@@ -5,6 +5,11 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
+bollard = "0.16"
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+futures-util = "0.3"
+chrono = "0.4"
 
 [dev-dependencies]
 tempfile = "3.8"
