@@ -28,6 +28,9 @@ cargo clippy -- -D warnings
 
 # Build release version
 cargo build --release
+
+# Run fmt, clippy, and tests
+just precommit
 ```
 
 ## Architecture Guidelines
