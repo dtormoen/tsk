@@ -214,6 +214,11 @@ impl<C: DockerClient> DockerManager<C> {
                 network_mode: Some(CONTAINER_NETWORK_MODE.to_string()),
                 memory: Some(CONTAINER_MEMORY_LIMIT),
                 cpu_quota: Some(CONTAINER_CPU_QUOTA),
+                // Add capabilities needed for iptables to work
+                cap_add: Some(vec![
+                    "NET_ADMIN".to_string(),
+                    "NET_RAW".to_string(),
+                ]),
                 ..Default::default()
             }),
             working_dir: Some(CONTAINER_WORKING_DIR.to_string()),
@@ -240,10 +245,11 @@ impl<C: DockerClient> DockerManager<C> {
             .to_str()
             .ok_or_else(|| "Invalid worktree path".to_string())?;
 
+        // Run firewall script first, then sleep infinity for debug
         let sleep_command = Some(vec![
             "sh".to_string(),
             "-c".to_string(),
-            "sleep infinity".to_string(),
+            "sudo /usr/local/bin/init-firewall.sh && sleep infinity".to_string(),
         ]);
 
         let config = Self::create_base_container_config(
@@ -288,16 +294,30 @@ impl<C: DockerClient> DockerManager<C> {
             .to_str()
             .ok_or_else(|| "Invalid worktree path".to_string())?;
 
-        let cmd = if command.is_empty() {
-            None
+        // Wrap the command with firewall initialization
+        let wrapped_command = if command.is_empty() {
+            // If no command provided, just run the firewall script
+            vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "sudo /usr/local/bin/init-firewall.sh".to_string(),
+            ]
         } else {
-            Some(command.clone())
+            // Run firewall script first, then the actual command
+            vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                format!(
+                    "sudo /usr/local/bin/init-firewall.sh && {}",
+                    command.join(" ")
+                ),
+            ]
         };
 
         let config = Self::create_base_container_config(
             image,
             worktree_path_str,
-            cmd,
+            Some(wrapped_command),
             false, // not interactive
         );
 
@@ -455,7 +475,14 @@ mod tests {
 
         let create_calls = manager.client.create_container_calls.lock().unwrap();
         assert_eq!(create_calls.len(), 1);
-        assert_eq!(create_calls[0].1.cmd, Some(command));
+        
+        // Check that the command is wrapped with firewall initialization
+        let actual_cmd = create_calls[0].1.cmd.as_ref().unwrap();
+        assert_eq!(actual_cmd.len(), 3);
+        assert_eq!(actual_cmd[0], "sh");
+        assert_eq!(actual_cmd[1], "-c");
+        assert!(actual_cmd[2].contains("sudo /usr/local/bin/init-firewall.sh"));
+        assert!(actual_cmd[2].contains("echo hello"));
         drop(create_calls); // Release the lock
 
         let start_calls = manager.client.start_container_calls.lock().unwrap();
@@ -485,9 +512,13 @@ mod tests {
 
         assert!(result.is_ok());
 
-        // Verify no command was set when empty command array is passed
+        // Verify firewall script is run when no command is provided
         let create_calls = manager.client.create_container_calls.lock().unwrap();
-        assert_eq!(create_calls[0].1.cmd, None);
+        let actual_cmd = create_calls[0].1.cmd.as_ref().unwrap();
+        assert_eq!(actual_cmd.len(), 3);
+        assert_eq!(actual_cmd[0], "sh");
+        assert_eq!(actual_cmd[1], "-c");
+        assert_eq!(actual_cmd[2], "sudo /usr/local/bin/init-firewall.sh");
     }
 
     #[tokio::test]
@@ -552,7 +583,14 @@ mod tests {
         assert_eq!(config.image, Some("tsk/base".to_string()));
         assert_eq!(config.working_dir, Some(CONTAINER_WORKING_DIR.to_string()));
         assert_eq!(config.user, Some(CONTAINER_USER.to_string()));
-        assert_eq!(config.cmd, Some(command));
+        
+        // Check that command is wrapped with firewall initialization
+        let actual_cmd = config.cmd.as_ref().unwrap();
+        assert_eq!(actual_cmd.len(), 3);
+        assert_eq!(actual_cmd[0], "sh");
+        assert_eq!(actual_cmd[1], "-c");
+        assert!(actual_cmd[2].contains("sudo /usr/local/bin/init-firewall.sh"));
+        assert!(actual_cmd[2].contains("test"));
 
         let host_config = config.host_config.as_ref().unwrap();
         assert_eq!(
