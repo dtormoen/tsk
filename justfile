@@ -13,4 +13,6 @@ precommit:
     cargo fmt
     cargo clippy
     cargo test
+    # Check that the command will starts
+    cargo run -- --help
 

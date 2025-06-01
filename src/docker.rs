@@ -1,8 +1,14 @@
 use async_trait::async_trait;
 use bollard::container::{Config, CreateContainerOptions, LogsOptions, RemoveContainerOptions};
 use bollard::Docker;
-use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+// Container resource limits
+const CONTAINER_MEMORY_LIMIT: i64 = 2 * 1024 * 1024 * 1024; // 2GB
+const CONTAINER_CPU_QUOTA: i64 = 100000; // 1 CPU
+const CONTAINER_NETWORK_MODE: &str = "none";
+const CONTAINER_WORKING_DIR: &str = "/workspace";
+const CONTAINER_USER: &str = "agent";
 
 #[async_trait]
 pub trait DockerClient: Send + Sync {
@@ -120,56 +126,73 @@ impl<C: DockerClient> DockerManager<C> {
         Self { client }
     }
 
-    pub async fn create_debug_container(
-        &self,
-        image: &str,
-        worktree_path: &Path,
-    ) -> Result<String, String> {
+    fn prepare_worktree_path(worktree_path: &Path) -> Result<PathBuf, String> {
         // Convert to absolute path to ensure Docker can find the volume
-        let absolute_worktree_path = if worktree_path.is_relative() {
+        let absolute_path = if worktree_path.is_relative() {
             std::env::current_dir()
                 .map_err(|e| format!("Failed to get current directory: {}", e))?
                 .join(worktree_path)
         } else {
             worktree_path.to_path_buf()
         };
+        Ok(absolute_path)
+    }
 
+    fn create_base_container_config(
+        image: &str,
+        worktree_path_str: &str,
+        command: Option<Vec<String>>,
+        interactive: bool,
+    ) -> Config<String> {
+        Config {
+            image: Some(image.to_string()),
+            cmd: command,
+            host_config: Some(bollard::service::HostConfig {
+                binds: Some(vec![format!(
+                    "{}:{}",
+                    worktree_path_str, CONTAINER_WORKING_DIR
+                )]),
+                network_mode: Some(CONTAINER_NETWORK_MODE.to_string()),
+                memory: Some(CONTAINER_MEMORY_LIMIT),
+                cpu_quota: Some(CONTAINER_CPU_QUOTA),
+                ..Default::default()
+            }),
+            working_dir: Some(CONTAINER_WORKING_DIR.to_string()),
+            user: Some(CONTAINER_USER.to_string()),
+            env: Some(vec![
+                format!("HOME=/home/{}", CONTAINER_USER),
+                format!("USER={}", CONTAINER_USER),
+            ]),
+            attach_stdin: Some(interactive),
+            attach_stdout: Some(interactive),
+            attach_stderr: Some(interactive),
+            tty: Some(interactive),
+            ..Default::default()
+        }
+    }
+
+    pub async fn create_debug_container(
+        &self,
+        image: &str,
+        worktree_path: &Path,
+    ) -> Result<String, String> {
+        let absolute_worktree_path = Self::prepare_worktree_path(worktree_path)?;
         let worktree_path_str = absolute_worktree_path
             .to_str()
             .ok_or_else(|| "Invalid worktree path".to_string())?;
 
-        let mut volumes = HashMap::new();
-        volumes.insert(
-            worktree_path_str.to_string(),
-            HashMap::from([("bind".to_string(), "/workspace".to_string())]),
-        );
+        let sleep_command = Some(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "sleep infinity".to_string(),
+        ]);
 
-        let config = Config {
-            image: Some(image.to_string()),
-            cmd: Some(vec![
-                "sh".to_string(),
-                "-c".to_string(),
-                "sleep infinity".to_string(),
-            ]),
-            host_config: Some(bollard::service::HostConfig {
-                binds: Some(vec![format!("{}:/workspace", worktree_path_str)]),
-                network_mode: Some("none".to_string()),
-                memory: Some(2 * 1024 * 1024 * 1024), // 2GB
-                cpu_quota: Some(100000),              // 1 CPU
-                ..Default::default()
-            }),
-            working_dir: Some("/workspace".to_string()),
-            user: Some("agent".to_string()),
-            env: Some(vec![
-                "HOME=/home/agent".to_string(),
-                "USER=agent".to_string(),
-            ]),
-            attach_stdin: Some(true),
-            attach_stdout: Some(true),
-            attach_stderr: Some(true),
-            tty: Some(true),
-            ..Default::default()
-        };
+        let config = Self::create_base_container_config(
+            image,
+            worktree_path_str,
+            sleep_command,
+            true, // interactive
+        );
 
         let container_name = format!("tsk-debug-{}", chrono::Utc::now().timestamp());
         let options = CreateContainerOptions {
@@ -178,7 +201,6 @@ impl<C: DockerClient> DockerManager<C> {
         };
 
         let container_id = self.client.create_container(Some(options), config).await?;
-
         self.client.start_container(&container_id).await?;
 
         Ok(container_name)
@@ -202,47 +224,23 @@ impl<C: DockerClient> DockerManager<C> {
         worktree_path: &Path,
         command: Vec<String>,
     ) -> Result<String, String> {
-        // Convert to absolute path to ensure Docker can find the volume
-        let absolute_worktree_path = if worktree_path.is_relative() {
-            std::env::current_dir()
-                .map_err(|e| format!("Failed to get current directory: {}", e))?
-                .join(worktree_path)
-        } else {
-            worktree_path.to_path_buf()
-        };
-
+        let absolute_worktree_path = Self::prepare_worktree_path(worktree_path)?;
         let worktree_path_str = absolute_worktree_path
             .to_str()
             .ok_or_else(|| "Invalid worktree path".to_string())?;
 
-        let mut volumes = HashMap::new();
-        volumes.insert(
-            worktree_path_str.to_string(),
-            HashMap::from([("bind".to_string(), "/workspace".to_string())]),
-        );
-
-        let config = Config {
-            image: Some(image.to_string()),
-            cmd: if command.is_empty() {
-                None
-            } else {
-                Some(command.clone())
-            },
-            host_config: Some(bollard::service::HostConfig {
-                binds: Some(vec![format!("{}:/workspace", worktree_path_str)]),
-                network_mode: Some("none".to_string()),
-                memory: Some(2 * 1024 * 1024 * 1024), // 2GB
-                cpu_quota: Some(100000),              // 1 CPU
-                ..Default::default()
-            }),
-            working_dir: Some("/workspace".to_string()),
-            user: Some("agent".to_string()),
-            env: Some(vec![
-                "HOME=/home/agent".to_string(),
-                "USER=agent".to_string(),
-            ]),
-            ..Default::default()
+        let cmd = if command.is_empty() {
+            None
+        } else {
+            Some(command.clone())
         };
+
+        let config = Self::create_base_container_config(
+            image,
+            worktree_path_str,
+            cmd,
+            false, // not interactive
+        );
 
         let options = CreateContainerOptions {
             name: format!("tsk-{}", chrono::Utc::now().timestamp()),
@@ -250,7 +248,6 @@ impl<C: DockerClient> DockerManager<C> {
         };
 
         let container_id = self.client.create_container(Some(options), config).await?;
-
         self.client.start_container(&container_id).await?;
 
         let exit_code = self.client.wait_container(&container_id).await?;
@@ -494,15 +491,19 @@ mod tests {
 
         assert!(options.as_ref().unwrap().name.starts_with("tsk-"));
         assert_eq!(config.image, Some("tsk/base".to_string()));
-        assert_eq!(config.working_dir, Some("/workspace".to_string()));
-        assert_eq!(config.user, Some("agent".to_string()));
+        assert_eq!(config.working_dir, Some(CONTAINER_WORKING_DIR.to_string()));
+        assert_eq!(config.user, Some(CONTAINER_USER.to_string()));
         assert_eq!(config.cmd, Some(command));
 
         let host_config = config.host_config.as_ref().unwrap();
-        assert_eq!(host_config.network_mode, Some("none".to_string()));
-        assert_eq!(host_config.memory, Some(2 * 1024 * 1024 * 1024));
-        assert_eq!(host_config.cpu_quota, Some(100000));
-        assert!(host_config.binds.as_ref().unwrap()[0].contains("/tmp/test-worktree:/workspace"));
+        assert_eq!(
+            host_config.network_mode,
+            Some(CONTAINER_NETWORK_MODE.to_string())
+        );
+        assert_eq!(host_config.memory, Some(CONTAINER_MEMORY_LIMIT));
+        assert_eq!(host_config.cpu_quota, Some(CONTAINER_CPU_QUOTA));
+        assert!(host_config.binds.as_ref().unwrap()[0]
+            .contains(&format!("/tmp/test-worktree:{}", CONTAINER_WORKING_DIR)));
     }
 
     #[tokio::test]
@@ -527,6 +528,6 @@ mod tests {
 
         // Should contain an absolute path (starts with /)
         assert!(bind.starts_with('/'));
-        assert!(bind.ends_with("test-worktree:/workspace"));
+        assert!(bind.ends_with(&format!("test-worktree:{}", CONTAINER_WORKING_DIR)));
     }
 }
