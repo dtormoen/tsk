@@ -56,6 +56,7 @@ impl WorktreeManager {
         }
     }
 
+    #[cfg(test)]
     pub fn with_executor(command_executor: Box<dyn CommandExecutor>) -> Self {
         Self {
             base_path: PathBuf::from(".tsk/tasks"),
