@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 mod git;
-use git::get_worktree_manager;
+use git::get_repo_manager;
 
 mod docker;
 use docker::get_docker_manager;
@@ -66,13 +66,13 @@ async fn main() {
             }
             println!("Timeout: {} minutes", timeout);
 
-            // Create worktree for the task
-            let worktree_manager = get_worktree_manager();
-            match worktree_manager.create_worktree(&name) {
-                Ok(worktree_path) => {
+            // Copy repository for the task
+            let repo_manager = get_repo_manager();
+            match repo_manager.copy_repo(&name) {
+                Ok((repo_path, branch_name)) => {
                     println!(
-                        "Successfully created worktree at: {}",
-                        worktree_path.display()
+                        "Successfully created repository copy at: {}",
+                        repo_path.display()
                     );
 
                     // Launch Docker container
@@ -80,30 +80,39 @@ async fn main() {
                         Ok(docker_manager) => {
                             println!("Launching Docker container...");
 
-                            // Command to create/append to tsk-test.md
-                            let timestamp = chrono::Utc::now().to_rfc3339();
-                            let log_entry = format!(
-                                "[{}] Task: {} | Type: {} | Description: {}",
-                                timestamp, name, r#type, description
-                            );
-
                             // Debug: List directory contents before and after
                             let command = vec![
                                 "sh".to_string(),
                                 "-c".to_string(),
-                                format!(
-                                    "pwd && ls -la && touch tsk-test.md && echo '{}' >> tsk-test.md && echo 'File created:' && ls -la tsk-test.md && cat tsk-test.md",
-                                    log_entry
-                                ),
+                                "claude -p --dangerously-skip-permissions /project:testcommand".to_string()
                             ];
 
                             match docker_manager
-                                .run_task_container("tsk/base", &worktree_path, command)
+                                .run_task_container("tsk/base", &repo_path, command)
                                 .await
                             {
                                 Ok(output) => {
                                     println!("Container execution completed successfully");
                                     println!("Output:\n{}", output);
+
+                                    // Commit any changes made by the container
+                                    let commit_message =
+                                        format!("TSK automated changes for task: {}", name);
+                                    if let Err(e) =
+                                        repo_manager.commit_changes(&repo_path, &commit_message)
+                                    {
+                                        eprintln!("Error committing changes: {}", e);
+                                    }
+
+                                    // Fetch changes back to main repository
+                                    if let Err(e) = repo_manager.fetch_changes(&repo_path) {
+                                        eprintln!("Error fetching changes: {}", e);
+                                    } else {
+                                        println!(
+                                            "Branch {} is now available in the main repository",
+                                            branch_name
+                                        );
+                                    }
                                 }
                                 Err(e) => {
                                     eprintln!("Error running container: {}", e);
@@ -118,7 +127,7 @@ async fn main() {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error creating worktree: {}", e);
+                    eprintln!("Error copying repository: {}", e);
                     std::process::exit(1);
                 }
             }
@@ -126,13 +135,13 @@ async fn main() {
         Commands::Debug { name } => {
             println!("Starting debug session: {}", name);
 
-            // Create worktree for the debug session
-            let worktree_manager = get_worktree_manager();
-            match worktree_manager.create_worktree(&name) {
-                Ok(worktree_path) => {
+            // Copy repository for the debug session
+            let repo_manager = get_repo_manager();
+            match repo_manager.copy_repo(&name) {
+                Ok((repo_path, branch_name)) => {
                     println!(
-                        "Successfully created worktree at: {}",
-                        worktree_path.display()
+                        "Successfully created repository copy at: {}",
+                        repo_path.display()
                     );
 
                     // Launch Docker container
@@ -141,7 +150,7 @@ async fn main() {
                             println!("Launching Docker container...");
 
                             match docker_manager
-                                .create_debug_container("tsk/base", &worktree_path)
+                                .create_debug_container("tsk/base", &repo_path)
                                 .await
                             {
                                 Ok(container_name) => {
@@ -162,6 +171,22 @@ async fn main() {
                                     {
                                         Ok(_) => {
                                             println!("Container stopped and removed successfully");
+
+                                            // Commit any changes made during debug session
+                                            let commit_message =
+                                                format!("TSK debug session changes for: {}", name);
+                                            if let Err(e) = repo_manager
+                                                .commit_changes(&repo_path, &commit_message)
+                                            {
+                                                eprintln!("Error committing changes: {}", e);
+                                            }
+
+                                            // Fetch changes back to main repository
+                                            if let Err(e) = repo_manager.fetch_changes(&repo_path) {
+                                                eprintln!("Error fetching changes: {}", e);
+                                            } else {
+                                                println!("Branch {} is now available in the main repository", branch_name);
+                                            }
                                         }
                                         Err(e) => {
                                             eprintln!("Error stopping container: {}", e);
@@ -181,7 +206,7 @@ async fn main() {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error creating worktree: {}", e);
+                    eprintln!("Error copying repository: {}", e);
                     std::process::exit(1);
                 }
             }

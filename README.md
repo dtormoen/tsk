@@ -162,7 +162,7 @@ tsk server [OPTIONS]
 ### Execution Flow
 
 1. **Task Queuing**: User defines task with type and detailed description
-2. **Environment Setup**: Create isolated git worktree and Docker container
+2. **Environment Setup**: Copy repository and create isolated Docker container
 3. **Agent Execution**: Selected AI agent (Aider/Claude Code) runs autonomously
 4. **Result Capture**: All changes committed to a dedicated task branch
 5. **Quality Checks**: Automated tests, linting, and compilation validation
@@ -195,7 +195,7 @@ docker run --network=ai-restricted \
 **File System Boundaries**
 - Agents cannot access host filesystem or other projects
 - No access to Docker socket, SSH keys, or system files
-- All modifications contained within the task worktree
+- All modifications contained within the copied repository
 
 ### Branch Management
 
@@ -250,7 +250,7 @@ tsk add --name "security" --type "feature" \
 ### Phase 1: Core Implementation
 - [ ] Basic CLI framework and task management
 - [ ] Docker sandbox integration
-- [ ] Git worktree management
+- [ ] Git repository copying and management
 - [ ] Claude Code integration for autonomous execution
 - [ ] Branch creation and result packaging
 

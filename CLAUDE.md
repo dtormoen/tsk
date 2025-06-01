@@ -55,19 +55,19 @@ just precommit
 
 4. **Sandbox Execution** (`src/sandbox/`)
    - Docker container management
-   - Git worktree creation
+   - Repository copying and isolation
    - Network restrictions
    - Resource limits
 
 5. **Git Operations** (`src/git/`)
    - Branch creation and management
-   - Worktree operations
-   - Commit packaging
+   - Repository copy operations
+   - Commit packaging and fetching
 
 ### Key Design Decisions
 
 - Tasks execute in isolated Docker containers with restricted network access
-- Each task creates a dedicated git branch for review
+- Each task copies the repository and creates a dedicated git branch for review
 - Agents run autonomously without interactive input
 - All changes must pass through human review before merging
 
@@ -75,7 +75,7 @@ just precommit
 
 - Implement strict Docker container isolation
 - Limit network access to AI API endpoints only
-- No access to host filesystem outside worktree
+- No access to host filesystem outside the copied repository
 - Resource limits on containers (memory, CPU, time)
 - No access to SSH keys, Docker socket, or system files
 
