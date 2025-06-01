@@ -3,17 +3,24 @@ FROM ubuntu:22.04
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install essential tools
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
-    git \
     curl \
-    ca-certificates \
+    git \
+    openssh-client \
     python3 \
     python3-pip \
-    nodejs \
-    npm \
     build-essential \
+    sudo \
+    vim \
+    jq \
+    ca-certificates \
+    gnupg \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 20.x
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs
 
 # Install Rust
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
@@ -21,6 +28,8 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Install just using cargo
 RUN cargo install just
+
+RUN npm install -g @anthropic-ai/claude-code
 
 # Create a non-root user for running the agent
 RUN useradd -m -s /bin/bash agent
