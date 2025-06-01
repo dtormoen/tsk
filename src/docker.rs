@@ -120,6 +120,82 @@ impl<C: DockerClient> DockerManager<C> {
         Self { client }
     }
 
+    pub async fn create_debug_container(
+        &self,
+        image: &str,
+        worktree_path: &Path,
+    ) -> Result<String, String> {
+        // Convert to absolute path to ensure Docker can find the volume
+        let absolute_worktree_path = if worktree_path.is_relative() {
+            std::env::current_dir()
+                .map_err(|e| format!("Failed to get current directory: {}", e))?
+                .join(worktree_path)
+        } else {
+            worktree_path.to_path_buf()
+        };
+
+        let worktree_path_str = absolute_worktree_path
+            .to_str()
+            .ok_or_else(|| "Invalid worktree path".to_string())?;
+
+        let mut volumes = HashMap::new();
+        volumes.insert(
+            worktree_path_str.to_string(),
+            HashMap::from([("bind".to_string(), "/workspace".to_string())]),
+        );
+
+        let config = Config {
+            image: Some(image.to_string()),
+            cmd: Some(vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                "sleep infinity".to_string(),
+            ]),
+            host_config: Some(bollard::service::HostConfig {
+                binds: Some(vec![format!("{}:/workspace", worktree_path_str)]),
+                network_mode: Some("none".to_string()),
+                memory: Some(2 * 1024 * 1024 * 1024), // 2GB
+                cpu_quota: Some(100000),              // 1 CPU
+                ..Default::default()
+            }),
+            working_dir: Some("/workspace".to_string()),
+            user: Some("agent".to_string()),
+            env: Some(vec![
+                "HOME=/home/agent".to_string(),
+                "USER=agent".to_string(),
+            ]),
+            attach_stdin: Some(true),
+            attach_stdout: Some(true),
+            attach_stderr: Some(true),
+            tty: Some(true),
+            ..Default::default()
+        };
+
+        let container_name = format!("tsk-debug-{}", chrono::Utc::now().timestamp());
+        let options = CreateContainerOptions {
+            name: container_name.clone(),
+            platform: None,
+        };
+
+        let container_id = self.client.create_container(Some(options), config).await?;
+
+        self.client.start_container(&container_id).await?;
+
+        Ok(container_name)
+    }
+
+    pub async fn stop_and_remove_container(&self, container_name: &str) -> Result<(), String> {
+        self.client
+            .remove_container(
+                container_name,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+            )
+            .await
+    }
+
     pub async fn run_task_container(
         &self,
         image: &str,

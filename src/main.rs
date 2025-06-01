@@ -38,6 +38,12 @@ enum Commands {
         #[arg(long, default_value = "30")]
         timeout: u32,
     },
+    /// Launch a Docker container for interactive debugging
+    Debug {
+        /// Unique identifier for the debug session
+        #[arg(short, long)]
+        name: String,
+    },
 }
 
 #[tokio::main]
@@ -101,6 +107,69 @@ async fn main() {
                                 }
                                 Err(e) => {
                                     eprintln!("Error running container: {}", e);
+                                    std::process::exit(1);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error initializing Docker manager: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error creating worktree: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Debug { name } => {
+            println!("Starting debug session: {}", name);
+
+            // Create worktree for the debug session
+            let worktree_manager = WorktreeManager::new();
+            match worktree_manager.create_worktree(&name) {
+                Ok(worktree_path) => {
+                    println!(
+                        "Successfully created worktree at: {}",
+                        worktree_path.display()
+                    );
+
+                    // Launch Docker container
+                    match DockerManager::new() {
+                        Ok(docker_manager) => {
+                            println!("Launching Docker container...");
+
+                            match docker_manager
+                                .create_debug_container("tsk/base", &worktree_path)
+                                .await
+                            {
+                                Ok(container_name) => {
+                                    println!("\nDocker container started successfully!");
+                                    println!("Container name: {}", container_name);
+                                    println!("\nTo connect to the container, run:");
+                                    println!("  docker exec -it {} /bin/bash", container_name);
+                                    println!("\nPress any key to stop the container and exit...");
+
+                                    // Wait for user input
+                                    use std::io::{self, Read};
+                                    let _ = io::stdin().read(&mut [0u8]).unwrap();
+
+                                    println!("\nStopping container...");
+                                    match docker_manager
+                                        .stop_and_remove_container(&container_name)
+                                        .await
+                                    {
+                                        Ok(_) => {
+                                            println!("Container stopped and removed successfully");
+                                        }
+                                        Err(e) => {
+                                            eprintln!("Error stopping container: {}", e);
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("Error creating debug container: {}", e);
                                     std::process::exit(1);
                                 }
                             }
