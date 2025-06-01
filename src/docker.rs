@@ -3,6 +3,57 @@ use bollard::container::{Config, CreateContainerOptions, LogsOptions, RemoveCont
 use bollard::Docker;
 use std::path::{Path, PathBuf};
 
+/// Factory function to get a DockerManager instance
+/// Returns a dummy implementation in test mode that panics on use
+#[cfg(not(test))]
+pub fn get_docker_manager() -> Result<DockerManager<RealDockerClient>, String> {
+    DockerManager::new()
+}
+
+#[cfg(test)]
+pub fn get_docker_manager() -> Result<DockerManager<PanicDockerClient>, String> {
+    Ok(DockerManager::with_client(PanicDockerClient))
+}
+
+#[cfg(test)]
+pub struct PanicDockerClient;
+
+#[cfg(test)]
+#[async_trait]
+impl DockerClient for PanicDockerClient {
+    async fn create_container(
+        &self,
+        _options: Option<CreateContainerOptions<String>>,
+        _config: Config<String>,
+    ) -> Result<String, String> {
+        panic!("Docker operations are not allowed in tests! Please mock DockerManager properly using DockerManager::with_client()")
+    }
+
+    async fn start_container(&self, _id: &str) -> Result<(), String> {
+        panic!("Docker operations are not allowed in tests! Please mock DockerManager properly using DockerManager::with_client()")
+    }
+
+    async fn wait_container(&self, _id: &str) -> Result<i64, String> {
+        panic!("Docker operations are not allowed in tests! Please mock DockerManager properly using DockerManager::with_client()")
+    }
+
+    async fn logs(
+        &self,
+        _id: &str,
+        _options: Option<LogsOptions<String>>,
+    ) -> Result<String, String> {
+        panic!("Docker operations are not allowed in tests! Please mock DockerManager properly using DockerManager::with_client()")
+    }
+
+    async fn remove_container(
+        &self,
+        _id: &str,
+        _options: Option<RemoveContainerOptions>,
+    ) -> Result<(), String> {
+        panic!("Docker operations are not allowed in tests! Please mock DockerManager properly using DockerManager::with_client()")
+    }
+}
+
 // Container resource limits
 const CONTAINER_MEMORY_LIMIT: i64 = 2 * 1024 * 1024 * 1024; // 2GB
 const CONTAINER_CPU_QUOTA: i64 = 100000; // 1 CPU
@@ -121,7 +172,6 @@ impl DockerManager<RealDockerClient> {
 }
 
 impl<C: DockerClient> DockerManager<C> {
-    #[cfg(test)]
     pub fn with_client(client: C) -> Self {
         Self { client }
     }

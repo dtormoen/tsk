@@ -1,10 +1,10 @@
 use clap::{Parser, Subcommand};
 
 mod git;
-use git::WorktreeManager;
+use git::get_worktree_manager;
 
 mod docker;
-use docker::DockerManager;
+use docker::get_docker_manager;
 
 #[derive(Parser)]
 #[command(name = "tsk")]
@@ -67,7 +67,7 @@ async fn main() {
             println!("Timeout: {} minutes", timeout);
 
             // Create worktree for the task
-            let worktree_manager = WorktreeManager::new();
+            let worktree_manager = get_worktree_manager();
             match worktree_manager.create_worktree(&name) {
                 Ok(worktree_path) => {
                     println!(
@@ -76,7 +76,7 @@ async fn main() {
                     );
 
                     // Launch Docker container
-                    match DockerManager::new() {
+                    match get_docker_manager() {
                         Ok(docker_manager) => {
                             println!("Launching Docker container...");
 
@@ -127,7 +127,7 @@ async fn main() {
             println!("Starting debug session: {}", name);
 
             // Create worktree for the debug session
-            let worktree_manager = WorktreeManager::new();
+            let worktree_manager = get_worktree_manager();
             match worktree_manager.create_worktree(&name) {
                 Ok(worktree_path) => {
                     println!(
@@ -136,7 +136,7 @@ async fn main() {
                     );
 
                     // Launch Docker container
-                    match DockerManager::new() {
+                    match get_docker_manager() {
                         Ok(docker_manager) => {
                             println!("Launching Docker container...");
 

@@ -3,6 +3,29 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Factory function to get a WorktreeManager instance
+/// Returns a dummy implementation in test mode that panics on use
+#[cfg(not(test))]
+pub fn get_worktree_manager() -> WorktreeManager {
+    WorktreeManager::new()
+}
+
+#[cfg(test)]
+pub fn get_worktree_manager() -> WorktreeManager {
+    struct PanicCommandExecutor;
+
+    impl CommandExecutor for PanicCommandExecutor {
+        fn execute(&self, _program: &str, _args: &[&str]) -> Result<Output, String> {
+            panic!("Git operations are not allowed in tests! Please mock WorktreeManager properly using WorktreeManager::with_executor()")
+        }
+    }
+
+    WorktreeManager {
+        base_path: PathBuf::from(".tsk/tasks"),
+        command_executor: Box::new(PanicCommandExecutor),
+    }
+}
+
 /// Trait for executing commands - allows mocking in tests
 pub trait CommandExecutor {
     fn execute(&self, program: &str, args: &[&str]) -> Result<Output, String>;
@@ -30,6 +53,13 @@ impl WorktreeManager {
         Self {
             base_path: PathBuf::from(".tsk/tasks"),
             command_executor: Box::new(SystemCommandExecutor),
+        }
+    }
+
+    pub fn with_executor(command_executor: Box<dyn CommandExecutor>) -> Self {
+        Self {
+            base_path: PathBuf::from(".tsk/tasks"),
+            command_executor,
         }
     }
 
