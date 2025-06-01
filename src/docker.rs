@@ -204,6 +204,7 @@ impl<C: DockerClient> DockerManager<C> {
 
         Config {
             image: Some(image.to_string()),
+            entrypoint: Some(vec!["/usr/local/bin/entrypoint.sh".to_string()]),
             cmd: command,
             host_config: Some(bollard::service::HostConfig {
                 binds: Some(vec![
@@ -215,14 +216,21 @@ impl<C: DockerClient> DockerManager<C> {
                 memory: Some(CONTAINER_MEMORY_LIMIT),
                 cpu_quota: Some(CONTAINER_CPU_QUOTA),
                 // Add capabilities needed for iptables to work
-                cap_add: Some(vec![
-                    "NET_ADMIN".to_string(),
-                    "NET_RAW".to_string(),
+                cap_add: Some(vec!["NET_ADMIN".to_string(), "NET_RAW".to_string()]),
+                // Drop dangerous capabilities for security
+                // Note: We need SETUID/SETGID for su to work
+                cap_drop: Some(vec![
+                    "SETPCAP".to_string(),
+                    "SYS_ADMIN".to_string(),
+                    "SYS_PTRACE".to_string(),
+                    "DAC_OVERRIDE".to_string(),
+                    "AUDIT_WRITE".to_string(),
                 ]),
                 ..Default::default()
             }),
             working_dir: Some(CONTAINER_WORKING_DIR.to_string()),
-            user: Some(CONTAINER_USER.to_string()),
+            // Don't set user here - entrypoint script handles user switching
+            // user: Some(CONTAINER_USER.to_string()),
             env: Some(vec![
                 format!("HOME=/home/{}", CONTAINER_USER),
                 format!("USER={}", CONTAINER_USER),
@@ -245,12 +253,8 @@ impl<C: DockerClient> DockerManager<C> {
             .to_str()
             .ok_or_else(|| "Invalid worktree path".to_string())?;
 
-        // Run firewall script first, then sleep infinity for debug
-        let sleep_command = Some(vec![
-            "sh".to_string(),
-            "-c".to_string(),
-            "sudo /usr/local/bin/init-firewall.sh && sleep infinity".to_string(),
-        ]);
+        // The entrypoint script will handle firewall setup and user switching
+        let sleep_command = Some(vec!["sleep".to_string(), "infinity".to_string()]);
 
         let config = Self::create_base_container_config(
             image,
@@ -294,30 +298,17 @@ impl<C: DockerClient> DockerManager<C> {
             .to_str()
             .ok_or_else(|| "Invalid worktree path".to_string())?;
 
-        // Wrap the command with firewall initialization
+        // The entrypoint script will handle firewall setup and user switching
         let wrapped_command = if command.is_empty() {
-            // If no command provided, just run the firewall script
-            vec![
-                "sh".to_string(),
-                "-c".to_string(),
-                "sudo /usr/local/bin/init-firewall.sh".to_string(),
-            ]
+            None
         } else {
-            // Run firewall script first, then the actual command
-            vec![
-                "sh".to_string(),
-                "-c".to_string(),
-                format!(
-                    "sudo /usr/local/bin/init-firewall.sh && {}",
-                    command.join(" ")
-                ),
-            ]
+            Some(command)
         };
 
         let config = Self::create_base_container_config(
             image,
             worktree_path_str,
-            Some(wrapped_command),
+            wrapped_command,
             false, // not interactive
         );
 
@@ -475,14 +466,17 @@ mod tests {
 
         let create_calls = manager.client.create_container_calls.lock().unwrap();
         assert_eq!(create_calls.len(), 1);
-        
-        // Check that the command is wrapped with firewall initialization
+
+        // Check that the command is passed through (entrypoint handles wrapping)
         let actual_cmd = create_calls[0].1.cmd.as_ref().unwrap();
-        assert_eq!(actual_cmd.len(), 3);
-        assert_eq!(actual_cmd[0], "sh");
-        assert_eq!(actual_cmd[1], "-c");
-        assert!(actual_cmd[2].contains("sudo /usr/local/bin/init-firewall.sh"));
-        assert!(actual_cmd[2].contains("echo hello"));
+        assert_eq!(actual_cmd.len(), 2);
+        assert_eq!(actual_cmd[0], "echo");
+        assert_eq!(actual_cmd[1], "hello");
+
+        // Check that entrypoint is set
+        let entrypoint = create_calls[0].1.entrypoint.as_ref().unwrap();
+        assert_eq!(entrypoint.len(), 1);
+        assert_eq!(entrypoint[0], "/usr/local/bin/entrypoint.sh");
         drop(create_calls); // Release the lock
 
         let start_calls = manager.client.start_container_calls.lock().unwrap();
@@ -512,13 +506,14 @@ mod tests {
 
         assert!(result.is_ok());
 
-        // Verify firewall script is run when no command is provided
+        // Verify no command is passed when command vector is empty
         let create_calls = manager.client.create_container_calls.lock().unwrap();
-        let actual_cmd = create_calls[0].1.cmd.as_ref().unwrap();
-        assert_eq!(actual_cmd.len(), 3);
-        assert_eq!(actual_cmd[0], "sh");
-        assert_eq!(actual_cmd[1], "-c");
-        assert_eq!(actual_cmd[2], "sudo /usr/local/bin/init-firewall.sh");
+        assert!(create_calls[0].1.cmd.is_none());
+
+        // Check that entrypoint is set
+        let entrypoint = create_calls[0].1.entrypoint.as_ref().unwrap();
+        assert_eq!(entrypoint.len(), 1);
+        assert_eq!(entrypoint[0], "/usr/local/bin/entrypoint.sh");
     }
 
     #[tokio::test]
@@ -582,15 +577,18 @@ mod tests {
         assert!(options.as_ref().unwrap().name.starts_with("tsk-"));
         assert_eq!(config.image, Some("tsk/base".to_string()));
         assert_eq!(config.working_dir, Some(CONTAINER_WORKING_DIR.to_string()));
-        assert_eq!(config.user, Some(CONTAINER_USER.to_string()));
-        
-        // Check that command is wrapped with firewall initialization
+        // User is no longer set at container level
+        assert_eq!(config.user, None);
+
+        // Check that command is passed through
         let actual_cmd = config.cmd.as_ref().unwrap();
-        assert_eq!(actual_cmd.len(), 3);
-        assert_eq!(actual_cmd[0], "sh");
-        assert_eq!(actual_cmd[1], "-c");
-        assert!(actual_cmd[2].contains("sudo /usr/local/bin/init-firewall.sh"));
-        assert!(actual_cmd[2].contains("test"));
+        assert_eq!(actual_cmd.len(), 1);
+        assert_eq!(actual_cmd[0], "test");
+
+        // Check that entrypoint is set
+        let entrypoint = config.entrypoint.as_ref().unwrap();
+        assert_eq!(entrypoint.len(), 1);
+        assert_eq!(entrypoint[0], "/usr/local/bin/entrypoint.sh");
 
         let host_config = config.host_config.as_ref().unwrap();
         assert_eq!(

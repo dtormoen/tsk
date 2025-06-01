@@ -36,21 +36,24 @@ RUN cargo install just
 
 RUN npm install -g @anthropic-ai/claude-code
 
-# Create a non-root user for running the agent
-RUN useradd -m -s /bin/bash agent
+# Create a non-root user for running the agent with UID/GID 1000
+# This helps with file permissions when mounting volumes
+RUN groupadd -g 1000 agent && \
+    useradd -m -s /bin/bash -u 1000 -g agent agent
 
 # Set up working directory
 WORKDIR /workspace
 
-# Copy and set up firewall script
+# Copy and set up scripts
 COPY init-firewall.sh /usr/local/bin/
-USER root
-RUN chmod +x /usr/local/bin/init-firewall.sh && \
-  echo "agent ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/agent-firewall && \
-  chmod 0440 /etc/sudoers.d/agent-firewall
+COPY entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh && \
+    # Ensure scripts are owned by root
+    chown root:root /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh
 
-# Switch to non-root user
-USER agent
+# Note: We don't switch to agent user here anymore.
+# The container will start as root via the entrypoint script,
+# which handles firewall setup and user switching.
 
 # Set environment variables
 ENV PATH="/home/agent/.local/bin:${PATH}"
