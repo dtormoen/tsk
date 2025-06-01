@@ -195,10 +195,12 @@ impl<C: DockerClient> DockerManager<C> {
         command: Option<Vec<String>>,
         interactive: bool,
     ) -> Config<String> {
-        // Get the home directory path for mounting ~/.claude
+        // Get the home directory path for mounting ~/.claude and ~/.claude.json
         let home_dir = std::env::var("HOME").unwrap_or_else(|_| "/home/agent".to_string());
-        let claude_host_path = format!("{}/.claude", home_dir);
-        let claude_container_path = format!("/home/{}/.claude", CONTAINER_USER);
+        let claude_dir_host_path = format!("{}/.claude", home_dir);
+        let claude_dir_container_path = format!("/home/{}/.claude", CONTAINER_USER);
+        let claude_json_host_path = format!("{}/.claude.json", home_dir);
+        let claude_json_container_path = format!("/home/{}/.claude.json", CONTAINER_USER);
 
         Config {
             image: Some(image.to_string()),
@@ -206,7 +208,8 @@ impl<C: DockerClient> DockerManager<C> {
             host_config: Some(bollard::service::HostConfig {
                 binds: Some(vec![
                     format!("{}:{}", worktree_path_str, CONTAINER_WORKING_DIR),
-                    format!("{}:{}", claude_host_path, claude_container_path),
+                    format!("{}:{}", claude_dir_host_path, claude_dir_container_path),
+                    format!("{}:{}", claude_json_host_path, claude_json_container_path),
                 ]),
                 network_mode: Some(CONTAINER_NETWORK_MODE.to_string()),
                 memory: Some(CONTAINER_MEMORY_LIMIT),
@@ -560,9 +563,10 @@ mod tests {
         assert_eq!(host_config.cpu_quota, Some(CONTAINER_CPU_QUOTA));
 
         let binds = host_config.binds.as_ref().unwrap();
-        assert_eq!(binds.len(), 2);
+        assert_eq!(binds.len(), 3);
         assert!(binds[0].contains(&format!("/tmp/test-worktree:{}", CONTAINER_WORKING_DIR)));
         assert!(binds[1].ends_with("/.claude:/home/agent/.claude"));
+        assert!(binds[2].ends_with("/.claude.json:/home/agent/.claude.json"));
     }
 
     #[tokio::test]
@@ -590,8 +594,9 @@ mod tests {
         assert!(worktree_bind.starts_with('/'));
         assert!(worktree_bind.ends_with(&format!("test-worktree:{}", CONTAINER_WORKING_DIR)));
 
-        // Should also have the claude directory mount
-        assert_eq!(binds.len(), 2);
+        // Should also have the claude directory and claude.json mounts
+        assert_eq!(binds.len(), 3);
         assert!(binds[1].ends_with("/.claude:/home/agent/.claude"));
+        assert!(binds[2].ends_with("/.claude.json:/home/agent/.claude.json"));
     }
 }
