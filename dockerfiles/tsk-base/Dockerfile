@@ -16,6 +16,11 @@ RUN apt-get update && apt-get install -y \
     jq \
     ca-certificates \
     gnupg \
+    iputils-ping \
+    iptables \
+    ipset \
+    iproute2 \
+    dnsutils \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 20.x
@@ -36,6 +41,13 @@ RUN useradd -m -s /bin/bash agent
 
 # Set up working directory
 WORKDIR /workspace
+
+# Copy and set up firewall script
+COPY init-firewall.sh /usr/local/bin/
+USER root
+RUN chmod +x /usr/local/bin/init-firewall.sh && \
+  echo "agent ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" > /etc/sudoers.d/agent-firewall && \
+  chmod 0440 /etc/sudoers.d/agent-firewall
 
 # Switch to non-root user
 USER agent

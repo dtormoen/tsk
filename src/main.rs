@@ -84,7 +84,8 @@ async fn main() {
                             let command = vec![
                                 "sh".to_string(),
                                 "-c".to_string(),
-                                "claude -p --dangerously-skip-permissions /project:testcommand".to_string()
+                                "claude -p --dangerously-skip-permissions /project:testcommand"
+                                    .to_string(),
                             ];
 
                             match docker_manager
@@ -105,7 +106,9 @@ async fn main() {
                                     }
 
                                     // Fetch changes back to main repository
-                                    if let Err(e) = repo_manager.fetch_changes(&repo_path, &branch_name) {
+                                    if let Err(e) =
+                                        repo_manager.fetch_changes(&repo_path, &branch_name)
+                                    {
                                         eprintln!("Error fetching changes: {}", e);
                                     } else {
                                         println!(
@@ -182,7 +185,9 @@ async fn main() {
                                             }
 
                                             // Fetch changes back to main repository
-                                            if let Err(e) = repo_manager.fetch_changes(&repo_path, &branch_name) {
+                                            if let Err(e) =
+                                                repo_manager.fetch_changes(&repo_path, &branch_name)
+                                            {
                                                 eprintln!("Error fetching changes: {}", e);
                                             } else {
                                                 println!("Branch {} is now available in the main repository", branch_name);
