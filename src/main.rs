@@ -105,7 +105,7 @@ async fn main() {
                                     }
 
                                     // Fetch changes back to main repository
-                                    if let Err(e) = repo_manager.fetch_changes(&repo_path) {
+                                    if let Err(e) = repo_manager.fetch_changes(&repo_path, &branch_name) {
                                         eprintln!("Error fetching changes: {}", e);
                                     } else {
                                         println!(
@@ -182,7 +182,7 @@ async fn main() {
                                             }
 
                                             // Fetch changes back to main repository
-                                            if let Err(e) = repo_manager.fetch_changes(&repo_path) {
+                                            if let Err(e) = repo_manager.fetch_changes(&repo_path, &branch_name) {
                                                 eprintln!("Error fetching changes: {}", e);
                                             } else {
                                                 println!("Branch {} is now available in the main repository", branch_name);

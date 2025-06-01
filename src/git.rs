@@ -200,7 +200,7 @@ impl RepoManager {
     }
 
     /// Fetch changes from the copied repository back to the main repository
-    pub fn fetch_changes(&self, repo_path: &Path) -> Result<(), String> {
+    pub fn fetch_changes(&self, repo_path: &Path, branch_name: &str) -> Result<(), String> {
         let repo_path_str = repo_path
             .to_str()
             .ok_or_else(|| "Invalid repo path".to_string())?;
@@ -240,10 +240,17 @@ impl RepoManager {
             }
         }
 
-        // Fetch from the remote
-        let fetch_cmd = self
-            .command_executor
-            .execute("git", &["-C", main_repo_str, "fetch", &remote_name])?;
+        // Fetch the specific branch from the remote
+        let fetch_cmd = self.command_executor.execute(
+            "git",
+            &[
+                "-C",
+                main_repo_str,
+                "fetch",
+                &remote_name,
+                &format!("{}:{}", branch_name, branch_name),
+            ],
+        )?;
 
         if !fetch_cmd.status.success() {
             let stderr = String::from_utf8_lossy(&fetch_cmd.stderr);
