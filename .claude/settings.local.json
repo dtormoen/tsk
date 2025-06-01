@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(cargo:*)",
+      "Bash(just precommit)",
+      "Bash(rg:*)"
+    ],
+    "deny": []
+  }
+}
