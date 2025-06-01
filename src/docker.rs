@@ -57,7 +57,7 @@ impl DockerClient for PanicDockerClient {
 // Container resource limits
 const CONTAINER_MEMORY_LIMIT: i64 = 2 * 1024 * 1024 * 1024; // 2GB
 const CONTAINER_CPU_QUOTA: i64 = 100000; // 1 CPU
-const CONTAINER_NETWORK_MODE: &str = "none";
+const CONTAINER_NETWORK_MODE: &str = "bridge";
 const CONTAINER_WORKING_DIR: &str = "/workspace";
 const CONTAINER_USER: &str = "agent";
 

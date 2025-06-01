@@ -165,17 +165,15 @@ mod tests {
     impl CommandExecutor for MockCommandExecutor {
         fn execute(&self, program: &str, args: &[&str]) -> Result<Output, String> {
             // Special handling for commands with dynamic paths
-            if program == "git" && args.len() >= 2 {
-                if args[0] == "worktree" && args[1] == "add" {
-                    // For worktree add commands, check if it matches our pattern
-                    for (cmd_program, cmd_args, response) in &self.responses {
-                        if cmd_program == "git"
-                            && cmd_args.len() >= 2
-                            && cmd_args[0] == "worktree"
-                            && cmd_args[1] == "add"
-                        {
-                            return response.clone();
-                        }
+            if program == "git" && args.len() >= 2 && args[0] == "worktree" && args[1] == "add" {
+                // For worktree add commands, check if it matches our pattern
+                for (cmd_program, cmd_args, response) in &self.responses {
+                    if cmd_program == "git"
+                        && cmd_args.len() >= 2
+                        && cmd_args[0] == "worktree"
+                        && cmd_args[1] == "add"
+                    {
+                        return response.clone();
                     }
                 }
             }
