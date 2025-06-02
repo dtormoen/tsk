@@ -76,8 +76,14 @@ impl LogProcessor {
         match msg.message_type.as_str() {
             "assistant" => self.format_assistant_message(msg),
             "result" => self.format_result_message(msg),
-            _ => Some(format!("Message type: {}", msg.message_type)),
+            "user" => self.format_user_message(msg),
+            _ => None, // Skip other message types
         }
+    }
+
+    fn format_user_message(&self, _msg: ClaudeMessage) -> Option<String> {
+        // Skip user messages - they're typically tool results which are verbose
+        None
     }
 
     fn format_assistant_message(&self, msg: ClaudeMessage) -> Option<String> {
@@ -88,17 +94,19 @@ impl LogProcessor {
                         let mut output = String::new();
                         for item in contents {
                             if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
+                                if !output.is_empty() {
+                                    output.push('\n');
+                                }
                                 output.push_str(text);
-                                output.push('\n');
                             }
                         }
                         if !output.is_empty() {
-                            Some(output.trim_end().to_string())
+                            Some(format!("🤖 Assistant:\n{}", output))
                         } else {
                             None
                         }
                     }
-                    Value::String(text) => Some(text),
+                    Value::String(text) => Some(format!("🤖 Assistant:\n{}", text)),
                     _ => None,
                 }
             } else {
@@ -117,24 +125,44 @@ impl LogProcessor {
                 if success {
                     "Task completed successfully".to_string()
                 } else {
-                    msg.result
-                        .clone()
-                        .unwrap_or_else(|| "Task failed".to_string())
+                    "Task failed".to_string()
                 }
             });
 
             self.final_result = Some(TaskResult {
                 success,
-                message,
+                message: message.clone(),
                 cost_usd: msg.cost_usd,
                 duration_ms: msg.duration_ms,
             });
-        }
 
-        // Format the result message as pretty-printed JSON
-        match serde_json::to_string_pretty(&msg) {
-            Ok(json) => Some(json),
-            Err(_) => Some(format!("Failed to format result message: {:?}", msg)),
+            // Format a nice summary
+            let mut output = String::new();
+            output.push('\n');
+            output.push_str(&"─".repeat(60));
+            output.push('\n');
+
+            let status_emoji = if success { "✅" } else { "❌" };
+            output.push_str(&format!("{} Task Result: {}\n", status_emoji, subtype));
+
+            if let Some(cost) = msg.cost_usd {
+                output.push_str(&format!("💰 Cost: ${:.2}\n", cost));
+            }
+
+            if let Some(duration) = msg.duration_ms {
+                let seconds = duration as f64 / 1000.0;
+                output.push_str(&format!("⏱️  Duration: {:.1}s\n", seconds));
+            }
+
+            if let Some(turns) = msg.num_turns {
+                output.push_str(&format!("🔄 Turns: {}\n", turns));
+            }
+
+            output.push_str(&"─".repeat(60));
+
+            Some(output)
+        } else {
+            None
         }
     }
 
@@ -171,7 +199,7 @@ mod tests {
         }"#;
 
         let result = processor.process_line(json);
-        assert_eq!(result, Some("Hello, world!".to_string()));
+        assert_eq!(result, Some("🤖 Assistant:\nHello, world!".to_string()));
     }
 
     #[test]
@@ -186,7 +214,9 @@ mod tests {
 
         let result = processor.process_line(json);
         assert!(result.is_some());
-        assert!(result.unwrap().contains("\"type\": \"result\""));
+        let formatted = result.unwrap();
+        assert!(formatted.contains("✅ Task Result: success"));
+        assert!(formatted.contains("💰 Cost: $0.12"));
 
         // Check that the result was parsed correctly
         let final_result = processor.get_final_result();
@@ -213,6 +243,9 @@ mod tests {
 
         let result = processor.process_line(json);
         assert!(result.is_some());
+        let formatted = result.unwrap();
+        assert!(formatted.contains("❌ Task Result: error"));
+        assert!(formatted.contains("⏱️  Duration: 5.0s"));
 
         // Check that the failure was parsed correctly
         let final_result = processor.get_final_result();
@@ -224,12 +257,12 @@ mod tests {
     }
 
     #[test]
-    fn test_process_other_message() {
+    fn test_process_user_message() {
         let mut processor = LogProcessor::new();
         let json = r#"{"type": "user"}"#;
 
         let result = processor.process_line(json);
-        assert_eq!(result, Some("Message type: user".to_string()));
+        assert_eq!(result, None); // User messages are now skipped
     }
 
     #[test]
