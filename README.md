@@ -62,6 +62,10 @@ git merge tsk/auth-review-20240531-143022
 # The refactoring needs work - refine and retry
 tsk add --name "extract-service-v2" \
   --description "Extract user notification logic into NotificationService class. Keep existing public API unchanged and ensure all tests pass."
+
+# Or create a task with interactive editing
+tsk add --name "complex-feature" --type "feature" --edit
+# This will open your $EDITOR to create detailed instructions
 ```
 
 ## Command Reference
@@ -77,6 +81,12 @@ tsk add --name <TASK_NAME> [--type <TASK_TYPE>] --description <DESCRIPTION>
 - `--name, -n`: Unique identifier for the task
 - `--type, -t`: Task type (optional, defaults to 'generic'). Must have a corresponding template in the templates/ folder
 - `--description, -d`: Detailed description of what needs to be accomplished
+- `--instructions, -i`: Path to instructions file to pass to the agent (alternative to --description)
+- `--edit, -e`: Open the instructions file in $EDITOR after creation for interactive editing
+- `--agent, -a`: Specific agent to use (aider, claude-code)
+- `--timeout`: Task timeout in minutes (default: 30)
+
+**Note:** If neither `--description` nor `--instructions` is provided, you must use `--edit` to create instructions interactively.
 
 **Task Types:**
 Task types are determined by available templates in the `templates/` folder. By default, the following template is provided:
@@ -139,9 +149,15 @@ tsk quick [--type <TASK_TYPE>] --description <DESCRIPTION>
 ```
 
 **Options:**
+- `--name, -n`: Unique identifier for the task
 - `--type, -t`: Task type (optional, defaults to 'generic'). Must have a corresponding template in the templates/ folder
-- `--description, -d`: Task description (required)
+- `--description, -d`: Task description
+- `--instructions, -i`: Path to instructions file to pass to the agent (alternative to --description)
+- `--edit, -e`: Open the instructions file in $EDITOR after creation for interactive editing
 - `--agent, -a`: Specific agent to use (aider|claude-code)
+- `--timeout`: Task timeout in minutes (default: 30)
+
+**Note:** If neither `--description` nor `--instructions` is provided, you must use `--edit` to create instructions interactively.
 
 ### `tsk tasks`
 Manages tasks in the task list, allowing deletion of specific tasks or cleanup of completed tasks.

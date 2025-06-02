@@ -44,6 +44,10 @@ enum Commands {
         #[arg(short, long, conflicts_with = "description")]
         instructions: Option<String>,
 
+        /// Open the instructions file in $EDITOR after creation
+        #[arg(short, long)]
+        edit: bool,
+
         /// Specific agent to use (aider, claude-code)
         #[arg(short, long)]
         agent: Option<String>,
@@ -73,6 +77,10 @@ enum Commands {
         /// Path to instructions file to pass to the agent
         #[arg(short, long, conflicts_with = "description")]
         instructions: Option<String>,
+
+        /// Open the instructions file in $EDITOR after creation
+        #[arg(short, long)]
+        edit: bool,
 
         /// Specific agent to use (aider, claude-code)
         #[arg(short, long)]
@@ -112,14 +120,15 @@ async fn main() {
             r#type,
             description,
             instructions,
+            edit,
             agent,
             timeout,
         } => {
             println!("Adding task to queue: {}", name);
 
-            // Ensure either description or instructions is provided
-            if description.is_none() && instructions.is_none() {
-                eprintln!("Error: Either --description or --instructions must be provided");
+            // Ensure either description or instructions is provided, or edit flag is set
+            if description.is_none() && instructions.is_none() && !edit {
+                eprintln!("Error: Either --description or --instructions must be provided, or use --edit to create instructions interactively");
                 std::process::exit(1);
             }
 
@@ -205,11 +214,100 @@ async fn main() {
                         std::process::exit(1);
                     }
                 }
+            } else if edit {
+                // Create empty instructions file for editing
+                let dest_path = task_dir.join("instructions.md");
+
+                // Check if a template exists for this task type
+                let template_path =
+                    std::path::Path::new("templates").join(format!("{}.md", r#type));
+                let initial_content = if template_path.exists() {
+                    // Load template as starting point
+                    match std::fs::read_to_string(&template_path) {
+                        Ok(template_content) => {
+                            // Use template with placeholder for user to fill
+                            template_content.replace(
+                                "{{DESCRIPTION}}",
+                                "<!-- TODO: Add your task description here -->",
+                            )
+                        }
+                        Err(_) => {
+                            // Fall back to empty file
+                            String::new()
+                        }
+                    }
+                } else {
+                    // No template found, start with empty file
+                    String::new()
+                };
+
+                match std::fs::write(&dest_path, initial_content) {
+                    Ok(_) => {
+                        println!("Created instructions file for editing");
+                        Some(dest_path.to_string_lossy().to_string())
+                    }
+                    Err(e) => {
+                        eprintln!("Error creating instructions file: {}", e);
+                        std::process::exit(1);
+                    }
+                }
             } else {
                 // This should never happen due to validation, but handle it gracefully
                 eprintln!("Error: No description or instructions provided");
                 std::process::exit(1);
             };
+
+            // Open editor if edit flag is set
+            if edit {
+                if let Some(ref inst_path) = instructions_path {
+                    // Get editor from environment variable
+                    let editor = std::env::var("EDITOR").unwrap_or_else(|_| {
+                        // Try common fallbacks
+                        if std::env::var("VISUAL").is_ok() {
+                            std::env::var("VISUAL").unwrap()
+                        } else {
+                            "vi".to_string()
+                        }
+                    });
+
+                    println!("Opening instructions file in editor: {}", editor);
+
+                    // Execute editor
+                    let status = std::process::Command::new(&editor).arg(inst_path).status();
+
+                    match status {
+                        Ok(exit_status) => {
+                            if !exit_status.success() {
+                                eprintln!("Editor exited with non-zero status");
+                                std::process::exit(1);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to open editor: {}", e);
+                            eprintln!("Please ensure EDITOR environment variable is set to a valid editor");
+                            std::process::exit(1);
+                        }
+                    }
+
+                    // Check if file is empty after editing
+                    match std::fs::read_to_string(inst_path) {
+                        Ok(content) => {
+                            if content.trim().is_empty() {
+                                eprintln!(
+                                    "Error: Instructions file is empty. Task creation cancelled."
+                                );
+                                // Clean up
+                                let _ = std::fs::remove_dir_all(&task_dir);
+                                std::process::exit(1);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error reading edited instructions file: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            }
 
             // Create and save the task
             let task = Task::new(
@@ -256,15 +354,16 @@ async fn main() {
             r#type,
             description,
             instructions,
+            edit,
             agent,
             timeout,
         } => {
             println!("Executing quick task: {}", name);
             println!("Type: {}", r#type);
 
-            // Ensure either description or instructions is provided
-            if description.is_none() && instructions.is_none() {
-                eprintln!("Error: Either --description or --instructions must be provided");
+            // Ensure either description or instructions is provided, or edit flag is set
+            if description.is_none() && instructions.is_none() && !edit {
+                eprintln!("Error: Either --description or --instructions must be provided, or use --edit to create instructions interactively");
                 std::process::exit(1);
             }
 
@@ -350,11 +449,102 @@ async fn main() {
                         std::process::exit(1);
                     }
                 }
+            } else if edit {
+                // Create empty instructions file for editing
+                let dest_path = task_dir.join("instructions.md");
+
+                // Check if a template exists for this task type
+                let template_path =
+                    std::path::Path::new("templates").join(format!("{}.md", r#type));
+                let initial_content = if template_path.exists() {
+                    // Load template as starting point
+                    match std::fs::read_to_string(&template_path) {
+                        Ok(template_content) => {
+                            // Use template with placeholder for user to fill
+                            template_content.replace(
+                                "{{DESCRIPTION}}",
+                                "<!-- TODO: Add your task description here -->",
+                            )
+                        }
+                        Err(_) => {
+                            // Fall back to empty file
+                            String::new()
+                        }
+                    }
+                } else {
+                    // No template found, start with empty file
+                    String::new()
+                };
+
+                match std::fs::write(&dest_path, initial_content) {
+                    Ok(_) => {
+                        println!("Created instructions file for editing");
+                        dest_path.to_string_lossy().to_string()
+                    }
+                    Err(e) => {
+                        eprintln!("Error creating instructions file: {}", e);
+                        std::process::exit(1);
+                    }
+                }
             } else {
                 // This should never happen due to validation
                 eprintln!("Error: No description or instructions provided");
                 std::process::exit(1);
             };
+
+            // Open editor if edit flag is set
+            if edit {
+                // Get editor from environment variable
+                let editor = std::env::var("EDITOR").unwrap_or_else(|_| {
+                    // Try common fallbacks
+                    if std::env::var("VISUAL").is_ok() {
+                        std::env::var("VISUAL").unwrap()
+                    } else {
+                        "vi".to_string()
+                    }
+                });
+
+                println!("Opening instructions file in editor: {}", editor);
+
+                // Execute editor
+                let status = std::process::Command::new(&editor)
+                    .arg(&instructions_path)
+                    .status();
+
+                match status {
+                    Ok(exit_status) => {
+                        if !exit_status.success() {
+                            eprintln!("Editor exited with non-zero status");
+                            std::process::exit(1);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to open editor: {}", e);
+                        eprintln!(
+                            "Please ensure EDITOR environment variable is set to a valid editor"
+                        );
+                        std::process::exit(1);
+                    }
+                }
+
+                // Check if file is empty after editing
+                match std::fs::read_to_string(&instructions_path) {
+                    Ok(content) => {
+                        if content.trim().is_empty() {
+                            eprintln!(
+                                "Error: Instructions file is empty. Task execution cancelled."
+                            );
+                            // Clean up
+                            let _ = std::fs::remove_dir_all(&task_dir);
+                            std::process::exit(1);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading edited instructions file: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
 
             if let Some(agent) = agent {
                 println!("Agent: {}", agent);
