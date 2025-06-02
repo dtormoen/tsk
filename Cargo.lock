@@ -1225,6 +1225,8 @@ dependencies = [
  "chrono",
  "clap",
  "futures-util",
+ "serde",
+ "serde_json",
  "tempfile",
  "tokio",
 ]

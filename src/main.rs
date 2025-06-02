@@ -6,6 +6,9 @@ use git::get_repo_manager;
 mod docker;
 use docker::get_docker_manager;
 
+mod task;
+use task::{get_task_storage, Task};
+
 #[derive(Parser)]
 #[command(name = "tsk")]
 #[command(author, version, about = "TSK - Task delegation to AI agents", long_about = None)]
@@ -16,6 +19,32 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Queue a task for later execution
+    Add {
+        /// Unique identifier for the task
+        #[arg(short, long)]
+        name: String,
+
+        /// Task type (code-review, refactor, feature, bug-fix, test-generation, documentation)
+        #[arg(short = 't', long)]
+        r#type: String,
+
+        /// Detailed description of what needs to be accomplished
+        #[arg(short, long, conflicts_with = "instructions")]
+        description: Option<String>,
+
+        /// Path to instructions file to pass to the agent
+        #[arg(short, long, conflicts_with = "description")]
+        instructions: Option<String>,
+
+        /// Specific agent to use (aider, claude-code)
+        #[arg(short, long)]
+        agent: Option<String>,
+
+        /// Task timeout in minutes
+        #[arg(long, default_value = "30")]
+        timeout: u32,
+    },
     /// Immediately execute a task without queuing
     Quick {
         /// Unique identifier for the task
@@ -57,6 +86,120 @@ async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Add {
+            name,
+            r#type,
+            description,
+            instructions,
+            agent,
+            timeout,
+        } => {
+            println!("Adding task to queue: {}", name);
+
+            // Ensure either description or instructions is provided
+            if description.is_none() && instructions.is_none() {
+                eprintln!("Error: Either --description or --instructions must be provided");
+                std::process::exit(1);
+            }
+
+            // Validate task type
+            let valid_types = [
+                "code-review",
+                "refactor",
+                "feature",
+                "bug-fix",
+                "test-generation",
+                "documentation",
+            ];
+            if !valid_types.contains(&r#type.as_str()) {
+                eprintln!(
+                    "Error: Invalid task type '{}'. Valid types are: {}",
+                    r#type,
+                    valid_types.join(", ")
+                );
+                std::process::exit(1);
+            }
+
+            // Copy instructions file to task directory if provided
+            let instructions_path = if let Some(ref inst_path) = instructions {
+                // Verify instructions file exists
+                match std::fs::read_to_string(inst_path) {
+                    Ok(_) => {
+                        // Create task directory
+                        let timestamp = chrono::Utc::now().format("%Y-%m-%d-%H%M");
+                        let task_dir_name = format!("{}-{}", timestamp, name);
+                        let task_dir = std::path::Path::new(".tsk/tasks").join(&task_dir_name);
+                        std::fs::create_dir_all(&task_dir).unwrap_or_else(|e| {
+                            eprintln!("Error creating task directory: {}", e);
+                            std::process::exit(1);
+                        });
+
+                        // Copy instructions file to task directory
+                        let inst_filename = std::path::Path::new(inst_path)
+                            .file_name()
+                            .unwrap_or_else(|| std::ffi::OsStr::new("instructions.md"));
+                        let dest_path = task_dir.join(inst_filename);
+
+                        match std::fs::copy(inst_path, &dest_path) {
+                            Ok(_) => {
+                                println!("Copied instructions file to task directory");
+                                Some(dest_path.to_string_lossy().to_string())
+                            }
+                            Err(e) => {
+                                eprintln!("Error copying instructions file: {}", e);
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading instructions file: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                None
+            };
+
+            // Create and save the task
+            let task = Task::new(
+                name.clone(),
+                r#type.clone(),
+                description.clone(),
+                instructions_path,
+                agent.clone(),
+                timeout,
+            );
+
+            match get_task_storage() {
+                Ok(storage) => match storage.add_task(task.clone()).await {
+                    Ok(_) => {
+                        println!("\nTask successfully added to queue!");
+                        println!("Task ID: {}", task.id);
+                        println!("Type: {}", r#type);
+                        if let Some(desc) = description {
+                            println!("Description: {}", desc);
+                        }
+                        if instructions.is_some() {
+                            println!("Instructions: Copied to task directory");
+                        }
+                        if let Some(agent) = agent {
+                            println!("Agent: {}", agent);
+                        }
+                        println!("Timeout: {} minutes", timeout);
+                        println!("\nUse 'tsk list' to view all queued tasks");
+                        println!("Use 'tsk run' to execute the next task in the queue");
+                    }
+                    Err(e) => {
+                        eprintln!("Error saving task: {}", e);
+                        std::process::exit(1);
+                    }
+                },
+                Err(e) => {
+                    eprintln!("Error initializing task storage: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
         Commands::Quick {
             name,
             r#type,
