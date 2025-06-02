@@ -320,6 +320,7 @@ impl<C: DockerClient> DockerManager<C> {
         worktree_path_str: &str,
         command: Option<Vec<String>>,
         interactive: bool,
+        instructions_file_path: Option<&PathBuf>,
     ) -> Config<String> {
         // Get the home directory path for mounting ~/.claude and ~/.claude.json
         let home_dir = std::env::var("HOME").unwrap_or_else(|_| "/home/agent".to_string());
@@ -328,17 +329,30 @@ impl<C: DockerClient> DockerManager<C> {
         let claude_json_host_path = format!("{}/.claude.json", home_dir);
         let claude_json_container_path = format!("/home/{}/.claude.json", CONTAINER_USER);
 
+        // Build binds vector with optional instructions directory
+        let mut binds = vec![
+            format!("{}:{}", worktree_path_str, CONTAINER_WORKING_DIR),
+            format!("{}:{}", claude_dir_host_path, claude_dir_container_path),
+            format!("{}:{}", claude_json_host_path, claude_json_container_path),
+        ];
+
+        // Add instructions directory mount if provided
+        if let Some(inst_path) = instructions_file_path {
+            if let Some(parent) = inst_path.parent() {
+                // Convert to absolute path to avoid Docker volume naming issues
+                let abs_parent = parent.canonicalize()
+                    .unwrap_or_else(|_| parent.to_path_buf());
+                binds.push(format!("{}:/instructions:ro", abs_parent.to_str().unwrap()));
+            }
+        }
+
         Config {
             image: Some(image.to_string()),
             // No entrypoint needed anymore - just run as agent user directly
             user: Some(CONTAINER_USER.to_string()),
             cmd: command,
             host_config: Some(bollard::service::HostConfig {
-                binds: Some(vec![
-                    format!("{}:{}", worktree_path_str, CONTAINER_WORKING_DIR),
-                    format!("{}:{}", claude_dir_host_path, claude_dir_container_path),
-                    format!("{}:{}", claude_json_host_path, claude_json_container_path),
-                ]),
+                binds: Some(binds),
                 network_mode: Some(TSK_NETWORK_NAME.to_string()),
                 memory: Some(CONTAINER_MEMORY_LIMIT),
                 cpu_quota: Some(CONTAINER_CPU_QUOTA),
@@ -399,6 +413,7 @@ impl<C: DockerClient> DockerManager<C> {
             worktree_path_str,
             sleep_command,
             true, // interactive
+            None, // no instructions file for debug containers
         );
 
         let container_name = format!("tsk-debug-{}", chrono::Utc::now().timestamp());
@@ -430,6 +445,7 @@ impl<C: DockerClient> DockerManager<C> {
         image: &str,
         worktree_path: &Path,
         command: Vec<String>,
+        instructions_file_path: Option<&PathBuf>,
     ) -> Result<String, String> {
         // Ensure network and proxy are running
         self.ensure_network().await?;
@@ -451,6 +467,7 @@ impl<C: DockerClient> DockerManager<C> {
             worktree_path_str,
             wrapped_command,
             false, // not interactive
+            instructions_file_path,
         );
 
         let options = CreateContainerOptions {
@@ -637,7 +654,7 @@ mod tests {
         let command = vec!["echo".to_string(), "hello".to_string()];
 
         let result = manager
-            .run_task_container("tsk/base", worktree_path, command.clone())
+            .run_task_container("tsk/base", worktree_path, command.clone(), None)
             .await;
 
         assert!(result.is_ok());
@@ -685,7 +702,7 @@ mod tests {
         let command = vec![];
 
         let result = manager
-            .run_task_container("tsk/base", worktree_path, command)
+            .run_task_container("tsk/base", worktree_path, command, None)
             .await;
 
         assert!(result.is_ok());
@@ -709,7 +726,7 @@ mod tests {
         let command = vec!["false".to_string()];
 
         let result = manager
-            .run_task_container("tsk/base", worktree_path, command)
+            .run_task_container("tsk/base", worktree_path, command, None)
             .await;
 
         assert!(result.is_err());
@@ -734,7 +751,7 @@ mod tests {
         let command = vec!["echo".to_string(), "hello".to_string()];
 
         let result = manager
-            .run_task_container("tsk/base", worktree_path, command)
+            .run_task_container("tsk/base", worktree_path, command, None)
             .await;
 
         assert!(result.is_err());
@@ -753,7 +770,7 @@ mod tests {
         let command = vec!["test".to_string()];
 
         let _ = manager
-            .run_task_container("tsk/base", worktree_path, command.clone())
+            .run_task_container("tsk/base", worktree_path, command.clone(), None)
             .await;
 
         let create_calls = manager.client.create_container_calls.lock().unwrap();
@@ -799,6 +816,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_run_task_container_with_instructions_file() {
+        let mock_client = MockDockerClient::new();
+        let manager = DockerManager::with_client(mock_client);
+
+        let worktree_path = Path::new("/tmp/test-worktree");
+        let instructions_path = PathBuf::from("/tmp/tsk-test/instructions.txt");
+        let command = vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "cat /instructions/instructions.txt | claude".to_string(),
+        ];
+
+        let result = manager
+            .run_task_container("tsk/base", worktree_path, command, Some(&instructions_path))
+            .await;
+
+        assert!(result.is_ok());
+
+        let create_calls = manager.client.create_container_calls.lock().unwrap();
+        assert_eq!(create_calls.len(), 2); // One for proxy, one for task container
+
+        // Check that instructions directory is mounted
+        let task_container_config = &create_calls[1].1;
+        let host_config = task_container_config.host_config.as_ref().unwrap();
+        let binds = host_config.binds.as_ref().unwrap();
+        assert_eq!(binds.len(), 4); // workspace, claude dir, claude.json, and instructions
+        assert!(binds[3].contains("/tmp/tsk-test:/instructions:ro"));
+    }
+
+    #[tokio::test]
     async fn test_relative_path_conversion() {
         let mock_client = MockDockerClient::new();
         let manager = DockerManager::with_client(mock_client);
@@ -807,7 +854,7 @@ mod tests {
         let command = vec!["test".to_string()];
 
         let result = manager
-            .run_task_container("tsk/base", relative_path, command)
+            .run_task_container("tsk/base", relative_path, command, None)
             .await;
 
         assert!(result.is_ok());

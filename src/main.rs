@@ -27,8 +27,12 @@ enum Commands {
         r#type: String,
 
         /// Detailed description of what needs to be accomplished
-        #[arg(short, long)]
-        description: String,
+        #[arg(short, long, conflicts_with = "instructions")]
+        description: Option<String>,
+
+        /// Path to instructions file to pass to the agent
+        #[arg(short, long, conflicts_with = "description")]
+        instructions: Option<String>,
 
         /// Specific agent to use (aider, claude-code)
         #[arg(short, long)]
@@ -57,12 +61,25 @@ async fn main() {
             name,
             r#type,
             description,
+            instructions,
             agent,
             timeout,
         } => {
             println!("Executing quick task: {}", name);
             println!("Type: {}", r#type);
-            println!("Description: {}", description);
+
+            // Ensure either description or instructions is provided
+            if description.is_none() && instructions.is_none() {
+                eprintln!("Error: Either --description or --instructions must be provided");
+                std::process::exit(1);
+            }
+
+            if let Some(ref desc) = description {
+                println!("Description: {}", desc);
+            }
+            if let Some(ref inst) = instructions {
+                println!("Instructions file: {}", inst);
+            }
             if let Some(agent) = agent {
                 println!("Agent: {}", agent);
             }
@@ -77,24 +94,80 @@ async fn main() {
                         repo_path.display()
                     );
 
+                    // Handle instructions file if provided
+                    let mut instructions_file_path = None;
+                    if let Some(ref inst_path) = instructions {
+                        // Read the instructions file to verify it exists
+                        match std::fs::read_to_string(inst_path) {
+                            Ok(_) => {
+                                // Copy instructions file to task folder (parent of repo_path)
+                                let task_folder = repo_path.parent().unwrap();
+                                let inst_filename = std::path::Path::new(inst_path)
+                                    .file_name()
+                                    .unwrap_or_else(|| std::ffi::OsStr::new("instructions.md"));
+                                let dest_path = task_folder.join(inst_filename);
+
+                                match std::fs::copy(inst_path, &dest_path) {
+                                    Ok(_) => {
+                                        println!(
+                                            "Copied instructions file to: {}",
+                                            dest_path.display()
+                                        );
+                                        instructions_file_path = Some(dest_path);
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Error copying instructions file: {}", e);
+                                        std::process::exit(1);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Error reading instructions file: {}", e);
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+
                     // Launch Docker container
                     match get_docker_manager() {
                         Ok(docker_manager) => {
                             println!("Launching Docker container...");
 
-                            // Debug: List directory contents before and after
-                            let command = vec![
-                                "sh".to_string(),
-                                "-c".to_string(),
-                                format!(
-                                    "claude -p --verbose --output-format stream-json --dangerously-skip-permissions '{}' | jq",
-                                    description
-                                )
-                                .to_string(),
-                            ];
+                            // Build the command based on whether we have instructions or description
+                            let command = if let Some(ref inst_path) = instructions_file_path {
+                                // Get just the filename for the container path
+                                let inst_filename =
+                                    inst_path.file_name().unwrap().to_str().unwrap();
+                                vec![
+                                    "sh".to_string(),
+                                    "-c".to_string(),
+                                    format!(
+                                        "cat /instructions/{} | claude -p --verbose --output-format stream-json --dangerously-skip-permissions | jq",
+                                        inst_filename
+                                    )
+                                    .to_string(),
+                                ]
+                            } else {
+                                // Use description
+                                let desc = description.as_ref().unwrap();
+                                vec![
+                                    "sh".to_string(),
+                                    "-c".to_string(),
+                                    format!(
+                                        "claude -p --verbose --output-format stream-json --dangerously-skip-permissions '{}' | jq",
+                                        desc
+                                    )
+                                    .to_string(),
+                                ]
+                            };
 
                             match docker_manager
-                                .run_task_container("tsk/base", &repo_path, command)
+                                .run_task_container(
+                                    "tsk/base",
+                                    &repo_path,
+                                    command,
+                                    instructions_file_path.as_ref(),
+                                )
                                 .await
                             {
                                 Ok(output) => {
