@@ -16,3 +16,5 @@ tabled = "0.16"
 
 [dev-dependencies]
 tempfile = "3.8"
+assert_cmd = "2.0"
+predicates = "3.0"

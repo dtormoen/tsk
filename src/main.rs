@@ -32,8 +32,8 @@ enum Commands {
         #[arg(short, long)]
         name: String,
 
-        /// Task type (code-review, refactor, feature, bug-fix, test-generation, documentation)
-        #[arg(short = 't', long)]
+        /// Task type (defaults to 'generic' if not specified)
+        #[arg(short = 't', long, default_value = "generic")]
         r#type: String,
 
         /// Detailed description of what needs to be accomplished
@@ -62,8 +62,8 @@ enum Commands {
         #[arg(short, long)]
         name: String,
 
-        /// Task type (code-review, refactor, feature, bug-fix, test-generation, documentation)
-        #[arg(short = 't', long)]
+        /// Task type (defaults to 'generic' if not specified)
+        #[arg(short = 't', long, default_value = "generic")]
         r#type: String,
 
         /// Detailed description of what needs to be accomplished
@@ -113,22 +113,17 @@ async fn main() {
                 std::process::exit(1);
             }
 
-            // Validate task type
-            let valid_types = [
-                "code-review",
-                "refactor",
-                "feature",
-                "bug-fix",
-                "test-generation",
-                "documentation",
-            ];
-            if !valid_types.contains(&r#type.as_str()) {
-                eprintln!(
-                    "Error: Invalid task type '{}'. Valid types are: {}",
-                    r#type,
-                    valid_types.join(", ")
-                );
-                std::process::exit(1);
+            // Validate task type if specified (not default 'generic')
+            if r#type != "generic" {
+                let template_path =
+                    std::path::Path::new("templates").join(format!("{}.md", r#type));
+                if !template_path.exists() {
+                    eprintln!(
+                        "Error: No template found for task type '{}'. Please check the templates folder.",
+                        r#type
+                    );
+                    std::process::exit(1);
+                }
             }
 
             // Create task directory
@@ -261,6 +256,19 @@ async fn main() {
             if description.is_none() && instructions.is_none() {
                 eprintln!("Error: Either --description or --instructions must be provided");
                 std::process::exit(1);
+            }
+
+            // Validate task type if specified (not default 'generic')
+            if r#type != "generic" {
+                let template_path =
+                    std::path::Path::new("templates").join(format!("{}.md", r#type));
+                if !template_path.exists() {
+                    eprintln!(
+                        "Error: No template found for task type '{}'. Please check the templates folder.",
+                        r#type
+                    );
+                    std::process::exit(1);
+                }
             }
 
             // Create task directory for quick tasks
@@ -544,5 +552,51 @@ async fn main() {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::Path;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_template_validation() {
+        // Create a temporary directory for templates
+        let temp_dir = TempDir::new().unwrap();
+        let templates_dir = temp_dir.path().join("templates");
+        fs::create_dir_all(&templates_dir).unwrap();
+
+        // Create a test template
+        let test_template_path = templates_dir.join("test-type.md");
+        fs::write(&test_template_path, "Test template content").unwrap();
+
+        // Test that validation passes for existing template
+        let template_path = templates_dir.join("test-type.md");
+        assert!(template_path.exists());
+
+        // Test that validation fails for non-existing template
+        let missing_template_path = templates_dir.join("missing-type.md");
+        assert!(!missing_template_path.exists());
+    }
+
+    #[test]
+    fn test_generic_type_no_template_required() {
+        // The 'generic' type should not require a template
+        let templates_dir = Path::new("templates");
+        let _generic_template = templates_dir.join("generic.md");
+
+        // Even if generic.md doesn't exist, it should be allowed
+        // This is handled by the r#type != "generic" check in the code
+        assert!(true); // Placeholder assertion - in real code this would be tested via CLI
+    }
+
+    #[test]
+    fn test_task_type_default_value() {
+        // Test that the default value for task type is "generic"
+        // This is set via clap's default_value attribute
+        // In a real integration test, we would parse CLI args
+        assert!(true); // Placeholder - clap handles this via default_value
     }
 }

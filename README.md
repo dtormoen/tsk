@@ -34,13 +34,13 @@ Think of it as having a team of engineers who work autonomously but always submi
 ## Quick Start
 
 ```bash
-# Delegate a security review task
-tsk add --name "auth-review" --type "code-review" \
+# Delegate a generic task (no type needed)
+tsk add --name "auth-review" \
   --description "Review the authentication module for security vulnerabilities, focus on input validation and session management"
 
-# Add a refactoring task
-tsk add --name "extract-service" --type "refactor" \
-  --description "Extract the user notification logic into a separate service class with proper dependency injection"
+# Add a feature task (using the feature template)
+tsk add --name "add-notifications" --type "feature" \
+  --description "Add email notifications when users register"
 
 # Run all queued tasks (each creates a branch)
 tsk run
@@ -60,7 +60,7 @@ git checkout main
 git merge tsk/auth-review-20240531-143022
 
 # The refactoring needs work - refine and retry
-tsk add --name "extract-service-v2" --type "refactor" \
+tsk add --name "extract-service-v2" \
   --description "Extract user notification logic into NotificationService class. Keep existing public API unchanged and ensure all tests pass."
 ```
 
@@ -70,21 +70,19 @@ tsk add --name "extract-service-v2" --type "refactor" \
 Queues a task for autonomous execution by an AI agent.
 
 ```bash
-tsk add --name <TASK_NAME> --type <TASK_TYPE> --description <DESCRIPTION>
+tsk add --name <TASK_NAME> [--type <TASK_TYPE>] --description <DESCRIPTION>
 ```
 
 **Options:**
 - `--name, -n`: Unique identifier for the task
-- `--type, -t`: Task type determining which agent and approach to use
+- `--type, -t`: Task type (optional, defaults to 'generic'). Must have a corresponding template in the templates/ folder
 - `--description, -d`: Detailed description of what needs to be accomplished
 
 **Task Types:**
-- `code-review`: Comprehensive code analysis and security review
-- `refactor`: Code restructuring and optimization
-- `feature`: Implement new functionality
-- `bug-fix`: Automated bug detection and resolution
-- `test-generation`: Create unit tests and integration tests
-- `documentation`: Code documentation and README updates
+Task types are determined by available templates in the `templates/` folder. By default, the following template is provided:
+- `feature`: Template for implementing new functionality
+
+To add custom task types, create new template files in the `templates/` folder (e.g., `templates/bug-fix.md`)
 
 ### `tsk run`
 Executes all queued tasks, creating git branches for review.
@@ -137,11 +135,11 @@ Task Status Report
 Immediately executes a task and creates a branch for review.
 
 ```bash
-tsk quick --type <TASK_TYPE> --description <DESCRIPTION>
+tsk quick [--type <TASK_TYPE>] --description <DESCRIPTION>
 ```
 
 **Options:**
-- `--type, -t`: Task type (required)
+- `--type, -t`: Task type (optional, defaults to 'generic'). Must have a corresponding template in the templates/ folder
 - `--description, -d`: Task description (required)
 - `--agent, -a`: Specific agent to use (aider|claude-code)
 
@@ -210,13 +208,13 @@ task/{task-name}-{attempt}-{timestamp}
 
 **Good Task Description:**
 ```bash
-tsk add --name "add-rate-limiting" --type "feature" \
+tsk add --name "add-rate-limiting" \
   --description "Add rate limiting to the login endpoint. Use a sliding window approach with Redis backend. Limit to 5 attempts per minute per IP address. Return 429 status code when limit exceeded. Add configuration options for limits and window size."
 ```
 
 **Poor Task Description:**
 ```bash
-tsk add --name "security" --type "feature" \
+tsk add --name "security" \
   --description "Make it more secure"
 ```
 
