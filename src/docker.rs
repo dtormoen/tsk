@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use bollard::container::{Config, CreateContainerOptions, LogsOptions, RemoveContainerOptions};
 use bollard::network::{CreateNetworkOptions, ListNetworksOptions};
 use bollard::Docker;
+use futures_util::stream::{Stream, StreamExt};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -17,6 +18,7 @@ pub fn get_docker_manager() -> Result<DockerManager<PanicDockerClient>, String> 
     Ok(DockerManager::with_client(PanicDockerClient))
 }
 
+#[derive(Clone)]
 #[cfg(test)]
 pub struct PanicDockerClient;
 
@@ -47,6 +49,14 @@ impl DockerClient for PanicDockerClient {
         panic!("Docker operations are not allowed in tests! Please mock DockerManager properly using DockerManager::with_client()")
     }
 
+    async fn logs_stream(
+        &self,
+        _id: &str,
+        _options: Option<LogsOptions<String>>,
+    ) -> Result<Box<dyn Stream<Item = Result<String, String>> + Send + Unpin>, String> {
+        panic!("Docker operations are not allowed in tests! Please mock DockerManager properly using DockerManager::with_client()")
+    }
+
     async fn remove_container(
         &self,
         _id: &str,
@@ -74,7 +84,7 @@ const PROXY_CONTAINER_NAME: &str = "tsk-proxy";
 const PROXY_IMAGE: &str = "tsk/proxy";
 
 #[async_trait]
-pub trait DockerClient: Send + Sync {
+pub trait DockerClient: Send + Sync + Clone {
     async fn create_container(
         &self,
         options: Option<CreateContainerOptions<String>>,
@@ -87,6 +97,13 @@ pub trait DockerClient: Send + Sync {
 
     async fn logs(&self, id: &str, options: Option<LogsOptions<String>>) -> Result<String, String>;
 
+    #[allow(dead_code)] // Used in production builds
+    async fn logs_stream(
+        &self,
+        id: &str,
+        options: Option<LogsOptions<String>>,
+    ) -> Result<Box<dyn futures_util::Stream<Item = Result<String, String>> + Send + Unpin>, String>;
+
     async fn remove_container(
         &self,
         id: &str,
@@ -98,6 +115,7 @@ pub trait DockerClient: Send + Sync {
     async fn network_exists(&self, name: &str) -> Result<bool, String>;
 }
 
+#[derive(Clone)]
 pub struct RealDockerClient {
     docker: Docker,
 }
@@ -150,8 +168,6 @@ impl DockerClient for RealDockerClient {
     }
 
     async fn logs(&self, id: &str, options: Option<LogsOptions<String>>) -> Result<String, String> {
-        use futures_util::stream::StreamExt;
-
         let mut stream = self.docker.logs(id, options);
         let mut output = String::new();
 
@@ -163,6 +179,19 @@ impl DockerClient for RealDockerClient {
         }
 
         Ok(output)
+    }
+
+    async fn logs_stream(
+        &self,
+        id: &str,
+        options: Option<LogsOptions<String>>,
+    ) -> Result<Box<dyn Stream<Item = Result<String, String>> + Send + Unpin>, String> {
+        let stream = self.docker.logs(id, options);
+        let mapped_stream = stream.map(|result| match result {
+            Ok(log) => Ok(log.to_string()),
+            Err(e) => Err(format!("Failed to get logs: {}", e)),
+        });
+        Ok(Box::new(Box::pin(mapped_stream)))
     }
 
     async fn remove_container(
@@ -219,7 +248,7 @@ impl DockerManager<RealDockerClient> {
     }
 }
 
-impl<C: DockerClient> DockerManager<C> {
+impl<C: DockerClient + 'static> DockerManager<C> {
     #[cfg(test)]
     pub fn with_client(client: C) -> Self {
         Self { client }
@@ -443,6 +472,136 @@ impl<C: DockerClient> DockerManager<C> {
             .await
     }
 
+    #[allow(dead_code)] // Used in production builds
+    pub async fn run_task_container_with_streaming<F>(
+        &self,
+        image: &str,
+        worktree_path: &Path,
+        command: Vec<String>,
+        instructions_file_path: Option<&PathBuf>,
+        mut log_handler: F,
+    ) -> Result<String, String>
+    where
+        F: FnMut(&str) + Send,
+    {
+        // Ensure network and proxy are running
+        self.ensure_network().await?;
+        self.ensure_proxy().await?;
+
+        let absolute_worktree_path = Self::prepare_worktree_path(worktree_path)?;
+        let worktree_path_str = absolute_worktree_path
+            .to_str()
+            .ok_or_else(|| "Invalid worktree path".to_string())?;
+
+        let wrapped_command = if command.is_empty() {
+            None
+        } else {
+            Some(command)
+        };
+
+        let config = Self::create_base_container_config(
+            image,
+            worktree_path_str,
+            wrapped_command,
+            false, // not interactive
+            instructions_file_path,
+        );
+
+        let options = CreateContainerOptions {
+            name: format!("tsk-{}", chrono::Utc::now().timestamp()),
+            platform: None,
+        };
+
+        let container_id = self.client.create_container(Some(options), config).await?;
+        self.client.start_container(&container_id).await?;
+
+        // Start a background task to stream logs
+        let client_clone = self.client.clone();
+        let container_id_clone = container_id.clone();
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(100);
+
+        let log_task = tokio::spawn(async move {
+            let log_options = LogsOptions {
+                stdout: true,
+                stderr: true,
+                follow: true,
+                timestamps: false,
+                ..Default::default()
+            };
+
+            match client_clone
+                .logs_stream(&container_id_clone, Some(log_options))
+                .await
+            {
+                Ok(mut stream) => {
+                    while let Some(result) = stream.next().await {
+                        match result {
+                            Ok(log_line) => {
+                                if tx.send(log_line).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Error streaming logs: {}", e);
+                                break;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to start log streaming: {}", e);
+                }
+            }
+        });
+
+        // Collect all logs for return value
+        let mut all_logs = String::new();
+
+        // Process logs while container is running
+        loop {
+            tokio::select! {
+                Some(log_line) = rx.recv() => {
+                    all_logs.push_str(&log_line);
+                    log_handler(&log_line);
+                }
+                exit_code = self.client.wait_container(&container_id) => {
+                    let exit_code = exit_code?;
+
+                    // Give a bit of time for remaining logs
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+                    // Drain any remaining logs
+                    while let Ok(log_line) = rx.try_recv() {
+                        all_logs.push_str(&log_line);
+                        log_handler(&log_line);
+                    }
+
+                    // Abort the log task
+                    log_task.abort();
+
+                    self.client
+                        .remove_container(
+                            &container_id,
+                            Some(RemoveContainerOptions {
+                                force: true,
+                                ..Default::default()
+                            }),
+                        )
+                        .await?;
+
+                    if exit_code == 0 {
+                        return Ok(all_logs);
+                    } else {
+                        return Err(format!(
+                            "Container exited with non-zero status: {}. Output:\n{}",
+                            exit_code, all_logs
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
     pub async fn run_task_container(
         &self,
         image: &str,
@@ -645,6 +804,17 @@ mod tests {
 
         async fn network_exists(&self, _name: &str) -> Result<bool, String> {
             self.network_exists_result.lock().unwrap().clone()
+        }
+
+        async fn logs_stream(
+            &self,
+            id: &str,
+            options: Option<LogsOptions<String>>,
+        ) -> Result<Box<dyn Stream<Item = Result<String, String>> + Send + Unpin>, String> {
+            // For tests, just return the logs as a single-item stream
+            let logs = self.logs(id, options).await?;
+            let stream = futures_util::stream::once(async move { Ok(logs) });
+            Ok(Box::new(Box::pin(stream)))
         }
     }
 

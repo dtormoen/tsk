@@ -1,5 +1,6 @@
 use crate::docker::{get_docker_manager, DockerManager};
 use crate::git::{get_repo_manager, RepoManager};
+use crate::log_processor::LogProcessor;
 use crate::task::{get_task_storage, Task, TaskStatus, TaskStorage};
 use std::path::{Path, PathBuf};
 
@@ -31,7 +32,9 @@ pub trait DockerManagerTrait: Send + Sync {
 
 // Implement the trait for the real DockerManager
 #[async_trait::async_trait]
-impl<C: crate::docker::DockerClient + Send + Sync> DockerManagerTrait for DockerManager<C> {
+impl<C: crate::docker::DockerClient + Send + Sync + 'static> DockerManagerTrait
+    for DockerManager<C>
+{
     async fn run_task_container(
         &self,
         image: &str,
@@ -193,21 +196,102 @@ impl TaskManager {
         // Build the command
         let command = self.build_task_command(description, instructions_file_path.as_ref())?;
 
-        // Launch Docker container
-        println!("Launching Docker container...");
-        let output = self
-            .docker_manager
-            .run_task_container(
-                "tsk/base",
-                &repo_path,
-                command,
-                instructions_file_path.as_ref(),
-            )
-            .await
-            .map_err(|e| format!("Error running container: {}", e))?;
+        // Remove jq from the command since we'll handle formatting ourselves
+        let command_without_jq =
+            if command.len() >= 3 && command.last() == Some(&"| jq".to_string()) {
+                let mut cmd = command.clone();
+                if let Some(last) = cmd.last_mut() {
+                    *last = last.replace(" | jq", "");
+                }
+                cmd
+            } else {
+                command
+            };
 
+        // Create a log processor
+        let mut log_processor = LogProcessor::new();
+
+        // Launch Docker container with streaming
+        println!("Launching Docker container...");
+        println!("\n{}", "=".repeat(60));
+
+        // For streaming, we need to use the concrete docker manager
+        #[cfg(not(test))]
+        let output = {
+            if let Ok(docker_manager) = get_docker_manager() {
+                // Use streaming version
+                docker_manager
+                    .run_task_container_with_streaming(
+                        "tsk/base",
+                        &repo_path,
+                        command_without_jq.clone(),
+                        instructions_file_path.as_ref(),
+                        |log_line| {
+                            // Process each line of output
+                            if let Some(formatted) = log_processor.process_line(log_line) {
+                                println!("{}", formatted);
+                            }
+                        },
+                    )
+                    .await
+                    .map_err(|e| format!("Error running container: {}", e))?
+            } else {
+                // Fallback to non-streaming version
+                let output = self
+                    .docker_manager
+                    .run_task_container(
+                        "tsk/base",
+                        &repo_path,
+                        command_without_jq,
+                        instructions_file_path.as_ref(),
+                    )
+                    .await
+                    .map_err(|e| format!("Error running container: {}", e))?;
+
+                // Process the output all at once
+                for line in output.lines() {
+                    if let Some(formatted) = log_processor.process_line(line) {
+                        println!("{}", formatted);
+                    }
+                }
+                output
+            }
+        };
+
+        // In test mode, always use the trait version
+        #[cfg(test)]
+        let output = {
+            let output = self
+                .docker_manager
+                .run_task_container(
+                    "tsk/base",
+                    &repo_path,
+                    command_without_jq,
+                    instructions_file_path.as_ref(),
+                )
+                .await
+                .map_err(|e| format!("Error running container: {}", e))?;
+
+            // Process the output all at once
+            for line in output.lines() {
+                if let Some(formatted) = log_processor.process_line(line) {
+                    println!("{}", formatted);
+                }
+            }
+            output
+        };
+
+        println!("\n{}", "=".repeat(60));
         println!("Container execution completed successfully");
-        println!("Output:\n{}", output);
+
+        // Save the full log file
+        let task_dir = repo_path.parent().unwrap_or(&repo_path);
+        let log_file_path = task_dir.join(format!("{}-full.log", task_name));
+        if let Err(e) = log_processor.save_full_log(&log_file_path) {
+            eprintln!("Warning: Failed to save full log file: {}", e);
+        } else {
+            println!("Full log saved to: {}", log_file_path.display());
+        }
 
         // Commit any changes made by the container
         let commit_message = format!("TSK automated changes for task: {}", task_name);

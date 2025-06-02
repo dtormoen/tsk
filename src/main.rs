@@ -11,6 +11,8 @@ use task::{get_task_storage, Task, TaskStatus};
 mod task_manager;
 use task_manager::TaskManager;
 
+mod log_processor;
+
 use tabled::settings::Style;
 use tabled::{Table, Tabled};
 
