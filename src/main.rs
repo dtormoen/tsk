@@ -87,7 +87,7 @@ async fn main() {
                                 "sh".to_string(),
                                 "-c".to_string(),
                                 format!(
-                                    "claude -p --dangerously-skip-permissions '{}'",
+                                    "claude -p --verbose --output-format stream-json --dangerously-skip-permissions '{}' | jq",
                                     description
                                 )
                                 .to_string(),
