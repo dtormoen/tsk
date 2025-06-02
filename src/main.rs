@@ -7,7 +7,10 @@ mod docker;
 use docker::get_docker_manager;
 
 mod task;
-use task::{get_task_storage, Task};
+use task::{get_task_storage, Task, TaskStatus};
+
+use tabled::settings::Style;
+use tabled::{Table, Tabled};
 
 #[derive(Parser)]
 #[command(name = "tsk")]
@@ -45,6 +48,10 @@ enum Commands {
         #[arg(long, default_value = "30")]
         timeout: u32,
     },
+    /// List all queued tasks
+    List,
+    /// Run all queued tasks sequentially
+    Run,
     /// Immediately execute a task without queuing
     Quick {
         /// Unique identifier for the task
@@ -451,6 +458,342 @@ async fn main() {
                 },
                 Err(e) => {
                     eprintln!("Error initializing Docker manager: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::List => {
+            match get_task_storage() {
+                Ok(storage) => match storage.list_tasks().await {
+                    Ok(tasks) => {
+                        if tasks.is_empty() {
+                            println!("No tasks in queue");
+                        } else {
+                            // Create table data structure
+                            #[derive(Tabled)]
+                            struct TaskRow {
+                                #[tabled(rename = "ID")]
+                                id: String,
+                                #[tabled(rename = "Name")]
+                                name: String,
+                                #[tabled(rename = "Type")]
+                                task_type: String,
+                                #[tabled(rename = "Status")]
+                                status: String,
+                                #[tabled(rename = "Agent")]
+                                agent: String,
+                                #[tabled(rename = "Created")]
+                                created: String,
+                            }
+
+                            let rows: Vec<TaskRow> = tasks
+                                .iter()
+                                .map(|task| TaskRow {
+                                    id: task.id.clone(),
+                                    name: task.name.clone(),
+                                    task_type: task.task_type.clone(),
+                                    status: match &task.status {
+                                        TaskStatus::Queued => "QUEUED".to_string(),
+                                        TaskStatus::Running => "RUNNING".to_string(),
+                                        TaskStatus::Failed => "FAILED".to_string(),
+                                        TaskStatus::Complete => "COMPLETE".to_string(),
+                                    },
+                                    agent: task.agent.clone().unwrap_or_else(|| "auto".to_string()),
+                                    created: task.created_at.format("%Y-%m-%d %H:%M").to_string(),
+                                })
+                                .collect();
+
+                            let table = Table::new(rows).with(Style::modern()).to_string();
+                            println!("{}", table);
+
+                            // Print summary
+                            let queued = tasks
+                                .iter()
+                                .filter(|t| t.status == TaskStatus::Queued)
+                                .count();
+                            let running = tasks
+                                .iter()
+                                .filter(|t| t.status == TaskStatus::Running)
+                                .count();
+                            let complete = tasks
+                                .iter()
+                                .filter(|t| t.status == TaskStatus::Complete)
+                                .count();
+                            let failed = tasks
+                                .iter()
+                                .filter(|t| t.status == TaskStatus::Failed)
+                                .count();
+
+                            println!(
+                                "\nSummary: {} queued, {} running, {} complete, {} failed",
+                                queued, running, complete, failed
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error listing tasks: {}", e);
+                        std::process::exit(1);
+                    }
+                },
+                Err(e) => {
+                    eprintln!("Error initializing task storage: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Run => {
+            match get_task_storage() {
+                Ok(storage) => {
+                    // Get all queued tasks
+                    match storage.list_tasks().await {
+                        Ok(tasks) => {
+                            let queued_tasks: Vec<Task> = tasks
+                                .into_iter()
+                                .filter(|t| t.status == TaskStatus::Queued)
+                                .collect();
+
+                            if queued_tasks.is_empty() {
+                                println!("No queued tasks to run");
+                                return;
+                            }
+
+                            println!("Found {} queued task(s) to run", queued_tasks.len());
+
+                            for task in queued_tasks {
+                                println!("\n{}", "=".repeat(60));
+                                println!("Running task: {} ({})", task.name, task.id);
+                                println!("Type: {}", task.task_type);
+                                if let Some(ref desc) = task.description {
+                                    println!("Description: {}", desc);
+                                }
+                                println!("{}", "=".repeat(60));
+
+                                // Update task status to running
+                                let mut running_task = task.clone();
+                                running_task.status = TaskStatus::Running;
+                                running_task.started_at = Some(chrono::Utc::now());
+
+                                if let Err(e) = storage.update_task(running_task.clone()).await {
+                                    eprintln!("Error updating task status: {}", e);
+                                    continue;
+                                }
+
+                                // Copy repository for the task
+                                let repo_manager = get_repo_manager();
+                                match repo_manager.copy_repo(&task.name) {
+                                    Ok((repo_path, branch_name)) => {
+                                        println!(
+                                            "Created repository copy at: {}",
+                                            repo_path.display()
+                                        );
+
+                                        // Handle instructions file if provided
+                                        let mut instructions_file_path = None;
+                                        if let Some(ref inst_path) = task.instructions_file {
+                                            match std::fs::read_to_string(inst_path) {
+                                                Ok(_) => {
+                                                    let task_folder = repo_path.parent().unwrap();
+                                                    let inst_filename =
+                                                        std::path::Path::new(inst_path)
+                                                            .file_name()
+                                                            .unwrap_or_else(|| {
+                                                                std::ffi::OsStr::new(
+                                                                    "instructions.md",
+                                                                )
+                                                            });
+                                                    let dest_path = task_folder.join(inst_filename);
+
+                                                    match std::fs::copy(inst_path, &dest_path) {
+                                                        Ok(_) => {
+                                                            instructions_file_path =
+                                                                Some(dest_path);
+                                                        }
+                                                        Err(e) => {
+                                                            eprintln!("Error copying instructions file: {}", e);
+                                                            let mut failed_task =
+                                                                running_task.clone();
+                                                            failed_task.status = TaskStatus::Failed;
+                                                            failed_task.error_message = Some(format!("Failed to copy instructions: {}", e));
+                                                            failed_task.completed_at =
+                                                                Some(chrono::Utc::now());
+                                                            let _ = storage
+                                                                .update_task(failed_task)
+                                                                .await;
+                                                            continue;
+                                                        }
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    eprintln!(
+                                                        "Error reading instructions file: {}",
+                                                        e
+                                                    );
+                                                    let mut failed_task = running_task.clone();
+                                                    failed_task.status = TaskStatus::Failed;
+                                                    failed_task.error_message = Some(format!(
+                                                        "Failed to read instructions: {}",
+                                                        e
+                                                    ));
+                                                    failed_task.completed_at =
+                                                        Some(chrono::Utc::now());
+                                                    let _ = storage.update_task(failed_task).await;
+                                                    continue;
+                                                }
+                                            }
+                                        }
+
+                                        // Launch Docker container
+                                        match get_docker_manager() {
+                                            Ok(docker_manager) => {
+                                                println!("Launching Docker container...");
+
+                                                // Build the command
+                                                let command = if let Some(ref inst_path) =
+                                                    instructions_file_path
+                                                {
+                                                    let inst_filename = inst_path
+                                                        .file_name()
+                                                        .unwrap()
+                                                        .to_str()
+                                                        .unwrap();
+                                                    vec![
+                                                        "sh".to_string(),
+                                                        "-c".to_string(),
+                                                        format!(
+                                                            "cat /instructions/{} | claude -p --verbose --output-format stream-json --dangerously-skip-permissions | jq",
+                                                            inst_filename
+                                                        ),
+                                                    ]
+                                                } else if let Some(ref desc) = task.description {
+                                                    vec![
+                                                        "sh".to_string(),
+                                                        "-c".to_string(),
+                                                        format!(
+                                                            "claude -p --verbose --output-format stream-json --dangerously-skip-permissions '{}' | jq",
+                                                            desc
+                                                        ),
+                                                    ]
+                                                } else {
+                                                    eprintln!("Task has neither description nor instructions");
+                                                    let mut failed_task = running_task.clone();
+                                                    failed_task.status = TaskStatus::Failed;
+                                                    failed_task.error_message = Some(
+                                                        "No description or instructions provided"
+                                                            .to_string(),
+                                                    );
+                                                    failed_task.completed_at =
+                                                        Some(chrono::Utc::now());
+                                                    let _ = storage.update_task(failed_task).await;
+                                                    continue;
+                                                };
+
+                                                match docker_manager
+                                                    .run_task_container(
+                                                        "tsk/base",
+                                                        &repo_path,
+                                                        command,
+                                                        instructions_file_path.as_ref(),
+                                                    )
+                                                    .await
+                                                {
+                                                    Ok(output) => {
+                                                        println!("\nTask completed successfully");
+                                                        println!("Output:\n{}", output);
+
+                                                        // Commit any changes
+                                                        let commit_message = format!(
+                                                            "TSK automated changes for task: {}",
+                                                            task.name
+                                                        );
+                                                        if let Err(e) = repo_manager.commit_changes(
+                                                            &repo_path,
+                                                            &commit_message,
+                                                        ) {
+                                                            eprintln!(
+                                                                "Error committing changes: {}",
+                                                                e
+                                                            );
+                                                        }
+
+                                                        // Fetch changes back
+                                                        if let Err(e) = repo_manager
+                                                            .fetch_changes(&repo_path, &branch_name)
+                                                        {
+                                                            eprintln!(
+                                                                "Error fetching changes: {}",
+                                                                e
+                                                            );
+                                                        } else {
+                                                            println!("Branch {} is now available in the main repository", branch_name);
+                                                        }
+
+                                                        // Update task status to complete
+                                                        let mut complete_task =
+                                                            running_task.clone();
+                                                        complete_task.status = TaskStatus::Complete;
+                                                        complete_task.completed_at =
+                                                            Some(chrono::Utc::now());
+                                                        complete_task.branch_name =
+                                                            Some(branch_name);
+                                                        let _ = storage
+                                                            .update_task(complete_task)
+                                                            .await;
+                                                    }
+                                                    Err(e) => {
+                                                        eprintln!("Error running container: {}", e);
+                                                        let mut failed_task = running_task.clone();
+                                                        failed_task.status = TaskStatus::Failed;
+                                                        failed_task.error_message = Some(format!(
+                                                            "Container execution failed: {}",
+                                                            e
+                                                        ));
+                                                        failed_task.completed_at =
+                                                            Some(chrono::Utc::now());
+                                                        let _ =
+                                                            storage.update_task(failed_task).await;
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                eprintln!(
+                                                    "Error initializing Docker manager: {}",
+                                                    e
+                                                );
+                                                let mut failed_task = running_task.clone();
+                                                failed_task.status = TaskStatus::Failed;
+                                                failed_task.error_message = Some(format!(
+                                                    "Docker initialization failed: {}",
+                                                    e
+                                                ));
+                                                failed_task.completed_at = Some(chrono::Utc::now());
+                                                let _ = storage.update_task(failed_task).await;
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Error copying repository: {}", e);
+                                        let mut failed_task = running_task.clone();
+                                        failed_task.status = TaskStatus::Failed;
+                                        failed_task.error_message =
+                                            Some(format!("Repository copy failed: {}", e));
+                                        failed_task.completed_at = Some(chrono::Utc::now());
+                                        let _ = storage.update_task(failed_task).await;
+                                    }
+                                }
+                            }
+
+                            println!("\n{}", "=".repeat(60));
+                            println!("All tasks processed!");
+                            println!("Use 'tsk list' to see the final status of all tasks");
+                        }
+                        Err(e) => {
+                            eprintln!("Error listing tasks: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error initializing task storage: {}", e);
                     std::process::exit(1);
                 }
             }
