@@ -65,6 +65,7 @@ pub struct TaskExecutionResult {
     pub branch_name: String,
     #[allow(dead_code)] // Available for future use by callers
     pub output: String,
+    pub task_result: Option<crate::log_processor::TaskResult>,
 }
 
 #[derive(Debug)]
@@ -153,7 +154,7 @@ impl TaskManager {
                 "sh".to_string(),
                 "-c".to_string(),
                 format!(
-                    "cat /instructions/{} | claude -p --verbose --output-format stream-json --dangerously-skip-permissions | jq",
+                    "cat /instructions/{} | claude -p --verbose --output-format stream-json --dangerously-skip-permissions",
                     inst_filename
                 ),
             ])
@@ -162,7 +163,7 @@ impl TaskManager {
                 "sh".to_string(),
                 "-c".to_string(),
                 format!(
-                    "claude -p --verbose --output-format stream-json --dangerously-skip-permissions '{}' | jq",
+                    "claude -p --verbose --output-format stream-json --dangerously-skip-permissions '{}'",
                     desc
                 ),
             ])
@@ -312,10 +313,14 @@ impl TaskManager {
             );
         }
 
+        // Get the final result from the log processor
+        let task_result = log_processor.get_final_result().cloned();
+
         Ok(TaskExecutionResult {
             repo_path,
             branch_name,
             output,
+            task_result,
         })
     }
 
@@ -336,23 +341,36 @@ impl TaskManager {
         }
 
         // Execute the task
-        match self
+        let execution_result = self
             .execute_task(
                 &task.name,
                 task.description.as_ref(),
                 task.instructions_file.as_ref(),
             )
-            .await
-        {
-            Ok(result) => {
-                // Update task status to complete if we have storage
-                if let Some(ref storage) = self.task_storage {
-                    let mut complete_task = task.clone();
-                    complete_task.status = TaskStatus::Complete;
-                    complete_task.completed_at = Some(chrono::Utc::now());
-                    complete_task.branch_name = Some(result.branch_name.clone());
+            .await;
 
-                    if let Err(e) = storage.update_task(complete_task).await {
+        match execution_result {
+            Ok(result) => {
+                // Update task status based on the task result if we have storage
+                if let Some(ref storage) = self.task_storage {
+                    let mut updated_task = task.clone();
+                    updated_task.completed_at = Some(chrono::Utc::now());
+                    updated_task.branch_name = Some(result.branch_name.clone());
+
+                    // Check if we have a parsed result from the log processor
+                    if let Some(task_result) = result.task_result.as_ref() {
+                        if task_result.success {
+                            updated_task.status = TaskStatus::Complete;
+                        } else {
+                            updated_task.status = TaskStatus::Failed;
+                            updated_task.error_message = Some(task_result.message.clone());
+                        }
+                    } else {
+                        // Default to complete if no explicit result was found
+                        updated_task.status = TaskStatus::Complete;
+                    }
+
+                    if let Err(e) = storage.update_task(updated_task).await {
                         eprintln!("Error updating task status: {}", e);
                     }
                 }

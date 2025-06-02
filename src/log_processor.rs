@@ -32,12 +32,24 @@ struct MessageContent {
 
 pub struct LogProcessor {
     full_log: Vec<String>,
+    final_result: Option<TaskResult>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskResult {
+    pub success: bool,
+    pub message: String,
+    #[allow(dead_code)] // Available for future use
+    pub cost_usd: Option<f64>,
+    #[allow(dead_code)] // Available for future use
+    pub duration_ms: Option<u64>,
 }
 
 impl LogProcessor {
     pub fn new() -> Self {
         Self {
             full_log: Vec::new(),
+            final_result: None,
         }
     }
 
@@ -60,7 +72,7 @@ impl LogProcessor {
         }
     }
 
-    fn format_message(&self, msg: ClaudeMessage) -> Option<String> {
+    fn format_message(&mut self, msg: ClaudeMessage) -> Option<String> {
         match msg.message_type.as_str() {
             "assistant" => self.format_assistant_message(msg),
             "result" => self.format_result_message(msg),
@@ -97,7 +109,28 @@ impl LogProcessor {
         }
     }
 
-    fn format_result_message(&self, msg: ClaudeMessage) -> Option<String> {
+    fn format_result_message(&mut self, msg: ClaudeMessage) -> Option<String> {
+        // Parse and store the result status
+        if let Some(subtype) = &msg.subtype {
+            let success = subtype == "success";
+            let message = msg.result.clone().unwrap_or_else(|| {
+                if success {
+                    "Task completed successfully".to_string()
+                } else {
+                    msg.result
+                        .clone()
+                        .unwrap_or_else(|| "Task failed".to_string())
+                }
+            });
+
+            self.final_result = Some(TaskResult {
+                success,
+                message,
+                cost_usd: msg.cost_usd,
+                duration_ms: msg.duration_ms,
+            });
+        }
+
         // Format the result message as pretty-printed JSON
         match serde_json::to_string_pretty(&msg) {
             Ok(json) => Some(json),
@@ -116,6 +149,10 @@ impl LogProcessor {
             writeln!(file, "{}", line)?;
         }
         Ok(())
+    }
+
+    pub fn get_final_result(&self) -> Option<&TaskResult> {
+        self.final_result.as_ref()
     }
 }
 
@@ -143,12 +180,47 @@ mod tests {
         let json = r#"{
             "type": "result",
             "subtype": "success",
-            "cost_usd": 0.123
+            "cost_usd": 0.123,
+            "result": "Task completed successfully with all tests passing"
         }"#;
 
         let result = processor.process_line(json);
         assert!(result.is_some());
         assert!(result.unwrap().contains("\"type\": \"result\""));
+
+        // Check that the result was parsed correctly
+        let final_result = processor.get_final_result();
+        assert!(final_result.is_some());
+        let task_result = final_result.unwrap();
+        assert_eq!(task_result.success, true);
+        assert_eq!(
+            task_result.message,
+            "Task completed successfully with all tests passing"
+        );
+        assert_eq!(task_result.cost_usd, Some(0.123));
+    }
+
+    #[test]
+    fn test_process_result_message_failure() {
+        let mut processor = LogProcessor::new();
+        let json = r#"{
+            "type": "result",
+            "subtype": "error",
+            "is_error": true,
+            "result": "Task failed due to compilation errors",
+            "duration_ms": 5000
+        }"#;
+
+        let result = processor.process_line(json);
+        assert!(result.is_some());
+
+        // Check that the failure was parsed correctly
+        let final_result = processor.get_final_result();
+        assert!(final_result.is_some());
+        let task_result = final_result.unwrap();
+        assert_eq!(task_result.success, false);
+        assert_eq!(task_result.message, "Task failed due to compilation errors");
+        assert_eq!(task_result.duration_ms, Some(5000));
     }
 
     #[test]
