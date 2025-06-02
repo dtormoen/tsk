@@ -51,17 +51,15 @@ ipset create allowed-domains hash:net
 # done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git)[]' | aggregate -q)
 
 # Resolve and add other allowed domains
+    # "index.crates.io" \
+    # "static.crates.io" \
+    # "pypi.python.org" \
 for domain in \
     "registry.npmjs.org" \
     "api.anthropic.com" \
     "sentry.io" \
-    "index.crates.io" \
     "crates.io" \
-    "static.crates.io" \
-    "pypi.python.org" \
     "pypi.org" \
-    "pythonhosted.org" \
-    "iles.pythonhosted.org" \
     "statsig.com"; do
     echo "Resolving $domain..."
     ips=$(dig +short A "$domain")

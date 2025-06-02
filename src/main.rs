@@ -84,8 +84,11 @@ async fn main() {
                             let command = vec![
                                 "sh".to_string(),
                                 "-c".to_string(),
-                                "claude -p --dangerously-skip-permissions /project:testcommand"
-                                    .to_string(),
+                                format!(
+                                    "claude -p --dangerously-skip-permissions '{}'",
+                                    description
+                                )
+                                .to_string(),
                             ];
 
                             match docker_manager
