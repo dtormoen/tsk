@@ -34,6 +34,7 @@ pub struct Task {
 }
 
 impl Task {
+    #[allow(dead_code)] // Used in tests
     pub fn new(
         name: String,
         task_type: String,
@@ -55,6 +56,32 @@ impl Task {
             timeout,
             status: TaskStatus::Queued,
             created_at: timestamp,
+            started_at: None,
+            completed_at: None,
+            branch_name: None,
+            error_message: None,
+        }
+    }
+
+    pub fn new_with_id(
+        id: String,
+        name: String,
+        task_type: String,
+        description: Option<String>,
+        instructions_file: Option<String>,
+        agent: Option<String>,
+        timeout: u32,
+    ) -> Self {
+        Self {
+            id,
+            name,
+            task_type,
+            description,
+            instructions_file,
+            agent,
+            timeout,
+            status: TaskStatus::Queued,
+            created_at: Utc::now(),
             started_at: None,
             completed_at: None,
             branch_name: None,

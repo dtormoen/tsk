@@ -309,8 +309,9 @@ async fn main() {
                 }
             }
 
-            // Create and save the task
-            let task = Task::new(
+            // Create and save the task with the same ID as the directory
+            let task = Task::new_with_id(
+                task_dir_name.clone(), // Use the same name as the directory
                 name.clone(),
                 r#type.clone(),
                 None, // description is now stored in instructions file

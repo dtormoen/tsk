@@ -841,4 +841,69 @@ mod tests {
         // Restore original directory
         std::env::set_current_dir(original_dir).unwrap();
     }
+
+    #[tokio::test]
+    async fn test_clean_tasks_with_id_matching() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Change to temp directory
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&temp_dir).unwrap();
+
+        // Create a test git directory and .tsk directory structure
+        std::fs::create_dir_all(temp_dir.path().join(".git")).unwrap();
+        std::fs::create_dir_all(temp_dir.path().join(".tsk/tasks")).unwrap();
+
+        // Create task storage
+        let storage =
+            crate::task::JsonTaskStorage::new(temp_dir.path().join(".tsk").as_path()).unwrap();
+
+        // Create a task with a specific ID using new_with_id
+        let task_id = "2024-01-15-1430-test-feature".to_string();
+        let mut completed_task = Task::new_with_id(
+            task_id.clone(),
+            "test-feature".to_string(),
+            "feature".to_string(),
+            Some("Test feature".to_string()),
+            None,
+            None,
+            30,
+        );
+        completed_task.status = TaskStatus::Complete;
+        storage.add_task(completed_task.clone()).await.unwrap();
+
+        // Create task directory with matching ID
+        let task_dir = temp_dir.path().join(".tsk/tasks").join(&task_id);
+        std::fs::create_dir_all(&task_dir).unwrap();
+
+        // Create a test file in the directory to ensure the directory is not empty
+        std::fs::write(task_dir.join("instructions.md"), "Test instructions").unwrap();
+
+        // Create task manager with storage
+        let repo_manager = create_mock_repo_manager(&temp_dir);
+        let docker_manager = Box::new(MockDockerManager::new());
+        let task_manager =
+            TaskManager::with_mocks(repo_manager, docker_manager, Some(Box::new(storage)));
+
+        // Clean tasks
+        let result = task_manager.clean_tasks().await;
+        assert!(result.is_ok());
+        let (completed_count, _) = result.unwrap();
+        assert_eq!(completed_count, 1);
+
+        // Verify task was removed from storage
+        let storage =
+            crate::task::JsonTaskStorage::new(temp_dir.path().join(".tsk").as_path()).unwrap();
+        let tasks = storage.list_tasks().await.unwrap();
+        assert_eq!(tasks.len(), 0);
+
+        // Verify directory was deleted
+        assert!(
+            !task_dir.exists(),
+            "Task directory should have been deleted"
+        );
+
+        // Restore original directory
+        std::env::set_current_dir(original_dir).unwrap();
+    }
 }
