@@ -67,7 +67,6 @@ impl DockerClient for PanicDockerClient {
 // Container resource limits
 const CONTAINER_MEMORY_LIMIT: i64 = 2 * 1024 * 1024 * 1024; // 2GB
 const CONTAINER_CPU_QUOTA: i64 = 100000; // 1 CPU
-const CONTAINER_NETWORK_MODE: &str = "bridge";
 const CONTAINER_WORKING_DIR: &str = "/workspace";
 const CONTAINER_USER: &str = "agent";
 const TSK_NETWORK_NAME: &str = "tsk-network";
@@ -187,25 +186,22 @@ impl DockerClient for RealDockerClient {
             .create_network(options)
             .await
             .map_err(|e| format!("Failed to create network: {}", e))?;
-        
+
         Ok(response.id.unwrap_or_else(|| name.to_string()))
     }
 
     async fn network_exists(&self, name: &str) -> Result<bool, String> {
         let mut filters = HashMap::new();
         filters.insert("name", vec![name]);
-        
-        let options = ListNetworksOptions {
-            filters,
-            ..Default::default()
-        };
+
+        let options = ListNetworksOptions { filters };
 
         let networks = self
             .docker
             .list_networks(Some(options))
             .await
             .map_err(|e| format!("Failed to list networks: {}", e))?;
-        
+
         Ok(!networks.is_empty())
     }
 }
@@ -225,6 +221,26 @@ impl<C: DockerClient> DockerManager<C> {
     #[cfg(test)]
     pub fn with_client(client: C) -> Self {
         Self { client }
+    }
+
+    #[allow(dead_code)]
+    pub async fn stop_proxy(&self) -> Result<(), String> {
+        // Try to stop and remove the proxy container
+        match self
+            .client
+            .remove_container(
+                PROXY_CONTAINER_NAME,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(e) if e.contains("No such container") => Ok(()),
+            Err(e) => Err(format!("Failed to stop proxy container: {}", e)),
+        }
     }
 
     async fn ensure_network(&self) -> Result<(), String> {
@@ -531,16 +547,12 @@ mod tests {
             config: Config<String>,
         ) -> Result<String, String> {
             let call_count = self.create_container_calls.lock().unwrap().len();
-            self.create_container_calls
-                .lock()
-                .unwrap()
-                .push((options.clone(), config));
-            
-            // Return different IDs for proxy and task containers
-            if let Some(opt) = &options {
+
+            // Determine the result before moving config
+            let result = if let Some(opt) = &options {
                 if opt.name == PROXY_CONTAINER_NAME {
                     Ok("test-proxy-container-id".to_string())
-                } else if let Some(ref cmd) = config.cmd {
+                } else if let Some(ref cmd) = &config.cmd {
                     if cmd.contains(&"false".to_string()) {
                         Ok("test-container-id-fail".to_string())
                     } else {
@@ -551,7 +563,15 @@ mod tests {
                 }
             } else {
                 self.create_container_result.lock().unwrap().clone()
-            }
+            };
+
+            // Now we can move config into the vector
+            self.create_container_calls
+                .lock()
+                .unwrap()
+                .push((options.clone(), config));
+
+            result
         }
 
         async fn start_container(&self, id: &str) -> Result<(), String> {
@@ -635,7 +655,7 @@ mod tests {
 
         // Check that user is set
         assert_eq!(task_container_config.user, Some("agent".to_string()));
-        
+
         // Check proxy environment variables
         let env = task_container_config.env.as_ref().unwrap();
         assert!(env.contains(&"HTTP_PROXY=http://tsk-proxy:3128".to_string()));
@@ -644,7 +664,7 @@ mod tests {
 
         let start_calls = manager.client.start_container_calls.lock().unwrap();
         assert_eq!(start_calls.len(), 2); // One for proxy, one for task container
-        assert_eq!(start_calls[0], "test-proxy-container-id");
+        assert_eq!(start_calls[0], "tsk-proxy");
         assert_eq!(start_calls[1], "test-container-id-1");
 
         let wait_calls = manager.client.wait_container_calls.lock().unwrap();
@@ -704,7 +724,9 @@ mod tests {
     #[tokio::test]
     async fn test_run_task_container_create_fails() {
         let mock_client = MockDockerClient::new();
-        *mock_client.create_container_result.lock().unwrap() =
+        // Set network_exists to false to trigger network creation failure
+        *mock_client.network_exists_result.lock().unwrap() = Ok(false);
+        *mock_client.create_network_result.lock().unwrap() =
             Err("Docker daemon not running".to_string());
         let manager = DockerManager::with_client(mock_client);
 
@@ -736,12 +758,12 @@ mod tests {
 
         let create_calls = manager.client.create_container_calls.lock().unwrap();
         assert_eq!(create_calls.len(), 2); // One for proxy, one for task container
-        
+
         // Check proxy container config
         let (proxy_options, proxy_config) = &create_calls[0];
         assert_eq!(proxy_options.as_ref().unwrap().name, PROXY_CONTAINER_NAME);
         assert_eq!(proxy_config.image, Some(PROXY_IMAGE.to_string()));
-        
+
         // Check task container config
         let (options, config) = &create_calls[1];
 
@@ -760,10 +782,7 @@ mod tests {
         assert!(config.entrypoint.is_none());
 
         let host_config = config.host_config.as_ref().unwrap();
-        assert_eq!(
-            host_config.network_mode,
-            Some(TSK_NETWORK_NAME.to_string())
-        );
+        assert_eq!(host_config.network_mode, Some(TSK_NETWORK_NAME.to_string()));
         assert_eq!(host_config.memory, Some(CONTAINER_MEMORY_LIMIT));
         assert_eq!(host_config.cpu_quota, Some(CONTAINER_CPU_QUOTA));
 
@@ -772,7 +791,7 @@ mod tests {
         assert!(binds[0].contains(&format!("/tmp/test-worktree:{}", CONTAINER_WORKING_DIR)));
         assert!(binds[1].ends_with("/.claude:/home/agent/.claude"));
         assert!(binds[2].ends_with("/.claude.json:/home/agent/.claude.json"));
-        
+
         // Check proxy environment variables
         let env = config.env.as_ref().unwrap();
         assert!(env.contains(&"HTTP_PROXY=http://tsk-proxy:3128".to_string()));
@@ -794,7 +813,8 @@ mod tests {
         assert!(result.is_ok());
 
         let create_calls = manager.client.create_container_calls.lock().unwrap();
-        let (_, config) = &create_calls[0];
+        assert_eq!(create_calls.len(), 2); // One for proxy, one for task container
+        let (_, config) = &create_calls[1]; // Get the task container config, not proxy
 
         let host_config = config.host_config.as_ref().unwrap();
         let binds = host_config.binds.as_ref().unwrap();

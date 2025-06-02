@@ -44,6 +44,8 @@ enum Commands {
         #[arg(short, long)]
         name: String,
     },
+    /// Stop the TSK proxy container
+    StopProxy,
 }
 
 #[tokio::main]
@@ -215,6 +217,24 @@ async fn main() {
                 }
                 Err(e) => {
                     eprintln!("Error copying repository: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::StopProxy => {
+            println!("Stopping TSK proxy container...");
+            match get_docker_manager() {
+                Ok(docker_manager) => match docker_manager.stop_proxy().await {
+                    Ok(_) => {
+                        println!("Proxy container stopped successfully");
+                    }
+                    Err(e) => {
+                        eprintln!("Error stopping proxy container: {}", e);
+                        std::process::exit(1);
+                    }
+                },
+                Err(e) => {
+                    eprintln!("Error initializing Docker manager: {}", e);
                     std::process::exit(1);
                 }
             }
