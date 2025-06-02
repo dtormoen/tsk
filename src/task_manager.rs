@@ -137,46 +137,29 @@ impl TaskManager {
     }
 
     /// Build command for running the task
-    pub fn build_task_command(
-        &self,
-        description: Option<&String>,
-        instructions_file_path: Option<&PathBuf>,
-    ) -> Result<Vec<String>, String> {
-        if let Some(inst_path) = instructions_file_path {
-            // Get just the filename for the container path
-            let inst_filename = inst_path
-                .file_name()
-                .ok_or_else(|| "Invalid instructions file path".to_string())?
-                .to_str()
-                .ok_or_else(|| "Invalid instructions file name".to_string())?;
+    pub fn build_task_command(&self, instructions_file_path: &Path) -> Result<Vec<String>, String> {
+        // Get just the filename for the container path
+        let inst_filename = instructions_file_path
+            .file_name()
+            .ok_or_else(|| "Invalid instructions file path".to_string())?
+            .to_str()
+            .ok_or_else(|| "Invalid instructions file name".to_string())?;
 
-            Ok(vec![
-                "sh".to_string(),
-                "-c".to_string(),
-                format!(
-                    "cat /instructions/{} | claude -p --verbose --output-format stream-json --dangerously-skip-permissions",
-                    inst_filename
-                ),
-            ])
-        } else if let Some(desc) = description {
-            Ok(vec![
-                "sh".to_string(),
-                "-c".to_string(),
-                format!(
-                    "claude -p --verbose --output-format stream-json --dangerously-skip-permissions '{}'",
-                    desc
-                ),
-            ])
-        } else {
-            Err("Task has neither description nor instructions".to_string())
-        }
+        Ok(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            format!(
+                "cat /instructions/{} | claude -p --verbose --output-format stream-json --dangerously-skip-permissions",
+                inst_filename
+            ),
+        ])
     }
 
     /// Execute a task (used by both quick and run commands)
     pub async fn execute_task(
         &self,
         task_name: &str,
-        description: Option<&String>,
+        _description: Option<&String>, // Kept for backward compatibility, but always use instructions_path
         instructions_path: Option<&String>,
     ) -> Result<TaskExecutionResult, TaskExecutionError> {
         // Copy repository for the task
@@ -187,15 +170,15 @@ impl TaskManager {
 
         println!("Created repository copy at: {}", repo_path.display());
 
-        // Handle instructions file if provided
+        // Ensure we have an instructions file
         let instructions_file_path = if let Some(inst_path) = instructions_path {
-            Some(self.prepare_instructions_file(inst_path, &repo_path)?)
+            self.prepare_instructions_file(inst_path, &repo_path)?
         } else {
-            None
+            return Err("No instructions file provided".to_string().into());
         };
 
         // Build the command
-        let command = self.build_task_command(description, instructions_file_path.as_ref())?;
+        let command = self.build_task_command(&instructions_file_path)?;
 
         // Remove jq from the command since we'll handle formatting ourselves
         let command_without_jq =
@@ -226,7 +209,7 @@ impl TaskManager {
                         "tsk/base",
                         &repo_path,
                         command_without_jq.clone(),
-                        instructions_file_path.as_ref(),
+                        Some(&instructions_file_path),
                         |log_line| {
                             // Process each line of output
                             if let Some(formatted) = log_processor.process_line(log_line) {
@@ -244,7 +227,7 @@ impl TaskManager {
                         "tsk/base",
                         &repo_path,
                         command_without_jq,
-                        instructions_file_path.as_ref(),
+                        Some(&instructions_file_path),
                     )
                     .await
                     .map_err(|e| format!("Error running container: {}", e))?;
@@ -268,7 +251,7 @@ impl TaskManager {
                     "tsk/base",
                     &repo_path,
                     command_without_jq,
-                    instructions_file_path.as_ref(),
+                    Some(&instructions_file_path),
                 )
                 .await
                 .map_err(|e| format!("Error running container: {}", e))?;
@@ -565,25 +548,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_build_task_command_with_description() {
-        let temp_dir = TempDir::new().unwrap();
-        let repo_manager = create_mock_repo_manager(&temp_dir);
-        let docker_manager = Box::new(MockDockerManager::new());
-        let task_manager = TaskManager::with_mocks(repo_manager, docker_manager, None);
-
-        let description = Some("Test task description".to_string());
-        let command = task_manager
-            .build_task_command(description.as_ref(), None)
-            .unwrap();
-
-        assert_eq!(command.len(), 3);
-        assert_eq!(command[0], "sh");
-        assert_eq!(command[1], "-c");
-        assert!(command[2].contains("Test task description"));
-        assert!(command[2].contains("claude -p"));
-    }
-
-    #[tokio::test]
     async fn test_build_task_command_with_instructions() {
         let temp_dir = TempDir::new().unwrap();
         let repo_manager = create_mock_repo_manager(&temp_dir);
@@ -591,31 +555,13 @@ mod tests {
         let task_manager = TaskManager::with_mocks(repo_manager, docker_manager, None);
 
         let inst_path = PathBuf::from("/tmp/instructions.md");
-        let command = task_manager
-            .build_task_command(None, Some(&inst_path))
-            .unwrap();
+        let command = task_manager.build_task_command(&inst_path).unwrap();
 
         assert_eq!(command.len(), 3);
         assert_eq!(command[0], "sh");
         assert_eq!(command[1], "-c");
         assert!(command[2].contains("cat /instructions/instructions.md"));
         assert!(command[2].contains("claude -p"));
-    }
-
-    #[tokio::test]
-    async fn test_build_task_command_no_input() {
-        let temp_dir = TempDir::new().unwrap();
-        let repo_manager = create_mock_repo_manager(&temp_dir);
-        let docker_manager = Box::new(MockDockerManager::new());
-        let task_manager = TaskManager::with_mocks(repo_manager, docker_manager, None);
-
-        let result = task_manager.build_task_command(None, None);
-
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err(),
-            "Task has neither description nor instructions"
-        );
     }
 
     #[tokio::test]
@@ -637,9 +583,16 @@ mod tests {
         let docker_manager = Box::new(MockDockerManager::new());
         let task_manager = TaskManager::with_mocks(repo_manager, docker_manager, None);
 
-        let description = Some("Test task".to_string());
+        // Create an instructions file
+        let instructions_file = temp_dir.path().join("instructions.md");
+        std::fs::write(&instructions_file, "Test task instructions").unwrap();
+
         let result = task_manager
-            .execute_task("test-task", description.as_ref(), None)
+            .execute_task(
+                "test-task",
+                None,
+                Some(&instructions_file.to_string_lossy().to_string()),
+            )
             .await;
 
         // Restore original directory

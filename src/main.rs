@@ -131,33 +131,28 @@ async fn main() {
                 std::process::exit(1);
             }
 
-            // Copy instructions file to task directory if provided
+            // Create task directory
+            let timestamp = chrono::Utc::now().format("%Y-%m-%d-%H%M");
+            let task_dir_name = format!("{}-{}", timestamp, name);
+            let task_dir = std::path::Path::new(".tsk/tasks").join(&task_dir_name);
+            std::fs::create_dir_all(&task_dir).unwrap_or_else(|e| {
+                eprintln!("Error creating task directory: {}", e);
+                std::process::exit(1);
+            });
+
+            // Always create an instructions.md file
             let instructions_path = if let Some(ref inst_path) = instructions {
-                // Verify instructions file exists
+                // Copy existing instructions file
                 match std::fs::read_to_string(inst_path) {
-                    Ok(_) => {
-                        // Create task directory
-                        let timestamp = chrono::Utc::now().format("%Y-%m-%d-%H%M");
-                        let task_dir_name = format!("{}-{}", timestamp, name);
-                        let task_dir = std::path::Path::new(".tsk/tasks").join(&task_dir_name);
-                        std::fs::create_dir_all(&task_dir).unwrap_or_else(|e| {
-                            eprintln!("Error creating task directory: {}", e);
-                            std::process::exit(1);
-                        });
-
-                        // Copy instructions file to task directory
-                        let inst_filename = std::path::Path::new(inst_path)
-                            .file_name()
-                            .unwrap_or_else(|| std::ffi::OsStr::new("instructions.md"));
-                        let dest_path = task_dir.join(inst_filename);
-
-                        match std::fs::copy(inst_path, &dest_path) {
+                    Ok(content) => {
+                        let dest_path = task_dir.join("instructions.md");
+                        match std::fs::write(&dest_path, content) {
                             Ok(_) => {
                                 println!("Copied instructions file to task directory");
                                 Some(dest_path.to_string_lossy().to_string())
                             }
                             Err(e) => {
-                                eprintln!("Error copying instructions file: {}", e);
+                                eprintln!("Error writing instructions file: {}", e);
                                 std::process::exit(1);
                             }
                         }
@@ -167,15 +162,55 @@ async fn main() {
                         std::process::exit(1);
                     }
                 }
+            } else if let Some(ref desc) = description {
+                // Check if a template exists for this task type
+                let template_path =
+                    std::path::Path::new("templates").join(format!("{}.md", r#type));
+                let content = if template_path.exists() {
+                    // Load and process template
+                    match std::fs::read_to_string(&template_path) {
+                        Ok(template_content) => {
+                            // Simple template processing - replace {{DESCRIPTION}} with the actual description
+                            template_content.replace("{{DESCRIPTION}}", desc)
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: Failed to read template file: {}", e);
+                            // Fall back to plain description
+                            desc.clone()
+                        }
+                    }
+                } else {
+                    // No template found, use plain description
+                    desc.clone()
+                };
+
+                // Create instructions.md with processed content
+                let dest_path = task_dir.join("instructions.md");
+                match std::fs::write(&dest_path, content) {
+                    Ok(_) => {
+                        if template_path.exists() {
+                            println!("Created instructions file from {} template", r#type);
+                        } else {
+                            println!("Created instructions file from description");
+                        }
+                        Some(dest_path.to_string_lossy().to_string())
+                    }
+                    Err(e) => {
+                        eprintln!("Error creating instructions file: {}", e);
+                        std::process::exit(1);
+                    }
+                }
             } else {
-                None
+                // This should never happen due to validation, but handle it gracefully
+                eprintln!("Error: No description or instructions provided");
+                std::process::exit(1);
             };
 
             // Create and save the task
             let task = Task::new(
                 name.clone(),
                 r#type.clone(),
-                description.clone(),
+                None, // description is now stored in instructions file
                 instructions_path,
                 agent.clone(),
                 timeout,
@@ -228,12 +263,81 @@ async fn main() {
                 std::process::exit(1);
             }
 
-            if let Some(ref desc) = description {
-                println!("Description: {}", desc);
-            }
-            if let Some(ref inst) = instructions {
-                println!("Instructions file: {}", inst);
-            }
+            // Create task directory for quick tasks
+            let timestamp = chrono::Utc::now().format("%Y-%m-%d-%H%M");
+            let task_dir_name = format!("{}-{}", timestamp, name);
+            let task_dir = std::path::Path::new(".tsk/quick-tasks").join(&task_dir_name);
+            std::fs::create_dir_all(&task_dir).unwrap_or_else(|e| {
+                eprintln!("Error creating task directory: {}", e);
+                std::process::exit(1);
+            });
+
+            // Always create an instructions.md file
+            let instructions_path = if let Some(ref inst_path) = instructions {
+                // Copy existing instructions file
+                match std::fs::read_to_string(inst_path) {
+                    Ok(content) => {
+                        let dest_path = task_dir.join("instructions.md");
+                        match std::fs::write(&dest_path, content) {
+                            Ok(_) => {
+                                println!("Copied instructions file to task directory");
+                                dest_path.to_string_lossy().to_string()
+                            }
+                            Err(e) => {
+                                eprintln!("Error writing instructions file: {}", e);
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading instructions file: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            } else if let Some(ref desc) = description {
+                // Check if a template exists for this task type
+                let template_path =
+                    std::path::Path::new("templates").join(format!("{}.md", r#type));
+                let content = if template_path.exists() {
+                    // Load and process template
+                    match std::fs::read_to_string(&template_path) {
+                        Ok(template_content) => {
+                            // Simple template processing - replace {{DESCRIPTION}} with the actual description
+                            template_content.replace("{{DESCRIPTION}}", desc)
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: Failed to read template file: {}", e);
+                            // Fall back to plain description
+                            desc.clone()
+                        }
+                    }
+                } else {
+                    // No template found, use plain description
+                    desc.clone()
+                };
+
+                // Create instructions.md with processed content
+                let dest_path = task_dir.join("instructions.md");
+                match std::fs::write(&dest_path, content) {
+                    Ok(_) => {
+                        if template_path.exists() {
+                            println!("Created instructions file from {} template", r#type);
+                        } else {
+                            println!("Created instructions file from description");
+                        }
+                        dest_path.to_string_lossy().to_string()
+                    }
+                    Err(e) => {
+                        eprintln!("Error creating instructions file: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                // This should never happen due to validation
+                eprintln!("Error: No description or instructions provided");
+                std::process::exit(1);
+            };
+
             if let Some(agent) = agent {
                 println!("Agent: {}", agent);
             }
@@ -243,7 +347,7 @@ async fn main() {
             match TaskManager::new() {
                 Ok(task_manager) => {
                     match task_manager
-                        .execute_task(&name, description.as_ref(), instructions.as_ref())
+                        .execute_task(&name, None, Some(&instructions_path))
                         .await
                     {
                         Ok(_) => {
