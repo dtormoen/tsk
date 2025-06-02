@@ -27,19 +27,24 @@ RUN apt-get update && apt-get install -y \
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs
 
-# Install Rust
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-ENV PATH="/root/.cargo/bin:${PATH}"
-
-# Install just using cargo
-RUN cargo install just
-
 RUN npm install -g @anthropic-ai/claude-code
 
 # Create a non-root user for running the agent with UID/GID 1000
 # This helps with file permissions when mounting volumes
 RUN groupadd -g 1000 agent && \
     useradd -m -s /bin/bash -u 1000 -g agent agent
+
+# Switch to agent user to install Rust and just
+USER agent
+WORKDIR /home/agent
+
+# Install Rust for the agent user
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable && \
+    . $HOME/.cargo/env && \
+    cargo install just
+
+# Switch back to root for remaining setup
+USER root
 
 # Set up working directory
 WORKDIR /workspace
@@ -56,7 +61,7 @@ RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh && \
 # which handles firewall setup and user switching.
 
 # Set environment variables
-ENV PATH="/home/agent/.local/bin:${PATH}"
+ENV PATH="/home/agent/.cargo/bin:/home/agent/.local/bin:${PATH}"
 ENV PYTHONUNBUFFERED=1
 
 # Default command (will be overridden by agent setup)
