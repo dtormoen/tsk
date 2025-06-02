@@ -76,14 +76,11 @@ impl LogProcessor {
         match msg.message_type.as_str() {
             "assistant" => self.format_assistant_message(msg),
             "result" => self.format_result_message(msg),
-            "user" => self.format_user_message(msg),
-            _ => None, // Skip other message types
+            other_type => {
+                // For other message types, just show a brief indicator
+                Some(format!("📋 [{}]", other_type))
+            }
         }
-    }
-
-    fn format_user_message(&self, _msg: ClaudeMessage) -> Option<String> {
-        // Skip user messages - they're typically tool results which are verbose
-        None
     }
 
     fn format_assistant_message(&self, msg: ClaudeMessage) -> Option<String> {
@@ -257,20 +254,31 @@ mod tests {
     }
 
     #[test]
-    fn test_process_user_message() {
-        let mut processor = LogProcessor::new();
-        let json = r#"{"type": "user"}"#;
-
-        let result = processor.process_line(json);
-        assert_eq!(result, None); // User messages are now skipped
-    }
-
-    #[test]
     fn test_process_non_json() {
         let mut processor = LogProcessor::new();
         let line = "This is not JSON";
 
         let result = processor.process_line(line);
         assert_eq!(result, Some(line.to_string()));
+    }
+
+    #[test]
+    fn test_process_other_message_types() {
+        let mut processor = LogProcessor::new();
+
+        // Test a message with an unknown type - tool_use
+        let json = r#"{"type": "tool_use"}"#;
+        let result = processor.process_line(json);
+        assert_eq!(result, Some("📋 [tool_use]".to_string()));
+
+        // Test another unknown type - system
+        let json = r#"{"type": "system"}"#;
+        let result = processor.process_line(json);
+        assert_eq!(result, Some("📋 [system]".to_string()));
+
+        // Test with more complete message structure
+        let json = r#"{"type": "thinking", "message": {"content": "Processing..."}}"#;
+        let result = processor.process_line(json);
+        assert_eq!(result, Some("📋 [thinking]".to_string()));
     }
 }
