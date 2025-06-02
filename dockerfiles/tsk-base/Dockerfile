@@ -17,9 +17,6 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     gnupg \
     iputils-ping \
-    iptables \
-    ipset \
-    iproute2 \
     dnsutils \
     && rm -rf /var/lib/apt/lists/*
 
@@ -49,16 +46,8 @@ USER root
 # Set up working directory
 WORKDIR /workspace
 
-# Copy and set up scripts
-COPY init-firewall.sh /usr/local/bin/
-COPY entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh && \
-    # Ensure scripts are owned by root
-    chown root:root /usr/local/bin/init-firewall.sh /usr/local/bin/entrypoint.sh
-
-# Note: We don't switch to agent user here anymore.
-# The container will start as root via the entrypoint script,
-# which handles firewall setup and user switching.
+# Switch to agent user
+USER agent
 
 # Set environment variables
 ENV PATH="/home/agent/.cargo/bin:/home/agent/.local/bin:${PATH}"

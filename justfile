@@ -17,6 +17,7 @@ precommit:
 
 docker-build:
     cd dockerfiles/tsk-base && docker build -t tsk/base .
+    cd dockerfiles/tsk-proxy && docker build -t tsk/proxy .
 
 nuke-tsk:
     rm -rf .tsk

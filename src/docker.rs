@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use bollard::container::{Config, CreateContainerOptions, LogsOptions, RemoveContainerOptions};
+use bollard::network::{CreateNetworkOptions, ListNetworksOptions};
 use bollard::Docker;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Factory function to get a DockerManager instance
@@ -52,6 +54,14 @@ impl DockerClient for PanicDockerClient {
     ) -> Result<(), String> {
         panic!("Docker operations are not allowed in tests! Please mock DockerManager properly using DockerManager::with_client()")
     }
+
+    async fn create_network(&self, _name: &str) -> Result<String, String> {
+        panic!("Docker operations are not allowed in tests! Please mock DockerManager properly using DockerManager::with_client()")
+    }
+
+    async fn network_exists(&self, _name: &str) -> Result<bool, String> {
+        panic!("Docker operations are not allowed in tests! Please mock DockerManager properly using DockerManager::with_client()")
+    }
 }
 
 // Container resource limits
@@ -60,6 +70,9 @@ const CONTAINER_CPU_QUOTA: i64 = 100000; // 1 CPU
 const CONTAINER_NETWORK_MODE: &str = "bridge";
 const CONTAINER_WORKING_DIR: &str = "/workspace";
 const CONTAINER_USER: &str = "agent";
+const TSK_NETWORK_NAME: &str = "tsk-network";
+const PROXY_CONTAINER_NAME: &str = "tsk-proxy";
+const PROXY_IMAGE: &str = "tsk/proxy";
 
 #[async_trait]
 pub trait DockerClient: Send + Sync {
@@ -80,6 +93,10 @@ pub trait DockerClient: Send + Sync {
         id: &str,
         options: Option<RemoveContainerOptions>,
     ) -> Result<(), String>;
+
+    async fn create_network(&self, name: &str) -> Result<String, String>;
+
+    async fn network_exists(&self, name: &str) -> Result<bool, String>;
 }
 
 pub struct RealDockerClient {
@@ -158,6 +175,39 @@ impl DockerClient for RealDockerClient {
             .await
             .map_err(|e| format!("Failed to remove container: {}", e))
     }
+
+    async fn create_network(&self, name: &str) -> Result<String, String> {
+        let options = CreateNetworkOptions {
+            name: name.to_string(),
+            ..Default::default()
+        };
+
+        let response = self
+            .docker
+            .create_network(options)
+            .await
+            .map_err(|e| format!("Failed to create network: {}", e))?;
+        
+        Ok(response.id.unwrap_or_else(|| name.to_string()))
+    }
+
+    async fn network_exists(&self, name: &str) -> Result<bool, String> {
+        let mut filters = HashMap::new();
+        filters.insert("name", vec![name]);
+        
+        let options = ListNetworksOptions {
+            filters,
+            ..Default::default()
+        };
+
+        let networks = self
+            .docker
+            .list_networks(Some(options))
+            .await
+            .map_err(|e| format!("Failed to list networks: {}", e))?;
+        
+        Ok(!networks.is_empty())
+    }
 }
 
 pub struct DockerManager<C: DockerClient> {
@@ -175,6 +225,66 @@ impl<C: DockerClient> DockerManager<C> {
     #[cfg(test)]
     pub fn with_client(client: C) -> Self {
         Self { client }
+    }
+
+    async fn ensure_network(&self) -> Result<(), String> {
+        if !self.client.network_exists(TSK_NETWORK_NAME).await? {
+            self.client.create_network(TSK_NETWORK_NAME).await?;
+        }
+        Ok(())
+    }
+
+    async fn ensure_proxy(&self) -> Result<(), String> {
+        // Check if proxy container exists
+        let proxy_config = Config {
+            image: Some(PROXY_IMAGE.to_string()),
+            exposed_ports: Some(
+                vec![("3128/tcp".to_string(), HashMap::new())]
+                    .into_iter()
+                    .collect(),
+            ),
+            host_config: Some(bollard::service::HostConfig {
+                network_mode: Some(TSK_NETWORK_NAME.to_string()),
+                restart_policy: Some(bollard::service::RestartPolicy {
+                    name: Some(bollard::service::RestartPolicyNameEnum::UNLESS_STOPPED),
+                    maximum_retry_count: None,
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let create_options = CreateContainerOptions {
+            name: PROXY_CONTAINER_NAME.to_string(),
+            platform: None,
+        };
+
+        // Try to create the container (this will fail if it already exists)
+        match self
+            .client
+            .create_container(Some(create_options), proxy_config)
+            .await
+        {
+            Ok(_) => {
+                // New container created, start it
+                self.client.start_container(PROXY_CONTAINER_NAME).await?;
+            }
+            Err(e) => {
+                // Container might already exist, try to start it
+                if e.contains("already in use") {
+                    // Try to start existing container
+                    match self.client.start_container(PROXY_CONTAINER_NAME).await {
+                        Ok(_) => (),
+                        Err(e) if e.contains("already started") => (),
+                        Err(e) => return Err(e),
+                    }
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn prepare_worktree_path(worktree_path: &Path) -> Result<PathBuf, String> {
@@ -204,7 +314,8 @@ impl<C: DockerClient> DockerManager<C> {
 
         Config {
             image: Some(image.to_string()),
-            entrypoint: Some(vec!["/usr/local/bin/entrypoint.sh".to_string()]),
+            // No entrypoint needed anymore - just run as agent user directly
+            user: Some(CONTAINER_USER.to_string()),
             cmd: command,
             host_config: Some(bollard::service::HostConfig {
                 binds: Some(vec![
@@ -212,28 +323,35 @@ impl<C: DockerClient> DockerManager<C> {
                     format!("{}:{}", claude_dir_host_path, claude_dir_container_path),
                     format!("{}:{}", claude_json_host_path, claude_json_container_path),
                 ]),
-                network_mode: Some(CONTAINER_NETWORK_MODE.to_string()),
+                network_mode: Some(TSK_NETWORK_NAME.to_string()),
                 memory: Some(CONTAINER_MEMORY_LIMIT),
                 cpu_quota: Some(CONTAINER_CPU_QUOTA),
-                // Add capabilities needed for iptables to work
-                cap_add: Some(vec!["NET_ADMIN".to_string(), "NET_RAW".to_string()]),
-                // Drop dangerous capabilities for security
-                // Note: We need SETUID/SETGID for su to work
+                // No capabilities needed since we're not running iptables
                 cap_drop: Some(vec![
+                    "NET_ADMIN".to_string(),
+                    "NET_RAW".to_string(),
                     "SETPCAP".to_string(),
                     "SYS_ADMIN".to_string(),
                     "SYS_PTRACE".to_string(),
                     "DAC_OVERRIDE".to_string(),
                     "AUDIT_WRITE".to_string(),
+                    "SETUID".to_string(),
+                    "SETGID".to_string(),
                 ]),
                 ..Default::default()
             }),
             working_dir: Some(CONTAINER_WORKING_DIR.to_string()),
-            // Don't set user here - entrypoint script handles user switching
-            // user: Some(CONTAINER_USER.to_string()),
             env: Some(vec![
                 format!("HOME=/home/{}", CONTAINER_USER),
                 format!("USER={}", CONTAINER_USER),
+                // Configure proxy settings
+                "HTTP_PROXY=http://tsk-proxy:3128".to_string(),
+                "HTTPS_PROXY=http://tsk-proxy:3128".to_string(),
+                "http_proxy=http://tsk-proxy:3128".to_string(),
+                "https_proxy=http://tsk-proxy:3128".to_string(),
+                // Don't proxy localhost
+                "NO_PROXY=localhost,127.0.0.1".to_string(),
+                "no_proxy=localhost,127.0.0.1".to_string(),
             ]),
             attach_stdin: Some(interactive),
             attach_stdout: Some(interactive),
@@ -248,12 +366,16 @@ impl<C: DockerClient> DockerManager<C> {
         image: &str,
         worktree_path: &Path,
     ) -> Result<String, String> {
+        // Ensure network and proxy are running
+        self.ensure_network().await?;
+        self.ensure_proxy().await?;
+
         let absolute_worktree_path = Self::prepare_worktree_path(worktree_path)?;
         let worktree_path_str = absolute_worktree_path
             .to_str()
             .ok_or_else(|| "Invalid worktree path".to_string())?;
 
-        // The entrypoint script will handle firewall setup and user switching
+        // Run sleep infinity for debug container
         let sleep_command = Some(vec!["sleep".to_string(), "infinity".to_string()]);
 
         let config = Self::create_base_container_config(
@@ -293,12 +415,15 @@ impl<C: DockerClient> DockerManager<C> {
         worktree_path: &Path,
         command: Vec<String>,
     ) -> Result<String, String> {
+        // Ensure network and proxy are running
+        self.ensure_network().await?;
+        self.ensure_proxy().await?;
+
         let absolute_worktree_path = Self::prepare_worktree_path(worktree_path)?;
         let worktree_path_str = absolute_worktree_path
             .to_str()
             .ok_or_else(|| "Invalid worktree path".to_string())?;
 
-        // The entrypoint script will handle firewall setup and user switching
         let wrapped_command = if command.is_empty() {
             None
         } else {
@@ -374,6 +499,8 @@ mod tests {
         wait_container_result: Arc<Mutex<Result<i64, String>>>,
         logs_result: Arc<Mutex<Result<String, String>>>,
         remove_container_result: Arc<Mutex<Result<(), String>>>,
+        create_network_result: Arc<Mutex<Result<String, String>>>,
+        network_exists_result: Arc<Mutex<Result<bool, String>>>,
     }
 
     impl MockDockerClient {
@@ -390,6 +517,8 @@ mod tests {
                 wait_container_result: Arc::new(Mutex::new(Ok(0))),
                 logs_result: Arc::new(Mutex::new(Ok("Container logs".to_string()))),
                 remove_container_result: Arc::new(Mutex::new(Ok(()))),
+                create_network_result: Arc::new(Mutex::new(Ok("test-network-id".to_string()))),
+                network_exists_result: Arc::new(Mutex::new(Ok(true))),
             }
         }
     }
@@ -401,11 +530,28 @@ mod tests {
             options: Option<CreateContainerOptions<String>>,
             config: Config<String>,
         ) -> Result<String, String> {
+            let call_count = self.create_container_calls.lock().unwrap().len();
             self.create_container_calls
                 .lock()
                 .unwrap()
-                .push((options, config));
-            self.create_container_result.lock().unwrap().clone()
+                .push((options.clone(), config));
+            
+            // Return different IDs for proxy and task containers
+            if let Some(opt) = &options {
+                if opt.name == PROXY_CONTAINER_NAME {
+                    Ok("test-proxy-container-id".to_string())
+                } else if let Some(ref cmd) = config.cmd {
+                    if cmd.contains(&"false".to_string()) {
+                        Ok("test-container-id-fail".to_string())
+                    } else {
+                        Ok(format!("test-container-id-{}", call_count))
+                    }
+                } else {
+                    Ok(format!("test-container-id-{}", call_count))
+                }
+            } else {
+                self.create_container_result.lock().unwrap().clone()
+            }
         }
 
         async fn start_container(&self, id: &str) -> Result<(), String> {
@@ -421,7 +567,12 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(id.to_string());
-            self.wait_container_result.lock().unwrap().clone()
+            // Return different results based on container ID for testing
+            if id == "test-container-id-fail" {
+                Ok(1) // Non-zero exit code
+            } else {
+                self.wait_container_result.lock().unwrap().clone()
+            }
         }
 
         async fn logs(
@@ -447,6 +598,14 @@ mod tests {
                 .push((id.to_string(), options));
             self.remove_container_result.lock().unwrap().clone()
         }
+
+        async fn create_network(&self, _name: &str) -> Result<String, String> {
+            self.create_network_result.lock().unwrap().clone()
+        }
+
+        async fn network_exists(&self, _name: &str) -> Result<bool, String> {
+            self.network_exists_result.lock().unwrap().clone()
+        }
     }
 
     #[tokio::test]
@@ -465,31 +624,36 @@ mod tests {
         assert_eq!(result.unwrap(), "Container logs");
 
         let create_calls = manager.client.create_container_calls.lock().unwrap();
-        assert_eq!(create_calls.len(), 1);
+        assert_eq!(create_calls.len(), 2); // One for proxy, one for task container
 
-        // Check that the command is passed through (entrypoint handles wrapping)
-        let actual_cmd = create_calls[0].1.cmd.as_ref().unwrap();
+        // Check that the command is passed through directly
+        let task_container_config = &create_calls[1].1;
+        let actual_cmd = task_container_config.cmd.as_ref().unwrap();
         assert_eq!(actual_cmd.len(), 2);
         assert_eq!(actual_cmd[0], "echo");
         assert_eq!(actual_cmd[1], "hello");
 
-        // Check that entrypoint is set
-        let entrypoint = create_calls[0].1.entrypoint.as_ref().unwrap();
-        assert_eq!(entrypoint.len(), 1);
-        assert_eq!(entrypoint[0], "/usr/local/bin/entrypoint.sh");
+        // Check that user is set
+        assert_eq!(task_container_config.user, Some("agent".to_string()));
+        
+        // Check proxy environment variables
+        let env = task_container_config.env.as_ref().unwrap();
+        assert!(env.contains(&"HTTP_PROXY=http://tsk-proxy:3128".to_string()));
+        assert!(env.contains(&"HTTPS_PROXY=http://tsk-proxy:3128".to_string()));
         drop(create_calls); // Release the lock
 
         let start_calls = manager.client.start_container_calls.lock().unwrap();
-        assert_eq!(start_calls.len(), 1);
-        assert_eq!(start_calls[0], "test-container-id");
+        assert_eq!(start_calls.len(), 2); // One for proxy, one for task container
+        assert_eq!(start_calls[0], "test-proxy-container-id");
+        assert_eq!(start_calls[1], "test-container-id-1");
 
         let wait_calls = manager.client.wait_container_calls.lock().unwrap();
         assert_eq!(wait_calls.len(), 1);
-        assert_eq!(wait_calls[0], "test-container-id");
+        assert_eq!(wait_calls[0], "test-container-id-1");
 
         let remove_calls = manager.client.remove_container_calls.lock().unwrap();
         assert_eq!(remove_calls.len(), 1);
-        assert_eq!(remove_calls[0].0, "test-container-id");
+        assert_eq!(remove_calls[0].0, "test-container-id-1");
     }
 
     #[tokio::test]
@@ -508,18 +672,17 @@ mod tests {
 
         // Verify no command is passed when command vector is empty
         let create_calls = manager.client.create_container_calls.lock().unwrap();
-        assert!(create_calls[0].1.cmd.is_none());
+        assert_eq!(create_calls.len(), 2); // One for proxy, one for task container
+        let task_container_config = &create_calls[1].1;
+        assert!(task_container_config.cmd.is_none());
 
-        // Check that entrypoint is set
-        let entrypoint = create_calls[0].1.entrypoint.as_ref().unwrap();
-        assert_eq!(entrypoint.len(), 1);
-        assert_eq!(entrypoint[0], "/usr/local/bin/entrypoint.sh");
+        // Check that user is set instead of entrypoint
+        assert_eq!(task_container_config.user, Some("agent".to_string()));
     }
 
     #[tokio::test]
     async fn test_run_task_container_non_zero_exit() {
         let mock_client = MockDockerClient::new();
-        *mock_client.wait_container_result.lock().unwrap() = Ok(1);
         let manager = DockerManager::with_client(mock_client);
 
         let worktree_path = Path::new("/tmp/test-worktree");
@@ -572,28 +735,34 @@ mod tests {
             .await;
 
         let create_calls = manager.client.create_container_calls.lock().unwrap();
-        let (options, config) = &create_calls[0];
+        assert_eq!(create_calls.len(), 2); // One for proxy, one for task container
+        
+        // Check proxy container config
+        let (proxy_options, proxy_config) = &create_calls[0];
+        assert_eq!(proxy_options.as_ref().unwrap().name, PROXY_CONTAINER_NAME);
+        assert_eq!(proxy_config.image, Some(PROXY_IMAGE.to_string()));
+        
+        // Check task container config
+        let (options, config) = &create_calls[1];
 
         assert!(options.as_ref().unwrap().name.starts_with("tsk-"));
         assert_eq!(config.image, Some("tsk/base".to_string()));
         assert_eq!(config.working_dir, Some(CONTAINER_WORKING_DIR.to_string()));
-        // User is no longer set at container level
-        assert_eq!(config.user, None);
+        // User is now set directly
+        assert_eq!(config.user, Some(CONTAINER_USER.to_string()));
 
         // Check that command is passed through
         let actual_cmd = config.cmd.as_ref().unwrap();
         assert_eq!(actual_cmd.len(), 1);
         assert_eq!(actual_cmd[0], "test");
 
-        // Check that entrypoint is set
-        let entrypoint = config.entrypoint.as_ref().unwrap();
-        assert_eq!(entrypoint.len(), 1);
-        assert_eq!(entrypoint[0], "/usr/local/bin/entrypoint.sh");
+        // No entrypoint anymore
+        assert!(config.entrypoint.is_none());
 
         let host_config = config.host_config.as_ref().unwrap();
         assert_eq!(
             host_config.network_mode,
-            Some(CONTAINER_NETWORK_MODE.to_string())
+            Some(TSK_NETWORK_NAME.to_string())
         );
         assert_eq!(host_config.memory, Some(CONTAINER_MEMORY_LIMIT));
         assert_eq!(host_config.cpu_quota, Some(CONTAINER_CPU_QUOTA));
@@ -603,6 +772,11 @@ mod tests {
         assert!(binds[0].contains(&format!("/tmp/test-worktree:{}", CONTAINER_WORKING_DIR)));
         assert!(binds[1].ends_with("/.claude:/home/agent/.claude"));
         assert!(binds[2].ends_with("/.claude.json:/home/agent/.claude.json"));
+        
+        // Check proxy environment variables
+        let env = config.env.as_ref().unwrap();
+        assert!(env.contains(&"HTTP_PROXY=http://tsk-proxy:3128".to_string()));
+        assert!(env.contains(&"HTTPS_PROXY=http://tsk-proxy:3128".to_string()));
     }
 
     #[tokio::test]
