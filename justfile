@@ -16,7 +16,10 @@ precommit:
     cargo run -- --help
 
 docker-build:
-    cd dockerfiles/tsk-base && docker build -t tsk/base .
+    cd dockerfiles/tsk-base && docker build \
+        --build-arg GIT_USER_NAME="$(git config --global user.name)" \
+        --build-arg GIT_USER_EMAIL="$(git config --global user.email)" \
+        -t tsk/base .
     cd dockerfiles/tsk-proxy && docker build -t tsk/proxy .
 
 nuke-tsk:

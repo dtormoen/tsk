@@ -49,6 +49,14 @@ WORKDIR /workspace
 # Switch to agent user
 USER agent
 
+# Build arguments for git configuration
+ARG GIT_USER_NAME
+ARG GIT_USER_EMAIL
+
+# Configure git with the settings from build arguments
+RUN git config --global user.name "$GIT_USER_NAME" && \
+    git config --global user.email "$GIT_USER_EMAIL"
+
 # Set environment variables
 ENV PATH="/home/agent/.cargo/bin:/home/agent/.local/bin:${PATH}"
 ENV PYTHONUNBUFFERED=1
