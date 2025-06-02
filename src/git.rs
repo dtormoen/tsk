@@ -1,7 +1,7 @@
+use chrono::{DateTime, Local};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Factory function to get a RepoManager instance
 /// Returns a dummy implementation in test mode that panics on use
@@ -67,11 +67,9 @@ impl RepoManager {
     /// Copy repository for a task with the name `<task-name>` in `.tsk/tasks/<task-name>/repo-<task-name>`
     /// Returns the path to the copied repository and the branch name
     pub fn copy_repo(&self, task_name: &str) -> Result<(PathBuf, String), String> {
-        // Generate timestamp
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| format!("Failed to get timestamp: {}", e))?
-            .as_secs();
+        // Generate timestamp in YYYY-MM-DD-HHMM format
+        let now: DateTime<Local> = Local::now();
+        let timestamp = now.format("%Y-%m-%d-%H%M").to_string();
 
         // Create unique names with timestamp
         let task_dir_name = format!("{}-{}", timestamp, task_name);
@@ -213,13 +211,8 @@ impl RepoManager {
             .ok_or_else(|| "Invalid main repo path".to_string())?;
 
         // Add the copied repository as a remote in the main repository
-        let remote_name = format!(
-            "tsk-temp-{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs()
-        );
+        let now: DateTime<Local> = Local::now();
+        let remote_name = format!("tsk-temp-{}", now.format("%Y-%m-%d-%H%M%S"));
         let add_remote_cmd = self.command_executor.execute(
             "git",
             &[
