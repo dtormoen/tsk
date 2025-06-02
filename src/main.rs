@@ -90,6 +90,16 @@ enum Commands {
     },
     /// Stop the TSK proxy container
     StopProxy,
+    /// Manage tasks in the task list
+    Tasks {
+        /// Delete a specific task by ID
+        #[arg(short, long, value_name = "TASK_ID")]
+        delete: Option<String>,
+
+        /// Delete all completed tasks and all quick tasks
+        #[arg(short, long)]
+        clean: bool,
+    },
 }
 
 #[tokio::main]
@@ -548,6 +558,52 @@ async fn main() {
                 }
                 Err(e) => {
                     eprintln!("Error initializing task storage: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Tasks { delete, clean } => {
+            // Ensure at least one option is provided
+            if delete.is_none() && !clean {
+                eprintln!("Error: Please specify either --delete <TASK_ID> or --clean");
+                std::process::exit(1);
+            }
+
+            // Get task manager with storage
+            match TaskManager::with_storage() {
+                Ok(task_manager) => {
+                    // Handle delete option
+                    if let Some(task_id) = delete {
+                        println!("Deleting task: {}", task_id);
+                        match task_manager.delete_task(&task_id).await {
+                            Ok(_) => {
+                                println!("Task '{}' deleted successfully", task_id);
+                            }
+                            Err(e) => {
+                                eprintln!("Error deleting task: {}", e);
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+
+                    // Handle clean option
+                    if clean {
+                        println!("Cleaning completed tasks and quick tasks...");
+                        match task_manager.clean_tasks().await {
+                            Ok((completed_count, quick_count)) => {
+                                println!("Cleanup complete:");
+                                println!("  - {} completed task(s) deleted", completed_count);
+                                println!("  - {} quick task(s) deleted", quick_count);
+                            }
+                            Err(e) => {
+                                eprintln!("Error cleaning tasks: {}", e);
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error initializing task manager: {}", e);
                     std::process::exit(1);
                 }
             }

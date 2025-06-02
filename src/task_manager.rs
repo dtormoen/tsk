@@ -432,6 +432,102 @@ impl TaskManager {
 
         Ok(())
     }
+
+    /// Delete a specific task and its associated directory
+    pub async fn delete_task(&self, task_id: &str) -> Result<(), String> {
+        // Get task storage to delete from database
+        let storage = match &self.task_storage {
+            Some(s) => s,
+            None => return Err("Task storage not initialized".to_string()),
+        };
+
+        // Get the task to find its directory
+        let task = storage
+            .get_task(task_id)
+            .await
+            .map_err(|e| format!("Error getting task: {}", e))?;
+
+        if task.is_none() {
+            return Err(format!("Task with ID '{}' not found", task_id));
+        }
+
+        // Delete from storage first
+        storage
+            .delete_task(task_id)
+            .await
+            .map_err(|e| format!("Error deleting task from storage: {}", e))?;
+
+        // Delete the task directory
+        let task_dir = PathBuf::from(".tsk/tasks").join(task_id);
+        if task_dir.exists() {
+            std::fs::remove_dir_all(&task_dir)
+                .map_err(|e| format!("Error deleting task directory: {}", e))?;
+        }
+
+        Ok(())
+    }
+
+    /// Delete all completed tasks and all quick tasks
+    pub async fn clean_tasks(&self) -> Result<(usize, usize), String> {
+        // Get task storage
+        let storage = match &self.task_storage {
+            Some(s) => s,
+            None => return Err("Task storage not initialized".to_string()),
+        };
+
+        // Get all tasks to find directories to delete
+        let all_tasks = storage
+            .list_tasks()
+            .await
+            .map_err(|e| format!("Error listing tasks: {}", e))?;
+
+        // Filter completed tasks
+        let completed_tasks: Vec<&Task> = all_tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Complete)
+            .collect();
+
+        // Delete completed tasks directories
+        for task in &completed_tasks {
+            let task_dir = PathBuf::from(".tsk/tasks").join(&task.id);
+            if task_dir.exists() {
+                if let Err(e) = std::fs::remove_dir_all(&task_dir) {
+                    eprintln!(
+                        "Warning: Failed to delete task directory {}: {}",
+                        task.id, e
+                    );
+                }
+            }
+        }
+
+        // Delete completed tasks from storage
+        let deleted_count = storage
+            .delete_tasks_by_status(vec![TaskStatus::Complete])
+            .await
+            .map_err(|e| format!("Error deleting completed tasks: {}", e))?;
+
+        // Delete all quick task directories
+        let quick_tasks_dir = PathBuf::from(".tsk/quick-tasks");
+        let mut quick_task_count = 0;
+        if quick_tasks_dir.exists() {
+            match std::fs::read_dir(&quick_tasks_dir) {
+                Ok(entries) => {
+                    for entry in entries.flatten() {
+                        if entry.path().is_dir() {
+                            if let Err(e) = std::fs::remove_dir_all(entry.path()) {
+                                eprintln!("Warning: Failed to delete quick task directory: {}", e);
+                            } else {
+                                quick_task_count += 1;
+                            }
+                        }
+                    }
+                }
+                Err(e) => eprintln!("Warning: Failed to read quick tasks directory: {}", e),
+            }
+        }
+
+        Ok((deleted_count, quick_task_count))
+    }
 }
 
 #[cfg(test)]
@@ -604,5 +700,145 @@ mod tests {
         assert!(execution_result.branch_name.contains("test-task"));
 
         // The test passes if no error was thrown
+    }
+
+    #[tokio::test]
+    async fn test_delete_task() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Change to temp directory
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&temp_dir).unwrap();
+
+        // Create a test git directory and .tsk directory structure
+        std::fs::create_dir_all(temp_dir.path().join(".git")).unwrap();
+        std::fs::create_dir_all(temp_dir.path().join(".tsk/tasks")).unwrap();
+
+        // Create task storage and add a test task
+        let storage =
+            crate::task::JsonTaskStorage::new(temp_dir.path().join(".tsk").as_path()).unwrap();
+        let task = Task::new(
+            "test-task".to_string(),
+            "feature".to_string(),
+            Some("Test description".to_string()),
+            None,
+            None,
+            30,
+        );
+        let task_id = task.id.clone();
+        storage.add_task(task.clone()).await.unwrap();
+
+        // Create task directory
+        let task_dir = temp_dir.path().join(".tsk/tasks").join(&task_id);
+        std::fs::create_dir_all(&task_dir).unwrap();
+        std::fs::write(task_dir.join("test.txt"), "test content").unwrap();
+
+        // Create task manager with storage
+        let repo_manager = create_mock_repo_manager(&temp_dir);
+        let docker_manager = Box::new(MockDockerManager::new());
+        let task_manager =
+            TaskManager::with_mocks(repo_manager, docker_manager, Some(Box::new(storage)));
+
+        // Delete the task
+        let result = task_manager.delete_task(&task_id).await;
+        assert!(result.is_ok());
+
+        // Verify task is deleted from storage
+        let storage =
+            crate::task::JsonTaskStorage::new(temp_dir.path().join(".tsk").as_path()).unwrap();
+        let task_lookup = storage.get_task(&task_id).await.unwrap();
+        assert!(task_lookup.is_none());
+
+        // Verify task directory is deleted
+        assert!(!task_dir.exists());
+
+        // Restore original directory
+        std::env::set_current_dir(original_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_clean_tasks() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Change to temp directory
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&temp_dir).unwrap();
+
+        // Create a test git directory and .tsk directory structure
+        std::fs::create_dir_all(temp_dir.path().join(".git")).unwrap();
+        std::fs::create_dir_all(temp_dir.path().join(".tsk/tasks")).unwrap();
+        std::fs::create_dir_all(temp_dir.path().join(".tsk/quick-tasks")).unwrap();
+
+        // Create task storage and add tasks with different statuses
+        let storage =
+            crate::task::JsonTaskStorage::new(temp_dir.path().join(".tsk").as_path()).unwrap();
+
+        // Add queued task
+        let queued_task = Task::new(
+            "queued-task".to_string(),
+            "feature".to_string(),
+            Some("Queued task".to_string()),
+            None,
+            None,
+            30,
+        );
+        storage.add_task(queued_task.clone()).await.unwrap();
+
+        // Add completed task
+        let mut completed_task = Task::new(
+            "completed-task".to_string(),
+            "bug-fix".to_string(),
+            Some("Completed task".to_string()),
+            None,
+            None,
+            30,
+        );
+        completed_task.status = TaskStatus::Complete;
+        storage.add_task(completed_task.clone()).await.unwrap();
+
+        // Create task directories
+        let queued_dir = temp_dir.path().join(".tsk/tasks").join(&queued_task.id);
+        let completed_dir = temp_dir.path().join(".tsk/tasks").join(&completed_task.id);
+        std::fs::create_dir_all(&queued_dir).unwrap();
+        std::fs::create_dir_all(&completed_dir).unwrap();
+
+        // Create quick task directories
+        let quick_task_dir1 = temp_dir
+            .path()
+            .join(".tsk/quick-tasks/2024-01-01-1200-quick1");
+        let quick_task_dir2 = temp_dir
+            .path()
+            .join(".tsk/quick-tasks/2024-01-01-1300-quick2");
+        std::fs::create_dir_all(&quick_task_dir1).unwrap();
+        std::fs::create_dir_all(&quick_task_dir2).unwrap();
+
+        // Create task manager with storage
+        let repo_manager = create_mock_repo_manager(&temp_dir);
+        let docker_manager = Box::new(MockDockerManager::new());
+        let task_manager =
+            TaskManager::with_mocks(repo_manager, docker_manager, Some(Box::new(storage)));
+
+        // Clean tasks
+        let result = task_manager.clean_tasks().await;
+        assert!(result.is_ok());
+        let (completed_count, quick_count) = result.unwrap();
+        assert_eq!(completed_count, 1);
+        assert_eq!(quick_count, 2);
+
+        // Verify queued task still exists
+        let storage =
+            crate::task::JsonTaskStorage::new(temp_dir.path().join(".tsk").as_path()).unwrap();
+        let tasks = storage.list_tasks().await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].status, TaskStatus::Queued);
+
+        // Verify directories are cleaned up
+        assert!(queued_dir.exists());
+        assert!(!completed_dir.exists());
+        assert!(!quick_task_dir1.exists());
+        assert!(!quick_task_dir2.exists());
+
+        // Restore original directory
+        std::env::set_current_dir(original_dir).unwrap();
     }
 }

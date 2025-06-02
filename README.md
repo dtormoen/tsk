@@ -143,6 +143,26 @@ tsk quick [--type <TASK_TYPE>] --description <DESCRIPTION>
 - `--description, -d`: Task description (required)
 - `--agent, -a`: Specific agent to use (aider|claude-code)
 
+### `tsk tasks`
+Manages tasks in the task list, allowing deletion of specific tasks or cleanup of completed tasks.
+
+```bash
+tsk tasks [OPTIONS]
+```
+
+**Options:**
+- `--delete, -d <TASK_ID>`: Delete a specific task by ID
+- `--clean, -c`: Delete all completed tasks and all quick tasks
+
+**Examples:**
+```bash
+# Delete a specific task
+tsk tasks --delete 2024-06-01-1430-auth-review
+
+# Clean up completed tasks and quick tasks
+tsk tasks --clean
+```
+
 ### `tsk server` (Planned)
 Starts the TSK daemon for scheduled and background task execution.
 
