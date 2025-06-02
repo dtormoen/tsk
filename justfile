@@ -10,7 +10,7 @@ format:
 
 precommit:
     cargo fmt
-    cargo clippy
+    cargo clippy -- -D warnings
     cargo test
     # Check that the command will starts
     cargo run -- --help

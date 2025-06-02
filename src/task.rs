@@ -67,6 +67,7 @@ impl Task {
 #[async_trait::async_trait]
 pub trait TaskStorage: Send + Sync {
     async fn add_task(&self, task: Task) -> Result<(), Box<dyn std::error::Error>>;
+    #[allow(dead_code)] // Will be used in future functionality (e.g., task details view)
     async fn get_task(&self, id: &str) -> Result<Option<Task>, Box<dyn std::error::Error>>;
     async fn list_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error>>;
     async fn update_task(&self, task: Task) -> Result<(), Box<dyn std::error::Error>>;

@@ -103,6 +103,7 @@ pub struct RealDockerClient {
 }
 
 impl RealDockerClient {
+    #[cfg(not(test))]
     pub fn new() -> Result<Self, String> {
         let docker = Docker::connect_with_local_defaults()
             .map_err(|e| format!("Failed to connect to Docker: {}", e))?;
@@ -211,6 +212,7 @@ pub struct DockerManager<C: DockerClient> {
 }
 
 impl DockerManager<RealDockerClient> {
+    #[cfg(not(test))]
     pub fn new() -> Result<Self, String> {
         let client = RealDockerClient::new()?;
         Ok(Self { client })

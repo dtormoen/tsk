@@ -57,25 +57,21 @@ impl<C: crate::docker::DockerClient + Send + Sync> DockerManagerTrait for Docker
 }
 
 pub struct TaskExecutionResult {
+    #[allow(dead_code)] // Available for future use by callers
     pub repo_path: PathBuf,
     pub branch_name: String,
+    #[allow(dead_code)] // Available for future use by callers
     pub output: String,
 }
 
 #[derive(Debug)]
 pub struct TaskExecutionError {
     pub message: String,
-    pub should_update_task: bool,
-    pub task_update: Option<Task>,
 }
 
 impl From<String> for TaskExecutionError {
     fn from(message: String) -> Self {
-        Self {
-            message,
-            should_update_task: false,
-            task_update: None,
-        }
+        Self { message }
     }
 }
 

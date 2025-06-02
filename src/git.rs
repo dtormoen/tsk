@@ -49,6 +49,7 @@ pub struct RepoManager {
 }
 
 impl RepoManager {
+    #[cfg(not(test))]
     pub fn new() -> Self {
         Self {
             base_path: PathBuf::from(".tsk/tasks"),
@@ -308,6 +309,7 @@ mod tests {
             ));
         }
 
+        #[allow(dead_code)]
         fn add_error(&mut self, program: &str, args: Vec<&str>, error: &str) {
             self.responses.push((
                 program.to_string(),
