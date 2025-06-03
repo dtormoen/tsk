@@ -27,7 +27,7 @@ pub fn get_repo_manager() -> RepoManager {
 }
 
 /// Trait for executing commands - allows mocking in tests
-pub trait CommandExecutor {
+pub trait CommandExecutor: Send + Sync {
     fn execute(&self, program: &str, args: &[&str]) -> Result<Output, String>;
 }
 
