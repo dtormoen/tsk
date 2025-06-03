@@ -1,4 +1,5 @@
-use crate::docker::{get_docker_manager, DockerManager};
+use crate::context::AppContext;
+use crate::docker::DockerManager;
 use crate::git::{get_repo_manager, RepoManager};
 use crate::log_processor::LogProcessor;
 use crate::task::{get_task_storage, Task, TaskStatus, TaskStorage};
@@ -13,6 +14,9 @@ pub struct TaskManager {
 // Trait for Docker manager to allow testing
 #[async_trait::async_trait]
 pub trait DockerManagerTrait: Send + Sync {
+    #[allow(dead_code)]  // Used for downcasting in streaming mode
+    fn as_any(&self) -> &dyn std::any::Any;
+
     async fn run_task_container(
         &self,
         image: &str,
@@ -32,9 +36,11 @@ pub trait DockerManagerTrait: Send + Sync {
 
 // Implement the trait for the real DockerManager
 #[async_trait::async_trait]
-impl<C: crate::docker::DockerClient + Send + Sync + 'static> DockerManagerTrait
-    for DockerManager<C>
-{
+impl DockerManagerTrait for DockerManager {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     async fn run_task_container(
         &self,
         image: &str,
@@ -80,18 +86,18 @@ impl From<String> for TaskExecutionError {
 }
 
 impl TaskManager {
-    pub fn new() -> Result<Self, String> {
+    pub fn new(ctx: &AppContext) -> Result<Self, String> {
         Ok(Self {
             repo_manager: get_repo_manager(),
-            docker_manager: Box::new(get_docker_manager()?),
+            docker_manager: Box::new(DockerManager::new(ctx.docker_client())),
             task_storage: None,
         })
     }
 
-    pub fn with_storage() -> Result<Self, String> {
+    pub fn with_storage(ctx: &AppContext) -> Result<Self, String> {
         Ok(Self {
             repo_manager: get_repo_manager(),
-            docker_manager: Box::new(get_docker_manager()?),
+            docker_manager: Box::new(DockerManager::new(ctx.docker_client())),
             task_storage: Some(get_task_storage().map_err(|e| e.to_string())?),
         })
     }
@@ -202,9 +208,12 @@ impl TaskManager {
         // For streaming, we need to use the concrete docker manager
         #[cfg(not(test))]
         let output = {
-            if let Ok(docker_manager) = get_docker_manager() {
+            // Try to downcast to the concrete DockerManager type
+            if let Some(concrete_manager) =
+                self.docker_manager.as_any().downcast_ref::<DockerManager>()
+            {
                 // Use streaming version
-                docker_manager
+                concrete_manager
                     .run_task_container_with_streaming(
                         "tsk/base",
                         &repo_path,
@@ -564,6 +573,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl DockerManagerTrait for MockDockerManager {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
         async fn run_task_container(
             &self,
             image: &str,

@@ -1,4 +1,5 @@
 use super::Command;
+use crate::context::AppContext;
 use crate::task::{get_task_storage, Task};
 use async_trait::async_trait;
 use std::error::Error;
@@ -129,7 +130,7 @@ impl AddCommand {
 
 #[async_trait]
 impl Command for AddCommand {
-    async fn execute(&self) -> Result<(), Box<dyn Error>> {
+    async fn execute(&self, _ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         println!("Adding task to queue: {}", self.name);
 
         self.validate_input()?;

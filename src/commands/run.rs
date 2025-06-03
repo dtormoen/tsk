@@ -1,4 +1,5 @@
 use super::Command;
+use crate::context::AppContext;
 use crate::task::{get_task_storage, Task, TaskStatus};
 use crate::task_manager::TaskManager;
 use async_trait::async_trait;
@@ -8,7 +9,7 @@ pub struct RunCommand;
 
 #[async_trait]
 impl Command for RunCommand {
-    async fn execute(&self) -> Result<(), Box<dyn Error>> {
+    async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         let storage = get_task_storage()?;
         let tasks = storage.list_tasks().await?;
 
@@ -24,7 +25,7 @@ impl Command for RunCommand {
 
         println!("Found {} queued task(s) to run", queued_tasks.len());
 
-        let task_manager = TaskManager::with_storage()?;
+        let task_manager = TaskManager::with_storage(ctx)?;
 
         for task in queued_tasks {
             println!("\n{}", "=".repeat(60));

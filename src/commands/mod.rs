@@ -1,3 +1,4 @@
+use crate::context::AppContext;
 use async_trait::async_trait;
 use std::error::Error;
 
@@ -22,5 +23,5 @@ pub use tasks::TasksCommand;
 
 #[async_trait]
 pub trait Command: Send + Sync {
-    async fn execute(&self) -> Result<(), Box<dyn Error>>;
+    async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>>;
 }

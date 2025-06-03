@@ -1,4 +1,5 @@
 use super::Command;
+use crate::context::AppContext;
 use crate::task_manager::TaskManager;
 use async_trait::async_trait;
 use std::error::Error;
@@ -10,13 +11,13 @@ pub struct TasksCommand {
 
 #[async_trait]
 impl Command for TasksCommand {
-    async fn execute(&self) -> Result<(), Box<dyn Error>> {
+    async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         // Ensure at least one option is provided
         if self.delete.is_none() && !self.clean {
             return Err("Please specify either --delete <TASK_ID> or --clean".into());
         }
 
-        let task_manager = TaskManager::with_storage()?;
+        let task_manager = TaskManager::with_storage(ctx)?;
 
         // Handle delete option
         if let Some(ref task_id) = self.delete {

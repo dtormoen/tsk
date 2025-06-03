@@ -1,4 +1,5 @@
 use super::Command;
+use crate::context::AppContext;
 use crate::task::{get_task_storage, TaskStatus};
 use async_trait::async_trait;
 use std::error::Error;
@@ -25,7 +26,7 @@ struct TaskRow {
 
 #[async_trait]
 impl Command for ListCommand {
-    async fn execute(&self) -> Result<(), Box<dyn Error>> {
+    async fn execute(&self, _ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         let storage = get_task_storage()?;
         let tasks = storage.list_tasks().await?;
 

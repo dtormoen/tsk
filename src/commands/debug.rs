@@ -1,4 +1,5 @@
 use super::Command;
+use crate::context::AppContext;
 use crate::task_manager::TaskManager;
 use async_trait::async_trait;
 use std::error::Error;
@@ -9,10 +10,10 @@ pub struct DebugCommand {
 
 #[async_trait]
 impl Command for DebugCommand {
-    async fn execute(&self) -> Result<(), Box<dyn Error>> {
+    async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         println!("Starting debug session: {}", self.name);
 
-        let task_manager = TaskManager::new()?;
+        let task_manager = TaskManager::new(ctx)?;
         task_manager
             .run_debug_container(&self.name)
             .await

@@ -1,4 +1,5 @@
 use super::Command;
+use crate::context::AppContext;
 use crate::task_manager::TaskManager;
 use async_trait::async_trait;
 use std::error::Error;
@@ -129,7 +130,7 @@ impl QuickCommand {
 
 #[async_trait]
 impl Command for QuickCommand {
-    async fn execute(&self) -> Result<(), Box<dyn Error>> {
+    async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         println!("Executing quick task: {}", self.name);
         println!("Type: {}", self.r#type);
 
@@ -152,7 +153,7 @@ impl Command for QuickCommand {
         }
         println!("Timeout: {} minutes", self.timeout);
 
-        let task_manager = TaskManager::new()?;
+        let task_manager = TaskManager::new(ctx)?;
         task_manager
             .execute_task(&self.name, None, Some(&instructions_path))
             .await
