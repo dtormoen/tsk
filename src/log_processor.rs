@@ -67,7 +67,8 @@ impl LogProcessor {
             Ok(msg) => self.format_message(msg),
             Err(_) => {
                 // If it's not JSON, just output the line as-is
-                Some(line.to_string())
+                // Some(line.to_string())
+                Some("‼️ parsing error".to_string())
             }
         }
     }
@@ -75,12 +76,17 @@ impl LogProcessor {
     fn format_message(&mut self, msg: ClaudeMessage) -> Option<String> {
         match msg.message_type.as_str() {
             "assistant" => self.format_assistant_message(msg),
+            "user" => self.format_user_message(),
             "result" => self.format_result_message(msg),
             other_type => {
                 // For other message types, just show a brief indicator
                 Some(format!("📋 [{}]", other_type))
             }
         }
+    }
+
+    fn format_user_message(&self) -> Option<String> {
+        Some("👤 [user]".to_string())
     }
 
     fn format_assistant_message(&self, msg: ClaudeMessage) -> Option<String> {
@@ -148,7 +154,7 @@ impl LogProcessor {
 
             if let Some(duration) = msg.duration_ms {
                 let seconds = duration as f64 / 1000.0;
-                output.push_str(&format!("⏱️  Duration: {:.1}s\n", seconds));
+                output.push_str(&format!("⏱️ Duration: {:.1}s\n", seconds));
             }
 
             if let Some(turns) = msg.num_turns {
@@ -242,7 +248,7 @@ mod tests {
         assert!(result.is_some());
         let formatted = result.unwrap();
         assert!(formatted.contains("❌ Task Result: error"));
-        assert!(formatted.contains("⏱️  Duration: 5.0s"));
+        assert!(formatted.contains("⏱️ Duration: 5.0s"));
 
         // Check that the failure was parsed correctly
         let final_result = processor.get_final_result();
@@ -259,7 +265,7 @@ mod tests {
         let line = "This is not JSON";
 
         let result = processor.process_line(line);
-        assert_eq!(result, Some(line.to_string()));
+        assert_eq!(result, Some("‼️ parsing error".to_string()));
     }
 
     #[test]

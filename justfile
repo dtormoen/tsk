@@ -2,7 +2,7 @@ build:
     cargo build
 
 test:
-    cargo test
+    cargo test -- --test-threads=1
 
 format:
     cargo fmt
@@ -11,7 +11,7 @@ format:
 precommit:
     cargo fmt
     cargo clippy -- -D warnings
-    cargo test
+    cargo test -- --test-threads=1
     # Check that the command will starts
     cargo run -- --help
 

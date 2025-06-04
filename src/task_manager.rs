@@ -14,7 +14,7 @@ pub struct TaskManager {
 // Trait for Docker manager to allow testing
 #[async_trait::async_trait]
 pub trait DockerManagerTrait: Send + Sync {
-    #[allow(dead_code)]  // Used for downcasting in streaming mode
+    #[allow(dead_code)] // Used for downcasting in streaming mode
     fn as_any(&self) -> &dyn std::any::Any;
 
     async fn run_task_container(
