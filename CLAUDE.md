@@ -8,80 +8,65 @@ TSK is a Rust-based CLI tool for delegating development tasks to AI agents runni
 
 ## Development Commands
 
-Since this is a Rust project in early development, use these commands:
-
 ```bash
-# Build the project
+# Build and development
 cargo build
-
-# Run tests
-cargo test
-
-# Run with debug output
+cargo test -- --test-threads=1    # Tests must run serially
 RUST_LOG=debug cargo run
 
-# Check code formatting
+# Code quality
 cargo fmt -- --check
-
-# Run linter
 cargo clippy -- -D warnings
 
-# Build release version
-cargo build --release
-
-# Run fmt, clippy, and tests
-just precommit
+# Justfile commands (recommended)
+just build                         # Build project
+just test                          # Run tests with proper threading
+just format                        # Format and lint code
+just precommit                     # Full CI checks (fmt, clippy, test, help)
 ```
 
-## Architecture Guidelines
+## Architecture Overview
 
-### Core Components (Planned)
+TSK implements a command pattern with dependency injection for testability. The core workflow: queue tasks → execute in Docker → create git branches for review.
 
-1. **CLI Interface** (`src/cli/`)
-   - Command parsing using clap or similar
-   - Subcommands: add, run, list, quick, server
-   - Configuration management
+### Key Components
 
-2. **Task Management** (`src/task/`)
-   - Task queue implementation
-   - Task types and metadata
-   - Status tracking and persistence
+**CLI Commands** (`src/commands/`)
+- `add`: Queue tasks with descriptions and templates
+- `run`: Execute all queued tasks in parallel Docker containers
+- `quick`: Immediately execute single tasks
+- `list`: Display task status and results
+- `debug`: Launch interactive containers for troubleshooting
+- `tasks`: Manage task queue (delete/clean operations)
 
-3. **Agent Integration** (`src/agents/`)
-   - Abstract agent interface
-   - Claude Code integration
-   - Aider integration
-   - Agent selection logic
+**Task Management** (`src/task.rs`, `src/task_manager.rs`)
+- JSON-based persistence in `.tsk/tasks.json`
+- Task status: Queued → Running → Complete/Failed
+- Branch naming: `tsk/{timestamp}-{task-name}`
 
-4. **Sandbox Execution** (`src/sandbox/`)
-   - Docker container management
-   - Repository copying and isolation
-   - Network restrictions
-   - Resource limits
+**Docker Integration** (`src/docker.rs`)
+- Security-first containers with dropped capabilities
+- Network isolation via proxy (Squid) for API-only access
+- Resource limits: 2GB memory, 1 CPU core
+- Volume mounting for repository copies and Claude config
 
-5. **Git Operations** (`src/git/`)
-   - Branch creation and management
-   - Repository copy operations
-   - Commit packaging and fetching
+**Git Operations** (`src/git.rs`)
+- Repository copying with `.tsk` exclusion
+- Isolated branch creation and result integration
+- Automatic commit and fetch operations
 
-### Key Design Decisions
+**Dependency Injection** (`src/context/`)
+- `AppContext` provides centralized resource management
+- Trait abstractions enable comprehensive testing with mocks
+- Factory pattern prevents accidental operations in tests
 
-- Tasks execute in isolated Docker containers with restricted network access
-- Each task copies the repository and creates a dedicated git branch for review
-- Agents run autonomously without interactive input
-- All changes must pass through human review before merging
+### Branch and Task Conventions
 
-### Security Considerations
+Tasks create timestamped branches: `tsk/2024-06-01-1430-add-auth-feature`
+Template-based task descriptions encourage structured problem statements.
 
-- Implement strict Docker container isolation
-- Limit network access to AI API endpoints only
-- No access to host filesystem outside the copied repository
-- Resource limits on containers (memory, CPU, time)
-- No access to SSH keys, Docker socket, or system files
+### Docker Infrastructure
 
-### Error Handling
-
-- Tasks should fail gracefully and always produce a branch
-- Capture all agent output for debugging
-- Implement comprehensive logging with RUST_LOG support
-- Timeout handling for long-running tasks
+**Base Image** (`dockerfiles/tsk-base/`): Ubuntu 22.04 with Claude Code, Rust toolchain, Node.js
+**Proxy Image** (`dockerfiles/tsk-proxy/`): Squid proxy for controlled network access
+Git configuration inherited via Docker build args from host user.
