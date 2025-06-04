@@ -70,7 +70,9 @@ mod command_tests {
     }
 
     fn create_test_context() -> AppContext {
-        AppContext::new(Arc::new(MockDockerClient))
+        AppContext::builder()
+            .with_docker_client(Arc::new(MockDockerClient))
+            .build()
     }
 
     #[tokio::test]

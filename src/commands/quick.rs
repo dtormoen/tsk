@@ -23,10 +23,10 @@ impl QuickCommand {
         Ok(())
     }
 
-    fn validate_task_type(&self) -> Result<(), Box<dyn Error>> {
+    async fn validate_task_type(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         if self.r#type != "generic" {
             let template_path = Path::new("templates").join(format!("{}.md", self.r#type));
-            if !template_path.exists() {
+            if !ctx.file_system().exists(&template_path).await? {
                 return Err(format!(
                     "No template found for task type '{}'. Please check the templates folder.",
                     self.r#type
@@ -37,28 +37,36 @@ impl QuickCommand {
         Ok(())
     }
 
-    fn create_task_directory(&self) -> Result<std::path::PathBuf, Box<dyn Error>> {
+    async fn create_task_directory(
+        &self,
+        ctx: &AppContext,
+    ) -> Result<std::path::PathBuf, Box<dyn Error>> {
         let timestamp = chrono::Utc::now().format("%Y-%m-%d-%H%M");
         let task_dir_name = format!("{}-{}", timestamp, self.name);
         let task_dir = Path::new(".tsk/quick-tasks").join(&task_dir_name);
-        std::fs::create_dir_all(&task_dir)?;
+        ctx.file_system().create_dir(&task_dir).await?;
         Ok(task_dir)
     }
 
-    fn create_instructions_file(&self, task_dir: &Path) -> Result<String, Box<dyn Error>> {
+    async fn create_instructions_file(
+        &self,
+        task_dir: &Path,
+        ctx: &AppContext,
+    ) -> Result<String, Box<dyn Error>> {
         let dest_path = task_dir.join("instructions.md");
+        let fs = ctx.file_system();
 
         if let Some(ref inst_path) = self.instructions {
             // Copy existing instructions file
-            let content = std::fs::read_to_string(inst_path)?;
-            std::fs::write(&dest_path, content)?;
+            let content = fs.read_file(Path::new(inst_path)).await?;
+            fs.write_file(&dest_path, &content).await?;
             println!("Copied instructions file to task directory");
             Ok(dest_path.to_string_lossy().to_string())
         } else if let Some(ref desc) = self.description {
             // Check if a template exists for this task type
             let template_path = Path::new("templates").join(format!("{}.md", self.r#type));
-            let content = if template_path.exists() {
-                match std::fs::read_to_string(&template_path) {
+            let content = if fs.exists(&template_path).await? {
+                match fs.read_file(&template_path).await {
                     Ok(template_content) => template_content.replace("{{DESCRIPTION}}", desc),
                     Err(e) => {
                         eprintln!("Warning: Failed to read template file: {}", e);
@@ -69,8 +77,8 @@ impl QuickCommand {
                 desc.clone()
             };
 
-            std::fs::write(&dest_path, content)?;
-            if template_path.exists() {
+            fs.write_file(&dest_path, &content).await?;
+            if fs.exists(&template_path).await? {
                 println!("Created instructions file from {} template", self.r#type);
             } else {
                 println!("Created instructions file from description");
@@ -79,8 +87,8 @@ impl QuickCommand {
         } else if self.edit {
             // Create empty instructions file for editing
             let template_path = Path::new("templates").join(format!("{}.md", self.r#type));
-            let initial_content = if template_path.exists() {
-                match std::fs::read_to_string(&template_path) {
+            let initial_content = if fs.exists(&template_path).await? {
+                match fs.read_file(&template_path).await {
                     Ok(template_content) => template_content.replace(
                         "{{DESCRIPTION}}",
                         "<!-- TODO: Add your task description here -->",
@@ -91,7 +99,7 @@ impl QuickCommand {
                 String::new()
             };
 
-            std::fs::write(&dest_path, initial_content)?;
+            fs.write_file(&dest_path, &initial_content).await?;
             println!("Created instructions file for editing");
             Ok(dest_path.to_string_lossy().to_string())
         } else {
@@ -118,12 +126,22 @@ impl QuickCommand {
             return Err("Editor exited with non-zero status".into());
         }
 
+        Ok(())
+    }
+
+    async fn check_instructions_not_empty(
+        &self,
+        instructions_path: &str,
+        ctx: &AppContext,
+    ) -> Result<(), Box<dyn Error>> {
         // Check if file is empty after editing
-        let content = std::fs::read_to_string(instructions_path)?;
+        let content = ctx
+            .file_system()
+            .read_file(Path::new(instructions_path))
+            .await?;
         if content.trim().is_empty() {
             return Err("Instructions file is empty. Task execution cancelled.".into());
         }
-
         Ok(())
     }
 }
@@ -135,17 +153,15 @@ impl Command for QuickCommand {
         println!("Type: {}", self.r#type);
 
         self.validate_input()?;
-        self.validate_task_type()?;
+        self.validate_task_type(ctx).await?;
 
-        let task_dir = self.create_task_directory()?;
-        let instructions_path = self.create_instructions_file(&task_dir)?;
+        let task_dir = self.create_task_directory(ctx).await?;
+        let instructions_path = self.create_instructions_file(&task_dir, ctx).await?;
 
         if self.edit {
-            if let Err(e) = self.open_editor(&instructions_path) {
-                // Clean up on error
-                let _ = std::fs::remove_dir_all(&task_dir);
-                return Err(e);
-            }
+            self.open_editor(&instructions_path)?;
+            self.check_instructions_not_empty(&instructions_path, ctx)
+                .await?;
         }
 
         if let Some(ref agent) = self.agent {

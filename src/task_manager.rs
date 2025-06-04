@@ -1,14 +1,16 @@
-use crate::context::AppContext;
+use crate::context::{file_system::FileSystemOperations, AppContext};
 use crate::docker::DockerManager;
 use crate::git::{get_repo_manager, RepoManager};
 use crate::log_processor::LogProcessor;
 use crate::task::{get_task_storage, Task, TaskStatus, TaskStorage};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub struct TaskManager {
     repo_manager: RepoManager,
     docker_manager: Box<dyn DockerManagerTrait>,
     task_storage: Option<Box<dyn TaskStorage>>,
+    file_system: Arc<dyn FileSystemOperations>,
 }
 
 // Trait for Docker manager to allow testing
@@ -88,17 +90,19 @@ impl From<String> for TaskExecutionError {
 impl TaskManager {
     pub fn new(ctx: &AppContext) -> Result<Self, String> {
         Ok(Self {
-            repo_manager: get_repo_manager(),
+            repo_manager: get_repo_manager(ctx.file_system()),
             docker_manager: Box::new(DockerManager::new(ctx.docker_client())),
             task_storage: None,
+            file_system: ctx.file_system(),
         })
     }
 
     pub fn with_storage(ctx: &AppContext) -> Result<Self, String> {
         Ok(Self {
-            repo_manager: get_repo_manager(),
+            repo_manager: get_repo_manager(ctx.file_system()),
             docker_manager: Box::new(DockerManager::new(ctx.docker_client())),
-            task_storage: Some(get_task_storage().map_err(|e| e.to_string())?),
+            task_storage: Some(get_task_storage(ctx.file_system())),
+            file_system: ctx.file_system(),
         })
     }
 
@@ -107,22 +111,26 @@ impl TaskManager {
         repo_manager: RepoManager,
         docker_manager: Box<dyn DockerManagerTrait>,
         task_storage: Option<Box<dyn TaskStorage>>,
+        file_system: Arc<dyn FileSystemOperations>,
     ) -> Self {
         Self {
             repo_manager,
             docker_manager,
             task_storage,
+            file_system,
         }
     }
 
     /// Prepare instructions file by copying it to the task directory
-    pub fn prepare_instructions_file(
+    pub async fn prepare_instructions_file(
         &self,
         instructions_path: &str,
         repo_path: &Path,
     ) -> Result<PathBuf, String> {
         // Read the instructions file to verify it exists
-        std::fs::read_to_string(instructions_path)
+        self.file_system
+            .read_file(Path::new(instructions_path))
+            .await
             .map_err(|e| format!("Error reading instructions file: {}", e))?;
 
         // Copy instructions file to task folder (parent of repo_path)
@@ -135,7 +143,9 @@ impl TaskManager {
             .unwrap_or_else(|| std::ffi::OsStr::new("instructions.md"));
         let dest_path = task_folder.join(inst_filename);
 
-        std::fs::copy(instructions_path, &dest_path)
+        self.file_system
+            .copy_file(Path::new(instructions_path), &dest_path)
+            .await
             .map_err(|e| format!("Error copying instructions file: {}", e))?;
 
         println!("Copied instructions file to: {}", dest_path.display());
@@ -172,13 +182,15 @@ impl TaskManager {
         let (repo_path, branch_name) = self
             .repo_manager
             .copy_repo(task_name)
+            .await
             .map_err(|e| format!("Error copying repository: {}", e))?;
 
         println!("Created repository copy at: {}", repo_path.display());
 
         // Ensure we have an instructions file
         let instructions_file_path = if let Some(inst_path) = instructions_path {
-            self.prepare_instructions_file(inst_path, &repo_path)?
+            self.prepare_instructions_file(inst_path, &repo_path)
+                .await?
         } else {
             return Err("No instructions file provided".to_string().into());
         };
@@ -198,8 +210,8 @@ impl TaskManager {
                 command
             };
 
-        // Create a log processor
-        let mut log_processor = LogProcessor::new();
+        // Create a log processor with file system
+        let mut log_processor = LogProcessor::with_file_system(self.file_system.clone());
 
         // Launch Docker container with streaming
         println!("Launching Docker container...");
@@ -280,7 +292,7 @@ impl TaskManager {
         // Save the full log file
         let task_dir = repo_path.parent().unwrap_or(&repo_path);
         let log_file_path = task_dir.join(format!("{}-full.log", task_name));
-        if let Err(e) = log_processor.save_full_log(&log_file_path) {
+        if let Err(e) = log_processor.save_full_log(&log_file_path).await {
             eprintln!("Warning: Failed to save full log file: {}", e);
         } else {
             println!("Full log saved to: {}", log_file_path.display());
@@ -388,7 +400,7 @@ impl TaskManager {
     /// Run debug container for a task
     pub async fn run_debug_container(&self, task_name: &str) -> Result<(), String> {
         // Copy repository for the debug session
-        let (repo_path, branch_name) = self.repo_manager.copy_repo(task_name)?;
+        let (repo_path, branch_name) = self.repo_manager.copy_repo(task_name).await?;
 
         println!(
             "Successfully created repository copy at: {}",
@@ -468,8 +480,10 @@ impl TaskManager {
 
         // Delete the task directory
         let task_dir = PathBuf::from(".tsk/tasks").join(task_id);
-        if task_dir.exists() {
-            std::fs::remove_dir_all(&task_dir)
+        if self.file_system.exists(&task_dir).await.unwrap_or(false) {
+            self.file_system
+                .remove_dir(&task_dir)
+                .await
                 .map_err(|e| format!("Error deleting task directory: {}", e))?;
         }
 
@@ -499,8 +513,8 @@ impl TaskManager {
         // Delete completed tasks directories
         for task in &completed_tasks {
             let task_dir = PathBuf::from(".tsk/tasks").join(&task.id);
-            if task_dir.exists() {
-                if let Err(e) = std::fs::remove_dir_all(&task_dir) {
+            if self.file_system.exists(&task_dir).await.unwrap_or(false) {
+                if let Err(e) = self.file_system.remove_dir(&task_dir).await {
                     eprintln!(
                         "Warning: Failed to delete task directory {}: {}",
                         task.id, e
@@ -518,16 +532,19 @@ impl TaskManager {
         // Delete all quick task directories
         let quick_tasks_dir = PathBuf::from(".tsk/quick-tasks");
         let mut quick_task_count = 0;
-        if quick_tasks_dir.exists() {
-            match std::fs::read_dir(&quick_tasks_dir) {
+        if self
+            .file_system
+            .exists(&quick_tasks_dir)
+            .await
+            .unwrap_or(false)
+        {
+            match self.file_system.read_dir(&quick_tasks_dir).await {
                 Ok(entries) => {
-                    for entry in entries.flatten() {
-                        if entry.path().is_dir() {
-                            if let Err(e) = std::fs::remove_dir_all(entry.path()) {
-                                eprintln!("Warning: Failed to delete quick task directory: {}", e);
-                            } else {
-                                quick_task_count += 1;
-                            }
+                    for entry_path in entries {
+                        if let Err(e) = self.file_system.remove_dir(&entry_path).await {
+                            eprintln!("Warning: Failed to delete quick task directory: {}", e);
+                        } else {
+                            quick_task_count += 1;
                         }
                     }
                 }
@@ -653,15 +670,19 @@ mod tests {
             }
         }
 
-        RepoManager::with_executor(Box::new(MockCommandExecutor))
+        use crate::context::file_system::tests::MockFileSystem;
+        let fs = Arc::new(MockFileSystem::new());
+        RepoManager::with_executor(Box::new(MockCommandExecutor), fs)
     }
 
     #[tokio::test]
     async fn test_build_task_command_with_instructions() {
+        use crate::context::file_system::tests::MockFileSystem;
         let temp_dir = TempDir::new().unwrap();
         let repo_manager = create_mock_repo_manager(&temp_dir);
         let docker_manager = Box::new(MockDockerManager::new());
-        let task_manager = TaskManager::with_mocks(repo_manager, docker_manager, None);
+        let fs = Arc::new(MockFileSystem::new());
+        let task_manager = TaskManager::with_mocks(repo_manager, docker_manager, None, fs);
 
         let inst_path = PathBuf::from("/tmp/instructions.md");
         let command = task_manager.build_task_command(&inst_path).unwrap();
@@ -690,7 +711,9 @@ mod tests {
 
         let repo_manager = create_mock_repo_manager(&temp_dir);
         let docker_manager = Box::new(MockDockerManager::new());
-        let task_manager = TaskManager::with_mocks(repo_manager, docker_manager, None);
+        use crate::context::file_system::tests::MockFileSystem;
+        let fs = Arc::new(MockFileSystem::new());
+        let task_manager = TaskManager::with_mocks(repo_manager, docker_manager, None, fs);
 
         // Create an instructions file
         let instructions_file = temp_dir.path().join("instructions.md");
@@ -728,8 +751,10 @@ mod tests {
         std::fs::create_dir_all(temp_dir.path().join(".tsk/tasks")).unwrap();
 
         // Create task storage and add a test task
+        use crate::context::file_system::tests::MockFileSystem;
+        let fs = Arc::new(MockFileSystem::new());
         let storage =
-            crate::task::JsonTaskStorage::new(temp_dir.path().join(".tsk").as_path()).unwrap();
+            crate::task::JsonTaskStorage::new(temp_dir.path().join(".tsk").as_path(), fs.clone());
         let task = Task::new(
             "test-task".to_string(),
             "feature".to_string(),
@@ -749,16 +774,21 @@ mod tests {
         // Create task manager with storage
         let repo_manager = create_mock_repo_manager(&temp_dir);
         let docker_manager = Box::new(MockDockerManager::new());
-        let task_manager =
-            TaskManager::with_mocks(repo_manager, docker_manager, Some(Box::new(storage)));
+        let task_manager = TaskManager::with_mocks(
+            repo_manager,
+            docker_manager,
+            Some(Box::new(storage)),
+            fs.clone(),
+        );
 
         // Delete the task
         let result = task_manager.delete_task(&task_id).await;
         assert!(result.is_ok());
 
         // Verify task is deleted from storage
+        let fs2 = Arc::new(MockFileSystem::new());
         let storage =
-            crate::task::JsonTaskStorage::new(temp_dir.path().join(".tsk").as_path()).unwrap();
+            crate::task::JsonTaskStorage::new(temp_dir.path().join(".tsk").as_path(), fs2);
         let task_lookup = storage.get_task(&task_id).await.unwrap();
         assert!(task_lookup.is_none());
 
@@ -783,8 +813,10 @@ mod tests {
         std::fs::create_dir_all(temp_dir.path().join(".tsk/quick-tasks")).unwrap();
 
         // Create task storage and add tasks with different statuses
+        use crate::context::file_system::tests::MockFileSystem;
+        let fs2 = Arc::new(MockFileSystem::new());
         let storage =
-            crate::task::JsonTaskStorage::new(temp_dir.path().join(".tsk").as_path()).unwrap();
+            crate::task::JsonTaskStorage::new(temp_dir.path().join(".tsk").as_path(), fs2.clone());
 
         // Add queued task
         let queued_task = Task::new(
@@ -828,8 +860,12 @@ mod tests {
         // Create task manager with storage
         let repo_manager = create_mock_repo_manager(&temp_dir);
         let docker_manager = Box::new(MockDockerManager::new());
-        let task_manager =
-            TaskManager::with_mocks(repo_manager, docker_manager, Some(Box::new(storage)));
+        let task_manager = TaskManager::with_mocks(
+            repo_manager,
+            docker_manager,
+            Some(Box::new(storage)),
+            fs2.clone(),
+        );
 
         // Clean tasks
         let result = task_manager.clean_tasks().await;
@@ -839,8 +875,9 @@ mod tests {
         assert_eq!(quick_count, 2);
 
         // Verify queued task still exists
+        let fs2 = Arc::new(MockFileSystem::new());
         let storage =
-            crate::task::JsonTaskStorage::new(temp_dir.path().join(".tsk").as_path()).unwrap();
+            crate::task::JsonTaskStorage::new(temp_dir.path().join(".tsk").as_path(), fs2);
         let tasks = storage.list_tasks().await.unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].status, TaskStatus::Queued);
@@ -868,8 +905,10 @@ mod tests {
         std::fs::create_dir_all(temp_dir.path().join(".tsk/tasks")).unwrap();
 
         // Create task storage
+        use crate::context::file_system::tests::MockFileSystem;
+        let fs = Arc::new(MockFileSystem::new());
         let storage =
-            crate::task::JsonTaskStorage::new(temp_dir.path().join(".tsk").as_path()).unwrap();
+            crate::task::JsonTaskStorage::new(temp_dir.path().join(".tsk").as_path(), fs.clone());
 
         // Create a task with a specific ID using new_with_id
         let task_id = "2024-01-15-1430-test-feature".to_string();
@@ -896,7 +935,7 @@ mod tests {
         let repo_manager = create_mock_repo_manager(&temp_dir);
         let docker_manager = Box::new(MockDockerManager::new());
         let task_manager =
-            TaskManager::with_mocks(repo_manager, docker_manager, Some(Box::new(storage)));
+            TaskManager::with_mocks(repo_manager, docker_manager, Some(Box::new(storage)), fs);
 
         // Clean tasks
         let result = task_manager.clean_tasks().await;
@@ -905,8 +944,9 @@ mod tests {
         assert_eq!(completed_count, 1);
 
         // Verify task was removed from storage
+        let fs2 = Arc::new(MockFileSystem::new());
         let storage =
-            crate::task::JsonTaskStorage::new(temp_dir.path().join(".tsk").as_path()).unwrap();
+            crate::task::JsonTaskStorage::new(temp_dir.path().join(".tsk").as_path(), fs2);
         let tasks = storage.list_tasks().await.unwrap();
         assert_eq!(tasks.len(), 0);
 

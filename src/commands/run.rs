@@ -10,7 +10,7 @@ pub struct RunCommand;
 #[async_trait]
 impl Command for RunCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
-        let storage = get_task_storage()?;
+        let storage = get_task_storage(ctx.file_system());
         let tasks = storage.list_tasks().await?;
 
         let queued_tasks: Vec<Task> = tasks

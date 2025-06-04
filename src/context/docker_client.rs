@@ -40,20 +40,21 @@ pub trait DockerClient: Send + Sync {
 }
 
 #[derive(Clone)]
-pub struct RealDockerClient {
+pub struct DefaultDockerClient {
     docker: Docker,
 }
 
-impl RealDockerClient {
-    pub fn new() -> Result<Self, String> {
-        let docker = Docker::connect_with_local_defaults()
-            .map_err(|e| format!("Failed to connect to Docker: {}", e))?;
-        Ok(Self { docker })
+impl DefaultDockerClient {
+    pub fn new() -> Self {
+        match Docker::connect_with_local_defaults() {
+            Ok(docker) => Self { docker },
+            Err(e) => panic!("Failed to connect to Docker: {}", e),
+        }
     }
 }
 
 #[async_trait]
-impl DockerClient for RealDockerClient {
+impl DockerClient for DefaultDockerClient {
     #[cfg(test)]
     fn as_any(&self) -> &dyn std::any::Any {
         self

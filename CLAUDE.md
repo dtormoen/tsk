@@ -56,9 +56,10 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Automatic commit and fetch operations
 
 **Dependency Injection** (`src/context/`)
-- `AppContext` provides centralized resource management
+- `AppContext` provides centralized resource management with builder pattern
 - Trait abstractions enable comprehensive testing with mocks
 - Factory pattern prevents accidental operations in tests
+- `FileSystemOperations` trait abstracts all file system operations for testability
 
 ### Branch and Task Conventions
 

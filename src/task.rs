@@ -1,3 +1,4 @@
+use crate::context::file_system::FileSystemOperations;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -109,36 +110,45 @@ pub trait TaskStorage: Send + Sync {
 pub struct JsonTaskStorage {
     file_path: PathBuf,
     lock: Arc<Mutex<()>>,
+    file_system: Arc<dyn FileSystemOperations>,
 }
 
 impl JsonTaskStorage {
-    pub fn new(base_path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(base_path: &Path, file_system: Arc<dyn FileSystemOperations>) -> Self {
         let file_path = base_path.join("tasks.json");
 
-        // Ensure the directory exists
-        if let Some(parent) = file_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        Ok(Self {
+        Self {
             file_path,
             lock: Arc::new(Mutex::new(())),
-        })
+            file_system,
+        }
     }
 
     async fn read_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error>> {
-        if !self.file_path.exists() {
+        if !self
+            .file_system
+            .exists(&self.file_path)
+            .await
+            .map_err(|e| e.to_string())?
+        {
             return Ok(Vec::new());
         }
 
-        let contents = tokio::fs::read_to_string(&self.file_path).await?;
+        let contents = self
+            .file_system
+            .read_file(&self.file_path)
+            .await
+            .map_err(|e| e.to_string())?;
         let tasks: Vec<Task> = serde_json::from_str(&contents)?;
         Ok(tasks)
     }
 
     async fn write_tasks(&self, tasks: &[Task]) -> Result<(), Box<dyn std::error::Error>> {
         let contents = serde_json::to_string_pretty(tasks)?;
-        tokio::fs::write(&self.file_path, contents).await?;
+        self.file_system
+            .write_file(&self.file_path, &contents)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 }
@@ -206,20 +216,22 @@ impl TaskStorage for JsonTaskStorage {
 }
 
 // Factory function for getting task storage
-pub fn get_task_storage() -> Result<Box<dyn TaskStorage>, Box<dyn std::error::Error>> {
-    let storage = JsonTaskStorage::new(Path::new(".tsk"))?;
-    Ok(Box::new(storage))
+pub fn get_task_storage(file_system: Arc<dyn FileSystemOperations>) -> Box<dyn TaskStorage> {
+    let storage = JsonTaskStorage::new(Path::new(".tsk"), file_system);
+    Box::new(storage)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::file_system::DefaultFileSystem;
     use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_json_task_storage() {
         let temp_dir = TempDir::new().unwrap();
-        let storage = JsonTaskStorage::new(temp_dir.path()).unwrap();
+        let file_system = Arc::new(DefaultFileSystem);
+        let storage = JsonTaskStorage::new(temp_dir.path(), file_system);
 
         // Test adding a task
         let task = Task::new(

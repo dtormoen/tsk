@@ -1,17 +1,18 @@
+use crate::context::file_system::FileSystemOperations;
 use chrono::{DateTime, Local};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::Arc;
 
 /// Factory function to get a RepoManager instance
 /// Returns a dummy implementation in test mode that panics on use
 #[cfg(not(test))]
-pub fn get_repo_manager() -> RepoManager {
-    RepoManager::new()
+pub fn get_repo_manager(file_system: Arc<dyn FileSystemOperations>) -> RepoManager {
+    RepoManager::new(file_system)
 }
 
 #[cfg(test)]
-pub fn get_repo_manager() -> RepoManager {
+pub fn get_repo_manager(file_system: Arc<dyn FileSystemOperations>) -> RepoManager {
     struct PanicCommandExecutor;
 
     impl CommandExecutor for PanicCommandExecutor {
@@ -23,6 +24,7 @@ pub fn get_repo_manager() -> RepoManager {
     RepoManager {
         base_path: PathBuf::from(".tsk/tasks"),
         command_executor: Box::new(PanicCommandExecutor),
+        file_system,
     }
 }
 
@@ -46,28 +48,34 @@ impl CommandExecutor for SystemCommandExecutor {
 pub struct RepoManager {
     base_path: PathBuf,
     command_executor: Box<dyn CommandExecutor>,
+    file_system: Arc<dyn FileSystemOperations>,
 }
 
 impl RepoManager {
     #[cfg(not(test))]
-    pub fn new() -> Self {
+    pub fn new(file_system: Arc<dyn FileSystemOperations>) -> Self {
         Self {
             base_path: PathBuf::from(".tsk/tasks"),
             command_executor: Box::new(SystemCommandExecutor),
+            file_system,
         }
     }
 
     #[cfg(test)]
-    pub fn with_executor(command_executor: Box<dyn CommandExecutor>) -> Self {
+    pub fn with_executor(
+        command_executor: Box<dyn CommandExecutor>,
+        file_system: Arc<dyn FileSystemOperations>,
+    ) -> Self {
         Self {
             base_path: PathBuf::from(".tsk/tasks"),
             command_executor,
+            file_system,
         }
     }
 
     /// Copy repository for a task with the name `<task-name>` in `.tsk/tasks/<task-name>/repo-<task-name>`
     /// Returns the path to the copied repository and the branch name
-    pub fn copy_repo(&self, task_name: &str) -> Result<(PathBuf, String), String> {
+    pub async fn copy_repo(&self, task_name: &str) -> Result<(PathBuf, String), String> {
         // Generate timestamp in YYYY-MM-DD-HHMM format
         let now: DateTime<Local> = Local::now();
         let timestamp = now.format("%Y-%m-%d-%H%M").to_string();
@@ -81,7 +89,9 @@ impl RepoManager {
         let repo_path = task_dir.join(format!("repo-{}", task_name));
 
         // Create directories if they don't exist
-        fs::create_dir_all(&task_dir)
+        self.file_system
+            .create_dir(&task_dir)
+            .await
             .map_err(|e| format!("Failed to create task directory: {}", e))?;
 
         // Check if we're in a git repository
@@ -98,7 +108,7 @@ impl RepoManager {
             .map_err(|e| format!("Failed to get current directory: {}", e))?;
 
         // Copy the repository, excluding .tsk directory
-        self.copy_directory(&current_dir, &repo_path)?;
+        self.copy_directory(&current_dir, &repo_path).await?;
 
         // Change to the copied repository directory
         let repo_path_str = repo_path
@@ -123,13 +133,19 @@ impl RepoManager {
 
     /// Copy directory recursively, excluding .tsk directory
     #[allow(clippy::only_used_in_recursion)]
-    fn copy_directory(&self, src: &Path, dst: &Path) -> Result<(), String> {
-        fs::create_dir_all(dst)
+    async fn copy_directory(&self, src: &Path, dst: &Path) -> Result<(), String> {
+        self.file_system
+            .create_dir(dst)
+            .await
             .map_err(|e| format!("Failed to create destination directory: {}", e))?;
 
-        for entry in fs::read_dir(src).map_err(|e| format!("Failed to read directory: {}", e))? {
-            let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
-            let path = entry.path();
+        let entries = self
+            .file_system
+            .read_dir(src)
+            .await
+            .map_err(|e| format!("Failed to read directory: {}", e))?;
+
+        for path in entries {
             let file_name = path
                 .file_name()
                 .ok_or_else(|| "Invalid file name".to_string())?;
@@ -141,10 +157,13 @@ impl RepoManager {
 
             let dst_path = dst.join(file_name);
 
-            if path.is_dir() {
-                self.copy_directory(&path, &dst_path)?;
+            // Check if it's a directory by trying to read it as one
+            if self.file_system.read_dir(&path).await.is_ok() {
+                Box::pin(self.copy_directory(&path, &dst_path)).await?;
             } else {
-                fs::copy(&path, &dst_path)
+                self.file_system
+                    .copy_file(&path, &dst_path)
+                    .await
                     .map_err(|e| format!("Failed to copy file {}: {}", path.display(), e))?;
             }
         }
@@ -334,8 +353,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_copy_repo_not_in_git_repo() {
+    #[tokio::test]
+    async fn test_copy_repo_not_in_git_repo() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let base_path = temp_dir.path().join(".tsk/tasks");
 
@@ -351,12 +370,16 @@ mod tests {
             "fatal: not a git repository",
         );
 
+        use crate::context::file_system::tests::MockFileSystem;
+        let fs = Arc::new(MockFileSystem::new());
+
         let manager = RepoManager {
             base_path: base_path.clone(),
             command_executor: Box::new(mock_executor),
+            file_system: fs,
         };
 
-        let result = manager.copy_repo("test-task");
+        let result = manager.copy_repo("test-task").await;
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Not in a git repository");
@@ -379,9 +402,13 @@ mod tests {
             "",
         );
 
+        use crate::context::file_system::tests::MockFileSystem;
+        let fs = Arc::new(MockFileSystem::new());
+
         let manager = RepoManager {
             base_path: PathBuf::from(".tsk/tasks"),
             command_executor: Box::new(mock_executor),
+            file_system: fs,
         };
 
         let result = manager.commit_changes(repo_path, "Test commit");
@@ -430,9 +457,13 @@ mod tests {
             "",
         );
 
+        use crate::context::file_system::tests::MockFileSystem;
+        let fs = Arc::new(MockFileSystem::new());
+
         let manager = RepoManager {
             base_path: PathBuf::from(".tsk/tasks"),
             command_executor: Box::new(mock_executor),
+            file_system: fs,
         };
 
         let result = manager.commit_changes(repo_path, "Test commit");

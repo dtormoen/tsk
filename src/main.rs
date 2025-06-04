@@ -7,7 +7,7 @@ use commands::{
 };
 
 mod context;
-use context::{docker_client::RealDockerClient, AppContext};
+use context::AppContext;
 
 mod git;
 
@@ -117,15 +117,8 @@ enum Commands {
 async fn main() {
     let cli = Cli::parse();
 
-    // Create the AppContext
-    let docker_client = match RealDockerClient::new() {
-        Ok(client) => std::sync::Arc::new(client),
-        Err(e) => {
-            eprintln!("Failed to create Docker client: {}", e);
-            std::process::exit(1);
-        }
-    };
-    let app_context = AppContext::new(docker_client);
+    // Create the AppContext using the builder pattern
+    let app_context = AppContext::builder().build();
 
     let command: Box<dyn Command> = match cli.command {
         Commands::Add {

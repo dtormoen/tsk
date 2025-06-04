@@ -1,6 +1,7 @@
+use crate::context::file_system::FileSystemOperations;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::io::Write;
+use std::sync::Arc;
 
 #[derive(Debug, Deserialize, Serialize)]
 struct ClaudeMessage {
@@ -33,6 +34,7 @@ struct MessageContent {
 pub struct LogProcessor {
     full_log: Vec<String>,
     final_result: Option<TaskResult>,
+    file_system: Option<Arc<dyn FileSystemOperations>>,
 }
 
 #[derive(Debug, Clone)]
@@ -46,10 +48,20 @@ pub struct TaskResult {
 }
 
 impl LogProcessor {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
             full_log: Vec::new(),
             final_result: None,
+            file_system: None,
+        }
+    }
+
+    pub fn with_file_system(file_system: Arc<dyn FileSystemOperations>) -> Self {
+        Self {
+            full_log: Vec::new(),
+            final_result: None,
+            file_system: Some(file_system),
         }
     }
 
@@ -174,12 +186,15 @@ impl LogProcessor {
         self.full_log.join("\n")
     }
 
-    pub fn save_full_log(&self, path: &std::path::Path) -> std::io::Result<()> {
-        let mut file = std::fs::File::create(path)?;
-        for line in &self.full_log {
-            writeln!(file, "{}", line)?;
+    pub async fn save_full_log(&self, path: &std::path::Path) -> Result<(), String> {
+        let content = self.full_log.join("\n");
+        if let Some(ref fs) = self.file_system {
+            fs.write_file(path, &content)
+                .await
+                .map_err(|e| format!("Failed to save log file: {}", e))
+        } else {
+            Err("File system not initialized in LogProcessor".to_string())
         }
-        Ok(())
     }
 
     pub fn get_final_result(&self) -> Option<&TaskResult> {

@@ -26,8 +26,8 @@ struct TaskRow {
 
 #[async_trait]
 impl Command for ListCommand {
-    async fn execute(&self, _ctx: &AppContext) -> Result<(), Box<dyn Error>> {
-        let storage = get_task_storage()?;
+    async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
+        let storage = get_task_storage(ctx.file_system());
         let tasks = storage.list_tasks().await?;
 
         if tasks.is_empty() {
