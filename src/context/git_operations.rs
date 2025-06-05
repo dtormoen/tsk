@@ -1,6 +1,6 @@
 use async_trait::async_trait;
+use git2::{Repository, RepositoryOpenFlags};
 use std::path::Path;
-use std::process::Output;
 
 #[async_trait]
 pub trait GitOperations: Send + Sync {
@@ -33,91 +33,180 @@ pub trait GitOperations: Send + Sync {
 
 pub struct DefaultGitOperations;
 
-impl DefaultGitOperations {
-    async fn execute_git_command(&self, args: &[&str]) -> Result<Output, String> {
-        tokio::process::Command::new("git")
-            .args(args)
-            .output()
-            .await
-            .map_err(|e| format!("Failed to execute git command: {}", e))
-    }
-}
+impl DefaultGitOperations {}
 
 #[async_trait]
 impl GitOperations for DefaultGitOperations {
     async fn is_git_repository(&self) -> Result<bool, String> {
-        let output = self
-            .execute_git_command(&["rev-parse", "--git-dir"])
-            .await?;
-        Ok(output.status.success())
+        let current_dir = std::env::current_dir()
+            .map_err(|e| format!("Failed to get current directory: {}", e))?;
+
+        match Repository::open_ext(&current_dir, RepositoryOpenFlags::empty(), &[] as &[&Path]) {
+            Ok(_) => Ok(true),
+            Err(_) => Ok(false),
+        }
     }
 
     async fn create_branch(&self, repo_path: &Path, branch_name: &str) -> Result<(), String> {
-        let repo_path_str = repo_path
-            .to_str()
-            .ok_or_else(|| "Invalid repo path".to_string())?;
+        tokio::task::spawn_blocking({
+            let repo_path = repo_path.to_owned();
+            let branch_name = branch_name.to_owned();
+            move || -> Result<(), String> {
+                let repo = Repository::open(&repo_path)
+                    .map_err(|e| format!("Failed to open repository: {}", e))?;
 
-        let output = self
-            .execute_git_command(&["-C", repo_path_str, "checkout", "-b", branch_name])
-            .await?;
+                let head = repo
+                    .head()
+                    .map_err(|e| format!("Failed to get HEAD: {}", e))?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("Failed to create branch: {}", stderr));
-        }
+                let commit = head
+                    .peel_to_commit()
+                    .map_err(|e| format!("Failed to get commit from HEAD: {}", e))?;
 
-        Ok(())
+                repo.branch(&branch_name, &commit, false)
+                    .map_err(|e| format!("Failed to create branch: {}", e))?;
+
+                repo.set_head(&format!("refs/heads/{}", branch_name))
+                    .map_err(|e| format!("Failed to checkout branch: {}", e))?;
+
+                repo.checkout_head(None)
+                    .map_err(|e| format!("Failed to update working directory: {}", e))?;
+
+                Ok(())
+            }
+        })
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
     }
 
     async fn get_status(&self, repo_path: &Path) -> Result<String, String> {
-        let repo_path_str = repo_path
-            .to_str()
-            .ok_or_else(|| "Invalid repo path".to_string())?;
+        tokio::task::spawn_blocking({
+            let repo_path = repo_path.to_owned();
+            move || -> Result<String, String> {
+                let repo = Repository::open(&repo_path)
+                    .map_err(|e| format!("Failed to open repository: {}", e))?;
 
-        let output = self
-            .execute_git_command(&["-C", repo_path_str, "status", "--porcelain"])
-            .await?;
+                let statuses = repo
+                    .statuses(None)
+                    .map_err(|e| format!("Failed to get repository status: {}", e))?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("Failed to check git status: {}", stderr));
-        }
+                let mut result = String::new();
 
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+                for entry in statuses.iter() {
+                    let status = entry.status();
+                    if let Some(path) = entry.path() {
+                        let status_char = if status.is_wt_new() {
+                            "??"
+                        } else if status.contains(git2::Status::INDEX_NEW) {
+                            "A"
+                        } else if status.contains(git2::Status::INDEX_MODIFIED)
+                            || status.contains(git2::Status::WT_MODIFIED)
+                        {
+                            "M"
+                        } else if status.contains(git2::Status::INDEX_DELETED)
+                            || status.contains(git2::Status::WT_DELETED)
+                        {
+                            "D"
+                        } else if status.contains(git2::Status::INDEX_RENAMED)
+                            || status.contains(git2::Status::WT_RENAMED)
+                        {
+                            "R"
+                        } else if status.contains(git2::Status::CONFLICTED) {
+                            "C"
+                        } else {
+                            continue;
+                        };
+
+                        result.push_str(&format!("{} {}\n", status_char, path));
+                    }
+                }
+
+                Ok(result)
+            }
+        })
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
     }
 
     async fn add_all(&self, repo_path: &Path) -> Result<(), String> {
-        let repo_path_str = repo_path
-            .to_str()
-            .ok_or_else(|| "Invalid repo path".to_string())?;
+        tokio::task::spawn_blocking({
+            let repo_path = repo_path.to_owned();
+            move || -> Result<(), String> {
+                let repo = Repository::open(&repo_path)
+                    .map_err(|e| format!("Failed to open repository: {}", e))?;
 
-        let output = self
-            .execute_git_command(&["-C", repo_path_str, "add", "-A"])
-            .await?;
+                let mut index = repo
+                    .index()
+                    .map_err(|e| format!("Failed to get repository index: {}", e))?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("Failed to add changes: {}", stderr));
-        }
+                index
+                    .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+                    .map_err(|e| format!("Failed to add files to index: {}", e))?;
 
-        Ok(())
+                index
+                    .write()
+                    .map_err(|e| format!("Failed to write index: {}", e))?;
+
+                Ok(())
+            }
+        })
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
     }
 
     async fn commit(&self, repo_path: &Path, message: &str) -> Result<(), String> {
-        let repo_path_str = repo_path
-            .to_str()
-            .ok_or_else(|| "Invalid repo path".to_string())?;
+        tokio::task::spawn_blocking({
+            let repo_path = repo_path.to_owned();
+            let message = message.to_owned();
+            move || -> Result<(), String> {
+                let repo = Repository::open(&repo_path)
+                    .map_err(|e| format!("Failed to open repository: {}", e))?;
 
-        let output = self
-            .execute_git_command(&["-C", repo_path_str, "commit", "-m", message])
-            .await?;
+                let mut index = repo
+                    .index()
+                    .map_err(|e| format!("Failed to get repository index: {}", e))?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("Failed to commit changes: {}", stderr));
-        }
+                let tree_id = index
+                    .write_tree()
+                    .map_err(|e| format!("Failed to write tree: {}", e))?;
 
-        Ok(())
+                let tree = repo
+                    .find_tree(tree_id)
+                    .map_err(|e| format!("Failed to find tree: {}", e))?;
+
+                let signature = repo
+                    .signature()
+                    .map_err(|e| format!("Failed to get signature: {}", e))?;
+
+                let parent_commit = match repo.head() {
+                    Ok(head) => Some(
+                        head.peel_to_commit()
+                            .map_err(|e| format!("Failed to get parent commit: {}", e))?,
+                    ),
+                    Err(_) => None,
+                };
+
+                let parents = if let Some(ref parent) = parent_commit {
+                    vec![parent]
+                } else {
+                    vec![]
+                };
+
+                repo.commit(
+                    Some("HEAD"),
+                    &signature,
+                    &signature,
+                    &message,
+                    &tree,
+                    &parents,
+                )
+                .map_err(|e| format!("Failed to create commit: {}", e))?;
+
+                Ok(())
+            }
+        })
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
     }
 
     async fn add_remote(
@@ -126,22 +215,29 @@ impl GitOperations for DefaultGitOperations {
         remote_name: &str,
         url: &str,
     ) -> Result<(), String> {
-        let repo_path_str = repo_path
-            .to_str()
-            .ok_or_else(|| "Invalid repo path".to_string())?;
+        tokio::task::spawn_blocking({
+            let repo_path = repo_path.to_owned();
+            let remote_name = remote_name.to_owned();
+            let url = url.to_owned();
+            move || -> Result<(), String> {
+                let repo = Repository::open(&repo_path)
+                    .map_err(|e| format!("Failed to open repository: {}", e))?;
 
-        let output = self
-            .execute_git_command(&["-C", repo_path_str, "remote", "add", remote_name, url])
-            .await?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if !stderr.contains("already exists") {
-                return Err(format!("Failed to add remote: {}", stderr));
+                let result = repo.remote(&remote_name, &url);
+                match result {
+                    Ok(_) => Ok(()),
+                    Err(e) => {
+                        if e.code() == git2::ErrorCode::Exists {
+                            Ok(())
+                        } else {
+                            Err(format!("Failed to add remote: {}", e))
+                        }
+                    }
+                }
             }
-        }
-
-        Ok(())
+        })
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
     }
 
     async fn fetch_branch(
@@ -150,43 +246,47 @@ impl GitOperations for DefaultGitOperations {
         remote_name: &str,
         branch_name: &str,
     ) -> Result<(), String> {
-        let repo_path_str = repo_path
-            .to_str()
-            .ok_or_else(|| "Invalid repo path".to_string())?;
+        tokio::task::spawn_blocking({
+            let repo_path = repo_path.to_owned();
+            let remote_name = remote_name.to_owned();
+            let branch_name = branch_name.to_owned();
+            move || -> Result<(), String> {
+                let repo = Repository::open(&repo_path)
+                    .map_err(|e| format!("Failed to open repository: {}", e))?;
 
-        let output = self
-            .execute_git_command(&[
-                "-C",
-                repo_path_str,
-                "fetch",
-                remote_name,
-                &format!("{}:{}", branch_name, branch_name),
-            ])
-            .await?;
+                let mut remote = repo
+                    .find_remote(&remote_name)
+                    .map_err(|e| format!("Failed to find remote: {}", e))?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("Failed to fetch changes: {}", stderr));
-        }
+                let refspec = format!("refs/heads/{}:refs/heads/{}", branch_name, branch_name);
 
-        Ok(())
+                remote
+                    .fetch(&[&refspec], None, None)
+                    .map_err(|e| format!("Failed to fetch changes: {}", e))?;
+
+                Ok(())
+            }
+        })
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
     }
 
     async fn remove_remote(&self, repo_path: &Path, remote_name: &str) -> Result<(), String> {
-        let repo_path_str = repo_path
-            .to_str()
-            .ok_or_else(|| "Invalid repo path".to_string())?;
+        tokio::task::spawn_blocking({
+            let repo_path = repo_path.to_owned();
+            let remote_name = remote_name.to_owned();
+            move || -> Result<(), String> {
+                let repo = Repository::open(&repo_path)
+                    .map_err(|e| format!("Failed to open repository: {}", e))?;
 
-        let output = self
-            .execute_git_command(&["-C", repo_path_str, "remote", "remove", remote_name])
-            .await?;
+                repo.remote_delete(&remote_name)
+                    .map_err(|e| format!("Failed to remove temporary remote: {}", e))?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("Failed to remove temporary remote: {}", stderr));
-        }
-
-        Ok(())
+                Ok(())
+            }
+        })
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
     }
 }
 

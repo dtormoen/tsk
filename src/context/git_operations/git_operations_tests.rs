@@ -8,11 +8,91 @@ async fn test_default_git_operations_is_git_repository() {
 
     // This will return false in a fresh temp directory
     let temp_dir = TempDir::new().unwrap();
+    let original_dir = std::env::current_dir().unwrap();
     std::env::set_current_dir(temp_dir.path()).unwrap();
 
     let result = git_ops.is_git_repository().await;
     assert!(result.is_ok());
     assert!(!result.unwrap());
+
+    // Restore original directory
+    std::env::set_current_dir(original_dir).unwrap();
+}
+
+#[tokio::test]
+async fn test_default_git_operations_with_real_repo() {
+    let git_ops = DefaultGitOperations;
+    let temp_dir = TempDir::new().unwrap();
+    let repo_path = temp_dir.path();
+
+    // Initialize a real git repository
+    let repo = git2::Repository::init(repo_path).unwrap();
+
+    // Test get_status on empty repo
+    let status = git_ops.get_status(repo_path).await.unwrap();
+    assert_eq!(status, "");
+
+    // Create a test file
+    std::fs::write(repo_path.join("test.txt"), "Hello, world!").unwrap();
+
+    // Test get_status with untracked file
+    let status = git_ops.get_status(repo_path).await.unwrap();
+    assert!(status.contains("?? test.txt"));
+
+    // Test add_all
+    git_ops.add_all(repo_path).await.unwrap();
+
+    // Test get_status after add
+    let status = git_ops.get_status(repo_path).await.unwrap();
+    assert!(status.contains("A test.txt"));
+
+    // Configure git user for commit
+    let mut config = repo.config().unwrap();
+    config.set_str("user.name", "Test User").unwrap();
+    config.set_str("user.email", "test@example.com").unwrap();
+
+    // Test commit
+    git_ops.commit(repo_path, "Initial commit").await.unwrap();
+
+    // Test get_status after commit
+    let status = git_ops.get_status(repo_path).await.unwrap();
+    assert_eq!(status, "");
+
+    // Test create_branch
+    git_ops
+        .create_branch(repo_path, "test-branch")
+        .await
+        .unwrap();
+
+    // Verify we're on the new branch
+    let head = repo.head().unwrap();
+    let branch_name = head.shorthand().unwrap();
+    assert_eq!(branch_name, "test-branch");
+}
+
+#[tokio::test]
+async fn test_default_git_operations_remotes() {
+    let git_ops = DefaultGitOperations;
+    let temp_dir = TempDir::new().unwrap();
+    let repo_path = temp_dir.path();
+
+    // Initialize a git repository
+    git2::Repository::init(repo_path).unwrap();
+
+    // Test add_remote
+    git_ops
+        .add_remote(repo_path, "origin", "https://github.com/test/repo.git")
+        .await
+        .unwrap();
+
+    // Test adding the same remote again (should not error)
+    git_ops
+        .add_remote(repo_path, "origin", "https://github.com/test/repo.git")
+        .await
+        .unwrap();
+
+    // Test remove_remote
+    git_ops.remove_remote(repo_path, "origin").await.unwrap();
 }
 
 #[tokio::test]
