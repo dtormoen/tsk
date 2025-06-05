@@ -23,6 +23,7 @@ pub fn get_repo_manager(
         base_path: PathBuf::from(".tsk/tasks"),
         file_system,
         git_operations,
+        repo_root: None,
     }
 }
 
@@ -30,6 +31,7 @@ pub struct RepoManager {
     base_path: PathBuf,
     file_system: Arc<dyn FileSystemOperations>,
     git_operations: Arc<dyn GitOperations>,
+    repo_root: Option<PathBuf>,
 }
 
 impl RepoManager {
@@ -42,6 +44,7 @@ impl RepoManager {
             base_path: PathBuf::from(".tsk/tasks"),
             file_system,
             git_operations,
+            repo_root: None,
         }
     }
 
@@ -54,6 +57,22 @@ impl RepoManager {
             base_path: PathBuf::from(".tsk/tasks"),
             file_system,
             git_operations,
+            repo_root: None,
+        }
+    }
+
+    /// Create a RepoManager with a specific repository root path
+    #[cfg(test)]
+    pub fn with_repo_root(
+        file_system: Arc<dyn FileSystemOperations>,
+        git_operations: Arc<dyn GitOperations>,
+        repo_root: PathBuf,
+    ) -> Self {
+        Self {
+            base_path: repo_root.join(".tsk/tasks"),
+            file_system,
+            git_operations,
+            repo_root: Some(repo_root),
         }
     }
 
@@ -83,9 +102,12 @@ impl RepoManager {
             return Err("Not in a git repository".to_string());
         }
 
-        // Get the current directory (repository root)
-        let current_dir = std::env::current_dir()
-            .map_err(|e| format!("Failed to get current directory: {}", e))?;
+        // Get the repository root
+        let current_dir = match &self.repo_root {
+            Some(root) => root.clone(),
+            None => std::env::current_dir()
+                .map_err(|e| format!("Failed to get current directory: {}", e))?,
+        };
 
         // Copy the repository, excluding .tsk directory
         self.copy_directory(&current_dir, &repo_path).await?;
@@ -166,9 +188,12 @@ impl RepoManager {
             .to_str()
             .ok_or_else(|| "Invalid repo path".to_string())?;
 
-        // Get the current directory (main repository)
-        let main_repo = std::env::current_dir()
-            .map_err(|e| format!("Failed to get current directory: {}", e))?;
+        // Get the main repository path
+        let main_repo = match &self.repo_root {
+            Some(root) => root.clone(),
+            None => std::env::current_dir()
+                .map_err(|e| format!("Failed to get current directory: {}", e))?,
+        };
 
         // Add the copied repository as a remote in the main repository
         let now: DateTime<Local> = Local::now();
@@ -227,6 +252,7 @@ mod tests {
             base_path: base_path.clone(),
             file_system: fs,
             git_operations: mock_git_ops,
+            repo_root: None,
         };
 
         let result = manager.copy_repo("test-task").await;
@@ -251,6 +277,7 @@ mod tests {
             base_path: PathBuf::from(".tsk/tasks"),
             file_system: fs,
             git_operations: mock_git_ops,
+            repo_root: None,
         };
 
         let result = manager.commit_changes(repo_path, "Test commit").await;
@@ -274,6 +301,7 @@ mod tests {
             base_path: PathBuf::from(".tsk/tasks"),
             file_system: fs,
             git_operations: mock_git_ops,
+            repo_root: None,
         };
 
         let result = manager.commit_changes(repo_path, "Test commit").await;

@@ -11,6 +11,7 @@ pub struct TaskManager {
     docker_manager: Box<dyn DockerManagerTrait>,
     task_storage: Option<Box<dyn TaskStorage>>,
     file_system: Arc<dyn FileSystemOperations>,
+    repo_root: Option<PathBuf>,
 }
 
 // Trait for Docker manager to allow testing
@@ -94,6 +95,7 @@ impl TaskManager {
             docker_manager: Box::new(DockerManager::new(ctx.docker_client())),
             task_storage: None,
             file_system: ctx.file_system(),
+            repo_root: None,
         })
     }
 
@@ -103,6 +105,7 @@ impl TaskManager {
             docker_manager: Box::new(DockerManager::new(ctx.docker_client())),
             task_storage: Some(get_task_storage(ctx.file_system())),
             file_system: ctx.file_system(),
+            repo_root: None,
         })
     }
 
@@ -118,6 +121,33 @@ impl TaskManager {
             docker_manager,
             task_storage,
             file_system,
+            repo_root: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn with_mocks_and_root(
+        repo_manager: RepoManager,
+        docker_manager: Box<dyn DockerManagerTrait>,
+        task_storage: Option<Box<dyn TaskStorage>>,
+        file_system: Arc<dyn FileSystemOperations>,
+        repo_root: PathBuf,
+    ) -> Self {
+        Self {
+            repo_manager,
+            docker_manager,
+            task_storage,
+            file_system,
+            repo_root: Some(repo_root),
+        }
+    }
+
+    /// Get the repository root path
+    fn get_repo_root(&self) -> Result<PathBuf, String> {
+        match &self.repo_root {
+            Some(root) => Ok(root.clone()),
+            None => std::env::current_dir()
+                .map_err(|e| format!("Failed to get current directory: {}", e)),
         }
     }
 
@@ -489,7 +519,8 @@ impl TaskManager {
             .map_err(|e| format!("Error deleting task from storage: {}", e))?;
 
         // Delete the task directory
-        let task_dir = PathBuf::from(".tsk/tasks").join(task_id);
+        let repo_root = self.get_repo_root()?;
+        let task_dir = repo_root.join(".tsk/tasks").join(task_id);
         if self.file_system.exists(&task_dir).await.unwrap_or(false) {
             self.file_system
                 .remove_dir(&task_dir)
@@ -521,8 +552,9 @@ impl TaskManager {
             .collect();
 
         // Delete completed tasks directories
+        let repo_root = self.get_repo_root()?;
         for task in &completed_tasks {
-            let task_dir = PathBuf::from(".tsk/tasks").join(&task.id);
+            let task_dir = repo_root.join(".tsk/tasks").join(&task.id);
             if self.file_system.exists(&task_dir).await.unwrap_or(false) {
                 if let Err(e) = self.file_system.remove_dir(&task_dir).await {
                     eprintln!(
@@ -540,7 +572,7 @@ impl TaskManager {
             .map_err(|e| format!("Error deleting completed tasks: {}", e))?;
 
         // Delete all quick task directories
-        let quick_tasks_dir = PathBuf::from(".tsk/quick-tasks");
+        let quick_tasks_dir = repo_root.join(".tsk/quick-tasks");
         let mut quick_task_count = 0;
         if self
             .file_system
@@ -569,97 +601,117 @@ impl TaskManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::docker_client::DockerClient;
+    use async_trait::async_trait;
     use std::sync::Arc;
     use tempfile::TempDir;
-    use tokio::sync::Mutex;
 
-    // Mock Docker Manager for testing
-    struct MockDockerManager {
-        run_task_container_calls: Arc<Mutex<Vec<(String, PathBuf, Vec<String>, Option<PathBuf>)>>>,
-        run_task_container_result: Arc<Mutex<Result<String, String>>>,
-        create_debug_container_calls: Arc<Mutex<Vec<(String, PathBuf)>>>,
-        create_debug_container_result: Arc<Mutex<Result<String, String>>>,
-        stop_and_remove_container_calls: Arc<Mutex<Vec<String>>>,
-        stop_and_remove_container_result: Arc<Mutex<Result<(), String>>>,
+    // Mock Docker client for tests
+    #[derive(Clone)]
+    struct MockDockerClient {
+        container_id: String,
+        exit_code: i64,
+        logs_output: String,
     }
 
-    impl MockDockerManager {
+    impl MockDockerClient {
         fn new() -> Self {
             Self {
-                run_task_container_calls: Arc::new(Mutex::new(Vec::new())),
-                run_task_container_result: Arc::new(Mutex::new(Ok("Test output".to_string()))),
-                create_debug_container_calls: Arc::new(Mutex::new(Vec::new())),
-                create_debug_container_result: Arc::new(Mutex::new(Ok(
-                    "test-debug-container".to_string()
-                ))),
-                stop_and_remove_container_calls: Arc::new(Mutex::new(Vec::new())),
-                stop_and_remove_container_result: Arc::new(Mutex::new(Ok(()))),
+                container_id: "test-container-id".to_string(),
+                exit_code: 0,
+                logs_output: "Test output".to_string(),
             }
         }
     }
 
-    #[async_trait::async_trait]
-    impl DockerManagerTrait for MockDockerManager {
+    #[async_trait]
+    impl DockerClient for MockDockerClient {
+        #[cfg(test)]
         fn as_any(&self) -> &dyn std::any::Any {
             self
         }
 
-        async fn run_task_container(
+        async fn create_container(
             &self,
-            image: &str,
-            worktree_path: &Path,
-            command: Vec<String>,
-            instructions_file_path: Option<&PathBuf>,
+            _options: Option<bollard::container::CreateContainerOptions<String>>,
+            _config: bollard::container::Config<String>,
         ) -> Result<String, String> {
-            self.run_task_container_calls.lock().await.push((
-                image.to_string(),
-                worktree_path.to_path_buf(),
-                command,
-                instructions_file_path.cloned(),
-            ));
-            self.run_task_container_result.lock().await.clone()
+            Ok(self.container_id.clone())
         }
 
-        async fn create_debug_container(
-            &self,
-            image: &str,
-            worktree_path: &Path,
-        ) -> Result<String, String> {
-            self.create_debug_container_calls
-                .lock()
-                .await
-                .push((image.to_string(), worktree_path.to_path_buf()));
-            self.create_debug_container_result.lock().await.clone()
+        async fn start_container(&self, _id: &str) -> Result<(), String> {
+            Ok(())
         }
 
-        async fn stop_and_remove_container(&self, container_name: &str) -> Result<(), String> {
-            self.stop_and_remove_container_calls
-                .lock()
-                .await
-                .push(container_name.to_string());
-            self.stop_and_remove_container_result.lock().await.clone()
+        async fn wait_container(&self, _id: &str) -> Result<i64, String> {
+            Ok(self.exit_code)
+        }
+
+        async fn logs(
+            &self,
+            _id: &str,
+            _options: Option<bollard::container::LogsOptions<String>>,
+        ) -> Result<String, String> {
+            Ok(self.logs_output.clone())
+        }
+
+        async fn logs_stream(
+            &self,
+            _id: &str,
+            _options: Option<bollard::container::LogsOptions<String>>,
+        ) -> Result<
+            Box<dyn futures_util::Stream<Item = Result<String, String>> + Send + Unpin>,
+            String,
+        > {
+            panic!("Not implemented for tests")
+        }
+
+        async fn remove_container(
+            &self,
+            _id: &str,
+            _options: Option<bollard::container::RemoveContainerOptions>,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn create_network(&self, _name: &str) -> Result<String, String> {
+            Ok("test-network".to_string())
+        }
+
+        async fn network_exists(&self, _name: &str) -> Result<bool, String> {
+            Ok(true)
         }
     }
 
-    // Mock Repo Manager
-    fn create_mock_repo_manager(_temp_dir: &TempDir) -> RepoManager {
+    // Create a repo manager with a specific root directory
+    fn create_repo_manager_with_root(temp_dir: &TempDir) -> RepoManager {
+        use crate::context::file_system::DefaultFileSystem;
         use crate::context::git_operations::tests::MockGitOperations;
         use crate::git::RepoManager;
 
-        use crate::context::file_system::DefaultFileSystem;
         let fs = Arc::new(DefaultFileSystem);
         let git_ops = Arc::new(MockGitOperations::new());
-        RepoManager::with_git_operations(fs, git_ops)
+        RepoManager::with_repo_root(fs, git_ops, temp_dir.path().to_path_buf())
     }
 
     #[tokio::test]
     async fn test_build_task_command_with_instructions() {
         use crate::context::file_system::tests::MockFileSystem;
         let temp_dir = TempDir::new().unwrap();
-        let repo_manager = create_mock_repo_manager(&temp_dir);
-        let docker_manager = Box::new(MockDockerManager::new());
+        let repo_manager = create_repo_manager_with_root(&temp_dir);
+        let docker_client = Arc::new(MockDockerClient::new());
+        let ctx = AppContext::builder()
+            .with_docker_client(docker_client)
+            .build();
+        let docker_manager = Box::new(DockerManager::new(ctx.docker_client()));
         let fs = Arc::new(MockFileSystem::new());
-        let task_manager = TaskManager::with_mocks(repo_manager, docker_manager, None, fs);
+        let task_manager = TaskManager::with_mocks_and_root(
+            repo_manager,
+            docker_manager,
+            None,
+            fs,
+            temp_dir.path().to_path_buf(),
+        );
 
         let inst_path = PathBuf::from("/tmp/instructions.md");
         let command = task_manager.build_task_command(&inst_path).unwrap();
@@ -672,13 +724,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Test passes individually but has race conditions when run with other tests
     async fn test_execute_task_success() {
         let temp_dir = TempDir::new().unwrap();
-
-        // Change to temp directory
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(temp_dir.path()).unwrap();
 
         // Create a test git directory and .tsk directory structure
         std::fs::create_dir_all(temp_dir.path().join(".git")).unwrap();
@@ -687,11 +734,21 @@ mod tests {
         // Create a dummy file to be copied
         std::fs::write(temp_dir.path().join("test.txt"), "test content").unwrap();
 
-        let repo_manager = create_mock_repo_manager(&temp_dir);
-        let docker_manager = Box::new(MockDockerManager::new());
+        let repo_manager = create_repo_manager_with_root(&temp_dir);
+        let docker_client = Arc::new(MockDockerClient::new());
+        let ctx = AppContext::builder()
+            .with_docker_client(docker_client)
+            .build();
+        let docker_manager = Box::new(DockerManager::new(ctx.docker_client()));
         use crate::context::file_system::DefaultFileSystem;
         let fs = Arc::new(DefaultFileSystem);
-        let task_manager = TaskManager::with_mocks(repo_manager, docker_manager, None, fs);
+        let task_manager = TaskManager::with_mocks_and_root(
+            repo_manager,
+            docker_manager,
+            None,
+            fs,
+            temp_dir.path().to_path_buf(),
+        );
 
         // Create an instructions file
         let instructions_file = temp_dir.path().join("instructions.md");
@@ -705,25 +762,15 @@ mod tests {
             )
             .await;
 
-        // Restore original directory
-        std::env::set_current_dir(original_dir).unwrap();
-
         assert!(result.is_ok(), "Error: {:?}", result.as_ref().err());
         let execution_result = result.unwrap();
         assert_eq!(execution_result.output, "Test output");
         assert!(execution_result.branch_name.contains("test-task"));
-
-        // The test passes if no error was thrown
     }
 
     #[tokio::test]
-    #[ignore] // Test passes individually but has race conditions when run with other tests
     async fn test_delete_task() {
         let temp_dir = TempDir::new().unwrap();
-
-        // Change to temp directory
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(temp_dir.path()).unwrap();
 
         // Create a test git directory and .tsk directory structure
         std::fs::create_dir_all(temp_dir.path().join(".git")).unwrap();
@@ -751,13 +798,18 @@ mod tests {
         std::fs::write(task_dir.join("test.txt"), "test content").unwrap();
 
         // Create task manager with storage
-        let repo_manager = create_mock_repo_manager(&temp_dir);
-        let docker_manager = Box::new(MockDockerManager::new());
-        let task_manager = TaskManager::with_mocks(
+        let repo_manager = create_repo_manager_with_root(&temp_dir);
+        let docker_client = Arc::new(MockDockerClient::new());
+        let ctx = AppContext::builder()
+            .with_docker_client(docker_client)
+            .build();
+        let docker_manager = Box::new(DockerManager::new(ctx.docker_client()));
+        let task_manager = TaskManager::with_mocks_and_root(
             repo_manager,
             docker_manager,
             Some(Box::new(storage)),
             fs.clone(),
+            temp_dir.path().to_path_buf(),
         );
 
         // Delete the task
@@ -773,19 +825,11 @@ mod tests {
 
         // Verify task directory is deleted
         assert!(!task_dir.exists());
-
-        // Restore original directory
-        std::env::set_current_dir(original_dir).unwrap();
     }
 
     #[tokio::test]
-    #[ignore] // Test passes individually but has race conditions when run with other tests
     async fn test_clean_tasks() {
         let temp_dir = TempDir::new().unwrap();
-
-        // Change to temp directory
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(temp_dir.path()).unwrap();
 
         // Create a test git directory and .tsk directory structure
         std::fs::create_dir_all(temp_dir.path().join(".git")).unwrap();
@@ -838,13 +882,18 @@ mod tests {
         std::fs::create_dir_all(&quick_task_dir2).unwrap();
 
         // Create task manager with storage
-        let repo_manager = create_mock_repo_manager(&temp_dir);
-        let docker_manager = Box::new(MockDockerManager::new());
-        let task_manager = TaskManager::with_mocks(
+        let repo_manager = create_repo_manager_with_root(&temp_dir);
+        let docker_client = Arc::new(MockDockerClient::new());
+        let ctx = AppContext::builder()
+            .with_docker_client(docker_client)
+            .build();
+        let docker_manager = Box::new(DockerManager::new(ctx.docker_client()));
+        let task_manager = TaskManager::with_mocks_and_root(
             repo_manager,
             docker_manager,
             Some(Box::new(storage)),
             fs2.clone(),
+            temp_dir.path().to_path_buf(),
         );
 
         // Clean tasks
@@ -867,19 +916,11 @@ mod tests {
         assert!(!completed_dir.exists());
         assert!(!quick_task_dir1.exists());
         assert!(!quick_task_dir2.exists());
-
-        // Restore original directory
-        std::env::set_current_dir(original_dir).unwrap();
     }
 
     #[tokio::test]
-    #[ignore] // Test passes individually but has race conditions when run with other tests
     async fn test_clean_tasks_with_id_matching() {
         let temp_dir = TempDir::new().unwrap();
-
-        // Change to temp directory
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(temp_dir.path()).unwrap();
 
         // Create a test git directory and .tsk directory structure
         std::fs::create_dir_all(temp_dir.path().join(".git")).unwrap();
@@ -913,10 +954,19 @@ mod tests {
         std::fs::write(task_dir.join("instructions.md"), "Test instructions").unwrap();
 
         // Create task manager with storage
-        let repo_manager = create_mock_repo_manager(&temp_dir);
-        let docker_manager = Box::new(MockDockerManager::new());
-        let task_manager =
-            TaskManager::with_mocks(repo_manager, docker_manager, Some(Box::new(storage)), fs);
+        let repo_manager = create_repo_manager_with_root(&temp_dir);
+        let docker_client = Arc::new(MockDockerClient::new());
+        let ctx = AppContext::builder()
+            .with_docker_client(docker_client)
+            .build();
+        let docker_manager = Box::new(DockerManager::new(ctx.docker_client()));
+        let task_manager = TaskManager::with_mocks_and_root(
+            repo_manager,
+            docker_manager,
+            Some(Box::new(storage)),
+            fs,
+            temp_dir.path().to_path_buf(),
+        );
 
         // Clean tasks
         let result = task_manager.clean_tasks().await;
@@ -936,8 +986,5 @@ mod tests {
             !task_dir.exists(),
             "Task directory should have been deleted"
         );
-
-        // Restore original directory
-        std::env::set_current_dir(original_dir).unwrap();
     }
 }
