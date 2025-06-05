@@ -371,6 +371,7 @@ impl DockerManager {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn run_task_container(
         &self,
         image: &str,

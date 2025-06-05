@@ -8,64 +8,10 @@ use std::sync::Arc;
 
 pub struct TaskManager {
     repo_manager: RepoManager,
-    docker_manager: Box<dyn DockerManagerTrait>,
+    docker_manager: DockerManager,
     task_storage: Option<Box<dyn TaskStorage>>,
     file_system: Arc<dyn FileSystemOperations>,
     repo_root: Option<PathBuf>,
-}
-
-// Trait for Docker manager to allow testing
-#[async_trait::async_trait]
-pub trait DockerManagerTrait: Send + Sync {
-    #[allow(dead_code)] // Used for downcasting in streaming mode
-    fn as_any(&self) -> &dyn std::any::Any;
-
-    async fn run_task_container(
-        &self,
-        image: &str,
-        worktree_path: &Path,
-        command: Vec<String>,
-        instructions_file_path: Option<&PathBuf>,
-    ) -> Result<String, String>;
-
-    async fn create_debug_container(
-        &self,
-        image: &str,
-        worktree_path: &Path,
-    ) -> Result<String, String>;
-
-    async fn stop_and_remove_container(&self, container_name: &str) -> Result<(), String>;
-}
-
-// Implement the trait for the real DockerManager
-#[async_trait::async_trait]
-impl DockerManagerTrait for DockerManager {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    async fn run_task_container(
-        &self,
-        image: &str,
-        worktree_path: &Path,
-        command: Vec<String>,
-        instructions_file_path: Option<&PathBuf>,
-    ) -> Result<String, String> {
-        self.run_task_container(image, worktree_path, command, instructions_file_path)
-            .await
-    }
-
-    async fn create_debug_container(
-        &self,
-        image: &str,
-        worktree_path: &Path,
-    ) -> Result<String, String> {
-        self.create_debug_container(image, worktree_path).await
-    }
-
-    async fn stop_and_remove_container(&self, container_name: &str) -> Result<(), String> {
-        self.stop_and_remove_container(container_name).await
-    }
 }
 
 pub struct TaskExecutionResult {
@@ -92,7 +38,7 @@ impl TaskManager {
     pub fn new(ctx: &AppContext) -> Result<Self, String> {
         Ok(Self {
             repo_manager: get_repo_manager(ctx.file_system(), ctx.git_operations()),
-            docker_manager: Box::new(DockerManager::new(ctx.docker_client())),
+            docker_manager: DockerManager::new(ctx.docker_client()),
             task_storage: None,
             file_system: ctx.file_system(),
             repo_root: None,
@@ -102,44 +48,11 @@ impl TaskManager {
     pub fn with_storage(ctx: &AppContext) -> Result<Self, String> {
         Ok(Self {
             repo_manager: get_repo_manager(ctx.file_system(), ctx.git_operations()),
-            docker_manager: Box::new(DockerManager::new(ctx.docker_client())),
+            docker_manager: DockerManager::new(ctx.docker_client()),
             task_storage: Some(get_task_storage(ctx.file_system())),
             file_system: ctx.file_system(),
             repo_root: None,
         })
-    }
-
-    #[cfg(test)]
-    pub fn with_mocks(
-        repo_manager: RepoManager,
-        docker_manager: Box<dyn DockerManagerTrait>,
-        task_storage: Option<Box<dyn TaskStorage>>,
-        file_system: Arc<dyn FileSystemOperations>,
-    ) -> Self {
-        Self {
-            repo_manager,
-            docker_manager,
-            task_storage,
-            file_system,
-            repo_root: None,
-        }
-    }
-
-    #[cfg(test)]
-    pub fn with_mocks_and_root(
-        repo_manager: RepoManager,
-        docker_manager: Box<dyn DockerManagerTrait>,
-        task_storage: Option<Box<dyn TaskStorage>>,
-        file_system: Arc<dyn FileSystemOperations>,
-        repo_root: PathBuf,
-    ) -> Self {
-        Self {
-            repo_manager,
-            docker_manager,
-            task_storage,
-            file_system,
-            repo_root: Some(repo_root),
-        }
     }
 
     /// Get the repository root path
@@ -247,73 +160,23 @@ impl TaskManager {
         println!("Launching Docker container...");
         println!("\n{}", "=".repeat(60));
 
-        // For streaming, we need to use the concrete docker manager
-        #[cfg(not(test))]
         let output = {
-            // Try to downcast to the concrete DockerManager type
-            if let Some(concrete_manager) =
-                self.docker_manager.as_any().downcast_ref::<DockerManager>()
-            {
-                // Use streaming version
-                concrete_manager
-                    .run_task_container_with_streaming(
-                        "tsk/base",
-                        &repo_path,
-                        command_without_jq.clone(),
-                        Some(&instructions_file_path),
-                        |log_line| {
-                            // Process each line of output
-                            if let Some(formatted) = log_processor.process_line(log_line) {
-                                println!("{}", formatted);
-                            }
-                        },
-                    )
-                    .await
-                    .map_err(|e| format!("Error running container: {}", e))?
-            } else {
-                // Fallback to non-streaming version
-                let output = self
-                    .docker_manager
-                    .run_task_container(
-                        "tsk/base",
-                        &repo_path,
-                        command_without_jq,
-                        Some(&instructions_file_path),
-                    )
-                    .await
-                    .map_err(|e| format!("Error running container: {}", e))?;
-
-                // Process the output all at once
-                for line in output.lines() {
-                    if let Some(formatted) = log_processor.process_line(line) {
-                        println!("{}", formatted);
-                    }
-                }
-                output
-            }
-        };
-
-        // In test mode, always use the trait version
-        #[cfg(test)]
-        let output = {
-            let output = self
-                .docker_manager
-                .run_task_container(
+            // Use streaming version
+            self.docker_manager
+                .run_task_container_with_streaming(
                     "tsk/base",
                     &repo_path,
-                    command_without_jq,
+                    command_without_jq.clone(),
                     Some(&instructions_file_path),
+                    |log_line| {
+                        // Process each line of output
+                        if let Some(formatted) = log_processor.process_line(log_line) {
+                            println!("{}", formatted);
+                        }
+                    },
                 )
                 .await
-                .map_err(|e| format!("Error running container: {}", e))?;
-
-            // Process the output all at once
-            for line in output.lines() {
-                if let Some(formatted) = log_processor.process_line(line) {
-                    println!("{}", formatted);
-                }
-            }
-            output
+                .map_err(|e| format!("Error running container: {}", e))?
         };
 
         println!("\n{}", "=".repeat(60));
@@ -703,7 +566,7 @@ mod tests {
         let ctx = AppContext::builder()
             .with_docker_client(docker_client)
             .build();
-        let docker_manager = Box::new(DockerManager::new(ctx.docker_client()));
+        let docker_manager = DockerManager::new(ctx.docker_client());
         let fs = Arc::new(MockFileSystem::new());
         let task_manager = TaskManager::with_mocks_and_root(
             repo_manager,
@@ -739,7 +602,7 @@ mod tests {
         let ctx = AppContext::builder()
             .with_docker_client(docker_client)
             .build();
-        let docker_manager = Box::new(DockerManager::new(ctx.docker_client()));
+        let docker_manager = DockerManager::new(ctx.docker_client());
         use crate::context::file_system::DefaultFileSystem;
         let fs = Arc::new(DefaultFileSystem);
         let task_manager = TaskManager::with_mocks_and_root(
@@ -803,7 +666,7 @@ mod tests {
         let ctx = AppContext::builder()
             .with_docker_client(docker_client)
             .build();
-        let docker_manager = Box::new(DockerManager::new(ctx.docker_client()));
+        let docker_manager = DockerManager::new(ctx.docker_client());
         let task_manager = TaskManager::with_mocks_and_root(
             repo_manager,
             docker_manager,
@@ -887,7 +750,7 @@ mod tests {
         let ctx = AppContext::builder()
             .with_docker_client(docker_client)
             .build();
-        let docker_manager = Box::new(DockerManager::new(ctx.docker_client()));
+        let docker_manager = DockerManager::new(ctx.docker_client());
         let task_manager = TaskManager::with_mocks_and_root(
             repo_manager,
             docker_manager,
@@ -959,7 +822,7 @@ mod tests {
         let ctx = AppContext::builder()
             .with_docker_client(docker_client)
             .build();
-        let docker_manager = Box::new(DockerManager::new(ctx.docker_client()));
+        let docker_manager = DockerManager::new(ctx.docker_client());
         let task_manager = TaskManager::with_mocks_and_root(
             repo_manager,
             docker_manager,
