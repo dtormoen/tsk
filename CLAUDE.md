@@ -60,6 +60,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Trait abstractions enable comprehensive testing with mocks
 - Factory pattern prevents accidental operations in tests
 - `FileSystemOperations` trait abstracts all file system operations for testability
+- `GitOperations` trait abstracts all git operations for improved testability and separation of concerns
 
 ### Branch and Task Conventions
 

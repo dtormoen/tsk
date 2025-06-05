@@ -1,75 +1,59 @@
 use crate::context::file_system::FileSystemOperations;
+use crate::context::git_operations::GitOperations;
 use chrono::{DateTime, Local};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
 use std::sync::Arc;
 
 /// Factory function to get a RepoManager instance
 /// Returns a dummy implementation in test mode that panics on use
 #[cfg(not(test))]
-pub fn get_repo_manager(file_system: Arc<dyn FileSystemOperations>) -> RepoManager {
-    RepoManager::new(file_system)
+pub fn get_repo_manager(
+    file_system: Arc<dyn FileSystemOperations>,
+    git_operations: Arc<dyn GitOperations>,
+) -> RepoManager {
+    RepoManager::new(file_system, git_operations)
 }
 
 #[cfg(test)]
-pub fn get_repo_manager(file_system: Arc<dyn FileSystemOperations>) -> RepoManager {
-    struct PanicCommandExecutor;
-
-    impl CommandExecutor for PanicCommandExecutor {
-        fn execute(&self, _program: &str, _args: &[&str]) -> Result<Output, String> {
-            panic!("Git operations are not allowed in tests! Please mock RepoManager properly using RepoManager::with_executor()")
-        }
-    }
-
+pub fn get_repo_manager(
+    file_system: Arc<dyn FileSystemOperations>,
+    git_operations: Arc<dyn GitOperations>,
+) -> RepoManager {
     RepoManager {
         base_path: PathBuf::from(".tsk/tasks"),
-        command_executor: Box::new(PanicCommandExecutor),
         file_system,
-    }
-}
-
-/// Trait for executing commands - allows mocking in tests
-pub trait CommandExecutor: Send + Sync {
-    fn execute(&self, program: &str, args: &[&str]) -> Result<Output, String>;
-}
-
-/// Default implementation that actually runs commands
-pub struct SystemCommandExecutor;
-
-impl CommandExecutor for SystemCommandExecutor {
-    fn execute(&self, program: &str, args: &[&str]) -> Result<Output, String> {
-        Command::new(program)
-            .args(args)
-            .output()
-            .map_err(|e| format!("Failed to execute command: {}", e))
+        git_operations,
     }
 }
 
 pub struct RepoManager {
     base_path: PathBuf,
-    command_executor: Box<dyn CommandExecutor>,
     file_system: Arc<dyn FileSystemOperations>,
+    git_operations: Arc<dyn GitOperations>,
 }
 
 impl RepoManager {
     #[cfg(not(test))]
-    pub fn new(file_system: Arc<dyn FileSystemOperations>) -> Self {
+    pub fn new(
+        file_system: Arc<dyn FileSystemOperations>,
+        git_operations: Arc<dyn GitOperations>,
+    ) -> Self {
         Self {
             base_path: PathBuf::from(".tsk/tasks"),
-            command_executor: Box::new(SystemCommandExecutor),
             file_system,
+            git_operations,
         }
     }
 
     #[cfg(test)]
-    pub fn with_executor(
-        command_executor: Box<dyn CommandExecutor>,
+    pub fn with_git_operations(
         file_system: Arc<dyn FileSystemOperations>,
+        git_operations: Arc<dyn GitOperations>,
     ) -> Self {
         Self {
             base_path: PathBuf::from(".tsk/tasks"),
-            command_executor,
             file_system,
+            git_operations,
         }
     }
 
@@ -95,11 +79,7 @@ impl RepoManager {
             .map_err(|e| format!("Failed to create task directory: {}", e))?;
 
         // Check if we're in a git repository
-        let git_check = self
-            .command_executor
-            .execute("git", &["rev-parse", "--git-dir"])?;
-
-        if !git_check.status.success() {
+        if !self.git_operations.is_git_repository().await? {
             return Err("Not in a git repository".to_string());
         }
 
@@ -110,21 +90,10 @@ impl RepoManager {
         // Copy the repository, excluding .tsk directory
         self.copy_directory(&current_dir, &repo_path).await?;
 
-        // Change to the copied repository directory
-        let repo_path_str = repo_path
-            .to_str()
-            .ok_or_else(|| "Invalid repo path".to_string())?;
-
         // Create a new branch in the copied repository
-        let checkout_cmd = self.command_executor.execute(
-            "git",
-            &["-C", repo_path_str, "checkout", "-b", &branch_name],
-        )?;
-
-        if !checkout_cmd.status.success() {
-            let stderr = String::from_utf8_lossy(&checkout_cmd.stderr);
-            return Err(format!("Failed to create branch: {}", stderr));
-        }
+        self.git_operations
+            .create_branch(&repo_path, &branch_name)
+            .await?;
 
         println!("Created repository copy at: {}", repo_path.display());
         println!("Branch: {}", branch_name);
@@ -172,53 +141,27 @@ impl RepoManager {
     }
 
     /// Commit any uncommitted changes in the repository
-    pub fn commit_changes(&self, repo_path: &Path, message: &str) -> Result<(), String> {
-        let repo_path_str = repo_path
-            .to_str()
-            .ok_or_else(|| "Invalid repo path".to_string())?;
-
+    pub async fn commit_changes(&self, repo_path: &Path, message: &str) -> Result<(), String> {
         // Check if there are any changes to commit
-        let status_cmd = self
-            .command_executor
-            .execute("git", &["-C", repo_path_str, "status", "--porcelain"])?;
+        let status_output = self.git_operations.get_status(repo_path).await?;
 
-        if !status_cmd.status.success() {
-            let stderr = String::from_utf8_lossy(&status_cmd.stderr);
-            return Err(format!("Failed to check git status: {}", stderr));
-        }
-
-        let status_output = String::from_utf8_lossy(&status_cmd.stdout);
         if status_output.trim().is_empty() {
             println!("No changes to commit");
             return Ok(());
         }
 
         // Add all changes
-        let add_cmd = self
-            .command_executor
-            .execute("git", &["-C", repo_path_str, "add", "-A"])?;
-
-        if !add_cmd.status.success() {
-            let stderr = String::from_utf8_lossy(&add_cmd.stderr);
-            return Err(format!("Failed to add changes: {}", stderr));
-        }
+        self.git_operations.add_all(repo_path).await?;
 
         // Commit changes
-        let commit_cmd = self
-            .command_executor
-            .execute("git", &["-C", repo_path_str, "commit", "-m", message])?;
-
-        if !commit_cmd.status.success() {
-            let stderr = String::from_utf8_lossy(&commit_cmd.stderr);
-            return Err(format!("Failed to commit changes: {}", stderr));
-        }
+        self.git_operations.commit(repo_path, message).await?;
 
         println!("Committed changes: {}", message);
         Ok(())
     }
 
     /// Fetch changes from the copied repository back to the main repository
-    pub fn fetch_changes(&self, repo_path: &Path, branch_name: &str) -> Result<(), String> {
+    pub async fn fetch_changes(&self, repo_path: &Path, branch_name: &str) -> Result<(), String> {
         let repo_path_str = repo_path
             .to_str()
             .ok_or_else(|| "Invalid repo path".to_string())?;
@@ -226,64 +169,35 @@ impl RepoManager {
         // Get the current directory (main repository)
         let main_repo = std::env::current_dir()
             .map_err(|e| format!("Failed to get current directory: {}", e))?;
-        let main_repo_str = main_repo
-            .to_str()
-            .ok_or_else(|| "Invalid main repo path".to_string())?;
 
         // Add the copied repository as a remote in the main repository
         let now: DateTime<Local> = Local::now();
         let remote_name = format!("tsk-temp-{}", now.format("%Y-%m-%d-%H%M%S"));
-        let add_remote_cmd = self.command_executor.execute(
-            "git",
-            &[
-                "-C",
-                main_repo_str,
-                "remote",
-                "add",
-                &remote_name,
-                repo_path_str,
-            ],
-        )?;
 
-        if !add_remote_cmd.status.success() {
-            let stderr = String::from_utf8_lossy(&add_remote_cmd.stderr);
-            // If remote already exists, that's okay
-            if !stderr.contains("already exists") {
-                return Err(format!("Failed to add remote: {}", stderr));
-            }
-        }
+        self.git_operations
+            .add_remote(&main_repo, &remote_name, repo_path_str)
+            .await?;
 
         // Fetch the specific branch from the remote
-        let fetch_cmd = self.command_executor.execute(
-            "git",
-            &[
-                "-C",
-                main_repo_str,
-                "fetch",
-                &remote_name,
-                &format!("{}:{}", branch_name, branch_name),
-            ],
-        )?;
-
-        if !fetch_cmd.status.success() {
-            let stderr = String::from_utf8_lossy(&fetch_cmd.stderr);
-            // Remove the temporary remote before returning error
-            let _ = self.command_executor.execute(
-                "git",
-                &["-C", main_repo_str, "remote", "remove", &remote_name],
-            );
-            return Err(format!("Failed to fetch changes: {}", stderr));
-        }
-
-        // Remove the temporary remote
-        let remove_remote_cmd = self.command_executor.execute(
-            "git",
-            &["-C", main_repo_str, "remote", "remove", &remote_name],
-        )?;
-
-        if !remove_remote_cmd.status.success() {
-            let stderr = String::from_utf8_lossy(&remove_remote_cmd.stderr);
-            return Err(format!("Failed to remove temporary remote: {}", stderr));
+        match self
+            .git_operations
+            .fetch_branch(&main_repo, &remote_name, branch_name)
+            .await
+        {
+            Ok(_) => {
+                // Remove the temporary remote
+                self.git_operations
+                    .remove_remote(&main_repo, &remote_name)
+                    .await?;
+            }
+            Err(e) => {
+                // Remove the temporary remote before returning error
+                let _ = self
+                    .git_operations
+                    .remove_remote(&main_repo, &remote_name)
+                    .await;
+                return Err(e);
+            }
         }
 
         println!("Fetched changes from copied repository");
@@ -294,89 +208,25 @@ impl RepoManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::process::ExitStatusExt;
-    use std::process::{ExitStatus, Output};
+    use crate::context::git_operations::tests::MockGitOperations;
     use tempfile::TempDir;
-
-    /// Mock command executor for testing
-    struct MockCommandExecutor {
-        responses: Vec<(String, Vec<String>, Result<Output, String>)>,
-    }
-
-    impl MockCommandExecutor {
-        fn new() -> Self {
-            Self { responses: vec![] }
-        }
-
-        fn add_response(
-            &mut self,
-            program: &str,
-            args: Vec<&str>,
-            success: bool,
-            stdout: &str,
-            stderr: &str,
-        ) {
-            let output = Output {
-                status: ExitStatus::from_raw(if success { 0 } else { 1 }),
-                stdout: stdout.as_bytes().to_vec(),
-                stderr: stderr.as_bytes().to_vec(),
-            };
-            self.responses.push((
-                program.to_string(),
-                args.iter().map(|s| s.to_string()).collect(),
-                Ok(output),
-            ));
-        }
-
-        #[allow(dead_code)]
-        fn add_error(&mut self, program: &str, args: Vec<&str>, error: &str) {
-            self.responses.push((
-                program.to_string(),
-                args.iter().map(|s| s.to_string()).collect(),
-                Err(error.to_string()),
-            ));
-        }
-    }
-
-    impl CommandExecutor for MockCommandExecutor {
-        fn execute(&self, program: &str, args: &[&str]) -> Result<Output, String> {
-            // Exact match for commands
-            for (cmd_program, cmd_args, response) in &self.responses {
-                if cmd_program == program && cmd_args == args {
-                    return response.clone();
-                }
-            }
-            Err(format!(
-                "No mock response for command: {} {:?}",
-                program, args
-            ))
-        }
-    }
 
     #[tokio::test]
     async fn test_copy_repo_not_in_git_repo() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let base_path = temp_dir.path().join(".tsk/tasks");
 
-        // Create mock executor
-        let mut mock_executor = MockCommandExecutor::new();
-
-        // Mock git rev-parse failure (not in git repo)
-        mock_executor.add_response(
-            "git",
-            vec!["rev-parse", "--git-dir"],
-            false,
-            "",
-            "fatal: not a git repository",
-        );
+        // Create mock git operations
+        let mock_git_ops = Arc::new(MockGitOperations::new());
+        mock_git_ops.set_is_repo_result(Ok(false));
 
         use crate::context::file_system::tests::MockFileSystem;
         let fs = Arc::new(MockFileSystem::new());
 
         let manager = RepoManager {
             base_path: base_path.clone(),
-            command_executor: Box::new(mock_executor),
             file_system: fs,
+            git_operations: mock_git_ops,
         };
 
         let result = manager.copy_repo("test-task").await;
@@ -385,88 +235,48 @@ mod tests {
         assert_eq!(result.unwrap_err(), "Not in a git repository");
     }
 
-    #[test]
-    fn test_commit_changes_no_changes() {
+    #[tokio::test]
+    async fn test_commit_changes_no_changes() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let repo_path = temp_dir.path();
 
-        // Create mock executor
-        let mut mock_executor = MockCommandExecutor::new();
-
-        // Mock git status - no changes
-        mock_executor.add_response(
-            "git",
-            vec!["-C", repo_path.to_str().unwrap(), "status", "--porcelain"],
-            true,
-            "",
-            "",
-        );
+        // Create mock git operations
+        let mock_git_ops = Arc::new(MockGitOperations::new());
+        mock_git_ops.set_get_status_result(Ok("".to_string()));
 
         use crate::context::file_system::tests::MockFileSystem;
         let fs = Arc::new(MockFileSystem::new());
 
         let manager = RepoManager {
             base_path: PathBuf::from(".tsk/tasks"),
-            command_executor: Box::new(mock_executor),
             file_system: fs,
+            git_operations: mock_git_ops,
         };
 
-        let result = manager.commit_changes(repo_path, "Test commit");
+        let result = manager.commit_changes(repo_path, "Test commit").await;
 
         assert!(result.is_ok());
     }
 
-    #[test]
-    fn test_commit_changes_with_changes() {
+    #[tokio::test]
+    async fn test_commit_changes_with_changes() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let repo_path = temp_dir.path();
 
-        // Create mock executor
-        let mut mock_executor = MockCommandExecutor::new();
-
-        // Mock git status - has changes
-        mock_executor.add_response(
-            "git",
-            vec!["-C", repo_path.to_str().unwrap(), "status", "--porcelain"],
-            true,
-            "M file.txt\n",
-            "",
-        );
-
-        // Mock git add
-        mock_executor.add_response(
-            "git",
-            vec!["-C", repo_path.to_str().unwrap(), "add", "-A"],
-            true,
-            "",
-            "",
-        );
-
-        // Mock git commit
-        mock_executor.add_response(
-            "git",
-            vec![
-                "-C",
-                repo_path.to_str().unwrap(),
-                "commit",
-                "-m",
-                "Test commit",
-            ],
-            true,
-            "",
-            "",
-        );
+        // Create mock git operations
+        let mock_git_ops = Arc::new(MockGitOperations::new());
+        mock_git_ops.set_get_status_result(Ok("M file.txt\n".to_string()));
 
         use crate::context::file_system::tests::MockFileSystem;
         let fs = Arc::new(MockFileSystem::new());
 
         let manager = RepoManager {
             base_path: PathBuf::from(".tsk/tasks"),
-            command_executor: Box::new(mock_executor),
             file_system: fs,
+            git_operations: mock_git_ops,
         };
 
-        let result = manager.commit_changes(repo_path, "Test commit");
+        let result = manager.commit_changes(repo_path, "Test commit").await;
 
         assert!(result.is_ok());
     }
