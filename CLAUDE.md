@@ -47,7 +47,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 **Docker Integration** (`src/docker.rs`)
 - Security-first containers with dropped capabilities
 - Network isolation via proxy (Squid) for API-only access
-- Resource limits: 2GB memory, 1 CPU core
+- Resource limits: 4GB memory, 4 CPU cores
 - Volume mounting for repository copies and Claude config
 
 **Git Operations** (`src/git.rs`)
