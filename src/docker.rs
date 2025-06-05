@@ -794,7 +794,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Test passes individually but has race conditions when run with other tests
     async fn test_relative_path_conversion() {
         let mock_client = Arc::new(MockDockerClient::new());
         let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);

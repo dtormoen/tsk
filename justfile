@@ -11,7 +11,7 @@ format:
 precommit:
     cargo fmt
     cargo clippy -- -D warnings
-    cargo test -- --test-threads=1
+    cargo test
     # Check that the command will starts
     cargo run -- --help
 

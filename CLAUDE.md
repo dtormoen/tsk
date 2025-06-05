@@ -68,6 +68,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Avoid tests with side effects like modifying resources in the `AppContext` or changing directories
 - Make tests thread safe so they can be run in parallel
 - Keep tests simple and concise while still testing core functionality
+- Avoid the use of `#[cfg(test)]` directives in code
 
 ### Branch and Task Conventions
 
