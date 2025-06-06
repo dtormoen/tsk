@@ -17,6 +17,8 @@ mod task;
 
 mod task_manager;
 
+mod task_runner;
+
 mod log_processor;
 
 #[derive(Parser)]

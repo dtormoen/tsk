@@ -5,7 +5,8 @@
       "Bash(cargo:*)",
       "Bash(just precommit)",
       "Bash(rg:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(grep:*)"
     ],
     "deny": []
   }
