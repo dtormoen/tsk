@@ -6,7 +6,8 @@
       "Bash(just precommit)",
       "Bash(rg:*)",
       "Bash(ls:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(RUST_BACKTRACE=1 cargo test test_clean_tasks::test_clean_tasks -- --test-threads=1 --nocapture 2 >& 1)"
     ],
     "deny": []
   }

@@ -103,7 +103,7 @@ impl TaskRunner {
         // Copy repository for the task
         let (repo_path, branch_name) = self
             .repo_manager
-            .copy_repo(&task.name)
+            .copy_repo(&task.id)
             .await
             .map_err(|e| format!("Error copying repository: {}", e))?;
 

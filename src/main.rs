@@ -15,6 +15,8 @@ mod docker;
 
 mod task;
 
+mod task_storage;
+
 mod task_manager;
 
 mod task_runner;

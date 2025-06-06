@@ -1,8 +1,9 @@
 use crate::context::{file_system::FileSystemOperations, AppContext};
 use crate::docker::DockerManager;
 use crate::git::get_repo_manager;
-use crate::task::{get_task_storage, Task, TaskStatus, TaskStorage};
+use crate::task::{Task, TaskStatus};
 use crate::task_runner::{TaskExecutionError, TaskExecutionResult, TaskRunner};
+use crate::task_storage::{get_task_storage, TaskStorage};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -47,38 +48,6 @@ impl TaskManager {
             None => std::env::current_dir()
                 .map_err(|e| format!("Failed to get current directory: {}", e)),
         }
-    }
-
-    /// Execute a task (used by both quick and run commands)
-    pub async fn execute_task(
-        &self,
-        task_name: &str,
-        _description: Option<&String>, // Kept for backward compatibility, but always use instructions_path
-        instructions_path: Option<&String>,
-    ) -> Result<TaskExecutionResult, TaskExecutionError> {
-        // Create a Task struct to pass to TaskRunner
-        let task = Task {
-            id: format!(
-                "{}-{}",
-                chrono::Utc::now().format("%Y-%m-%d-%H%M"),
-                task_name
-            ),
-            name: task_name.to_string(),
-            task_type: "adhoc".to_string(),
-            description: _description.cloned(),
-            instructions_file: instructions_path.cloned(),
-            agent: None,
-            timeout: 30,
-            status: TaskStatus::Running,
-            created_at: chrono::Utc::now(),
-            started_at: Some(chrono::Utc::now()),
-            completed_at: None,
-            branch_name: None,
-            error_message: None,
-        };
-
-        // Delegate to TaskRunner
-        self.task_runner.execute_task(&task).await
     }
 
     /// Execute a task from the queue (with status updates)
@@ -253,7 +222,6 @@ mod tests {
     use super::*;
     use crate::context::docker_client::DockerClient;
     use async_trait::async_trait;
-    use std::path::Path;
     use std::sync::Arc;
 
     // Mock Docker client for tests
@@ -354,29 +322,21 @@ mod tests {
             30,
         );
         let current_dir = std::env::current_dir().unwrap();
-        let task_dir_path = current_dir
-            .join(".tsk/tasks")
-            .join(&task_id)
-            .to_string_lossy()
-            .to_string();
+        let task_dir_path = current_dir.join(".tsk/tasks").join(&task_id);
 
         // Create mock file system with necessary structure
-        let _current_dir_str = current_dir.to_string_lossy().to_string();
-        let git_dir = current_dir.join(".git").to_string_lossy().to_string();
-        let tsk_dir = current_dir.join(".tsk").to_string_lossy().to_string();
-        let tasks_dir = current_dir.join(".tsk/tasks").to_string_lossy().to_string();
-        let tasks_json_path = current_dir
-            .join(".tsk/tasks.json")
-            .to_string_lossy()
-            .to_string();
+        let git_dir = current_dir.join(".git");
+        let tsk_dir = current_dir.join(".tsk");
+        let tasks_dir = current_dir.join(".tsk/tasks");
+        let tasks_json_path = ".tsk/tasks.json"; // Keep this relative for JsonTaskStorage
 
         let fs = Arc::new(
             MockFileSystem::new()
-                .with_dir(&git_dir)
-                .with_dir(&tsk_dir)
-                .with_dir(&tasks_dir)
-                .with_dir(&task_dir_path)
-                .with_file(&format!("{}/test.txt", task_dir_path), "test content")
+                .with_dir(&git_dir.to_string_lossy().to_string())
+                .with_dir(&tsk_dir.to_string_lossy().to_string())
+                .with_dir(&tasks_dir.to_string_lossy().to_string())
+                .with_dir(&task_dir_path.to_string_lossy().to_string())
+                .with_file(&format!("{}/test.txt", task_dir_path.to_string_lossy()), "test content")
                 .with_file(&tasks_json_path, &format!(r#"[{{"id":"{}","name":"test-task","task_type":"feature","description":"Test description","instructions_file":null,"agent":null,"timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":null,"error_message":null}}]"#, task_id))
         );
 
@@ -396,7 +356,7 @@ mod tests {
         assert!(result.is_ok(), "Failed to delete task: {:?}", result);
 
         // Verify task directory is deleted by checking the mock file system
-        let exists = fs.exists(Path::new(&task_dir_path)).await.unwrap();
+        let exists = fs.exists(&task_dir_path).await.unwrap();
         assert!(!exists, "Task directory should have been deleted");
     }
 
@@ -431,16 +391,8 @@ mod tests {
         completed_task.status = TaskStatus::Complete;
 
         let current_dir = std::env::current_dir().unwrap();
-        let queued_dir_path = current_dir
-            .join(".tsk/tasks")
-            .join(&queued_task_id)
-            .to_string_lossy()
-            .to_string();
-        let completed_dir_path = current_dir
-            .join(".tsk/tasks")
-            .join(&completed_task_id)
-            .to_string_lossy()
-            .to_string();
+        let queued_dir_path = current_dir.join(".tsk/tasks").join(&queued_task_id);
+        let completed_dir_path = current_dir.join(".tsk/tasks").join(&completed_task_id);
 
         // Create initial tasks.json with both tasks
         let tasks_json = format!(
@@ -449,36 +401,24 @@ mod tests {
         );
 
         // Create mock file system with necessary structure
-        let git_dir = current_dir.join(".git").to_string_lossy().to_string();
-        let tsk_dir = current_dir.join(".tsk").to_string_lossy().to_string();
-        let tasks_dir = current_dir.join(".tsk/tasks").to_string_lossy().to_string();
-        let quick_tasks_dir = current_dir
-            .join(".tsk/quick-tasks")
-            .to_string_lossy()
-            .to_string();
-        let quick_task_dir1 = current_dir
-            .join(".tsk/quick-tasks/2024-01-01-1200-quick1")
-            .to_string_lossy()
-            .to_string();
-        let quick_task_dir2 = current_dir
-            .join(".tsk/quick-tasks/2024-01-01-1300-quick2")
-            .to_string_lossy()
-            .to_string();
-        let tasks_json_path = current_dir
-            .join(".tsk/tasks.json")
-            .to_string_lossy()
-            .to_string();
+        let git_dir = current_dir.join(".git");
+        let tsk_dir = current_dir.join(".tsk");
+        let tasks_dir = current_dir.join(".tsk/tasks");
+        let quick_tasks_dir = current_dir.join(".tsk/quick-tasks");
+        let quick_task_dir1 = current_dir.join(".tsk/quick-tasks/2024-01-01-1200-quick1");
+        let quick_task_dir2 = current_dir.join(".tsk/quick-tasks/2024-01-01-1300-quick2");
+        let tasks_json_path = ".tsk/tasks.json"; // Keep relative for JsonTaskStorage
 
         let fs = Arc::new(
             MockFileSystem::new()
-                .with_dir(&git_dir)
-                .with_dir(&tsk_dir)
-                .with_dir(&tasks_dir)
-                .with_dir(&quick_tasks_dir)
-                .with_dir(&queued_dir_path)
-                .with_dir(&completed_dir_path)
-                .with_dir(&quick_task_dir1)
-                .with_dir(&quick_task_dir2)
+                .with_dir(&git_dir.to_string_lossy().to_string())
+                .with_dir(&tsk_dir.to_string_lossy().to_string())
+                .with_dir(&tasks_dir.to_string_lossy().to_string())
+                .with_dir(&quick_tasks_dir.to_string_lossy().to_string())
+                .with_dir(&queued_dir_path.to_string_lossy().to_string())
+                .with_dir(&completed_dir_path.to_string_lossy().to_string())
+                .with_dir(&quick_task_dir1.to_string_lossy().to_string())
+                .with_dir(&quick_task_dir2.to_string_lossy().to_string())
                 .with_file(&tasks_json_path, &tasks_json),
         );
 
@@ -501,8 +441,8 @@ mod tests {
         assert_eq!(quick_count, 2);
 
         // Verify directories are cleaned up
-        let queued_exists = fs.exists(Path::new(&queued_dir_path)).await.unwrap();
-        let completed_exists = fs.exists(Path::new(&completed_dir_path)).await.unwrap();
+        let queued_exists = fs.exists(&queued_dir_path).await.unwrap();
+        let completed_exists = fs.exists(&completed_dir_path).await.unwrap();
         assert!(queued_exists, "Queued task directory should still exist");
         assert!(
             !completed_exists,
@@ -529,11 +469,7 @@ mod tests {
         completed_task.status = TaskStatus::Complete;
 
         let current_dir = std::env::current_dir().unwrap();
-        let task_dir_path = current_dir
-            .join(".tsk/tasks")
-            .join(&task_id)
-            .to_string_lossy()
-            .to_string();
+        let task_dir_path = current_dir.join(".tsk/tasks").join(&task_id);
 
         // Create tasks.json with the completed task
         let tasks_json = format!(
@@ -542,22 +478,19 @@ mod tests {
         );
 
         // Create mock file system with necessary structure
-        let git_dir = current_dir.join(".git").to_string_lossy().to_string();
-        let tsk_dir = current_dir.join(".tsk").to_string_lossy().to_string();
-        let tasks_dir = current_dir.join(".tsk/tasks").to_string_lossy().to_string();
-        let tasks_json_path = current_dir
-            .join(".tsk/tasks.json")
-            .to_string_lossy()
-            .to_string();
+        let git_dir = current_dir.join(".git");
+        let tsk_dir = current_dir.join(".tsk");
+        let tasks_dir = current_dir.join(".tsk/tasks");
+        let tasks_json_path = ".tsk/tasks.json"; // Keep relative for JsonTaskStorage
 
         let fs = Arc::new(
             MockFileSystem::new()
-                .with_dir(&git_dir)
-                .with_dir(&tsk_dir)
-                .with_dir(&tasks_dir)
-                .with_dir(&task_dir_path)
+                .with_dir(&git_dir.to_string_lossy().to_string())
+                .with_dir(&tsk_dir.to_string_lossy().to_string())
+                .with_dir(&tasks_dir.to_string_lossy().to_string())
+                .with_dir(&task_dir_path.to_string_lossy().to_string())
                 .with_file(
-                    &format!("{}/instructions.md", task_dir_path),
+                    &format!("{}/instructions.md", task_dir_path.to_string_lossy()),
                     "Test instructions",
                 )
                 .with_file(&tasks_json_path, &tasks_json),
@@ -581,7 +514,7 @@ mod tests {
         assert_eq!(completed_count, 1);
 
         // Verify directory was deleted
-        let task_dir_exists = fs.exists(Path::new(&task_dir_path)).await.unwrap();
+        let task_dir_exists = fs.exists(&task_dir_path).await.unwrap();
         assert!(!task_dir_exists, "Task directory should have been deleted");
     }
 }

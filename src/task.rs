@@ -1,9 +1,8 @@
-use crate::context::file_system::FileSystemOperations;
+use crate::context::AppContext;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::error::Error;
+use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TaskStatus {
@@ -91,224 +90,386 @@ impl Task {
     }
 }
 
-// Trait for task storage abstraction
-#[async_trait::async_trait]
-pub trait TaskStorage: Send + Sync {
-    async fn add_task(&self, task: Task) -> Result<(), Box<dyn std::error::Error>>;
-    #[allow(dead_code)] // Will be used in future functionality (e.g., task details view)
-    async fn get_task(&self, id: &str) -> Result<Option<Task>, Box<dyn std::error::Error>>;
-    async fn list_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error>>;
-    async fn update_task(&self, task: Task) -> Result<(), Box<dyn std::error::Error>>;
-    async fn delete_task(&self, id: &str) -> Result<(), Box<dyn std::error::Error>>;
-    async fn delete_tasks_by_status(
-        &self,
-        statuses: Vec<TaskStatus>,
-    ) -> Result<usize, Box<dyn std::error::Error>>;
+pub struct TaskBuilder {
+    name: Option<String>,
+    task_type: Option<String>,
+    description: Option<String>,
+    instructions: Option<String>,
+    edit: bool,
+    agent: Option<String>,
+    timeout: Option<u32>,
+    is_quick: bool,
 }
 
-// JSON file-based implementation
-pub struct JsonTaskStorage {
-    file_path: PathBuf,
-    lock: Arc<Mutex<()>>,
-    file_system: Arc<dyn FileSystemOperations>,
-}
-
-impl JsonTaskStorage {
-    pub fn new(base_path: &Path, file_system: Arc<dyn FileSystemOperations>) -> Self {
-        let file_path = base_path.join("tasks.json");
-
+impl TaskBuilder {
+    pub fn new() -> Self {
         Self {
-            file_path,
-            lock: Arc::new(Mutex::new(())),
-            file_system,
+            name: None,
+            task_type: None,
+            description: None,
+            instructions: None,
+            edit: false,
+            agent: None,
+            timeout: None,
+            is_quick: false,
         }
     }
 
-    async fn read_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error>> {
-        if !self
-            .file_system
-            .exists(&self.file_path)
-            .await
-            .map_err(|e| e.to_string())?
-        {
-            return Ok(Vec::new());
+    pub fn name(mut self, name: String) -> Self {
+        self.name = Some(name);
+        self
+    }
+
+    pub fn task_type(mut self, task_type: String) -> Self {
+        self.task_type = Some(task_type);
+        self
+    }
+
+    pub fn description(mut self, description: Option<String>) -> Self {
+        self.description = description;
+        self
+    }
+
+    pub fn instructions(mut self, instructions: Option<String>) -> Self {
+        self.instructions = instructions;
+        self
+    }
+
+    pub fn edit(mut self, edit: bool) -> Self {
+        self.edit = edit;
+        self
+    }
+
+    pub fn agent(mut self, agent: Option<String>) -> Self {
+        self.agent = agent;
+        self
+    }
+
+    pub fn timeout(mut self, timeout: u32) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
+    pub fn quick(mut self, is_quick: bool) -> Self {
+        self.is_quick = is_quick;
+        self
+    }
+
+    pub async fn build(self, ctx: &AppContext) -> Result<Task, Box<dyn Error>> {
+        let name = self.name.clone().ok_or("Task name is required")?;
+        let task_type = self
+            .task_type
+            .clone()
+            .unwrap_or_else(|| "generic".to_string());
+        let timeout = self.timeout.unwrap_or(30);
+
+        // Validate input
+        if self.description.is_none() && self.instructions.is_none() && !self.edit {
+            return Err(
+                "Either description or instructions must be provided, or use edit mode".into(),
+            );
         }
 
-        let contents = self
-            .file_system
-            .read_file(&self.file_path)
-            .await
-            .map_err(|e| e.to_string())?;
-        let tasks: Vec<Task> = serde_json::from_str(&contents)?;
-        Ok(tasks)
-    }
+        // Validate task type
+        if task_type != "generic" {
+            let template_path = Path::new("templates").join(format!("{}.md", task_type));
+            if !ctx.file_system().exists(&template_path).await? {
+                return Err(format!(
+                    "No template found for task type '{}'. Please check the templates folder.",
+                    task_type
+                )
+                .into());
+            }
+        }
 
-    async fn write_tasks(&self, tasks: &[Task]) -> Result<(), Box<dyn std::error::Error>> {
-        let contents = serde_json::to_string_pretty(tasks)?;
-        self.file_system
-            .write_file(&self.file_path, &contents)
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(())
-    }
-}
-
-#[async_trait::async_trait]
-impl TaskStorage for JsonTaskStorage {
-    async fn add_task(&self, task: Task) -> Result<(), Box<dyn std::error::Error>> {
-        let _lock = self.lock.lock().await;
-
-        let mut tasks = self.read_tasks().await?;
-        tasks.push(task);
-        self.write_tasks(&tasks).await?;
-
-        Ok(())
-    }
-
-    async fn get_task(&self, id: &str) -> Result<Option<Task>, Box<dyn std::error::Error>> {
-        let tasks = self.read_tasks().await?;
-        Ok(tasks.into_iter().find(|t| t.id == id))
-    }
-
-    async fn list_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error>> {
-        self.read_tasks().await
-    }
-
-    async fn update_task(&self, task: Task) -> Result<(), Box<dyn std::error::Error>> {
-        let _lock = self.lock.lock().await;
-
-        let mut tasks = self.read_tasks().await?;
-        if let Some(index) = tasks.iter().position(|t| t.id == task.id) {
-            tasks[index] = task;
-            self.write_tasks(&tasks).await?;
-            Ok(())
+        // Create task directory
+        let timestamp = chrono::Utc::now().format("%Y-%m-%d-%H%M");
+        let task_dir_name = format!("{}-{}", timestamp, name);
+        let task_dir = if self.is_quick {
+            Path::new(".tsk/quick-tasks").join(&task_dir_name)
         } else {
-            Err("Task not found".into())
+            Path::new(".tsk/tasks").join(&task_dir_name)
+        };
+        ctx.file_system().create_dir(&task_dir).await?;
+
+        // Create instructions file
+        let instructions_path = self
+            .create_instructions_file(&task_dir, &task_type, ctx)
+            .await?;
+
+        // Handle edit mode
+        if self.edit {
+            self.open_editor(&instructions_path)?;
+            self.check_instructions_not_empty(&instructions_path, ctx)
+                .await?;
         }
+
+        // Create and return the task
+        let task = Task::new_with_id(
+            task_dir_name.clone(),
+            name,
+            task_type,
+            None, // description is now stored in instructions file
+            Some(instructions_path),
+            self.agent,
+            timeout,
+        );
+
+        Ok(task)
     }
 
-    async fn delete_task(&self, id: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let _lock = self.lock.lock().await;
-
-        let mut tasks = self.read_tasks().await?;
-        if let Some(index) = tasks.iter().position(|t| t.id == id) {
-            tasks.remove(index);
-            self.write_tasks(&tasks).await?;
-            Ok(())
-        } else {
-            Err("Task not found".into())
-        }
-    }
-
-    async fn delete_tasks_by_status(
+    async fn create_instructions_file(
         &self,
-        statuses: Vec<TaskStatus>,
-    ) -> Result<usize, Box<dyn std::error::Error>> {
-        let _lock = self.lock.lock().await;
+        task_dir: &Path,
+        task_type: &str,
+        ctx: &AppContext,
+    ) -> Result<String, Box<dyn Error>> {
+        let dest_path = task_dir.join("instructions.md");
+        let fs = ctx.file_system();
 
-        let mut tasks = self.read_tasks().await?;
-        let original_count = tasks.len();
-        tasks.retain(|t| !statuses.contains(&t.status));
-        let deleted_count = original_count - tasks.len();
-        self.write_tasks(&tasks).await?;
-        Ok(deleted_count)
+        if let Some(ref inst_path) = self.instructions {
+            // Copy existing instructions file
+            let content = fs.read_file(Path::new(inst_path)).await?;
+            fs.write_file(&dest_path, &content).await?;
+            println!("Copied instructions file to task directory");
+            Ok(dest_path.to_string_lossy().to_string())
+        } else if let Some(ref desc) = self.description {
+            // Check if a template exists for this task type
+            let template_path = Path::new("templates").join(format!("{}.md", task_type));
+            let content = if fs.exists(&template_path).await? {
+                match fs.read_file(&template_path).await {
+                    Ok(template_content) => template_content.replace("{{DESCRIPTION}}", desc),
+                    Err(e) => {
+                        eprintln!("Warning: Failed to read template file: {}", e);
+                        desc.clone()
+                    }
+                }
+            } else {
+                desc.clone()
+            };
+
+            fs.write_file(&dest_path, &content).await?;
+            if fs.exists(&template_path).await? {
+                println!("Created instructions file from {} template", task_type);
+            } else {
+                println!("Created instructions file from description");
+            }
+            Ok(dest_path.to_string_lossy().to_string())
+        } else if self.edit {
+            // Create empty instructions file for editing
+            let template_path = Path::new("templates").join(format!("{}.md", task_type));
+            let initial_content = if fs.exists(&template_path).await? {
+                match fs.read_file(&template_path).await {
+                    Ok(template_content) => template_content.replace(
+                        "{{DESCRIPTION}}",
+                        "<!-- TODO: Add your task description here -->",
+                    ),
+                    Err(_) => String::new(),
+                }
+            } else {
+                String::new()
+            };
+
+            fs.write_file(&dest_path, &initial_content).await?;
+            println!("Created instructions file for editing");
+            Ok(dest_path.to_string_lossy().to_string())
+        } else {
+            return Err("No description or instructions provided".into());
+        }
+    }
+
+    fn open_editor(&self, instructions_path: &str) -> Result<(), Box<dyn Error>> {
+        let editor = std::env::var("EDITOR").unwrap_or_else(|_| {
+            if std::env::var("VISUAL").is_ok() {
+                std::env::var("VISUAL").unwrap()
+            } else {
+                "vi".to_string()
+            }
+        });
+
+        println!("Opening instructions file in editor: {}", editor);
+
+        let status = std::process::Command::new(&editor)
+            .arg(instructions_path)
+            .status()?;
+
+        if !status.success() {
+            return Err("Editor exited with non-zero status".into());
+        }
+
+        Ok(())
+    }
+
+    async fn check_instructions_not_empty(
+        &self,
+        instructions_path: &str,
+        ctx: &AppContext,
+    ) -> Result<(), Box<dyn Error>> {
+        // Check if file is empty after editing
+        let content = ctx
+            .file_system()
+            .read_file(Path::new(instructions_path))
+            .await?;
+        if content.trim().is_empty() {
+            return Err("Instructions file is empty. Task creation cancelled.".into());
+        }
+        Ok(())
     }
 }
 
-// Factory function for getting task storage
-pub fn get_task_storage(file_system: Arc<dyn FileSystemOperations>) -> Box<dyn TaskStorage> {
-    let storage = JsonTaskStorage::new(Path::new(".tsk"), file_system);
-    Box::new(storage)
+impl Default for TaskBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::file_system::DefaultFileSystem;
-    use tempfile::TempDir;
+    use crate::context::file_system::{tests::MockFileSystem, FileSystemOperations};
+    use crate::context::AppContext;
+    use std::sync::Arc;
 
     #[tokio::test]
-    async fn test_json_task_storage() {
-        let temp_dir = TempDir::new().unwrap();
-        let file_system = Arc::new(DefaultFileSystem);
-        let storage = JsonTaskStorage::new(temp_dir.path(), file_system);
-
-        // Test adding a task
-        let task = Task::new(
-            "test-task".to_string(),
-            "feature".to_string(),
-            Some("Test description".to_string()),
-            None,
-            None,
-            30,
+    async fn test_task_builder_basic() {
+        let current_dir = std::env::current_dir().unwrap();
+        let fs = Arc::new(
+            MockFileSystem::new()
+                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string()),
         );
 
-        storage.add_task(task.clone()).await.unwrap();
+        let ctx = AppContext::builder().with_file_system(fs.clone()).build();
 
-        // Test getting a task
-        let retrieved = storage.get_task(&task.id).await.unwrap();
-        assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().name, "test-task");
-
-        // Test listing tasks
-        let tasks = storage.list_tasks().await.unwrap();
-        assert_eq!(tasks.len(), 1);
-
-        // Test updating a task
-        let mut updated_task = task.clone();
-        updated_task.status = TaskStatus::Running;
-        storage.update_task(updated_task).await.unwrap();
-
-        let retrieved = storage.get_task(&task.id).await.unwrap().unwrap();
-        assert_eq!(retrieved.status, TaskStatus::Running);
-
-        // Test deleting a task
-        storage.delete_task(&task.id).await.unwrap();
-        let retrieved = storage.get_task(&task.id).await.unwrap();
-        assert!(retrieved.is_none());
-
-        // Test deleting tasks by status
-        let task1 = Task::new(
-            "task1".to_string(),
-            "feature".to_string(),
-            Some("Task 1".to_string()),
-            None,
-            None,
-            30,
-        );
-        let mut task2 = Task::new(
-            "task2".to_string(),
-            "bug-fix".to_string(),
-            Some("Task 2".to_string()),
-            None,
-            None,
-            30,
-        );
-        task2.status = TaskStatus::Complete;
-        let mut task3 = Task::new(
-            "task3".to_string(),
-            "refactor".to_string(),
-            Some("Task 3".to_string()),
-            None,
-            None,
-            30,
-        );
-        task3.status = TaskStatus::Failed;
-
-        storage.add_task(task1.clone()).await.unwrap();
-        storage.add_task(task2.clone()).await.unwrap();
-        storage.add_task(task3.clone()).await.unwrap();
-
-        // Delete completed and failed tasks
-        let deleted_count = storage
-            .delete_tasks_by_status(vec![TaskStatus::Complete, TaskStatus::Failed])
+        let task = TaskBuilder::new()
+            .name("test-task".to_string())
+            .task_type("generic".to_string())
+            .description(Some("Test description".to_string()))
+            .timeout(60)
+            .build(&ctx)
             .await
             .unwrap();
-        assert_eq!(deleted_count, 2);
 
-        // Verify only queued task remains
-        let remaining_tasks = storage.list_tasks().await.unwrap();
-        assert_eq!(remaining_tasks.len(), 1);
-        assert_eq!(remaining_tasks[0].status, TaskStatus::Queued);
+        assert_eq!(task.name, "test-task");
+        assert_eq!(task.task_type, "generic");
+        assert_eq!(task.timeout, 60);
+        assert!(task.instructions_file.is_some());
+        assert!(task.id.contains("test-task"));
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_with_template() {
+        let current_dir = std::env::current_dir().unwrap();
+        let template_content = "# Feature Template\n\n{{DESCRIPTION}}";
+        let template_path = Path::new("templates/feature.md");
+        let fs = Arc::new(
+            MockFileSystem::new()
+                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string())
+                .with_dir("templates")
+                .with_file(
+                    &template_path.to_string_lossy().to_string(),
+                    template_content,
+                ),
+        );
+
+        let ctx = AppContext::builder().with_file_system(fs.clone()).build();
+
+        let task = TaskBuilder::new()
+            .name("test-feature".to_string())
+            .task_type("feature".to_string())
+            .description(Some("My feature description".to_string()))
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        assert_eq!(task.task_type, "feature");
+
+        // Verify instructions file was created with template
+        let instructions_path = task.instructions_file.as_ref().unwrap();
+        let content = fs.read_file(Path::new(instructions_path)).await.unwrap();
+        assert_eq!(content, "# Feature Template\n\nMy feature description");
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_quick_task() {
+        let current_dir = std::env::current_dir().unwrap();
+        let fs = Arc::new(
+            MockFileSystem::new().with_dir(
+                &current_dir
+                    .join(".tsk/quick-tasks")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+        );
+
+        let ctx = AppContext::builder().with_file_system(fs.clone()).build();
+
+        let task = TaskBuilder::new()
+            .name("quick-test".to_string())
+            .description(Some("Quick task".to_string()))
+            .quick(true)
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        assert!(task.id.contains("quick-test"));
+        assert!(task
+            .instructions_file
+            .as_ref()
+            .unwrap()
+            .contains("quick-tasks"));
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_validation_no_input() {
+        let current_dir = std::env::current_dir().unwrap();
+        let fs = Arc::new(
+            MockFileSystem::new()
+                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string()),
+        );
+
+        let ctx = AppContext::builder().with_file_system(fs).build();
+
+        let result = TaskBuilder::new()
+            .name("test-task".to_string())
+            .build(&ctx)
+            .await;
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Either description or instructions"));
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_with_instructions_file() {
+        let current_dir = std::env::current_dir().unwrap();
+        let instructions_content = "# Instructions for task";
+        let instructions_path = current_dir.join("test-instructions.md");
+        let fs = Arc::new(
+            MockFileSystem::new()
+                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string())
+                .with_file(
+                    &instructions_path.to_string_lossy().to_string(),
+                    instructions_content,
+                ),
+        );
+
+        let ctx = AppContext::builder().with_file_system(fs.clone()).build();
+
+        let task = TaskBuilder::new()
+            .name("test-task".to_string())
+            .instructions(Some(instructions_path.to_string_lossy().to_string()))
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        // Verify instructions file was copied
+        let task_instructions_path = task.instructions_file.as_ref().unwrap();
+        let content = fs
+            .read_file(Path::new(task_instructions_path))
+            .await
+            .unwrap();
+        assert_eq!(content, instructions_content);
     }
 }

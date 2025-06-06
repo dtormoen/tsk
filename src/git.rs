@@ -76,20 +76,16 @@ impl RepoManager {
         }
     }
 
-    /// Copy repository for a task with the name `<task-name>` in `.tsk/tasks/<task-name>/repo-<task-name>`
+    /// Copy repository for a task using the task ID
     /// Returns the path to the copied repository and the branch name
-    pub async fn copy_repo(&self, task_name: &str) -> Result<(PathBuf, String), String> {
-        // Generate timestamp in YYYY-MM-DD-HHMM format
-        let now: DateTime<Local> = Local::now();
-        let timestamp = now.format("%Y-%m-%d-%H%M").to_string();
-
-        // Create unique names with timestamp
-        let task_dir_name = format!("{}-{}", timestamp, task_name);
-        let branch_name = format!("tsk/{}-{}", timestamp, task_name);
+    pub async fn copy_repo(&self, task_id: &str) -> Result<(PathBuf, String), String> {
+        // Use the task ID directly for the directory name
+        let task_dir_name = task_id;
+        let branch_name = format!("tsk/{}", task_id);
 
         // Create the task directory structure
-        let task_dir = self.base_path.join(&task_dir_name);
-        let repo_path = task_dir.join(format!("repo-{}", task_name));
+        let task_dir = self.base_path.join(task_dir_name);
+        let repo_path = task_dir.join("repo");
 
         // Create directories if they don't exist
         self.file_system
@@ -255,7 +251,7 @@ mod tests {
             repo_root: None,
         };
 
-        let result = manager.copy_repo("test-task").await;
+        let result = manager.copy_repo("2024-01-01-1200-test-task").await;
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Not in a git repository");

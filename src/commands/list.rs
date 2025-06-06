@@ -1,6 +1,7 @@
 use super::Command;
 use crate::context::AppContext;
-use crate::task::{get_task_storage, TaskStatus};
+use crate::task::TaskStatus;
+use crate::task_storage::get_task_storage;
 use async_trait::async_trait;
 use std::error::Error;
 use tabled::settings::Style;

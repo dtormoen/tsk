@@ -39,10 +39,12 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `debug`: Launch interactive containers for troubleshooting
 - `tasks`: Manage task queue (delete/clean operations)
 
-**Task Management** (`src/task.rs`, `src/task_manager.rs`)
+**Task Management** (`src/task.rs`, `src/task_storage.rs`, `src/task_manager.rs`)
+- `TaskBuilder` provides consistent task creation with builder pattern
+- `TaskStorage` trait abstracts storage with JSON-based implementation
 - JSON-based persistence in `.tsk/tasks.json`
 - Task status: Queued → Running → Complete/Failed
-- Branch naming: `tsk/{timestamp}-{task-name}`
+- Branch naming: `tsk/{task-id}` (where task-id is `{timestamp}-{task-name}`)
 
 **Docker Integration** (`src/docker.rs`)
 - Security-first containers with dropped capabilities

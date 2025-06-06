@@ -93,7 +93,7 @@ mod command_tests {
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("Either --description or --instructions must be provided"));
+            .contains("Either description or instructions must be provided"));
     }
 
     #[tokio::test]
@@ -135,7 +135,7 @@ mod command_tests {
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("Either --description or --instructions must be provided"));
+            .contains("Either description or instructions must be provided"));
     }
 
     #[tokio::test]
