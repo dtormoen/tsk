@@ -241,8 +241,7 @@ impl DockerManager {
             .await
     }
 
-    #[allow(dead_code)] // Used in production builds
-    pub async fn run_task_container_with_streaming<F>(
+    pub async fn run_task_container<F>(
         &self,
         image: &str,
         worktree_path: &Path,
@@ -369,79 +368,6 @@ impl DockerManager {
                 }
             }
         }
-    }
-
-    #[allow(dead_code)]
-    pub async fn run_task_container(
-        &self,
-        image: &str,
-        worktree_path: &Path,
-        command: Vec<String>,
-        instructions_file_path: Option<&PathBuf>,
-    ) -> Result<String, String> {
-        // Ensure network and proxy are running
-        self.ensure_network().await?;
-        self.ensure_proxy().await?;
-
-        let absolute_worktree_path = Self::prepare_worktree_path(worktree_path)?;
-        let worktree_path_str = absolute_worktree_path
-            .to_str()
-            .ok_or_else(|| "Invalid worktree path".to_string())?;
-
-        let wrapped_command = if command.is_empty() {
-            None
-        } else {
-            Some(command)
-        };
-
-        let config = Self::create_base_container_config(
-            image,
-            worktree_path_str,
-            wrapped_command,
-            false, // not interactive
-            instructions_file_path,
-        );
-
-        let options = CreateContainerOptions {
-            name: format!("tsk-{}", chrono::Utc::now().timestamp()),
-            platform: None,
-        };
-
-        let container_id = self.client.create_container(Some(options), config).await?;
-        self.client.start_container(&container_id).await?;
-
-        let exit_code = self.client.wait_container(&container_id).await?;
-
-        let logs = self
-            .client
-            .logs(
-                &container_id,
-                Some(LogsOptions {
-                    stdout: true,
-                    stderr: true,
-                    ..Default::default()
-                }),
-            )
-            .await?;
-
-        self.client
-            .remove_container(
-                &container_id,
-                Some(RemoveContainerOptions {
-                    force: true,
-                    ..Default::default()
-                }),
-            )
-            .await?;
-
-        if exit_code != 0 {
-            return Err(format!(
-                "Container exited with non-zero status: {}. Logs:\n{}",
-                exit_code, logs
-            ));
-        }
-
-        Ok(logs)
     }
 }
 
@@ -603,7 +529,7 @@ mod tests {
         let command = vec!["echo".to_string(), "hello".to_string()];
 
         let result = manager
-            .run_task_container("tsk/base", worktree_path, command.clone(), None)
+            .run_task_container("tsk/base", worktree_path, command.clone(), None, |_| {})
             .await;
 
         assert!(result.is_ok());
@@ -651,7 +577,7 @@ mod tests {
         let command = vec![];
 
         let result = manager
-            .run_task_container("tsk/base", worktree_path, command, None)
+            .run_task_container("tsk/base", worktree_path, command, None, |_| {})
             .await;
 
         assert!(result.is_ok());
@@ -675,7 +601,7 @@ mod tests {
         let command = vec!["false".to_string()];
 
         let result = manager
-            .run_task_container("tsk/base", worktree_path, command, None)
+            .run_task_container("tsk/base", worktree_path, command, None, |_| {})
             .await;
 
         assert!(result.is_err());
@@ -700,7 +626,7 @@ mod tests {
         let command = vec!["echo".to_string(), "hello".to_string()];
 
         let result = manager
-            .run_task_container("tsk/base", worktree_path, command, None)
+            .run_task_container("tsk/base", worktree_path, command, None, |_| {})
             .await;
 
         assert!(result.is_err());
@@ -719,7 +645,7 @@ mod tests {
         let command = vec!["test".to_string()];
 
         let _ = manager
-            .run_task_container("tsk/base", worktree_path, command.clone(), None)
+            .run_task_container("tsk/base", worktree_path, command.clone(), None, |_| {})
             .await;
 
         let create_calls = mock_client.create_container_calls.lock().unwrap();
@@ -778,7 +704,13 @@ mod tests {
         ];
 
         let result = manager
-            .run_task_container("tsk/base", worktree_path, command, Some(&instructions_path))
+            .run_task_container(
+                "tsk/base",
+                worktree_path,
+                command,
+                Some(&instructions_path),
+                |_| {},
+            )
             .await;
 
         assert!(result.is_ok());
@@ -803,7 +735,7 @@ mod tests {
         let command = vec!["test".to_string()];
 
         let result = manager
-            .run_task_container("tsk/base", relative_path, command, None)
+            .run_task_container("tsk/base", relative_path, command, None, |_| {})
             .await;
 
         assert!(result.is_ok());

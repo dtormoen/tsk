@@ -1,7 +1,7 @@
 use super::Command;
 use crate::context::AppContext;
 use crate::docker::DockerManager;
-use crate::git::get_repo_manager;
+use crate::git::RepoManager;
 use crate::task_runner::TaskRunner;
 use async_trait::async_trait;
 use std::error::Error;
@@ -15,7 +15,7 @@ impl Command for DebugCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         println!("Starting debug session: {}", self.name);
 
-        let repo_manager = get_repo_manager(ctx.file_system(), ctx.git_operations());
+        let repo_manager = RepoManager::new(ctx.file_system(), ctx.git_operations());
         let docker_manager = DockerManager::new(ctx.docker_client());
         let task_runner = TaskRunner::new(repo_manager, docker_manager, ctx.file_system());
 

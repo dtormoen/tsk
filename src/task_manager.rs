@@ -1,6 +1,6 @@
 use crate::context::{file_system::FileSystemOperations, AppContext};
 use crate::docker::DockerManager;
-use crate::git::get_repo_manager;
+use crate::git::RepoManager;
 use crate::task::{Task, TaskStatus};
 use crate::task_runner::{TaskExecutionError, TaskExecutionResult, TaskRunner};
 use crate::task_storage::{get_task_storage, TaskStorage};
@@ -16,7 +16,7 @@ pub struct TaskManager {
 
 impl TaskManager {
     pub fn new(ctx: &AppContext) -> Result<Self, String> {
-        let repo_manager = get_repo_manager(ctx.file_system(), ctx.git_operations());
+        let repo_manager = RepoManager::new(ctx.file_system(), ctx.git_operations());
         let docker_manager = DockerManager::new(ctx.docker_client());
         let task_runner = TaskRunner::new(repo_manager, docker_manager, ctx.file_system());
 
@@ -29,7 +29,7 @@ impl TaskManager {
     }
 
     pub fn with_storage(ctx: &AppContext) -> Result<Self, String> {
-        let repo_manager = get_repo_manager(ctx.file_system(), ctx.git_operations());
+        let repo_manager = RepoManager::new(ctx.file_system(), ctx.git_operations());
         let docker_manager = DockerManager::new(ctx.docker_client());
         let task_runner = TaskRunner::new(repo_manager, docker_manager, ctx.file_system());
 

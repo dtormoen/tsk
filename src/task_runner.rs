@@ -64,37 +64,6 @@ impl TaskRunner {
         ])
     }
 
-    /// Prepare instructions file by copying it to the task directory
-    async fn prepare_instructions_file(
-        &self,
-        instructions_path: &str,
-        repo_path: &Path,
-    ) -> Result<PathBuf, String> {
-        // Read the instructions file to verify it exists
-        self.file_system
-            .read_file(Path::new(instructions_path))
-            .await
-            .map_err(|e| format!("Error reading instructions file: {}", e))?;
-
-        // Copy instructions file to task folder (parent of repo_path)
-        let task_folder = repo_path
-            .parent()
-            .ok_or_else(|| "Invalid repo path".to_string())?;
-
-        let inst_filename = std::path::Path::new(instructions_path)
-            .file_name()
-            .unwrap_or_else(|| std::ffi::OsStr::new("instructions.md"));
-        let dest_path = task_folder.join(inst_filename);
-
-        self.file_system
-            .copy_file(Path::new(instructions_path), &dest_path)
-            .await
-            .map_err(|e| format!("Error copying instructions file: {}", e))?;
-
-        println!("Copied instructions file to: {}", dest_path.display());
-        Ok(dest_path)
-    }
-
     /// Execute a task
     pub async fn execute_task(
         &self,
@@ -110,11 +79,9 @@ impl TaskRunner {
         println!("Created repository copy at: {}", repo_path.display());
 
         // Ensure we have an instructions file
-        let instructions_file_path = if let Some(inst_path) = &task.instructions_file {
-            self.prepare_instructions_file(inst_path, &repo_path)
-                .await?
-        } else {
-            return Err("No instructions file provided".to_string().into());
+        let instructions_file_path = match &task.instructions_file {
+            Some(path) => PathBuf::from(path),
+            None => return Err("No instructions file provided".to_string().into()),
         };
 
         // Build the command
@@ -130,7 +97,7 @@ impl TaskRunner {
         let output = {
             // Use streaming version
             self.docker_manager
-                .run_task_container_with_streaming(
+                .run_task_container(
                     "tsk/base",
                     &repo_path,
                     command.clone(),
@@ -348,13 +315,13 @@ mod tests {
     #[tokio::test]
     async fn test_build_task_command_with_instructions() {
         use crate::context::file_system::tests::MockFileSystem;
-        use crate::git::get_repo_manager;
+        use crate::git::RepoManager;
 
         let fs = Arc::new(MockFileSystem::new());
         let git_ops = Arc::new(crate::context::git_operations::tests::MockGitOperations::new());
         let docker_client = Arc::new(MockDockerClient::new());
 
-        let repo_manager = get_repo_manager(fs.clone(), git_ops);
+        let repo_manager = RepoManager::new(fs.clone(), git_ops);
         let docker_manager = crate::docker::DockerManager::new(docker_client);
         let task_runner = TaskRunner::new(repo_manager, docker_manager, fs);
 
@@ -371,7 +338,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_task_success() {
         use crate::context::file_system::tests::MockFileSystem;
-        use crate::git::get_repo_manager;
+        use crate::git::RepoManager;
 
         // Create mock file system with necessary files and directories
         let fs = Arc::new(
@@ -386,7 +353,7 @@ mod tests {
         let git_ops = Arc::new(crate::context::git_operations::tests::MockGitOperations::new());
         let docker_client = Arc::new(MockDockerClient::new());
 
-        let repo_manager = get_repo_manager(fs.clone(), git_ops);
+        let repo_manager = RepoManager::new(fs.clone(), git_ops);
         let docker_manager = crate::docker::DockerManager::new(docker_client);
         let task_runner = TaskRunner::new(repo_manager, docker_manager, fs);
 

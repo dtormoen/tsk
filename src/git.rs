@@ -4,29 +4,6 @@ use chrono::{DateTime, Local};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Factory function to get a RepoManager instance
-/// Returns a dummy implementation in test mode that panics on use
-#[cfg(not(test))]
-pub fn get_repo_manager(
-    file_system: Arc<dyn FileSystemOperations>,
-    git_operations: Arc<dyn GitOperations>,
-) -> RepoManager {
-    RepoManager::new(file_system, git_operations)
-}
-
-#[cfg(test)]
-pub fn get_repo_manager(
-    file_system: Arc<dyn FileSystemOperations>,
-    git_operations: Arc<dyn GitOperations>,
-) -> RepoManager {
-    RepoManager {
-        base_path: PathBuf::from(".tsk/tasks"),
-        file_system,
-        git_operations,
-        repo_root: None,
-    }
-}
-
 pub struct RepoManager {
     base_path: PathBuf,
     file_system: Arc<dyn FileSystemOperations>,
@@ -35,7 +12,6 @@ pub struct RepoManager {
 }
 
 impl RepoManager {
-    #[cfg(not(test))]
     pub fn new(
         file_system: Arc<dyn FileSystemOperations>,
         git_operations: Arc<dyn GitOperations>,
@@ -45,34 +21,6 @@ impl RepoManager {
             file_system,
             git_operations,
             repo_root: None,
-        }
-    }
-
-    #[cfg(test)]
-    pub fn with_git_operations(
-        file_system: Arc<dyn FileSystemOperations>,
-        git_operations: Arc<dyn GitOperations>,
-    ) -> Self {
-        Self {
-            base_path: PathBuf::from(".tsk/tasks"),
-            file_system,
-            git_operations,
-            repo_root: None,
-        }
-    }
-
-    /// Create a RepoManager with a specific repository root path
-    #[cfg(test)]
-    pub fn with_repo_root(
-        file_system: Arc<dyn FileSystemOperations>,
-        git_operations: Arc<dyn GitOperations>,
-        repo_root: PathBuf,
-    ) -> Self {
-        Self {
-            base_path: repo_root.join(".tsk/tasks"),
-            file_system,
-            git_operations,
-            repo_root: Some(repo_root),
         }
     }
 
