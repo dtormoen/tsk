@@ -28,11 +28,12 @@ impl Command for TasksCommand {
 
         // Handle clean option
         if self.clean {
-            println!("Cleaning completed tasks and quick tasks...");
-            let (completed_count, quick_count) = task_manager.clean_tasks().await?;
-            println!("Cleanup complete:");
-            println!("  - {} completed task(s) deleted", completed_count);
-            println!("  - {} quick task(s) deleted", quick_count);
+            println!("Cleaning completed tasks...");
+            let completed_count = task_manager.clean_tasks().await?;
+            println!(
+                "Cleanup complete: {} completed task(s) deleted",
+                completed_count
+            );
         }
 
         Ok(())

@@ -150,8 +150,8 @@ impl TaskManager {
         Ok(())
     }
 
-    /// Delete all completed tasks and all quick tasks
-    pub async fn clean_tasks(&self) -> Result<(usize, usize), String> {
+    /// Delete all completed tasks
+    pub async fn clean_tasks(&self) -> Result<usize, String> {
         // Get task storage
         let storage = match &self.task_storage {
             Some(s) => s,
@@ -190,30 +190,7 @@ impl TaskManager {
             .await
             .map_err(|e| format!("Error deleting completed tasks: {}", e))?;
 
-        // Delete all quick task directories
-        let quick_tasks_dir = repo_root.join(".tsk/quick-tasks");
-        let mut quick_task_count = 0;
-        if self
-            .file_system
-            .exists(&quick_tasks_dir)
-            .await
-            .unwrap_or(false)
-        {
-            match self.file_system.read_dir(&quick_tasks_dir).await {
-                Ok(entries) => {
-                    for entry_path in entries {
-                        if let Err(e) = self.file_system.remove_dir(&entry_path).await {
-                            eprintln!("Warning: Failed to delete quick task directory: {}", e);
-                        } else {
-                            quick_task_count += 1;
-                        }
-                    }
-                }
-                Err(e) => eprintln!("Warning: Failed to read quick tasks directory: {}", e),
-            }
-        }
-
-        Ok((deleted_count, quick_task_count))
+        Ok(deleted_count)
     }
 }
 
@@ -322,9 +299,6 @@ mod tests {
         let git_dir = current_dir.join(".git");
         let tsk_dir = current_dir.join(".tsk");
         let tasks_dir = current_dir.join(".tsk/tasks");
-        let quick_tasks_dir = current_dir.join(".tsk/quick-tasks");
-        let quick_task_dir1 = current_dir.join(".tsk/quick-tasks/2024-01-01-1200-quick1");
-        let quick_task_dir2 = current_dir.join(".tsk/quick-tasks/2024-01-01-1300-quick2");
         let tasks_json_path = ".tsk/tasks.json"; // Keep relative for JsonTaskStorage
 
         let fs = Arc::new(
@@ -332,11 +306,8 @@ mod tests {
                 .with_dir(&git_dir.to_string_lossy().to_string())
                 .with_dir(&tsk_dir.to_string_lossy().to_string())
                 .with_dir(&tasks_dir.to_string_lossy().to_string())
-                .with_dir(&quick_tasks_dir.to_string_lossy().to_string())
                 .with_dir(&queued_dir_path.to_string_lossy().to_string())
                 .with_dir(&completed_dir_path.to_string_lossy().to_string())
-                .with_dir(&quick_task_dir1.to_string_lossy().to_string())
-                .with_dir(&quick_task_dir2.to_string_lossy().to_string())
                 .with_file(&tasks_json_path, &tasks_json),
         );
 
@@ -354,9 +325,8 @@ mod tests {
         // Clean tasks
         let result = task_manager.clean_tasks().await;
         assert!(result.is_ok(), "Failed to clean tasks: {:?}", result);
-        let (completed_count, quick_count) = result.unwrap();
+        let completed_count = result.unwrap();
         assert_eq!(completed_count, 1);
-        assert_eq!(quick_count, 2);
 
         // Verify directories are cleaned up
         let queued_exists = fs.exists(&queued_dir_path).await.unwrap();
@@ -428,7 +398,7 @@ mod tests {
         // Clean tasks
         let result = task_manager.clean_tasks().await;
         assert!(result.is_ok(), "Failed to clean tasks: {:?}", result);
-        let (completed_count, _) = result.unwrap();
+        let completed_count = result.unwrap();
         assert_eq!(completed_count, 1);
 
         // Verify directory was deleted

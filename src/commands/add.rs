@@ -29,7 +29,6 @@ impl Command for AddCommand {
             .edit(self.edit)
             .agent(self.agent.clone())
             .timeout(self.timeout)
-            .quick(false) // This is for queued tasks, not quick tasks
             .build(ctx)
             .await?;
 

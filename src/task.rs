@@ -98,7 +98,6 @@ pub struct TaskBuilder {
     edit: bool,
     agent: Option<String>,
     timeout: Option<u32>,
-    is_quick: bool,
 }
 
 impl TaskBuilder {
@@ -111,7 +110,6 @@ impl TaskBuilder {
             edit: false,
             agent: None,
             timeout: None,
-            is_quick: false,
         }
     }
 
@@ -150,11 +148,6 @@ impl TaskBuilder {
         self
     }
 
-    pub fn quick(mut self, is_quick: bool) -> Self {
-        self.is_quick = is_quick;
-        self
-    }
-
     pub async fn build(self, ctx: &AppContext) -> Result<Task, Box<dyn Error>> {
         let name = self.name.clone().ok_or("Task name is required")?;
         let task_type = self
@@ -185,11 +178,7 @@ impl TaskBuilder {
         // Create task directory
         let timestamp = chrono::Utc::now().format("%Y-%m-%d-%H%M");
         let task_dir_name = format!("{}-{}", timestamp, name);
-        let task_dir = if self.is_quick {
-            Path::new(".tsk/quick-tasks").join(&task_dir_name)
-        } else {
-            Path::new(".tsk/tasks").join(&task_dir_name)
-        };
+        let task_dir = Path::new(".tsk/tasks").join(&task_dir_name);
         ctx.file_system().create_dir(&task_dir).await?;
 
         // Create instructions file
@@ -387,36 +376,6 @@ mod tests {
         let instructions_path = task.instructions_file.as_ref().unwrap();
         let content = fs.read_file(Path::new(instructions_path)).await.unwrap();
         assert_eq!(content, "# Feature Template\n\nMy feature description");
-    }
-
-    #[tokio::test]
-    async fn test_task_builder_quick_task() {
-        let current_dir = std::env::current_dir().unwrap();
-        let fs = Arc::new(
-            MockFileSystem::new().with_dir(
-                &current_dir
-                    .join(".tsk/quick-tasks")
-                    .to_string_lossy()
-                    .to_string(),
-            ),
-        );
-
-        let ctx = AppContext::builder().with_file_system(fs.clone()).build();
-
-        let task = TaskBuilder::new()
-            .name("quick-test".to_string())
-            .description(Some("Quick task".to_string()))
-            .quick(true)
-            .build(&ctx)
-            .await
-            .unwrap();
-
-        assert!(task.id.contains("quick-test"));
-        assert!(task
-            .instructions_file
-            .as_ref()
-            .unwrap()
-            .contains("quick-tasks"));
     }
 
     #[tokio::test]

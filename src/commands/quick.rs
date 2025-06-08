@@ -30,7 +30,6 @@ impl Command for QuickCommand {
             .edit(self.edit)
             .agent(self.agent.clone())
             .timeout(self.timeout)
-            .quick(true) // This is a quick task
             .build(ctx)
             .await?;
 
