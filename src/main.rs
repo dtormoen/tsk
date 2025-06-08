@@ -23,6 +23,9 @@ mod task_runner;
 
 mod log_processor;
 
+#[cfg(test)]
+mod test_utils;
+
 #[derive(Parser)]
 #[command(name = "tsk")]
 #[command(author, version, about = "TSK - Task delegation to AI agents", long_about = None)]

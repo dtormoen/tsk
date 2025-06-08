@@ -374,155 +374,11 @@ impl DockerManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
-    use futures_util::stream::Stream;
-    use std::sync::{Arc, Mutex};
-
-    #[derive(Clone)]
-    struct MockDockerClient {
-        create_container_calls:
-            Arc<Mutex<Vec<(Option<CreateContainerOptions<String>>, Config<String>)>>>,
-        start_container_calls: Arc<Mutex<Vec<String>>>,
-        wait_container_calls: Arc<Mutex<Vec<String>>>,
-        logs_calls: Arc<Mutex<Vec<(String, Option<LogsOptions<String>>)>>>,
-        remove_container_calls: Arc<Mutex<Vec<(String, Option<RemoveContainerOptions>)>>>,
-
-        create_container_result: Arc<Mutex<Result<String, String>>>,
-        start_container_result: Arc<Mutex<Result<(), String>>>,
-        wait_container_result: Arc<Mutex<Result<i64, String>>>,
-        logs_result: Arc<Mutex<Result<String, String>>>,
-        remove_container_result: Arc<Mutex<Result<(), String>>>,
-        create_network_result: Arc<Mutex<Result<String, String>>>,
-        network_exists_result: Arc<Mutex<Result<bool, String>>>,
-    }
-
-    impl MockDockerClient {
-        fn new() -> Self {
-            Self {
-                create_container_calls: Arc::new(Mutex::new(Vec::new())),
-                start_container_calls: Arc::new(Mutex::new(Vec::new())),
-                wait_container_calls: Arc::new(Mutex::new(Vec::new())),
-                logs_calls: Arc::new(Mutex::new(Vec::new())),
-                remove_container_calls: Arc::new(Mutex::new(Vec::new())),
-
-                create_container_result: Arc::new(Mutex::new(Ok("test-container-id".to_string()))),
-                start_container_result: Arc::new(Mutex::new(Ok(()))),
-                wait_container_result: Arc::new(Mutex::new(Ok(0))),
-                logs_result: Arc::new(Mutex::new(Ok("Container logs".to_string()))),
-                remove_container_result: Arc::new(Mutex::new(Ok(()))),
-                create_network_result: Arc::new(Mutex::new(Ok("test-network-id".to_string()))),
-                network_exists_result: Arc::new(Mutex::new(Ok(true))),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl DockerClient for MockDockerClient {
-        #[cfg(test)]
-        fn as_any(&self) -> &dyn std::any::Any {
-            self
-        }
-        async fn create_container(
-            &self,
-            options: Option<CreateContainerOptions<String>>,
-            config: Config<String>,
-        ) -> Result<String, String> {
-            let call_count = self.create_container_calls.lock().unwrap().len();
-
-            // Determine the result before moving config
-            let result = if let Some(opt) = &options {
-                if opt.name == PROXY_CONTAINER_NAME {
-                    Ok("test-proxy-container-id".to_string())
-                } else if let Some(ref cmd) = &config.cmd {
-                    if cmd.contains(&"false".to_string()) {
-                        Ok("test-container-id-fail".to_string())
-                    } else {
-                        Ok(format!("test-container-id-{}", call_count))
-                    }
-                } else {
-                    Ok(format!("test-container-id-{}", call_count))
-                }
-            } else {
-                self.create_container_result.lock().unwrap().clone()
-            };
-
-            // Now we can move config into the vector
-            self.create_container_calls
-                .lock()
-                .unwrap()
-                .push((options.clone(), config));
-
-            result
-        }
-
-        async fn start_container(&self, id: &str) -> Result<(), String> {
-            self.start_container_calls
-                .lock()
-                .unwrap()
-                .push(id.to_string());
-            self.start_container_result.lock().unwrap().clone()
-        }
-
-        async fn wait_container(&self, id: &str) -> Result<i64, String> {
-            self.wait_container_calls
-                .lock()
-                .unwrap()
-                .push(id.to_string());
-            // Return different results based on container ID for testing
-            if id == "test-container-id-fail" {
-                Ok(1) // Non-zero exit code
-            } else {
-                self.wait_container_result.lock().unwrap().clone()
-            }
-        }
-
-        async fn logs(
-            &self,
-            id: &str,
-            options: Option<LogsOptions<String>>,
-        ) -> Result<String, String> {
-            self.logs_calls
-                .lock()
-                .unwrap()
-                .push((id.to_string(), options));
-            self.logs_result.lock().unwrap().clone()
-        }
-
-        async fn remove_container(
-            &self,
-            id: &str,
-            options: Option<RemoveContainerOptions>,
-        ) -> Result<(), String> {
-            self.remove_container_calls
-                .lock()
-                .unwrap()
-                .push((id.to_string(), options));
-            self.remove_container_result.lock().unwrap().clone()
-        }
-
-        async fn create_network(&self, _name: &str) -> Result<String, String> {
-            self.create_network_result.lock().unwrap().clone()
-        }
-
-        async fn network_exists(&self, _name: &str) -> Result<bool, String> {
-            self.network_exists_result.lock().unwrap().clone()
-        }
-
-        async fn logs_stream(
-            &self,
-            id: &str,
-            options: Option<LogsOptions<String>>,
-        ) -> Result<Box<dyn Stream<Item = Result<String, String>> + Send + Unpin>, String> {
-            // For tests, just return the logs as a single-item stream
-            let logs = self.logs(id, options).await?;
-            let stream = futures_util::stream::once(async move { Ok(logs) });
-            Ok(Box::new(Box::pin(stream)))
-        }
-    }
+    use crate::test_utils::TrackedDockerClient;
 
     #[tokio::test]
     async fn test_run_task_container_success() {
-        let mock_client = Arc::new(MockDockerClient::new());
+        let mock_client = Arc::new(TrackedDockerClient::default());
         let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
 
         let worktree_path = Path::new("/tmp/test-worktree");
@@ -570,7 +426,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_task_container_no_command() {
-        let mock_client = Arc::new(MockDockerClient::new());
+        let mock_client = Arc::new(TrackedDockerClient::default());
         let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
 
         let worktree_path = Path::new("/tmp/test-worktree");
@@ -594,7 +450,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_task_container_non_zero_exit() {
-        let mock_client = Arc::new(MockDockerClient::new());
+        let mock_client = Arc::new(TrackedDockerClient::default());
         let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
 
         let worktree_path = Path::new("/tmp/test-worktree");
@@ -615,11 +471,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_task_container_create_fails() {
-        let mock_client = Arc::new(MockDockerClient::new());
-        // Set network_exists to false to trigger network creation failure
-        *mock_client.network_exists_result.lock().unwrap() = Ok(false);
-        *mock_client.create_network_result.lock().unwrap() =
-            Err("Docker daemon not running".to_string());
+        let mut mock_client = TrackedDockerClient::default();
+        mock_client.network_exists = false;
+        mock_client.create_network_error = Some("Docker daemon not running".to_string());
+        let mock_client = Arc::new(mock_client);
         let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
 
         let worktree_path = Path::new("/tmp/test-worktree");
@@ -638,7 +493,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_container_configuration() {
-        let mock_client = Arc::new(MockDockerClient::new());
+        let mock_client = Arc::new(TrackedDockerClient::default());
         let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
 
         let worktree_path = Path::new("/tmp/test-worktree");
@@ -692,7 +547,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_task_container_with_instructions_file() {
-        let mock_client = Arc::new(MockDockerClient::new());
+        let mock_client = Arc::new(TrackedDockerClient::default());
         let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
 
         let worktree_path = Path::new("/tmp/test-worktree");
@@ -728,7 +583,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_relative_path_conversion() {
-        let mock_client = Arc::new(MockDockerClient::new());
+        let mock_client = Arc::new(TrackedDockerClient::default());
         let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
 
         let relative_path = Path::new("test-worktree");

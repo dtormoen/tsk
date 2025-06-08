@@ -220,90 +220,8 @@ impl TaskManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::docker_client::DockerClient;
-    use async_trait::async_trait;
+    use crate::test_utils::FixedResponseDockerClient;
     use std::sync::Arc;
-
-    // Mock Docker client for tests
-    #[derive(Clone)]
-    struct MockDockerClient {
-        container_id: String,
-        exit_code: i64,
-        logs_output: String,
-    }
-
-    impl MockDockerClient {
-        fn new() -> Self {
-            Self {
-                container_id: "test-container-id".to_string(),
-                exit_code: 0,
-                logs_output: "Test output".to_string(),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl DockerClient for MockDockerClient {
-        #[cfg(test)]
-        fn as_any(&self) -> &dyn std::any::Any {
-            self
-        }
-
-        async fn create_container(
-            &self,
-            _options: Option<bollard::container::CreateContainerOptions<String>>,
-            _config: bollard::container::Config<String>,
-        ) -> Result<String, String> {
-            Ok(self.container_id.clone())
-        }
-
-        async fn start_container(&self, _id: &str) -> Result<(), String> {
-            Ok(())
-        }
-
-        async fn wait_container(&self, _id: &str) -> Result<i64, String> {
-            Ok(self.exit_code)
-        }
-
-        async fn logs(
-            &self,
-            _id: &str,
-            _options: Option<bollard::container::LogsOptions<String>>,
-        ) -> Result<String, String> {
-            Ok(self.logs_output.clone())
-        }
-
-        async fn logs_stream(
-            &self,
-            _id: &str,
-            _options: Option<bollard::container::LogsOptions<String>>,
-        ) -> Result<
-            Box<dyn futures_util::Stream<Item = Result<String, String>> + Send + Unpin>,
-            String,
-        > {
-            // Return a simple stream with the test output
-            use futures_util::stream::StreamExt;
-            let output = self.logs_output.clone();
-            let stream = futures_util::stream::once(async move { Ok(output) }).boxed();
-            Ok(Box::new(stream))
-        }
-
-        async fn remove_container(
-            &self,
-            _id: &str,
-            _options: Option<bollard::container::RemoveContainerOptions>,
-        ) -> Result<(), String> {
-            Ok(())
-        }
-
-        async fn create_network(&self, _name: &str) -> Result<String, String> {
-            Ok("test-network".to_string())
-        }
-
-        async fn network_exists(&self, _name: &str) -> Result<bool, String> {
-            Ok(true)
-        }
-    }
 
     #[tokio::test]
     async fn test_delete_task() {
@@ -340,7 +258,7 @@ mod tests {
                 .with_file(&tasks_json_path, &format!(r#"[{{"id":"{}","name":"test-task","task_type":"feature","description":"Test description","instructions_file":null,"agent":null,"timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":null,"error_message":null}}]"#, task_id))
         );
 
-        let docker_client = Arc::new(MockDockerClient::new());
+        let docker_client = Arc::new(FixedResponseDockerClient::default());
         let git_ops = Arc::new(MockGitOperations::new());
 
         let ctx = AppContext::builder()
@@ -422,7 +340,7 @@ mod tests {
                 .with_file(&tasks_json_path, &tasks_json),
         );
 
-        let docker_client = Arc::new(MockDockerClient::new());
+        let docker_client = Arc::new(FixedResponseDockerClient::default());
         let git_ops = Arc::new(MockGitOperations::new());
 
         let ctx = AppContext::builder()
@@ -496,7 +414,7 @@ mod tests {
                 .with_file(&tasks_json_path, &tasks_json),
         );
 
-        let docker_client = Arc::new(MockDockerClient::new());
+        let docker_client = Arc::new(FixedResponseDockerClient::default());
         let git_ops = Arc::new(MockGitOperations::new());
 
         let ctx = AppContext::builder()
