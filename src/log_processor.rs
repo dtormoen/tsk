@@ -47,6 +47,14 @@ pub struct TaskResult {
     pub duration_ms: Option<u64>,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct TodoItem {
+    id: String,
+    content: String,
+    status: String,
+    priority: String,
+}
+
 impl LogProcessor {
     #[allow(dead_code)]
     pub fn new() -> Self {
@@ -107,16 +115,44 @@ impl LogProcessor {
                 match content {
                     Value::Array(contents) => {
                         let mut output = String::new();
+                        let mut has_todo_update = false;
+
                         for item in contents {
+                            // Check for TodoWrite tool use
+                            if let Some(tool_name) = item.get("name").and_then(|n| n.as_str()) {
+                                if tool_name == "TodoWrite" {
+                                    if let Some(input) = item.get("input") {
+                                        if let Some(todos) = input.get("todos") {
+                                            if let Ok(todo_items) =
+                                                serde_json::from_value::<Vec<TodoItem>>(
+                                                    todos.clone(),
+                                                )
+                                            {
+                                                has_todo_update = true;
+                                                output.push_str(
+                                                    &self.format_todo_update(&todo_items),
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Process regular text content
                             if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
-                                if !output.is_empty() {
+                                if !output.is_empty() && !has_todo_update {
                                     output.push('\n');
                                 }
                                 output.push_str(text);
                             }
                         }
+
                         if !output.is_empty() {
-                            Some(format!("🤖 Assistant:\n{}", output))
+                            if has_todo_update {
+                                Some(output)
+                            } else {
+                                Some(format!("🤖 Assistant:\n{}", output))
+                            }
                         } else {
                             None
                         }
@@ -129,6 +165,95 @@ impl LogProcessor {
             }
         } else {
             None
+        }
+    }
+
+    fn format_todo_update(&self, todos: &[TodoItem]) -> String {
+        let mut output = String::new();
+        output.push_str("📝 TODO Update:\n");
+        output.push_str(&"─".repeat(60));
+        output.push('\n');
+
+        // Group todos by status
+        let mut pending_todos = Vec::new();
+        let mut in_progress_todos = Vec::new();
+        let mut completed_todos = Vec::new();
+
+        for todo in todos {
+            match todo.status.as_str() {
+                "pending" => pending_todos.push(todo),
+                "in_progress" => in_progress_todos.push(todo),
+                "completed" => completed_todos.push(todo),
+                _ => pending_todos.push(todo), // Default to pending for unknown statuses
+            }
+        }
+
+        // Display in-progress todos first
+        if !in_progress_todos.is_empty() {
+            output.push_str("🔄 In Progress:\n");
+            for todo in &in_progress_todos {
+                output.push_str(&format!(
+                    "   {} [{}] {}\n",
+                    self.get_priority_emoji(&todo.priority),
+                    todo.id,
+                    todo.content
+                ));
+            }
+            output.push('\n');
+        }
+
+        // Display pending todos
+        if !pending_todos.is_empty() {
+            output.push_str("⏳ Pending:\n");
+            for todo in &pending_todos {
+                output.push_str(&format!(
+                    "   {} [{}] {}\n",
+                    self.get_priority_emoji(&todo.priority),
+                    todo.id,
+                    todo.content
+                ));
+            }
+            output.push('\n');
+        }
+
+        // Display completed todos
+        if !completed_todos.is_empty() {
+            output.push_str("✅ Completed:\n");
+            for todo in &completed_todos {
+                output.push_str(&format!(
+                    "   {} [{}] {}\n",
+                    self.get_priority_emoji(&todo.priority),
+                    todo.id,
+                    todo.content
+                ));
+            }
+            output.push('\n');
+        }
+
+        output.push_str(&"─".repeat(60));
+        output.push('\n');
+
+        // Add summary
+        let total = todos.len();
+        let completed = completed_todos.len();
+        let in_progress = in_progress_todos.len();
+        let pending = pending_todos.len();
+
+        output.push_str(&format!(
+            "Summary: {} total | {} completed | {} in progress | {} pending\n",
+            total, completed, in_progress, pending
+        ));
+        output.push_str(&"─".repeat(60));
+
+        output
+    }
+
+    fn get_priority_emoji(&self, priority: &str) -> &'static str {
+        match priority {
+            "high" => "🔴",
+            "medium" => "🟡",
+            "low" => "🟢",
+            _ => "⚪",
         }
     }
 
@@ -301,5 +426,98 @@ mod tests {
         let json = r#"{"type": "thinking", "message": {"content": "Processing..."}}"#;
         let result = processor.process_line(json);
         assert_eq!(result, Some("📋 [thinking]".to_string()));
+    }
+
+    #[test]
+    fn test_process_todo_update() {
+        let mut processor = LogProcessor::new();
+        let json = r#"{
+            "type": "assistant",
+            "message": {
+                "id": "msg_01715dTbzrJ49yvb5Mp68sQa",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-opus-4-20250514",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "toolu_013pfL2AAyzkXVLeuGBrD2Z1",
+                    "name": "TodoWrite",
+                    "input": {
+                        "todos": [
+                            {"id": "1", "content": "Analyze existing MockDockerClient implementations", "status": "pending", "priority": "high"},
+                            {"id": "2", "content": "Create test_utils module structure", "status": "pending", "priority": "high"},
+                            {"id": "3", "content": "Implement NoOpDockerClient", "status": "completed", "priority": "high"},
+                            {"id": "4", "content": "Run tests and fix any issues", "status": "in_progress", "priority": "medium"}
+                        ]
+                    }
+                }]
+            }
+        }"#;
+
+        let result = processor.process_line(json);
+        assert!(result.is_some());
+        let formatted = result.unwrap();
+
+        // Check that the TODO update header is present
+        assert!(formatted.contains("📝 TODO Update:"));
+
+        // Check that todos are grouped by status
+        assert!(formatted.contains("🔄 In Progress:"));
+        assert!(formatted.contains("⏳ Pending:"));
+        assert!(formatted.contains("✅ Completed:"));
+
+        // Check that specific todo items are present
+        assert!(formatted.contains("Analyze existing MockDockerClient implementations"));
+        assert!(formatted.contains("Create test_utils module structure"));
+        assert!(formatted.contains("Implement NoOpDockerClient"));
+        assert!(formatted.contains("Run tests and fix any issues"));
+
+        // Check priority emojis
+        assert!(formatted.contains("🔴")); // high priority
+        assert!(formatted.contains("🟡")); // medium priority
+
+        // Check summary
+        assert!(formatted.contains("Summary: 4 total | 1 completed | 1 in progress | 2 pending"));
+    }
+
+    #[test]
+    fn test_process_todo_update_all_completed() {
+        let mut processor = LogProcessor::new();
+        let json = r#"{
+            "type": "assistant",
+            "message": {
+                "content": [{
+                    "type": "tool_use",
+                    "name": "TodoWrite",
+                    "input": {
+                        "todos": [
+                            {"id": "1", "content": "Task 1", "status": "completed", "priority": "high"},
+                            {"id": "2", "content": "Task 2", "status": "completed", "priority": "low"}
+                        ]
+                    }
+                }]
+            }
+        }"#;
+
+        let result = processor.process_line(json);
+        assert!(result.is_some());
+        let formatted = result.unwrap();
+
+        // Should only have completed section
+        assert!(formatted.contains("✅ Completed:"));
+        assert!(!formatted.contains("🔄 In Progress:"));
+        assert!(!formatted.contains("⏳ Pending:"));
+
+        // Check summary
+        assert!(formatted.contains("Summary: 2 total | 2 completed | 0 in progress | 0 pending"));
+    }
+
+    #[test]
+    fn test_todo_priority_emojis() {
+        let processor = LogProcessor::new();
+        assert_eq!(processor.get_priority_emoji("high"), "🔴");
+        assert_eq!(processor.get_priority_emoji("medium"), "🟡");
+        assert_eq!(processor.get_priority_emoji("low"), "🟢");
+        assert_eq!(processor.get_priority_emoji("unknown"), "⚪");
     }
 }
