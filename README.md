@@ -83,7 +83,7 @@ tsk add --name <TASK_NAME> [--type <TASK_TYPE>] --description <DESCRIPTION>
 - `--description, -d`: Detailed description of what needs to be accomplished
 - `--instructions, -i`: Path to instructions file to pass to the agent (alternative to --description)
 - `--edit, -e`: Open the instructions file in $EDITOR after creation for interactive editing
-- `--agent, -a`: Specific agent to use (aider, claude-code)
+- `--agent, -a`: Specific agent to use (defaults to claude-code)
 - `--timeout`: Task timeout in minutes (default: 30)
 
 **Note:** If neither `--description` nor `--instructions` is provided, you must use `--edit` to create instructions interactively.
@@ -154,7 +154,7 @@ tsk quick [--type <TASK_TYPE>] --description <DESCRIPTION>
 - `--description, -d`: Task description
 - `--instructions, -i`: Path to instructions file to pass to the agent (alternative to --description)
 - `--edit, -e`: Open the instructions file in $EDITOR after creation for interactive editing
-- `--agent, -a`: Specific agent to use (aider|claude-code)
+- `--agent, -a`: Specific agent to use (defaults to claude-code)
 - `--timeout`: Task timeout in minutes (default: 30)
 
 **Note:** If neither `--description` nor `--instructions` is provided, you must use `--edit` to create instructions interactively.
@@ -178,6 +178,20 @@ tsk tasks --delete 2024-06-01-1430-auth-review
 # Clean up completed tasks and quick tasks
 tsk tasks --clean
 ```
+
+### `tsk debug`
+Launches a Docker container for interactive debugging.
+
+```bash
+tsk debug --name <SESSION_NAME> [--agent <AGENT_NAME>]
+```
+
+**Options:**
+- `--name, -n`: Unique identifier for the debug session
+- `--agent, -a`: Specific agent to use (defaults to claude-code)
+
+This command creates an interactive Docker container with the same environment as tasks,
+allowing you to manually test and debug agent behavior.
 
 ### `tsk server` (Planned)
 Starts the TSK daemon for scheduled and background task execution.
@@ -204,6 +218,17 @@ tsk server [OPTIONS]
 7. **Integration**: Merge acceptable changes, refine and retry others
 
 ### Agent Integration
+
+TSK supports multiple AI agents through an extensible plugin system. Each agent can define its own Docker image, volumes, environment variables, and log processing logic.
+
+**Currently Supported Agents:**
+- `claude-code`: Claude Code AI assistant (default)
+
+**Agent Architecture:**
+- Agents implement a common trait interface for consistency
+- Each agent can specify custom Docker configurations
+- Log processors handle agent-specific output formatting
+- Agent validation ensures proper configuration before execution
 
 TSK acts as an orchestration layer for existing AI coding tools
 

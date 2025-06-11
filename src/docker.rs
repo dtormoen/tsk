@@ -1,3 +1,4 @@
+use crate::agent::Agent;
 use crate::context::docker_client::DockerClient;
 use bollard::container::{Config, CreateContainerOptions, LogsOptions, RemoveContainerOptions};
 use futures_util::stream::StreamExt;
@@ -121,20 +122,22 @@ impl DockerManager {
         command: Option<Vec<String>>,
         interactive: bool,
         instructions_file_path: Option<&PathBuf>,
+        agent: Option<&dyn Agent>,
     ) -> Config<String> {
-        // Get the home directory path for mounting ~/.claude and ~/.claude.json
-        let home_dir = std::env::var("HOME").unwrap_or_else(|_| "/home/agent".to_string());
-        let claude_dir_host_path = format!("{}/.claude", home_dir);
-        let claude_dir_container_path = format!("/home/{}/.claude", CONTAINER_USER);
-        let claude_json_host_path = format!("{}/.claude.json", home_dir);
-        let claude_json_container_path = format!("/home/{}/.claude.json", CONTAINER_USER);
+        // Build binds vector starting with workspace
+        let mut binds = vec![format!("{}:{}", worktree_path_str, CONTAINER_WORKING_DIR)];
 
-        // Build binds vector with optional instructions directory
-        let mut binds = vec![
-            format!("{}:{}", worktree_path_str, CONTAINER_WORKING_DIR),
-            format!("{}:{}", claude_dir_host_path, claude_dir_container_path),
-            format!("{}:{}", claude_json_host_path, claude_json_container_path),
-        ];
+        // Add agent-specific volumes if provided
+        if let Some(agent) = agent {
+            for (host_path, container_path, options) in agent.volumes() {
+                let bind = if options.is_empty() {
+                    format!("{}:{}", host_path, container_path)
+                } else {
+                    format!("{}:{}{}", host_path, container_path, options)
+                };
+                binds.push(bind);
+            }
+        }
 
         // Add instructions directory mount if provided
         if let Some(inst_path) = instructions_file_path {
@@ -145,6 +148,29 @@ impl DockerManager {
                     .unwrap_or_else(|_| parent.to_path_buf());
                 binds.push(format!("{}:/instructions:ro", abs_parent.to_str().unwrap()));
             }
+        }
+
+        // Build environment variables
+        let mut env_vars = vec![
+            // Configure proxy settings
+            "HTTP_PROXY=http://tsk-proxy:3128".to_string(),
+            "HTTPS_PROXY=http://tsk-proxy:3128".to_string(),
+            "http_proxy=http://tsk-proxy:3128".to_string(),
+            "https_proxy=http://tsk-proxy:3128".to_string(),
+            // Don't proxy localhost
+            "NO_PROXY=localhost,127.0.0.1".to_string(),
+            "no_proxy=localhost,127.0.0.1".to_string(),
+        ];
+
+        // Add agent-specific environment variables if provided
+        if let Some(agent) = agent {
+            for (key, value) in agent.environment() {
+                env_vars.push(format!("{}={}", key, value));
+            }
+        } else {
+            // Default environment if no agent specified
+            env_vars.push(format!("HOME=/home/{}", CONTAINER_USER));
+            env_vars.push(format!("USER={}", CONTAINER_USER));
         }
 
         Config {
@@ -172,18 +198,7 @@ impl DockerManager {
                 ..Default::default()
             }),
             working_dir: Some(CONTAINER_WORKING_DIR.to_string()),
-            env: Some(vec![
-                format!("HOME=/home/{}", CONTAINER_USER),
-                format!("USER={}", CONTAINER_USER),
-                // Configure proxy settings
-                "HTTP_PROXY=http://tsk-proxy:3128".to_string(),
-                "HTTPS_PROXY=http://tsk-proxy:3128".to_string(),
-                "http_proxy=http://tsk-proxy:3128".to_string(),
-                "https_proxy=http://tsk-proxy:3128".to_string(),
-                // Don't proxy localhost
-                "NO_PROXY=localhost,127.0.0.1".to_string(),
-                "no_proxy=localhost,127.0.0.1".to_string(),
-            ]),
+            env: Some(env_vars),
             attach_stdin: Some(interactive),
             attach_stdout: Some(interactive),
             attach_stderr: Some(interactive),
@@ -196,6 +211,7 @@ impl DockerManager {
         &self,
         image: &str,
         worktree_path: &Path,
+        agent: &dyn Agent,
     ) -> Result<String, String> {
         // Ensure network and proxy are running
         self.ensure_network().await?;
@@ -215,6 +231,7 @@ impl DockerManager {
             sleep_command,
             true, // interactive
             None, // no instructions file for debug containers
+            Some(agent),
         );
 
         let container_name = format!("tsk-debug-{}", chrono::Utc::now().timestamp());
@@ -247,6 +264,7 @@ impl DockerManager {
         worktree_path: &Path,
         command: Vec<String>,
         instructions_file_path: Option<&PathBuf>,
+        agent: &dyn Agent,
         mut log_handler: F,
     ) -> Result<String, String>
     where
@@ -273,6 +291,7 @@ impl DockerManager {
             wrapped_command,
             false, // not interactive
             instructions_file_path,
+            Some(agent),
         );
 
         let options = CreateContainerOptions {
@@ -384,8 +403,16 @@ mod tests {
         let worktree_path = Path::new("/tmp/test-worktree");
         let command = vec!["echo".to_string(), "hello".to_string()];
 
+        let agent = crate::agent::ClaudeCodeAgent::new();
         let result = manager
-            .run_task_container("tsk/base", worktree_path, command.clone(), None, |_| {})
+            .run_task_container(
+                "tsk/base",
+                worktree_path,
+                command.clone(),
+                None,
+                &agent,
+                |_| {},
+            )
             .await;
 
         assert!(result.is_ok());
@@ -432,8 +459,9 @@ mod tests {
         let worktree_path = Path::new("/tmp/test-worktree");
         let command = vec![];
 
+        let agent = crate::agent::ClaudeCodeAgent::new();
         let result = manager
-            .run_task_container("tsk/base", worktree_path, command, None, |_| {})
+            .run_task_container("tsk/base", worktree_path, command, None, &agent, |_| {})
             .await;
 
         assert!(result.is_ok());
@@ -456,8 +484,9 @@ mod tests {
         let worktree_path = Path::new("/tmp/test-worktree");
         let command = vec!["false".to_string()];
 
+        let agent = crate::agent::ClaudeCodeAgent::new();
         let result = manager
-            .run_task_container("tsk/base", worktree_path, command, None, |_| {})
+            .run_task_container("tsk/base", worktree_path, command, None, &agent, |_| {})
             .await;
 
         assert!(result.is_err());
@@ -480,8 +509,9 @@ mod tests {
         let worktree_path = Path::new("/tmp/test-worktree");
         let command = vec!["echo".to_string(), "hello".to_string()];
 
+        let agent = crate::agent::ClaudeCodeAgent::new();
         let result = manager
-            .run_task_container("tsk/base", worktree_path, command, None, |_| {})
+            .run_task_container("tsk/base", worktree_path, command, None, &agent, |_| {})
             .await;
 
         assert!(result.is_err());
@@ -499,8 +529,16 @@ mod tests {
         let worktree_path = Path::new("/tmp/test-worktree");
         let command = vec!["test".to_string()];
 
+        let agent = crate::agent::ClaudeCodeAgent::new();
         let _ = manager
-            .run_task_container("tsk/base", worktree_path, command.clone(), None, |_| {})
+            .run_task_container(
+                "tsk/base",
+                worktree_path,
+                command.clone(),
+                None,
+                &agent,
+                |_| {},
+            )
             .await;
 
         let create_calls = mock_client.create_container_calls.lock().unwrap();
@@ -558,12 +596,14 @@ mod tests {
             "cat /instructions/instructions.txt | claude".to_string(),
         ];
 
+        let agent = crate::agent::ClaudeCodeAgent::new();
         let result = manager
             .run_task_container(
                 "tsk/base",
                 worktree_path,
                 command,
                 Some(&instructions_path),
+                &agent,
                 |_| {},
             )
             .await;
@@ -589,8 +629,9 @@ mod tests {
         let relative_path = Path::new("test-worktree");
         let command = vec!["test".to_string()];
 
+        let agent = crate::agent::ClaudeCodeAgent::new();
         let result = manager
-            .run_task_container("tsk/base", relative_path, command, None, |_| {})
+            .run_task_container("tsk/base", relative_path, command, None, &agent, |_| {})
             .await;
 
         assert!(result.is_ok());

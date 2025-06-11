@@ -1,9 +1,9 @@
+use crate::agent::AgentProvider;
 use crate::context::file_system::FileSystemOperations;
 use crate::docker::DockerManager;
 use crate::git::RepoManager;
-use crate::log_processor::LogProcessor;
 use crate::task::Task;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 pub struct TaskExecutionResult {
@@ -45,30 +45,25 @@ impl TaskRunner {
         }
     }
 
-    /// Build command for running the task
-    pub fn build_task_command(&self, instructions_file_path: &Path) -> Result<Vec<String>, String> {
-        // Get just the filename for the container path
-        let inst_filename = instructions_file_path
-            .file_name()
-            .ok_or_else(|| "Invalid instructions file path".to_string())?
-            .to_str()
-            .ok_or_else(|| "Invalid instructions file name".to_string())?;
-
-        Ok(vec![
-            "sh".to_string(),
-            "-c".to_string(),
-            format!(
-                "cat /instructions/{} | claude -p --verbose --output-format stream-json --dangerously-skip-permissions",
-                inst_filename
-            ),
-        ])
-    }
-
     /// Execute a task
     pub async fn execute_task(
         &self,
         task: &Task,
     ) -> Result<TaskExecutionResult, TaskExecutionError> {
+        // Get the agent for this task
+        let agent_name = task
+            .agent
+            .as_deref()
+            .unwrap_or(AgentProvider::default_agent());
+        let agent = AgentProvider::get_agent(agent_name)
+            .map_err(|e| format!("Error getting agent: {}", e))?;
+
+        // Validate the agent
+        agent
+            .validate()
+            .await
+            .map_err(|e| format!("Agent validation failed: {}", e))?;
+
         // Copy repository for the task
         let (repo_path, branch_name) = self
             .repo_manager
@@ -84,24 +79,26 @@ impl TaskRunner {
             None => return Err("No instructions file provided".to_string().into()),
         };
 
-        // Build the command
-        let command = self.build_task_command(&instructions_file_path)?;
+        // Build the command using the agent
+        let command =
+            agent.build_command(instructions_file_path.to_str().unwrap_or("instructions.md"));
 
-        // Create a log processor with file system
-        let mut log_processor = LogProcessor::with_file_system(self.file_system.clone());
+        // Create a log processor for this agent
+        let mut log_processor = agent.create_log_processor(self.file_system.clone());
 
         // Launch Docker container with streaming
-        println!("Launching Docker container...");
+        println!("Launching Docker container with {} agent...", agent.name());
         println!("\n{}", "=".repeat(60));
 
         let output = {
             // Use streaming version
             self.docker_manager
                 .run_task_container(
-                    "tsk/base",
+                    agent.docker_image(),
                     &repo_path,
                     command.clone(),
                     Some(&instructions_file_path),
+                    agent.as_ref(),
                     |log_line| {
                         // Process each line of output
                         if let Some(formatted) = log_processor.process_line(log_line) {
@@ -161,7 +158,19 @@ impl TaskRunner {
     }
 
     /// Run debug container for a task
-    pub async fn run_debug_container(&self, task_name: &str) -> Result<(), String> {
+    pub async fn run_debug_container(
+        &self,
+        task_name: &str,
+        agent_name: Option<&str>,
+    ) -> Result<(), String> {
+        // Get the agent
+        let agent_name = agent_name.unwrap_or(AgentProvider::default_agent());
+        let agent = AgentProvider::get_agent(agent_name)
+            .map_err(|e| format!("Error getting agent: {}", e))?;
+
+        // Validate the agent
+        agent.validate().await?;
+
         // Copy repository for the debug session
         let (repo_path, branch_name) = self.repo_manager.copy_repo(task_name).await?;
 
@@ -171,11 +180,11 @@ impl TaskRunner {
         );
 
         // Launch Docker container
-        println!("Launching Docker container...");
+        println!("Launching Docker container with {} agent...", agent.name());
 
         let container_name = self
             .docker_manager
-            .create_debug_container("tsk/base", &repo_path)
+            .create_debug_container(agent.docker_image(), &repo_path, agent.as_ref())
             .await?;
 
         println!("\nDocker container started successfully!");
@@ -231,32 +240,15 @@ mod tests {
     use std::sync::Arc;
 
     #[tokio::test]
-    async fn test_build_task_command_with_instructions() {
-        use crate::context::file_system::tests::MockFileSystem;
-        use crate::git::RepoManager;
-
-        let fs = Arc::new(MockFileSystem::new());
-        let git_ops = Arc::new(crate::context::git_operations::tests::MockGitOperations::new());
-        let docker_client = Arc::new(FixedResponseDockerClient::default());
-
-        let repo_manager = RepoManager::new(fs.clone(), git_ops);
-        let docker_manager = crate::docker::DockerManager::new(docker_client);
-        let task_runner = TaskRunner::new(repo_manager, docker_manager, fs);
-
-        let inst_path = PathBuf::from("/tmp/instructions.md");
-        let command = task_runner.build_task_command(&inst_path).unwrap();
-
-        assert_eq!(command.len(), 3);
-        assert_eq!(command[0], "sh");
-        assert_eq!(command[1], "-c");
-        assert!(command[2].contains("cat /instructions/instructions.md"));
-        assert!(command[2].contains("claude -p"));
-    }
-
-    #[tokio::test]
     async fn test_execute_task_success() {
         use crate::context::file_system::tests::MockFileSystem;
         use crate::git::RepoManager;
+
+        // Set up a temporary home directory with a mock .claude.json file
+        let temp_dir = tempfile::tempdir().unwrap();
+        let claude_json_path = temp_dir.path().join(".claude.json");
+        std::fs::write(&claude_json_path, "{}").unwrap();
+        std::env::set_var("HOME", temp_dir.path());
 
         // Create mock file system with necessary files and directories
         let fs = Arc::new(

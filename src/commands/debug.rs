@@ -8,6 +8,7 @@ use std::error::Error;
 
 pub struct DebugCommand {
     pub name: String,
+    pub agent: Option<String>,
 }
 
 #[async_trait]
@@ -20,7 +21,7 @@ impl Command for DebugCommand {
         let task_runner = TaskRunner::new(repo_manager, docker_manager, ctx.file_system());
 
         task_runner
-            .run_debug_container(&self.name)
+            .run_debug_container(&self.name, self.agent.as_deref())
             .await
             .map_err(|e| e.to_string())?;
 

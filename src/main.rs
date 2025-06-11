@@ -23,6 +23,8 @@ mod task_runner;
 
 mod log_processor;
 
+mod agent;
+
 #[cfg(test)]
 mod test_utils;
 
@@ -105,6 +107,10 @@ enum Commands {
         /// Unique identifier for the debug session
         #[arg(short, long)]
         name: String,
+
+        /// Specific agent to use (defaults to claude-code)
+        #[arg(short, long)]
+        agent: Option<String>,
     },
     /// Stop the TSK proxy container
     StopProxy,
@@ -162,7 +168,7 @@ async fn main() {
             agent,
             timeout,
         }),
-        Commands::Debug { name } => Box::new(DebugCommand { name }),
+        Commands::Debug { name, agent } => Box::new(DebugCommand { name, agent }),
         Commands::StopProxy => Box::new(StopProxyCommand),
         Commands::List => Box::new(ListCommand),
         Commands::Run => Box::new(RunCommand),

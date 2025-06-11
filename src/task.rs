@@ -163,6 +163,18 @@ impl TaskBuilder {
             );
         }
 
+        // Validate agent if specified
+        if let Some(ref agent_name) = self.agent {
+            if !crate::agent::AgentProvider::is_valid_agent(agent_name) {
+                let available_agents = crate::agent::AgentProvider::list_agents().join(", ");
+                return Err(format!(
+                    "Unknown agent '{}'. Available agents: {}",
+                    agent_name, available_agents
+                )
+                .into());
+            }
+        }
+
         // Validate task type
         if task_type != "generic" {
             let template_path = Path::new("templates").join(format!("{}.md", task_type));
