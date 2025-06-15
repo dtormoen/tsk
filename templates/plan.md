@@ -1,4 +1,4 @@
-## Implementation Plan
+# Implementation Plan Request
 Write a detailed document describing how to implement the following changes to the repository:
 
 {{DESCRIPTION}}
@@ -31,4 +31,4 @@ This section should contain everything needed for someone or an agent to impleme
 After the summary, write out concise, but comprehensive steps for implementing the change. For larger changes, the changes can broken down into phases, but only do this for very complex changes. Reference the specific files, classes, and functions that need to be added, modified, or deleted.
 ```
 
-Save the completed doc to the docs folder with a short, descriptive title.
+Save the completed doc to the docs folder with a short, descriptive title. Commit your doc following the Conventional Commits specification with a brief summary of the doc.
