@@ -1,6 +1,7 @@
 pub mod docker_client;
 pub mod file_system;
 pub mod git_operations;
+pub mod terminal;
 
 #[cfg(test)]
 mod tests;
@@ -10,7 +11,12 @@ use crate::storage::XdgDirectories;
 use docker_client::DockerClient;
 use file_system::FileSystemOperations;
 use git_operations::GitOperations;
+use terminal::TerminalOperations;
+
 use std::sync::Arc;
+// Re-export terminal trait for tests
+#[cfg(test)]
+pub use terminal::TerminalOperations as TerminalOperationsTrait;
 
 #[derive(Clone)]
 pub struct AppContext {
@@ -18,6 +24,7 @@ pub struct AppContext {
     file_system: Arc<dyn FileSystemOperations>,
     git_operations: Arc<dyn GitOperations>,
     notification_client: Arc<dyn NotificationClient>,
+    terminal_operations: Arc<dyn TerminalOperations>,
     xdg_directories: Arc<XdgDirectories>,
 }
 
@@ -42,6 +49,10 @@ impl AppContext {
         Arc::clone(&self.notification_client)
     }
 
+    pub fn terminal_operations(&self) -> Arc<dyn TerminalOperations> {
+        Arc::clone(&self.terminal_operations)
+    }
+
     pub fn xdg_directories(&self) -> Arc<XdgDirectories> {
         Arc::clone(&self.xdg_directories)
     }
@@ -52,6 +63,7 @@ pub struct AppContextBuilder {
     file_system: Option<Arc<dyn FileSystemOperations>>,
     git_operations: Option<Arc<dyn GitOperations>>,
     notification_client: Option<Arc<dyn NotificationClient>>,
+    terminal_operations: Option<Arc<dyn TerminalOperations>>,
     xdg_directories: Option<Arc<XdgDirectories>>,
 }
 
@@ -62,6 +74,7 @@ impl AppContextBuilder {
             file_system: None,
             git_operations: None,
             notification_client: None,
+            terminal_operations: None,
             xdg_directories: None,
         }
     }
@@ -94,6 +107,15 @@ impl AppContextBuilder {
     }
 
     #[allow(dead_code)]
+    pub fn with_terminal_operations(
+        mut self,
+        terminal_operations: Arc<dyn TerminalOperations>,
+    ) -> Self {
+        self.terminal_operations = Some(terminal_operations);
+        self
+    }
+
+    #[allow(dead_code)]
     pub fn with_xdg_directories(mut self, xdg_directories: Arc<XdgDirectories>) -> Self {
         self.xdg_directories = Some(xdg_directories);
         self
@@ -121,6 +143,9 @@ impl AppContextBuilder {
             notification_client: self
                 .notification_client
                 .unwrap_or_else(|| crate::notifications::create_notification_client()),
+            terminal_operations: self
+                .terminal_operations
+                .unwrap_or_else(|| Arc::new(terminal::DefaultTerminalOperations::new())),
             xdg_directories,
         }
     }

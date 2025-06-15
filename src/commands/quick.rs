@@ -3,7 +3,6 @@ use crate::context::AppContext;
 use crate::repo_utils::find_repository_root;
 use crate::task::TaskBuilder;
 use crate::task_manager::TaskManager;
-use crate::terminal::{restore_terminal_title, set_terminal_title};
 use async_trait::async_trait;
 use std::error::Error;
 use std::path::Path;
@@ -46,7 +45,8 @@ impl Command for QuickCommand {
         println!("Timeout: {} minutes", self.timeout);
 
         // Update terminal title for the task
-        set_terminal_title(&format!("TSK: {}", self.name));
+        ctx.terminal_operations()
+            .set_title(&format!("TSK: {}", self.name));
 
         // Execute the task
         let task_manager = TaskManager::new(ctx)?;
@@ -56,7 +56,7 @@ impl Command for QuickCommand {
             .map_err(|e| e.message);
 
         // Restore terminal title
-        restore_terminal_title();
+        ctx.terminal_operations().restore_title();
 
         result?;
 

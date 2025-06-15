@@ -64,4 +64,44 @@ mod tests {
             .unwrap();
         assert_eq!(content, "test content");
     }
+
+    #[test]
+    fn test_app_context_with_terminal_operations() {
+        use std::sync::Mutex;
+
+        // Create a mock terminal operations implementation
+        #[derive(Default)]
+        struct MockTerminalOperations {
+            titles: Mutex<Vec<String>>,
+            restore_called: Mutex<bool>,
+        }
+
+        impl TerminalOperations for MockTerminalOperations {
+            fn set_title(&self, title: &str) {
+                self.titles.lock().unwrap().push(title.to_string());
+            }
+
+            fn restore_title(&self) {
+                *self.restore_called.lock().unwrap() = true;
+            }
+        }
+
+        let mock_terminal = Arc::new(MockTerminalOperations::default());
+        let app_context = AppContext::builder()
+            .with_terminal_operations(mock_terminal.clone())
+            .build();
+
+        // Use terminal operations through context
+        let terminal = app_context.terminal_operations();
+        terminal.set_title("Test Title 1");
+        terminal.set_title("Test Title 2");
+        terminal.restore_title();
+
+        // Verify the mock recorded the calls
+        assert_eq!(
+            *mock_terminal.titles.lock().unwrap(),
+            vec!["Test Title 1", "Test Title 2"]
+        );
+        assert!(*mock_terminal.restore_called.lock().unwrap());
+    }
 }

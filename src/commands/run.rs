@@ -5,7 +5,6 @@ use crate::server::TskServer;
 use crate::task::{Task, TaskStatus};
 use crate::task_manager::TaskManager;
 use crate::task_storage::get_task_storage;
-use crate::terminal::{restore_terminal_title, set_terminal_title};
 use async_trait::async_trait;
 use std::error::Error;
 use std::path::Path;
@@ -91,7 +90,8 @@ impl Command for RunCommand {
             println!("{}", "=".repeat(60));
 
             // Update terminal title for current task
-            set_terminal_title(&format!("TSK: {}", task.name));
+            ctx.terminal_operations()
+                .set_title(&format!("TSK: {}", task.name));
 
             // Execute the task with automatic status updates
             match task_manager.execute_queued_task(&task).await {
@@ -107,7 +107,7 @@ impl Command for RunCommand {
         }
 
         // Restore terminal title after all tasks complete
-        restore_terminal_title();
+        ctx.terminal_operations().restore_title();
 
         println!("\n{}", "=".repeat(60));
         println!("All tasks processed!");

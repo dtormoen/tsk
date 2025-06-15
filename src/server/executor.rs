@@ -2,23 +2,22 @@ use crate::context::AppContext;
 use crate::task::{Task, TaskStatus};
 use crate::task_manager::TaskManager;
 use crate::task_storage::TaskStorage;
-use crate::terminal::{restore_terminal_title, set_terminal_title};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
 
 /// Task executor that runs tasks sequentially
 pub struct TaskExecutor {
-    app_context: Arc<AppContext>,
+    context: Arc<AppContext>,
     storage: Arc<Mutex<Box<dyn TaskStorage>>>,
     running: Arc<Mutex<bool>>,
 }
 
 impl TaskExecutor {
     /// Create a new task executor
-    pub fn new(app_context: Arc<AppContext>, storage: Arc<Mutex<Box<dyn TaskStorage>>>) -> Self {
+    pub fn new(context: Arc<AppContext>, storage: Arc<Mutex<Box<dyn TaskStorage>>>) -> Self {
         Self {
-            app_context,
+            context,
             storage,
             running: Arc::new(Mutex::new(false)),
         }
@@ -36,13 +35,15 @@ impl TaskExecutor {
         println!("Task executor started");
 
         // Set initial idle title
-        set_terminal_title("TSK Server Idle");
+        self.context
+            .terminal_operations()
+            .set_title("TSK Server Idle");
 
         loop {
             // Check if we should continue running
             if !*self.running.lock().await {
                 println!("Task executor stopping");
-                restore_terminal_title();
+                self.context.terminal_operations().restore_title();
                 break;
             }
 
@@ -58,7 +59,9 @@ impl TaskExecutor {
                     println!("Executing task: {} ({})", task.name, task.id);
 
                     // Update terminal title to show current task
-                    set_terminal_title(&format!("TSK: {}", task.name));
+                    self.context
+                        .terminal_operations()
+                        .set_title(&format!("TSK: {}", task.name));
 
                     // Update task status to running
                     let mut running_task = task.clone();
@@ -100,7 +103,9 @@ impl TaskExecutor {
                     }
 
                     // Restore idle title after task completion
-                    set_terminal_title("TSK Server Idle");
+                    self.context
+                        .terminal_operations()
+                        .set_title("TSK Server Idle");
                 }
                 None => {
                     // No tasks to execute, wait a bit before checking again
@@ -123,7 +128,7 @@ impl TaskExecutor {
         task: &Task,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Create a task manager with the current context
-        let task_manager = TaskManager::with_storage(&self.app_context)?;
+        let task_manager = TaskManager::with_storage(&self.context)?;
 
         // Execute the task
         let result = task_manager.execute_queued_task(task).await;
