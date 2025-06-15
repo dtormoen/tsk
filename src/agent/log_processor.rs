@@ -16,5 +16,5 @@ pub trait LogProcessor: Send {
     async fn save_full_log(&self, path: &Path) -> Result<(), String>;
 
     /// Get the final result of the task execution
-    fn get_final_result(&self) -> Option<&crate::log_processor::TaskResult>;
+    fn get_final_result(&self) -> Option<&super::TaskResult>;
 }

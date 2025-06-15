@@ -170,7 +170,7 @@ impl Agent for TestAgent {
                 Ok(())
             }
 
-            fn get_final_result(&self) -> Option<&crate::log_processor::TaskResult> {
+            fn get_final_result(&self) -> Option<&super::TaskResult> {
                 None
             }
         }

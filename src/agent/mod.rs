@@ -9,7 +9,7 @@ mod provider;
 mod tests;
 
 pub use self::log_processor::LogProcessor;
-pub use claude_code::ClaudeCodeAgent;
+pub use claude_code::{ClaudeCodeAgent, TaskResult};
 pub use provider::AgentProvider;
 
 /// Trait defining the interface for AI agents that can execute tasks

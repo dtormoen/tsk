@@ -13,7 +13,7 @@ pub struct TaskExecutionResult {
     pub branch_name: String,
     #[allow(dead_code)] // Available for future use by callers
     pub output: String,
-    pub task_result: Option<crate::log_processor::TaskResult>,
+    pub task_result: Option<crate::agent::TaskResult>,
 }
 
 #[derive(Debug)]

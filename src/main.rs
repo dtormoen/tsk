@@ -21,8 +21,6 @@ mod task_manager;
 
 mod task_runner;
 
-mod log_processor;
-
 mod agent;
 
 mod repo_utils;
