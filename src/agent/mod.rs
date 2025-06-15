@@ -41,4 +41,15 @@ pub trait Agent: Send + Sync {
     async fn validate(&self) -> Result<(), String> {
         Ok(())
     }
+
+    /// Performs any necessary warmup steps before launching the Docker container
+    ///
+    /// This method is called after validation but before container creation.
+    /// It can be used to execute host-side setup commands, refresh credentials,
+    /// or perform any other preparatory work needed by the agent.
+    ///
+    /// The default implementation does nothing, allowing backward compatibility.
+    async fn warmup(&self) -> Result<(), String> {
+        Ok(())
+    }
 }

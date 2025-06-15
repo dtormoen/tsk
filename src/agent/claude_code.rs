@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::Path;
+use std::process::Command;
 use std::sync::Arc;
 
 /// Claude Code AI agent implementation
@@ -98,6 +99,50 @@ impl Agent for ClaudeCodeAgent {
             ));
         }
 
+        Ok(())
+    }
+
+    async fn warmup(&self) -> Result<(), String> {
+        // Skip warmup in test environments
+        if cfg!(test) {
+            return Ok(());
+        }
+
+        println!("Running Claude Code warmup steps...");
+
+        // Step 1: Force Claude CLI to refresh token
+        let output = Command::new("claude")
+            .args(["-p", "--model", "sonnet", "say hi and nothing else"])
+            .output()
+            .map_err(|e| format!("Failed to run Claude CLI: {}", e))?;
+
+        if !output.status.success() {
+            return Err(format!(
+                "Claude CLI failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+
+        // Step 2: Export OAuth token on macOS only
+        if std::env::consts::OS == "macos" {
+            let user = std::env::var("USER").map_err(|_| "USER environment variable not set")?;
+
+            let output = Command::new("sh")
+                .arg("-c")
+                .arg(format!(
+                    "security find-generic-password -a {} -w -s 'Claude Code-credentials' > ~/.claude/.credentials.json",
+                    user
+                ))
+                .output()
+                .map_err(|e| format!("Failed to export OAuth token: {}", e))?;
+
+            if !output.status.success() {
+                // This might fail if the keychain item doesn't exist yet
+                eprintln!("Warning: Could not export OAuth token from keychain");
+            }
+        }
+
+        println!("Claude Code warmup completed successfully");
         Ok(())
     }
 }

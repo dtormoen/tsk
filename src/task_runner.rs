@@ -68,6 +68,12 @@ impl TaskRunner {
             .await
             .map_err(|e| format!("Agent validation failed: {}", e))?;
 
+        // Run agent warmup
+        agent
+            .warmup()
+            .await
+            .map_err(|e| format!("Agent warmup failed: {}", e))?;
+
         // Copy repository for the task
         let (repo_path, branch_name) = self
             .repo_manager
@@ -187,6 +193,9 @@ impl TaskRunner {
 
         // Validate the agent
         agent.validate().await?;
+
+        // Run agent warmup
+        agent.warmup().await?;
 
         // Copy repository for the debug session
         let (repo_path, branch_name) = self.repo_manager.copy_repo(task_name, repo_root).await?;
