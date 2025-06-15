@@ -174,60 +174,22 @@ impl LogProcessor {
         output.push_str(&"─".repeat(60));
         output.push('\n');
 
-        // Group todos by status
-        let mut pending_todos = Vec::new();
-        let mut in_progress_todos = Vec::new();
-        let mut completed_todos = Vec::new();
-
+        // Display todos in their original order with status emoji
         for todo in todos {
-            match todo.status.as_str() {
-                "pending" => pending_todos.push(todo),
-                "in_progress" => in_progress_todos.push(todo),
-                "completed" => completed_todos.push(todo),
-                _ => pending_todos.push(todo), // Default to pending for unknown statuses
-            }
-        }
+            let status_emoji = match todo.status.as_str() {
+                "in_progress" => "🔄",
+                "pending" => "⏳",
+                "completed" => "✅",
+                _ => "⏳", // Default to pending for unknown statuses
+            };
 
-        // Display in-progress todos first
-        if !in_progress_todos.is_empty() {
-            output.push_str("🔄 In Progress:\n");
-            for todo in &in_progress_todos {
-                output.push_str(&format!(
-                    "   {} [{}] {}\n",
-                    self.get_priority_emoji(&todo.priority),
-                    todo.id,
-                    todo.content
-                ));
-            }
-            output.push('\n');
-        }
-
-        // Display pending todos
-        if !pending_todos.is_empty() {
-            output.push_str("⏳ Pending:\n");
-            for todo in &pending_todos {
-                output.push_str(&format!(
-                    "   {} [{}] {}\n",
-                    self.get_priority_emoji(&todo.priority),
-                    todo.id,
-                    todo.content
-                ));
-            }
-            output.push('\n');
-        }
-
-        // Display completed todos
-        if !completed_todos.is_empty() {
-            output.push_str("✅ Completed:\n");
-            for todo in &completed_todos {
-                output.push_str(&format!(
-                    "   {} [{}] {}\n",
-                    self.get_priority_emoji(&todo.priority),
-                    todo.id,
-                    todo.content
-                ));
-            }
-            output.push('\n');
+            output.push_str(&format!(
+                "{} {} [{}] {}\n",
+                status_emoji,
+                self.get_priority_emoji(&todo.priority),
+                todo.id,
+                todo.content
+            ));
         }
 
         output.push_str(&"─".repeat(60));
@@ -235,9 +197,9 @@ impl LogProcessor {
 
         // Add summary
         let total = todos.len();
-        let completed = completed_todos.len();
-        let in_progress = in_progress_todos.len();
-        let pending = pending_todos.len();
+        let completed = todos.iter().filter(|t| t.status == "completed").count();
+        let in_progress = todos.iter().filter(|t| t.status == "in_progress").count();
+        let pending = todos.iter().filter(|t| t.status == "pending").count();
 
         output.push_str(&format!(
             "Summary: {} total | {} completed | {} in progress | {} pending\n",
@@ -461,10 +423,25 @@ mod tests {
         // Check that the TODO update header is present
         assert!(formatted.contains("📝 TODO Update:"));
 
-        // Check that todos are grouped by status
-        assert!(formatted.contains("🔄 In Progress:"));
-        assert!(formatted.contains("⏳ Pending:"));
-        assert!(formatted.contains("✅ Completed:"));
+        // Check that todos have status emojis in the original order
+        let lines: Vec<&str> = formatted.lines().collect();
+        let todo_lines: Vec<&str> = lines
+            .iter()
+            .filter(|line| {
+                line.contains("[1]")
+                    || line.contains("[2]")
+                    || line.contains("[3]")
+                    || line.contains("[4]")
+            })
+            .cloned()
+            .collect();
+
+        // Verify the order is preserved as in the input
+        assert_eq!(todo_lines.len(), 4);
+        assert!(todo_lines[0].starts_with("⏳ 🔴 [1]")); // pending, high priority
+        assert!(todo_lines[1].starts_with("⏳ 🔴 [2]")); // pending, high priority
+        assert!(todo_lines[2].starts_with("✅ 🔴 [3]")); // completed, high priority
+        assert!(todo_lines[3].starts_with("🔄 🟡 [4]")); // in_progress, medium priority
 
         // Check that specific todo items are present
         assert!(formatted.contains("Analyze existing MockDockerClient implementations"));
@@ -503,10 +480,17 @@ mod tests {
         assert!(result.is_some());
         let formatted = result.unwrap();
 
-        // Should only have completed section
-        assert!(formatted.contains("✅ Completed:"));
-        assert!(!formatted.contains("🔄 In Progress:"));
-        assert!(!formatted.contains("⏳ Pending:"));
+        // Check that both todos have completed status emoji
+        let lines: Vec<&str> = formatted.lines().collect();
+        let todo_lines: Vec<&str> = lines
+            .iter()
+            .filter(|line| line.contains("[1]") || line.contains("[2]"))
+            .cloned()
+            .collect();
+
+        assert_eq!(todo_lines.len(), 2);
+        assert!(todo_lines[0].starts_with("✅ 🔴 [1]")); // completed, high priority
+        assert!(todo_lines[1].starts_with("✅ 🟢 [2]")); // completed, low priority
 
         // Check summary
         assert!(formatted.contains("Summary: 2 total | 2 completed | 0 in progress | 0 pending"));
@@ -519,5 +503,55 @@ mod tests {
         assert_eq!(processor.get_priority_emoji("medium"), "🟡");
         assert_eq!(processor.get_priority_emoji("low"), "🟢");
         assert_eq!(processor.get_priority_emoji("unknown"), "⚪");
+    }
+
+    #[test]
+    fn test_todo_order_preservation() {
+        let mut processor = LogProcessor::new();
+        let json = r#"{
+            "type": "assistant",
+            "message": {
+                "content": [{
+                    "type": "tool_use",
+                    "name": "TodoWrite",
+                    "input": {
+                        "todos": [
+                            {"id": "1", "content": "First task", "status": "completed", "priority": "low"},
+                            {"id": "2", "content": "Second task", "status": "in_progress", "priority": "high"},
+                            {"id": "3", "content": "Third task", "status": "pending", "priority": "medium"},
+                            {"id": "4", "content": "Fourth task", "status": "completed", "priority": "high"},
+                            {"id": "5", "content": "Fifth task", "status": "pending", "priority": "low"}
+                        ]
+                    }
+                }]
+            }
+        }"#;
+
+        let result = processor.process_line(json);
+        assert!(result.is_some());
+        let formatted = result.unwrap();
+
+        // Extract the todo lines in order
+        let lines: Vec<&str> = formatted.lines().collect();
+        let todo_lines: Vec<&str> = lines
+            .iter()
+            .filter(|line| {
+                line.contains("task")
+                    && (line.contains("[1]")
+                        || line.contains("[2]")
+                        || line.contains("[3]")
+                        || line.contains("[4]")
+                        || line.contains("[5]"))
+            })
+            .cloned()
+            .collect();
+
+        // Verify order is exactly as provided in input
+        assert_eq!(todo_lines.len(), 5);
+        assert!(todo_lines[0].contains("First task") && todo_lines[0].starts_with("✅"));
+        assert!(todo_lines[1].contains("Second task") && todo_lines[1].starts_with("🔄"));
+        assert!(todo_lines[2].contains("Third task") && todo_lines[2].starts_with("⏳"));
+        assert!(todo_lines[3].contains("Fourth task") && todo_lines[3].starts_with("✅"));
+        assert!(todo_lines[4].contains("Fifth task") && todo_lines[4].starts_with("⏳"));
     }
 }
