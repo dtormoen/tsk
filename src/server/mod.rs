@@ -128,7 +128,14 @@ async fn handle_client(
     let mut line = String::new();
 
     // Read request
-    reader.read_line(&mut line).await?;
+    let bytes_read = reader.read_line(&mut line).await?;
+
+    // Handle empty connections (e.g., from is_server_available checks)
+    if bytes_read == 0 || line.trim().is_empty() {
+        // Client connected but didn't send data - this is normal for availability checks
+        return Ok(());
+    }
+
     let request: Request = serde_json::from_str(&line)?;
 
     // Process request
@@ -182,4 +189,89 @@ async fn handle_client(
     writer.flush().await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::AppContext;
+    use crate::test_utils::NoOpDockerClient;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::UnixStream;
+
+    /// Helper to create a test AppContext
+    fn create_test_context() -> (Arc<AppContext>, TempDir) {
+        let temp_dir = TempDir::new().unwrap();
+        std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
+        std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
+
+        let context = AppContext::builder()
+            .with_docker_client(Arc::new(NoOpDockerClient))
+            .build();
+
+        // Ensure directories exist
+        context.xdg_directories().ensure_directories().unwrap();
+
+        (Arc::new(context), temp_dir)
+    }
+
+    #[tokio::test]
+    async fn test_handle_client_with_empty_connection() {
+        // This test verifies that the server gracefully handles connections
+        // that don't send any data (like is_server_available checks)
+        let (app_context, _temp_dir) = create_test_context();
+        let storage = get_task_storage(app_context.xdg_directories(), app_context.file_system());
+        let storage = Arc::new(Mutex::new(storage));
+        let shutdown_signal = Arc::new(Mutex::new(false));
+
+        // Create a pair of connected Unix sockets
+        let (client, server) = UnixStream::pair().unwrap();
+
+        // Close the client side immediately (simulating is_server_available)
+        drop(client);
+
+        // Handle the server side - this should not error with EOF
+        let result = handle_client(server, app_context, storage, shutdown_signal).await;
+
+        // The function should return Ok(()) without panicking or erroring
+        assert!(result.is_ok(), "Expected Ok(()), got {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_handle_client_with_valid_request() {
+        // This test verifies that valid requests still work correctly
+        let (app_context, _temp_dir) = create_test_context();
+        let storage = get_task_storage(app_context.xdg_directories(), app_context.file_system());
+        let storage = Arc::new(Mutex::new(storage));
+        let shutdown_signal = Arc::new(Mutex::new(false));
+
+        // Create a pair of connected Unix sockets
+        let (mut client, server) = UnixStream::pair().unwrap();
+
+        // Send a valid request from the client side
+        let request = Request::ListTasks;
+        let request_json = serde_json::to_string(&request).unwrap();
+        client.write_all(request_json.as_bytes()).await.unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.flush().await.unwrap();
+
+        // Handle the request on the server side
+        let server_handle = tokio::spawn(async move {
+            handle_client(server, app_context, storage, shutdown_signal).await
+        });
+
+        // Read the response
+        let mut buf = vec![0; 1024];
+        let n = client.read(&mut buf).await.unwrap();
+        let response_str = String::from_utf8_lossy(&buf[..n]);
+
+        // Verify we got a valid response
+        assert!(response_str.contains("TaskList") || response_str.contains("Error"));
+
+        // Ensure the server handler completes successfully
+        let result = server_handle.await.unwrap();
+        assert!(result.is_ok());
+    }
 }
