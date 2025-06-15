@@ -18,7 +18,12 @@ impl TaskManager {
     pub fn new(ctx: &AppContext) -> Result<Self, String> {
         let repo_manager = RepoManager::new(ctx.file_system(), ctx.git_operations());
         let docker_manager = DockerManager::new(ctx.docker_client());
-        let task_runner = TaskRunner::new(repo_manager, docker_manager, ctx.file_system());
+        let task_runner = TaskRunner::new(
+            repo_manager,
+            docker_manager,
+            ctx.file_system(),
+            ctx.notification_client(),
+        );
 
         Ok(Self {
             task_runner,
@@ -30,7 +35,12 @@ impl TaskManager {
     pub fn with_storage(ctx: &AppContext) -> Result<Self, String> {
         let repo_manager = RepoManager::new(ctx.file_system(), ctx.git_operations());
         let docker_manager = DockerManager::new(ctx.docker_client());
-        let task_runner = TaskRunner::new(repo_manager, docker_manager, ctx.file_system());
+        let task_runner = TaskRunner::new(
+            repo_manager,
+            docker_manager,
+            ctx.file_system(),
+            ctx.notification_client(),
+        );
 
         let repo_root = find_repository_root(Path::new("."))
             .map_err(|e| format!("Failed to find repository root: {}", e))?;

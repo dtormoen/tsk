@@ -5,6 +5,7 @@ pub mod git_operations;
 #[cfg(test)]
 mod tests;
 
+use crate::notifications::NotificationClient;
 use docker_client::DockerClient;
 use file_system::FileSystemOperations;
 use git_operations::GitOperations;
@@ -14,6 +15,7 @@ pub struct AppContext {
     docker_client: Arc<dyn DockerClient>,
     file_system: Arc<dyn FileSystemOperations>,
     git_operations: Arc<dyn GitOperations>,
+    notification_client: Arc<dyn NotificationClient>,
 }
 
 impl AppContext {
@@ -32,12 +34,17 @@ impl AppContext {
     pub fn git_operations(&self) -> Arc<dyn GitOperations> {
         Arc::clone(&self.git_operations)
     }
+
+    pub fn notification_client(&self) -> Arc<dyn NotificationClient> {
+        Arc::clone(&self.notification_client)
+    }
 }
 
 pub struct AppContextBuilder {
     docker_client: Option<Arc<dyn DockerClient>>,
     file_system: Option<Arc<dyn FileSystemOperations>>,
     git_operations: Option<Arc<dyn GitOperations>>,
+    notification_client: Option<Arc<dyn NotificationClient>>,
 }
 
 impl AppContextBuilder {
@@ -46,6 +53,7 @@ impl AppContextBuilder {
             docker_client: None,
             file_system: None,
             git_operations: None,
+            notification_client: None,
         }
     }
 
@@ -67,6 +75,15 @@ impl AppContextBuilder {
         self
     }
 
+    #[allow(dead_code)]
+    pub fn with_notification_client(
+        mut self,
+        notification_client: Arc<dyn NotificationClient>,
+    ) -> Self {
+        self.notification_client = Some(notification_client);
+        self
+    }
+
     pub fn build(self) -> AppContext {
         AppContext {
             docker_client: self
@@ -78,6 +95,9 @@ impl AppContextBuilder {
             git_operations: self
                 .git_operations
                 .unwrap_or_else(|| Arc::new(git_operations::DefaultGitOperations)),
+            notification_client: self
+                .notification_client
+                .unwrap_or_else(|| crate::notifications::create_notification_client()),
         }
     }
 }

@@ -30,6 +30,9 @@ impl Command for RunCommand {
         println!("Found {} queued task(s) to run", queued_tasks.len());
 
         let task_manager = TaskManager::with_storage(ctx)?;
+        let total_tasks = queued_tasks.len();
+        let mut succeeded = 0;
+        let mut failed = 0;
 
         for task in queued_tasks {
             println!("\n{}", "=".repeat(60));
@@ -44,9 +47,11 @@ impl Command for RunCommand {
             match task_manager.execute_queued_task(&task).await {
                 Ok(_result) => {
                     println!("\nTask completed successfully");
+                    succeeded += 1;
                 }
                 Err(e) => {
                     eprintln!("Task failed: {}", e.message);
+                    failed += 1;
                 }
             }
         }
@@ -54,6 +59,10 @@ impl Command for RunCommand {
         println!("\n{}", "=".repeat(60));
         println!("All tasks processed!");
         println!("Use 'tsk list' to see the final status of all tasks");
+
+        // Send summary notification
+        ctx.notification_client()
+            .notify_all_tasks_complete(total_tasks, succeeded, failed);
 
         Ok(())
     }

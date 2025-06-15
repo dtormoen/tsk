@@ -27,6 +27,8 @@ mod agent;
 
 mod repo_utils;
 
+mod notifications;
+
 #[cfg(test)]
 mod test_utils;
 

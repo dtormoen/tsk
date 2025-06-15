@@ -2,6 +2,7 @@ use crate::agent::AgentProvider;
 use crate::context::file_system::FileSystemOperations;
 use crate::docker::DockerManager;
 use crate::git::RepoManager;
+use crate::notifications::NotificationClient;
 use crate::task::Task;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -30,6 +31,7 @@ pub struct TaskRunner {
     repo_manager: RepoManager,
     docker_manager: DockerManager,
     file_system: Arc<dyn FileSystemOperations>,
+    notification_client: Arc<dyn NotificationClient>,
 }
 
 impl TaskRunner {
@@ -37,11 +39,13 @@ impl TaskRunner {
         repo_manager: RepoManager,
         docker_manager: DockerManager,
         file_system: Arc<dyn FileSystemOperations>,
+        notification_client: Arc<dyn NotificationClient>,
     ) -> Self {
         Self {
             repo_manager,
             docker_manager,
             file_system,
+            notification_client,
         }
     }
 
@@ -154,6 +158,12 @@ impl TaskRunner {
 
         // Get the final result from the log processor
         let task_result = log_processor.get_final_result().cloned();
+
+        // Send notification about task completion
+        let success = task_result.as_ref().map(|r| r.success).unwrap_or(false);
+        let message = task_result.as_ref().map(|r| r.message.as_str());
+        self.notification_client
+            .notify_task_complete(&task.name, success, message);
 
         Ok(TaskExecutionResult {
             repo_path,
@@ -282,7 +292,8 @@ mod tests {
 
         let repo_manager = RepoManager::new(fs.clone(), git_ops);
         let docker_manager = crate::docker::DockerManager::new(docker_client);
-        let task_runner = TaskRunner::new(repo_manager, docker_manager, fs);
+        let notification_client = Arc::new(crate::notifications::NoOpNotificationClient);
+        let task_runner = TaskRunner::new(repo_manager, docker_manager, fs, notification_client);
 
         let task = Task {
             id: "test-task-123".to_string(),
