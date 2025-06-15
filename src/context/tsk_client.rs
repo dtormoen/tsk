@@ -1,6 +1,7 @@
 use crate::server::protocol::{Request, Response};
 use crate::storage::XdgDirectories;
-use crate::task::Task;
+use crate::task::{Task, TaskStatus};
+use async_trait::async_trait;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -8,29 +9,45 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::time::timeout;
 
-/// Client for communicating with the TSK server
-pub struct TskClient {
+/// Trait for communicating with the TSK server
+#[async_trait]
+pub trait TskClient: Send + Sync {
+    /// Check if the server is available
+    async fn is_server_available(&self) -> bool;
+
+    /// Add a task to the server
+    async fn add_task(
+        &self,
+        repo_path: PathBuf,
+        task: Task,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+
+    /// List all tasks from the server
+    async fn list_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error + Send + Sync>>;
+
+    /// Get the status of a specific task
+    #[allow(dead_code)]
+    async fn get_task_status(
+        &self,
+        task_id: String,
+    ) -> Result<TaskStatus, Box<dyn std::error::Error + Send + Sync>>;
+
+    /// Shutdown the server
+    async fn shutdown_server(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+}
+
+/// Default implementation of TskClient that communicates with the TSK server via Unix sockets
+#[derive(Clone)]
+pub struct DefaultTskClient {
     socket_path: PathBuf,
 }
 
-impl TskClient {
+impl DefaultTskClient {
     /// Create a new TSK client
     pub fn new(xdg_directories: Arc<XdgDirectories>) -> Self {
         Self {
             socket_path: xdg_directories.socket_path(),
         }
-    }
-
-    /// Check if the server is available
-    pub async fn is_server_available(&self) -> bool {
-        matches!(
-            timeout(
-                Duration::from_secs(1),
-                UnixStream::connect(&self.socket_path),
-            )
-            .await,
-            Ok(Ok(_))
-        )
     }
 
     /// Send a request to the server and get a response
@@ -75,9 +92,22 @@ impl TskClient {
         let response: Response = serde_json::from_str(&response_line)?;
         Ok(response)
     }
+}
 
-    /// Add a task to the server
-    pub async fn add_task(
+#[async_trait]
+impl TskClient for DefaultTskClient {
+    async fn is_server_available(&self) -> bool {
+        matches!(
+            timeout(
+                Duration::from_secs(1),
+                UnixStream::connect(&self.socket_path),
+            )
+            .await,
+            Ok(Ok(_))
+        )
+    }
+
+    async fn add_task(
         &self,
         repo_path: PathBuf,
         task: Task,
@@ -98,8 +128,7 @@ impl TskClient {
         }
     }
 
-    /// List all tasks from the server
-    pub async fn list_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error + Send + Sync>> {
+    async fn list_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error + Send + Sync>> {
         let request = Request::ListTasks;
         let response = self.send_request(request).await?;
 
@@ -110,12 +139,10 @@ impl TskClient {
         }
     }
 
-    /// Get the status of a specific task
-    #[allow(dead_code)]
-    pub async fn get_task_status(
+    async fn get_task_status(
         &self,
         task_id: String,
-    ) -> Result<crate::task::TaskStatus, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<TaskStatus, Box<dyn std::error::Error + Send + Sync>> {
         let request = Request::GetStatus { task_id };
         let response = self.send_request(request).await?;
 
@@ -126,8 +153,7 @@ impl TskClient {
         }
     }
 
-    /// Shutdown the server
-    pub async fn shutdown_server(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn shutdown_server(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let request = Request::Shutdown;
         let response = self.send_request(request).await?;
 
@@ -156,7 +182,7 @@ mod tests {
         let xdg = Arc::new(XdgDirectories::new().unwrap());
         xdg.ensure_directories().unwrap();
 
-        let client = TskClient::new(xdg.clone());
+        let client = DefaultTskClient::new(xdg.clone());
 
         // Server should not be available without starting it
         assert!(!client.is_server_available().await);
@@ -175,7 +201,7 @@ mod tests {
         let xdg = Arc::new(XdgDirectories::new().unwrap());
         xdg.ensure_directories().unwrap();
 
-        let client = TskClient::new(xdg.clone());
+        let client = DefaultTskClient::new(xdg.clone());
 
         // Attempting to list tasks when server is not running should fail gracefully
         let result = client.list_tasks().await;

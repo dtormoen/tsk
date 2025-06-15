@@ -2,6 +2,7 @@ pub mod docker_client;
 pub mod file_system;
 pub mod git_operations;
 pub mod terminal;
+pub mod tsk_client;
 
 #[cfg(test)]
 mod tests;
@@ -14,6 +15,8 @@ use git_operations::GitOperations;
 use terminal::TerminalOperations;
 
 use std::sync::Arc;
+use tsk_client::TskClient;
+
 // Re-export terminal trait for tests
 #[cfg(test)]
 pub use terminal::TerminalOperations as TerminalOperationsTrait;
@@ -25,6 +28,7 @@ pub struct AppContext {
     git_operations: Arc<dyn GitOperations>,
     notification_client: Arc<dyn NotificationClient>,
     terminal_operations: Arc<dyn TerminalOperations>,
+    tsk_client: Arc<dyn TskClient>,
     xdg_directories: Arc<XdgDirectories>,
 }
 
@@ -53,6 +57,10 @@ impl AppContext {
         Arc::clone(&self.terminal_operations)
     }
 
+    pub fn tsk_client(&self) -> Arc<dyn TskClient> {
+        Arc::clone(&self.tsk_client)
+    }
+
     pub fn xdg_directories(&self) -> Arc<XdgDirectories> {
         Arc::clone(&self.xdg_directories)
     }
@@ -64,6 +72,7 @@ pub struct AppContextBuilder {
     git_operations: Option<Arc<dyn GitOperations>>,
     notification_client: Option<Arc<dyn NotificationClient>>,
     terminal_operations: Option<Arc<dyn TerminalOperations>>,
+    tsk_client: Option<Arc<dyn TskClient>>,
     xdg_directories: Option<Arc<XdgDirectories>>,
 }
 
@@ -75,6 +84,7 @@ impl AppContextBuilder {
             git_operations: None,
             notification_client: None,
             terminal_operations: None,
+            tsk_client: None,
             xdg_directories: None,
         }
     }
@@ -116,6 +126,12 @@ impl AppContextBuilder {
     }
 
     #[allow(dead_code)]
+    pub fn with_tsk_client(mut self, tsk_client: Arc<dyn TskClient>) -> Self {
+        self.tsk_client = Some(tsk_client);
+        self
+    }
+
+    #[allow(dead_code)]
     pub fn with_xdg_directories(mut self, xdg_directories: Arc<XdgDirectories>) -> Self {
         self.xdg_directories = Some(xdg_directories);
         self
@@ -128,6 +144,10 @@ impl AppContextBuilder {
             xdg.ensure_directories()
                 .expect("Failed to create XDG directories");
             Arc::new(xdg)
+        });
+
+        let tsk_client = self.tsk_client.unwrap_or_else(|| {
+            Arc::new(tsk_client::DefaultTskClient::new(xdg_directories.clone()))
         });
 
         AppContext {
@@ -146,6 +166,7 @@ impl AppContextBuilder {
             terminal_operations: self
                 .terminal_operations
                 .unwrap_or_else(|| Arc::new(terminal::DefaultTerminalOperations::new())),
+            tsk_client,
             xdg_directories,
         }
     }

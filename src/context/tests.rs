@@ -17,6 +17,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_app_context_with_tsk_client() {
+        use crate::test_utils::NoOpTskClient;
+
+        let tsk_client = Arc::new(NoOpTskClient);
+        let app_context = AppContext::builder()
+            .with_tsk_client(tsk_client.clone())
+            .build();
+
+        // Verify we can use the TSK client
+        let client = app_context.tsk_client();
+        assert!(!client.is_server_available().await);
+        assert!(client.list_tasks().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn test_app_context_docker_client_usage() {
         let docker_client = Arc::new(FixedResponseDockerClient::default());
         let app_context = AppContext::builder()

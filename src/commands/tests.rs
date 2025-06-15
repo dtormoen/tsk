@@ -5,11 +5,12 @@ use std::sync::Arc;
 #[cfg(test)]
 mod command_tests {
     use super::*;
-    use crate::test_utils::NoOpDockerClient;
+    use crate::test_utils::{NoOpDockerClient, NoOpTskClient};
 
     fn create_test_context() -> AppContext {
         AppContext::builder()
             .with_docker_client(Arc::new(NoOpDockerClient))
+            .with_tsk_client(Arc::new(NoOpTskClient))
             .build()
     }
 

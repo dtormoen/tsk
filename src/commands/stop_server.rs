@@ -1,5 +1,4 @@
 use super::Command;
-use crate::client::TskClient;
 use crate::context::AppContext;
 use async_trait::async_trait;
 use std::error::Error;
@@ -11,7 +10,7 @@ impl Command for StopServerCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         println!("Stopping TSK server...");
 
-        let client = TskClient::new(ctx.xdg_directories());
+        let client = ctx.tsk_client();
 
         if !client.is_server_available().await {
             println!("Server is not running");

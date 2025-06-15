@@ -1,5 +1,4 @@
 use super::Command;
-use crate::client::TskClient;
 use crate::context::AppContext;
 use crate::repo_utils::find_repository_root;
 use crate::task::TaskStatus;
@@ -34,7 +33,7 @@ impl Command for ListCommand {
         let _repo_root = find_repository_root(Path::new("."))?;
 
         // Try to get tasks from server first
-        let client = TskClient::new(ctx.xdg_directories());
+        let client = ctx.tsk_client();
         let tasks = if client.is_server_available().await {
             match client.list_tasks().await {
                 Ok(tasks) => tasks,

@@ -1,5 +1,4 @@
 use super::Command;
-use crate::client::TskClient;
 use crate::context::AppContext;
 use crate::repo_utils::find_repository_root;
 use crate::task::TaskBuilder;
@@ -40,7 +39,7 @@ impl Command for AddCommand {
             .await?;
 
         // Try to add task via server first
-        let client = TskClient::new(ctx.xdg_directories());
+        let client = ctx.tsk_client();
 
         if client.is_server_available().await {
             // Server is available, use it
