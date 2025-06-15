@@ -68,6 +68,26 @@ tsk add --name "complex-feature" --type "feature" --edit
 # This will open your $EDITOR to create detailed instructions
 ```
 
+### Server Mode Quick Start
+
+```bash
+# Start the TSK server in one terminal
+tsk run --server
+
+# In another terminal, add tasks from any repository
+cd ~/projects/project-a
+tsk add --name "fix-auth" --description "Fix authentication bug in login handler"
+
+cd ~/projects/project-b  
+tsk add --name "add-logging" --description "Add debug logging to API endpoints"
+
+# List all tasks across repositories
+tsk list
+
+# Stop the server when done
+tsk stop-server
+```
+
 ## Command Reference
 
 ### `tsk add`
@@ -102,9 +122,17 @@ tsk run [OPTIONS]
 ```
 
 **Options:**
+- `--server, -s`: Run in server mode, continuously processing tasks from any repository
 - `--parallel, -p`: Number of concurrent tasks (default: 1)
 - `--timeout, -t`: Task timeout in minutes (default: 30)
 - `--dry-run`: Preview execution plan without running tasks
+
+**Server Mode:**
+When run with `--server`, TSK starts as a background daemon that:
+- Accepts task additions from any repository via Unix socket
+- Executes tasks sequentially (one at a time)
+- Continues running until explicitly stopped
+- Stores all task data centrally in XDG-compliant directories
 
 ### `tsk list`
 Displays all tasks with their current status and resulting branches.
@@ -193,19 +221,31 @@ tsk debug --name <SESSION_NAME> [--agent <AGENT_NAME>]
 This command creates an interactive Docker container with the same environment as tasks,
 allowing you to manually test and debug agent behavior.
 
-### `tsk server` (Planned)
-Starts the TSK daemon for scheduled and background task execution.
+### `tsk stop-server`
+Stops the running TSK server daemon.
 
 ```bash
-tsk server [OPTIONS]
+tsk stop-server
 ```
 
-**Options:**
-- `--port, -p`: Server port (default: 8080)
-- `--config, -c`: Configuration file path
-- `--workers, -w`: Number of worker processes
+This command sends a shutdown signal to the running TSK server and waits for it to gracefully stop.
 
 ## Architecture
+
+### Centralized Storage
+
+TSK uses XDG Base Directory specification for storing task data centrally:
+- **Data Directory**: `$XDG_DATA_HOME/tsk/` (defaults to `~/.local/share/tsk/`)
+  - `tasks.json`: Central task database
+  - `tasks/`: Task-specific directories containing repository copies
+- **Runtime Directory**: `$XDG_RUNTIME_DIR/tsk/` (defaults to `/tmp/tsk-$UID/`)
+  - `tsk.sock`: Unix socket for client-server communication
+  - `tsk.pid`: Server process ID file
+
+This centralized approach allows:
+- Task management across multiple repositories
+- Server mode operation for continuous task processing
+- Clean separation of task data from repository content
 
 ### Execution Flow
 

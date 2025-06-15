@@ -6,16 +6,19 @@ pub mod git_operations;
 mod tests;
 
 use crate::notifications::NotificationClient;
+use crate::storage::XdgDirectories;
 use docker_client::DockerClient;
 use file_system::FileSystemOperations;
 use git_operations::GitOperations;
 use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct AppContext {
     docker_client: Arc<dyn DockerClient>,
     file_system: Arc<dyn FileSystemOperations>,
     git_operations: Arc<dyn GitOperations>,
     notification_client: Arc<dyn NotificationClient>,
+    xdg_directories: Arc<XdgDirectories>,
 }
 
 impl AppContext {
@@ -38,6 +41,10 @@ impl AppContext {
     pub fn notification_client(&self) -> Arc<dyn NotificationClient> {
         Arc::clone(&self.notification_client)
     }
+
+    pub fn xdg_directories(&self) -> Arc<XdgDirectories> {
+        Arc::clone(&self.xdg_directories)
+    }
 }
 
 pub struct AppContextBuilder {
@@ -45,6 +52,7 @@ pub struct AppContextBuilder {
     file_system: Option<Arc<dyn FileSystemOperations>>,
     git_operations: Option<Arc<dyn GitOperations>>,
     notification_client: Option<Arc<dyn NotificationClient>>,
+    xdg_directories: Option<Arc<XdgDirectories>>,
 }
 
 impl AppContextBuilder {
@@ -54,6 +62,7 @@ impl AppContextBuilder {
             file_system: None,
             git_operations: None,
             notification_client: None,
+            xdg_directories: None,
         }
     }
 
@@ -84,7 +93,21 @@ impl AppContextBuilder {
         self
     }
 
+    #[allow(dead_code)]
+    pub fn with_xdg_directories(mut self, xdg_directories: Arc<XdgDirectories>) -> Self {
+        self.xdg_directories = Some(xdg_directories);
+        self
+    }
+
     pub fn build(self) -> AppContext {
+        let xdg_directories = self.xdg_directories.unwrap_or_else(|| {
+            let xdg = XdgDirectories::new().expect("Failed to initialize XDG directories");
+            // Ensure directories exist
+            xdg.ensure_directories()
+                .expect("Failed to create XDG directories");
+            Arc::new(xdg)
+        });
+
         AppContext {
             docker_client: self
                 .docker_client
@@ -98,6 +121,7 @@ impl AppContextBuilder {
             notification_client: self
                 .notification_client
                 .unwrap_or_else(|| crate::notifications::create_notification_client()),
+            xdg_directories,
         }
     }
 }

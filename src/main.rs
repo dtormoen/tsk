@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 mod commands;
 use commands::{
     AddCommand, Command, DebugCommand, ListCommand, QuickCommand, RunCommand, StopProxyCommand,
-    TasksCommand,
+    StopServerCommand, TasksCommand,
 };
 
 mod context;
@@ -26,6 +26,12 @@ mod agent;
 mod repo_utils;
 
 mod notifications;
+
+mod storage;
+
+mod server;
+
+mod client;
 
 #[cfg(test)]
 mod test_utils;
@@ -73,7 +79,11 @@ enum Commands {
     /// List all queued tasks
     List,
     /// Run all queued tasks sequentially
-    Run,
+    Run {
+        /// Run in server mode (start daemon and keep running)
+        #[arg(short, long)]
+        server: bool,
+    },
     /// Immediately execute a task without queuing
     Quick {
         /// Unique identifier for the task
@@ -116,6 +126,8 @@ enum Commands {
     },
     /// Stop the TSK proxy container
     StopProxy,
+    /// Stop the TSK server
+    StopServer,
     /// Manage tasks in the task list
     Tasks {
         /// Delete a specific task by ID
@@ -172,8 +184,9 @@ async fn main() {
         }),
         Commands::Debug { name, agent } => Box::new(DebugCommand { name, agent }),
         Commands::StopProxy => Box::new(StopProxyCommand),
+        Commands::StopServer => Box::new(StopServerCommand),
         Commands::List => Box::new(ListCommand),
-        Commands::Run => Box::new(RunCommand),
+        Commands::Run { server } => Box::new(RunCommand { server }),
         Commands::Tasks { delete, clean } => Box::new(TasksCommand { delete, clean }),
     };
 

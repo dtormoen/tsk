@@ -1,0 +1,159 @@
+use crate::server::protocol::{Request, Response};
+use crate::storage::XdgDirectories;
+use crate::task::Task;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::UnixStream;
+use tokio::time::timeout;
+
+/// Client for communicating with the TSK server
+pub struct TskClient {
+    socket_path: PathBuf,
+}
+
+impl TskClient {
+    /// Create a new TSK client
+    pub fn new(xdg_directories: Arc<XdgDirectories>) -> Self {
+        Self {
+            socket_path: xdg_directories.socket_path(),
+        }
+    }
+
+    /// Check if the server is available
+    pub async fn is_server_available(&self) -> bool {
+        matches!(
+            timeout(
+                Duration::from_secs(1),
+                UnixStream::connect(&self.socket_path),
+            )
+            .await,
+            Ok(Ok(_))
+        )
+    }
+
+    /// Send a request to the server and get a response
+    async fn send_request(
+        &self,
+        request: Request,
+    ) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
+        // Connect to server with timeout
+        let stream = timeout(
+            Duration::from_secs(5),
+            UnixStream::connect(&self.socket_path),
+        )
+        .await
+        .map_err(|_| "Connection timeout")?
+        .map_err(|e| format!("Failed to connect to server: {}", e))?;
+
+        let (reader, mut writer) = stream.into_split();
+        let mut reader = BufReader::new(reader);
+
+        // Send request
+        let request_json = serde_json::to_string(&request)?;
+        writer.write_all(request_json.as_bytes()).await?;
+        writer.write_all(b"\n").await?;
+        writer.flush().await?;
+
+        // Read response with timeout
+        let mut response_line = String::new();
+        timeout(
+            Duration::from_secs(10),
+            reader.read_line(&mut response_line),
+        )
+        .await
+        .map_err(|_| "Response timeout")?
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+
+        // Parse response
+        let response: Response = serde_json::from_str(&response_line)?;
+        Ok(response)
+    }
+
+    /// Add a task to the server
+    pub async fn add_task(
+        &self,
+        repo_path: PathBuf,
+        task: Task,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let request = Request::AddTask {
+            repo_path,
+            task: Box::new(task),
+        };
+        let response = self.send_request(request).await?;
+
+        match response {
+            Response::Success { message } => {
+                println!("{}", message);
+                Ok(())
+            }
+            Response::Error { message } => Err(message.into()),
+            _ => Err("Unexpected response from server".into()),
+        }
+    }
+
+    /// List all tasks from the server
+    pub async fn list_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error + Send + Sync>> {
+        let request = Request::ListTasks;
+        let response = self.send_request(request).await?;
+
+        match response {
+            Response::TaskList { tasks } => Ok(tasks),
+            Response::Error { message } => Err(message.into()),
+            _ => Err("Unexpected response from server".into()),
+        }
+    }
+
+    /// Get the status of a specific task
+    #[allow(dead_code)]
+    pub async fn get_task_status(
+        &self,
+        task_id: String,
+    ) -> Result<crate::task::TaskStatus, Box<dyn std::error::Error + Send + Sync>> {
+        let request = Request::GetStatus { task_id };
+        let response = self.send_request(request).await?;
+
+        match response {
+            Response::TaskStatus { status } => Ok(status),
+            Response::Error { message } => Err(message.into()),
+            _ => Err("Unexpected response from server".into()),
+        }
+    }
+
+    /// Shutdown the server
+    pub async fn shutdown_server(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let request = Request::Shutdown;
+        let response = self.send_request(request).await?;
+
+        match response {
+            Response::Success { message } => {
+                println!("{}", message);
+                Ok(())
+            }
+            Response::Error { message } => Err(message.into()),
+            _ => Err("Unexpected response from server".into()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_client_creation() {
+        let temp_dir = TempDir::new().unwrap();
+        std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
+        std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
+
+        let xdg = Arc::new(XdgDirectories::new().unwrap());
+        xdg.ensure_directories().unwrap();
+
+        let client = TskClient::new(xdg.clone());
+
+        // Server should not be available without starting it
+        assert!(!client.is_server_available().await);
+    }
+}

@@ -207,10 +207,11 @@ impl TaskBuilder {
             }
         }
 
-        // Create task directory
+        // Create task directory in centralized location
         let timestamp = chrono::Utc::now().format("%Y-%m-%d-%H%M");
         let task_dir_name = format!("{}-{}", timestamp, name);
-        let task_dir = repo_root.join(".tsk/tasks").join(&task_dir_name);
+        let repo_hash = crate::storage::get_repo_hash(&repo_root);
+        let task_dir = ctx.xdg_directories().task_dir(&task_dir_name, &repo_hash);
         ctx.file_system().create_dir(&task_dir).await?;
 
         // Create instructions file

@@ -1,4 +1,5 @@
 use super::Command;
+use crate::client::TskClient;
 use crate::context::AppContext;
 use crate::repo_utils::find_repository_root;
 use crate::task::TaskStatus;
@@ -30,9 +31,33 @@ struct TaskRow {
 #[async_trait]
 impl Command for ListCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
-        let repo_root = find_repository_root(Path::new("."))?;
-        let storage = get_task_storage(&repo_root, ctx.file_system());
-        let tasks = storage.list_tasks().await?;
+        let _repo_root = find_repository_root(Path::new("."))?;
+
+        // Try to get tasks from server first
+        let client = TskClient::new(ctx.xdg_directories());
+        let tasks = if client.is_server_available().await {
+            match client.list_tasks().await {
+                Ok(tasks) => tasks,
+                Err(_) => {
+                    eprintln!("Failed to list tasks via server");
+                    eprintln!("Falling back to direct file read...");
+
+                    // Fall back to direct storage
+                    let storage = get_task_storage(ctx.xdg_directories(), ctx.file_system());
+                    storage
+                        .list_tasks()
+                        .await
+                        .map_err(|e| e as Box<dyn Error>)?
+                }
+            }
+        } else {
+            // Server not available, read directly
+            let storage = get_task_storage(ctx.xdg_directories(), ctx.file_system());
+            storage
+                .list_tasks()
+                .await
+                .map_err(|e| e as Box<dyn Error>)?
+        };
 
         if tasks.is_empty() {
             println!("No tasks in queue");

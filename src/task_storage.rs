@@ -1,22 +1,27 @@
 use crate::context::file_system::FileSystemOperations;
+use crate::storage::XdgDirectories;
 use crate::task::{Task, TaskStatus};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 // Trait for task storage abstraction
 #[async_trait::async_trait]
 pub trait TaskStorage: Send + Sync {
-    async fn add_task(&self, task: Task) -> Result<(), Box<dyn std::error::Error>>;
+    async fn add_task(&self, task: Task) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
     #[allow(dead_code)] // Will be used in future functionality (e.g., task details view)
-    async fn get_task(&self, id: &str) -> Result<Option<Task>, Box<dyn std::error::Error>>;
-    async fn list_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error>>;
-    async fn update_task(&self, task: Task) -> Result<(), Box<dyn std::error::Error>>;
-    async fn delete_task(&self, id: &str) -> Result<(), Box<dyn std::error::Error>>;
+    async fn get_task(
+        &self,
+        id: &str,
+    ) -> Result<Option<Task>, Box<dyn std::error::Error + Send + Sync>>;
+    async fn list_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error + Send + Sync>>;
+    async fn update_task(&self, task: Task)
+        -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    async fn delete_task(&self, id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
     async fn delete_tasks_by_status(
         &self,
         statuses: Vec<TaskStatus>,
-    ) -> Result<usize, Box<dyn std::error::Error>>;
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 // JSON file-based implementation
@@ -24,20 +29,26 @@ pub struct JsonTaskStorage {
     file_path: PathBuf,
     lock: Arc<Mutex<()>>,
     file_system: Arc<dyn FileSystemOperations>,
+    #[allow(dead_code)]
+    xdg_directories: Arc<XdgDirectories>,
 }
 
 impl JsonTaskStorage {
-    pub fn new(base_path: &Path, file_system: Arc<dyn FileSystemOperations>) -> Self {
-        let file_path = base_path.join("tasks.json");
+    pub fn new(
+        xdg_directories: Arc<XdgDirectories>,
+        file_system: Arc<dyn FileSystemOperations>,
+    ) -> Self {
+        let file_path = xdg_directories.tasks_file();
 
         Self {
             file_path,
             lock: Arc::new(Mutex::new(())),
             file_system,
+            xdg_directories,
         }
     }
 
-    async fn read_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error>> {
+    async fn read_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error + Send + Sync>> {
         if !self
             .file_system
             .exists(&self.file_path)
@@ -56,7 +67,10 @@ impl JsonTaskStorage {
         Ok(tasks)
     }
 
-    async fn write_tasks(&self, tasks: &[Task]) -> Result<(), Box<dyn std::error::Error>> {
+    async fn write_tasks(
+        &self,
+        tasks: &[Task],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let contents = serde_json::to_string_pretty(tasks)?;
         self.file_system
             .write_file(&self.file_path, &contents)
@@ -68,7 +82,7 @@ impl JsonTaskStorage {
 
 #[async_trait::async_trait]
 impl TaskStorage for JsonTaskStorage {
-    async fn add_task(&self, task: Task) -> Result<(), Box<dyn std::error::Error>> {
+    async fn add_task(&self, task: Task) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let _lock = self.lock.lock().await;
 
         let mut tasks = self.read_tasks().await?;
@@ -78,16 +92,22 @@ impl TaskStorage for JsonTaskStorage {
         Ok(())
     }
 
-    async fn get_task(&self, id: &str) -> Result<Option<Task>, Box<dyn std::error::Error>> {
+    async fn get_task(
+        &self,
+        id: &str,
+    ) -> Result<Option<Task>, Box<dyn std::error::Error + Send + Sync>> {
         let tasks = self.read_tasks().await?;
         Ok(tasks.into_iter().find(|t| t.id == id))
     }
 
-    async fn list_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error>> {
+    async fn list_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error + Send + Sync>> {
         self.read_tasks().await
     }
 
-    async fn update_task(&self, task: Task) -> Result<(), Box<dyn std::error::Error>> {
+    async fn update_task(
+        &self,
+        task: Task,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let _lock = self.lock.lock().await;
 
         let mut tasks = self.read_tasks().await?;
@@ -100,7 +120,7 @@ impl TaskStorage for JsonTaskStorage {
         }
     }
 
-    async fn delete_task(&self, id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    async fn delete_task(&self, id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let _lock = self.lock.lock().await;
 
         let mut tasks = self.read_tasks().await?;
@@ -116,7 +136,7 @@ impl TaskStorage for JsonTaskStorage {
     async fn delete_tasks_by_status(
         &self,
         statuses: Vec<TaskStatus>,
-    ) -> Result<usize, Box<dyn std::error::Error>> {
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         let _lock = self.lock.lock().await;
 
         let mut tasks = self.read_tasks().await?;
@@ -130,10 +150,10 @@ impl TaskStorage for JsonTaskStorage {
 
 // Factory function for getting task storage
 pub fn get_task_storage(
-    repo_root: &Path,
+    xdg_directories: Arc<XdgDirectories>,
     file_system: Arc<dyn FileSystemOperations>,
 ) -> Box<dyn TaskStorage> {
-    let storage = JsonTaskStorage::new(&repo_root.join(".tsk"), file_system);
+    let storage = JsonTaskStorage::new(xdg_directories, file_system);
     Box::new(storage)
 }
 
@@ -144,11 +164,20 @@ mod tests {
     use crate::task::Task;
     use tempfile::TempDir;
 
+    fn create_test_xdg_directories(temp_dir: &TempDir) -> Arc<XdgDirectories> {
+        std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
+        std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
+        let xdg = XdgDirectories::new().unwrap();
+        xdg.ensure_directories().unwrap();
+        Arc::new(xdg)
+    }
+
     #[tokio::test]
     async fn test_json_task_storage() {
         let temp_dir = TempDir::new().unwrap();
         let file_system = Arc::new(DefaultFileSystem);
-        let storage = JsonTaskStorage::new(temp_dir.path(), file_system);
+        let xdg_directories = create_test_xdg_directories(&temp_dir);
+        let storage = JsonTaskStorage::new(xdg_directories.clone(), file_system);
 
         // Test adding a task
         let task = Task::new(

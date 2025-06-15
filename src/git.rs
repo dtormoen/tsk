@@ -1,22 +1,24 @@
 use crate::context::file_system::FileSystemOperations;
 use crate::context::git_operations::GitOperations;
+use crate::storage::XdgDirectories;
 use chrono::{DateTime, Local};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub struct RepoManager {
-    base_path: PathBuf,
+    xdg_directories: Arc<XdgDirectories>,
     file_system: Arc<dyn FileSystemOperations>,
     git_operations: Arc<dyn GitOperations>,
 }
 
 impl RepoManager {
     pub fn new(
+        xdg_directories: Arc<XdgDirectories>,
         file_system: Arc<dyn FileSystemOperations>,
         git_operations: Arc<dyn GitOperations>,
     ) -> Self {
         Self {
-            base_path: PathBuf::from(".tsk/tasks"),
+            xdg_directories,
             file_system,
             git_operations,
         }
@@ -33,8 +35,9 @@ impl RepoManager {
         let task_dir_name = task_id;
         let branch_name = format!("tsk/{}", task_id);
 
-        // Create the task directory structure
-        let task_dir = repo_root.join(&self.base_path).join(task_dir_name);
+        // Create the task directory structure in centralized location
+        let repo_hash = crate::storage::get_repo_hash(repo_root);
+        let task_dir = self.xdg_directories.task_dir(task_dir_name, &repo_hash);
         let repo_path = task_dir.join("repo");
 
         // Create directories if they don't exist
@@ -199,10 +202,18 @@ mod tests {
     use crate::context::git_operations::tests::MockGitOperations;
     use tempfile::TempDir;
 
+    fn create_test_xdg_directories(temp_dir: &TempDir) -> Arc<XdgDirectories> {
+        std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
+        std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
+        let xdg = XdgDirectories::new().unwrap();
+        xdg.ensure_directories().unwrap();
+        Arc::new(xdg)
+    }
+
     #[tokio::test]
     async fn test_copy_repo_not_in_git_repo() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let base_path = temp_dir.path().join(".tsk/tasks");
+        let xdg_directories = create_test_xdg_directories(&temp_dir);
 
         // Create mock git operations
         let mock_git_ops = Arc::new(MockGitOperations::new());
@@ -211,11 +222,7 @@ mod tests {
         use crate::context::file_system::tests::MockFileSystem;
         let fs = Arc::new(MockFileSystem::new());
 
-        let manager = RepoManager {
-            base_path: base_path.clone(),
-            file_system: fs,
-            git_operations: mock_git_ops,
-        };
+        let manager = RepoManager::new(xdg_directories, fs, mock_git_ops.clone());
 
         let repo_root = temp_dir.path();
         let result = manager
@@ -238,11 +245,8 @@ mod tests {
         use crate::context::file_system::tests::MockFileSystem;
         let fs = Arc::new(MockFileSystem::new());
 
-        let manager = RepoManager {
-            base_path: PathBuf::from(".tsk/tasks"),
-            file_system: fs,
-            git_operations: mock_git_ops,
-        };
+        let xdg_directories = create_test_xdg_directories(&temp_dir);
+        let manager = RepoManager::new(xdg_directories, fs, mock_git_ops);
 
         let result = manager.commit_changes(repo_path, "Test commit").await;
 
@@ -261,11 +265,8 @@ mod tests {
         use crate::context::file_system::tests::MockFileSystem;
         let fs = Arc::new(MockFileSystem::new());
 
-        let manager = RepoManager {
-            base_path: PathBuf::from(".tsk/tasks"),
-            file_system: fs,
-            git_operations: mock_git_ops,
-        };
+        let xdg_directories = create_test_xdg_directories(&temp_dir);
+        let manager = RepoManager::new(xdg_directories, fs, mock_git_ops);
 
         let result = manager.commit_changes(repo_path, "Test commit").await;
 
@@ -284,11 +285,12 @@ mod tests {
         use crate::context::file_system::tests::MockFileSystem;
         let fs = Arc::new(MockFileSystem::new());
 
-        let manager = RepoManager {
-            base_path: PathBuf::from(".tsk/tasks"),
-            file_system: fs,
-            git_operations: mock_git_ops.clone(),
-        };
+        // Create XDG directories for test
+        std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
+        std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
+        let xdg = Arc::new(crate::storage::XdgDirectories::new().unwrap());
+
+        let manager = RepoManager::new(xdg, fs, mock_git_ops.clone());
 
         let repo_root = temp_dir.path();
         let result = manager
@@ -316,11 +318,12 @@ mod tests {
         use crate::context::file_system::tests::MockFileSystem;
         let fs = Arc::new(MockFileSystem::new());
 
-        let manager = RepoManager {
-            base_path: PathBuf::from(".tsk/tasks"),
-            file_system: fs,
-            git_operations: mock_git_ops.clone(),
-        };
+        // Create XDG directories for test
+        std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
+        std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
+        let xdg = Arc::new(crate::storage::XdgDirectories::new().unwrap());
+
+        let manager = RepoManager::new(xdg, fs, mock_git_ops.clone());
 
         let repo_root = temp_dir.path();
         let result = manager

@@ -1,21 +1,67 @@
 use super::Command;
 use crate::context::AppContext;
 use crate::repo_utils::find_repository_root;
+use crate::server::TskServer;
 use crate::task::{Task, TaskStatus};
 use crate::task_manager::TaskManager;
 use crate::task_storage::get_task_storage;
 use async_trait::async_trait;
 use std::error::Error;
 use std::path::Path;
+use std::sync::Arc;
 
-pub struct RunCommand;
+pub struct RunCommand {
+    pub server: bool,
+}
 
 #[async_trait]
 impl Command for RunCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
-        let repo_root = find_repository_root(Path::new("."))?;
-        let storage = get_task_storage(&repo_root, ctx.file_system());
-        let tasks = storage.list_tasks().await?;
+        if self.server {
+            // Run in server mode
+            println!("Starting TSK server...");
+            let server = TskServer::new(Arc::new(ctx.clone()));
+
+            // Setup signal handlers for graceful shutdown
+            let shutdown_signal = Arc::new(tokio::sync::Notify::new());
+            let shutdown_signal_clone = shutdown_signal.clone();
+
+            tokio::spawn(async move {
+                tokio::signal::ctrl_c()
+                    .await
+                    .expect("Failed to listen for Ctrl+C");
+                println!("\nReceived shutdown signal...");
+                shutdown_signal_clone.notify_one();
+            });
+
+            // Run server until shutdown
+            tokio::select! {
+                result = server.run() => {
+                    match result {
+                        Ok(_) => {},
+                        Err(e) => {
+                            let error_msg = e.to_string();
+                            eprintln!("Server error: {}", error_msg);
+                            return Err(Box::new(std::io::Error::other(error_msg)));
+                        }
+                    }
+                }
+                _ = shutdown_signal.notified() => {
+                    server.shutdown().await;
+                }
+            }
+
+            println!("Server stopped");
+            return Ok(());
+        }
+
+        // Run in client mode (execute current tasks and exit)
+        let _repo_root = find_repository_root(Path::new("."))?;
+        let storage = get_task_storage(ctx.xdg_directories(), ctx.file_system());
+        let tasks = storage
+            .list_tasks()
+            .await
+            .map_err(|e| e as Box<dyn Error>)?;
 
         let queued_tasks: Vec<Task> = tasks
             .into_iter()

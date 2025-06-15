@@ -27,22 +27,23 @@ just precommit                     # Full CI checks (fmt, clippy, test, help)
 
 ## Architecture Overview
 
-TSK implements a command pattern with dependency injection for testability. The core workflow: queue tasks → execute in Docker → create git branches for review.
+TSK implements a command pattern with dependency injection for testability. The core workflow: queue tasks → execute in Docker → create git branches for review. TSK can run in server mode for continuous task processing across multiple repositories.
 
 ### Key Components
 
 **CLI Commands** (`src/commands/`)
 - `add`: Queue tasks with descriptions and templates
-- `run`: Execute all queued tasks in parallel Docker containers
+- `run`: Execute all queued tasks (or start server with `--server` flag)
 - `quick`: Immediately execute single tasks
 - `list`: Display task status and results
 - `debug`: Launch interactive containers for troubleshooting
 - `tasks`: Manage task queue (delete/clean operations)
+- `stop-server`: Stop the running TSK server
 
 **Task Management** (`src/task.rs`, `src/task_storage.rs`, `src/task_manager.rs`)
 - `TaskBuilder` provides consistent task creation with builder pattern
 - `TaskStorage` trait abstracts storage with JSON-based implementation
-- JSON-based persistence in `.tsk/tasks.json`
+- Centralized JSON persistence in XDG data directory (`$XDG_DATA_HOME/tsk/tasks.json`)
 - Task status: Queued → Running → Complete/Failed
 - Branch naming: `tsk/{task-id}` (where task-id is `{timestamp}-{task-name}`)
 
@@ -52,8 +53,19 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Resource limits: 4GB memory, 4 CPU cores
 - Volume mounting for repository copies and Claude config
 
+**Storage** (`src/storage/`)
+- `XdgDirectories`: Manages XDG-compliant directory structure
+- Centralized task storage across all repositories
+- Runtime directory for server socket and PID file
+
+**Server Mode** (`src/server/`, `src/client/`)
+- `TskServer`: Continuous task execution daemon
+- `TskClient`: Client for communicating with server
+- Unix socket-based IPC protocol
+- Sequential task execution (one at a time)
+
 **Git Operations** (`src/git.rs`)
-- Repository copying with `.tsk` exclusion
+- Repository copying to centralized task directories
 - Isolated branch creation and result integration
 - Automatic commit and fetch operations
 
@@ -63,6 +75,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Factory pattern prevents accidental operations in tests
 - `FileSystemOperations` trait abstracts all file system operations for testability
 - `GitOperations` trait abstracts all git operations for improved testability and separation of concerns
+- `XdgDirectories` provides XDG-compliant directory paths for centralized storage
 
 ### Testing Conventions
 

@@ -1966,12 +1966,14 @@ dependencies = [
  "clap",
  "futures-util",
  "git2",
+ "libc",
  "notify-rust",
  "predicates",
  "serde",
  "serde_json",
  "tabled",
  "tempfile",
+ "thiserror 1.0.69",
  "tokio",
 ]
 

@@ -2,6 +2,7 @@ use crate::context::{file_system::FileSystemOperations, AppContext};
 use crate::docker::DockerManager;
 use crate::git::RepoManager;
 use crate::repo_utils::find_repository_root;
+use crate::storage::XdgDirectories;
 use crate::task::{Task, TaskStatus};
 use crate::task_runner::{TaskExecutionError, TaskExecutionResult, TaskRunner};
 use crate::task_storage::{get_task_storage, TaskStorage};
@@ -12,11 +13,16 @@ pub struct TaskManager {
     task_runner: TaskRunner,
     task_storage: Option<Box<dyn TaskStorage>>,
     file_system: Arc<dyn FileSystemOperations>,
+    xdg_directories: Arc<XdgDirectories>,
 }
 
 impl TaskManager {
     pub fn new(ctx: &AppContext) -> Result<Self, String> {
-        let repo_manager = RepoManager::new(ctx.file_system(), ctx.git_operations());
+        let repo_manager = RepoManager::new(
+            ctx.xdg_directories(),
+            ctx.file_system(),
+            ctx.git_operations(),
+        );
         let docker_manager = DockerManager::new(ctx.docker_client());
         let task_runner = TaskRunner::new(
             repo_manager,
@@ -29,11 +35,16 @@ impl TaskManager {
             task_runner,
             task_storage: None,
             file_system: ctx.file_system(),
+            xdg_directories: ctx.xdg_directories(),
         })
     }
 
     pub fn with_storage(ctx: &AppContext) -> Result<Self, String> {
-        let repo_manager = RepoManager::new(ctx.file_system(), ctx.git_operations());
+        let repo_manager = RepoManager::new(
+            ctx.xdg_directories(),
+            ctx.file_system(),
+            ctx.git_operations(),
+        );
         let docker_manager = DockerManager::new(ctx.docker_client());
         let task_runner = TaskRunner::new(
             repo_manager,
@@ -42,13 +53,14 @@ impl TaskManager {
             ctx.notification_client(),
         );
 
-        let repo_root = find_repository_root(Path::new("."))
+        let _repo_root = find_repository_root(Path::new("."))
             .map_err(|e| format!("Failed to find repository root: {}", e))?;
 
         Ok(Self {
             task_runner,
-            task_storage: Some(get_task_storage(&repo_root, ctx.file_system())),
+            task_storage: Some(get_task_storage(ctx.xdg_directories(), ctx.file_system())),
             file_system: ctx.file_system(),
+            xdg_directories: ctx.xdg_directories(),
         })
     }
 
@@ -141,7 +153,8 @@ impl TaskManager {
 
         // Delete the task directory
         let task = task.unwrap();
-        let task_dir = task.repo_root.join(".tsk/tasks").join(task_id);
+        let repo_hash = crate::storage::get_repo_hash(&task.repo_root);
+        let task_dir = self.xdg_directories.task_dir(task_id, &repo_hash);
         if self.file_system.exists(&task_dir).await.unwrap_or(false) {
             self.file_system
                 .remove_dir(&task_dir)
@@ -174,7 +187,8 @@ impl TaskManager {
 
         // Delete completed tasks directories
         for task in &completed_tasks {
-            let task_dir = task.repo_root.join(".tsk/tasks").join(&task.id);
+            let repo_hash = crate::storage::get_repo_hash(&task.repo_root);
+            let task_dir = self.xdg_directories.task_dir(&task.id, &repo_hash);
             if self.file_system.exists(&task_dir).await.unwrap_or(false) {
                 if let Err(e) = self.file_system.remove_dir(&task_dir).await {
                     eprintln!(
@@ -205,10 +219,25 @@ mod tests {
     async fn test_delete_task() {
         use crate::context::file_system::tests::MockFileSystem;
         use crate::context::git_operations::tests::MockGitOperations;
+        use std::env;
+
+        // Set up XDG environment variables for testing
+        let temp_dir = std::env::temp_dir();
+        let test_data_dir = temp_dir.join("tsk-test-data");
+        let test_runtime_dir = temp_dir.join("tsk-test-runtime");
+        env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
+        env::set_var(
+            "XDG_RUNTIME_DIR",
+            test_runtime_dir.to_string_lossy().to_string(),
+        );
+
+        // Create XdgDirectories instance
+        let xdg = Arc::new(XdgDirectories::new().unwrap());
 
         // Create a task to test with
         let repo_root = crate::repo_utils::find_repository_root(Path::new(".")).unwrap();
         let task_id = "test-task-123".to_string();
+        let repo_hash = crate::storage::get_repo_hash(&repo_root);
         let _task = Task::new_with_id(
             task_id.clone(),
             repo_root.clone(),
@@ -219,18 +248,20 @@ mod tests {
             None,
             30,
         );
-        let task_dir_path = repo_root.join(".tsk/tasks").join(&task_id);
+
+        // Get XDG paths
+        let task_dir_path = xdg.task_dir(&task_id, &repo_hash);
+        let tasks_json_path = xdg.tasks_file();
+        let data_dir = xdg.data_dir().to_path_buf();
+        let tasks_dir = data_dir.join("tasks");
 
         // Create mock file system with necessary structure
         let git_dir = repo_root.join(".git");
-        let tsk_dir = repo_root.join(".tsk");
-        let tasks_dir = repo_root.join(".tsk/tasks");
-        let tasks_json_path = repo_root.join(".tsk/tasks.json");
 
         let fs = Arc::new(
             MockFileSystem::new()
                 .with_dir(&git_dir.to_string_lossy().to_string())
-                .with_dir(&tsk_dir.to_string_lossy().to_string())
+                .with_dir(&data_dir.to_string_lossy().to_string())
                 .with_dir(&tasks_dir.to_string_lossy().to_string())
                 .with_dir(&task_dir_path.to_string_lossy().to_string())
                 .with_file(&format!("{}/test.txt", task_dir_path.to_string_lossy()), "test content")
@@ -244,6 +275,7 @@ mod tests {
             .with_docker_client(docker_client)
             .with_file_system(fs.clone())
             .with_git_operations(git_ops)
+            .with_xdg_directories(xdg)
             .build();
 
         let task_manager = TaskManager::with_storage(&ctx).unwrap();
@@ -261,9 +293,24 @@ mod tests {
     async fn test_clean_tasks() {
         use crate::context::file_system::tests::MockFileSystem;
         use crate::context::git_operations::tests::MockGitOperations;
+        use std::env;
+
+        // Set up XDG environment variables for testing
+        let temp_dir = std::env::temp_dir();
+        let test_data_dir = temp_dir.join("tsk-test-data2");
+        let test_runtime_dir = temp_dir.join("tsk-test-runtime2");
+        env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
+        env::set_var(
+            "XDG_RUNTIME_DIR",
+            test_runtime_dir.to_string_lossy().to_string(),
+        );
+
+        // Create XdgDirectories instance
+        let xdg = Arc::new(XdgDirectories::new().unwrap());
 
         // Create tasks with different statuses
         let repo_root = crate::repo_utils::find_repository_root(Path::new(".")).unwrap();
+        let repo_hash = crate::storage::get_repo_hash(&repo_root);
         let queued_task_id = "queued-task-123".to_string();
         let completed_task_id = "completed-task-456".to_string();
 
@@ -289,8 +336,13 @@ mod tests {
             30,
         );
         completed_task.status = TaskStatus::Complete;
-        let queued_dir_path = repo_root.join(".tsk/tasks").join(&queued_task_id);
-        let completed_dir_path = repo_root.join(".tsk/tasks").join(&completed_task_id);
+
+        // Get XDG paths
+        let queued_dir_path = xdg.task_dir(&queued_task_id, &repo_hash);
+        let completed_dir_path = xdg.task_dir(&completed_task_id, &repo_hash);
+        let tasks_json_path = xdg.tasks_file();
+        let data_dir = xdg.data_dir().to_path_buf();
+        let tasks_dir = data_dir.join("tasks");
 
         // Create initial tasks.json with both tasks
         let tasks_json = format!(
@@ -303,14 +355,11 @@ mod tests {
 
         // Create mock file system with necessary structure
         let git_dir = repo_root.join(".git");
-        let tsk_dir = repo_root.join(".tsk");
-        let tasks_dir = repo_root.join(".tsk/tasks");
-        let tasks_json_path = repo_root.join(".tsk/tasks.json");
 
         let fs = Arc::new(
             MockFileSystem::new()
                 .with_dir(&git_dir.to_string_lossy().to_string())
-                .with_dir(&tsk_dir.to_string_lossy().to_string())
+                .with_dir(&data_dir.to_string_lossy().to_string())
                 .with_dir(&tasks_dir.to_string_lossy().to_string())
                 .with_dir(&queued_dir_path.to_string_lossy().to_string())
                 .with_dir(&completed_dir_path.to_string_lossy().to_string())
@@ -324,6 +373,7 @@ mod tests {
             .with_docker_client(docker_client)
             .with_file_system(fs.clone())
             .with_git_operations(git_ops)
+            .with_xdg_directories(xdg)
             .build();
 
         let task_manager = TaskManager::with_storage(&ctx).unwrap();
@@ -348,9 +398,24 @@ mod tests {
     async fn test_clean_tasks_with_id_matching() {
         use crate::context::file_system::tests::MockFileSystem;
         use crate::context::git_operations::tests::MockGitOperations;
+        use std::env;
+
+        // Set up XDG environment variables for testing
+        let temp_dir = std::env::temp_dir();
+        let test_data_dir = temp_dir.join("tsk-test-data3");
+        let test_runtime_dir = temp_dir.join("tsk-test-runtime3");
+        env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
+        env::set_var(
+            "XDG_RUNTIME_DIR",
+            test_runtime_dir.to_string_lossy().to_string(),
+        );
+
+        // Create XdgDirectories instance
+        let xdg = Arc::new(XdgDirectories::new().unwrap());
 
         // Create a task with a specific ID using new_with_id
         let repo_root = crate::repo_utils::find_repository_root(Path::new(".")).unwrap();
+        let repo_hash = crate::storage::get_repo_hash(&repo_root);
         let task_id = "2024-01-15-1430-test-feature".to_string();
         let mut completed_task = Task::new_with_id(
             task_id.clone(),
@@ -363,7 +428,12 @@ mod tests {
             30,
         );
         completed_task.status = TaskStatus::Complete;
-        let task_dir_path = repo_root.join(".tsk/tasks").join(&task_id);
+
+        // Get XDG paths
+        let task_dir_path = xdg.task_dir(&task_id, &repo_hash);
+        let tasks_json_path = xdg.tasks_file();
+        let data_dir = xdg.data_dir().to_path_buf();
+        let tasks_dir = data_dir.join("tasks");
 
         // Create tasks.json with the completed task
         let tasks_json = format!(
@@ -374,14 +444,11 @@ mod tests {
 
         // Create mock file system with necessary structure
         let git_dir = repo_root.join(".git");
-        let tsk_dir = repo_root.join(".tsk");
-        let tasks_dir = repo_root.join(".tsk/tasks");
-        let tasks_json_path = repo_root.join(".tsk/tasks.json");
 
         let fs = Arc::new(
             MockFileSystem::new()
                 .with_dir(&git_dir.to_string_lossy().to_string())
-                .with_dir(&tsk_dir.to_string_lossy().to_string())
+                .with_dir(&data_dir.to_string_lossy().to_string())
                 .with_dir(&tasks_dir.to_string_lossy().to_string())
                 .with_dir(&task_dir_path.to_string_lossy().to_string())
                 .with_file(
@@ -398,6 +465,7 @@ mod tests {
             .with_docker_client(docker_client)
             .with_file_system(fs.clone())
             .with_git_operations(git_ops)
+            .with_xdg_directories(xdg)
             .build();
 
         let task_manager = TaskManager::with_storage(&ctx).unwrap();

@@ -1,4 +1,5 @@
 use super::Command;
+use crate::client::TskClient;
 use crate::context::AppContext;
 use crate::repo_utils::find_repository_root;
 use crate::task::TaskBuilder;
@@ -38,9 +39,35 @@ impl Command for AddCommand {
             .build(ctx)
             .await?;
 
-        // Save task to storage
-        let storage = get_task_storage(&repo_root, ctx.file_system());
-        storage.add_task(task.clone()).await?;
+        // Try to add task via server first
+        let client = TskClient::new(ctx.xdg_directories());
+
+        if client.is_server_available().await {
+            // Server is available, use it
+            match client.add_task(repo_root.clone(), task.clone()).await {
+                Ok(_) => {
+                    println!("Task added via server");
+                }
+                Err(_) => {
+                    eprintln!("Failed to add task via server");
+                    eprintln!("Falling back to direct file write...");
+
+                    // Fall back to direct storage
+                    let storage = get_task_storage(ctx.xdg_directories(), ctx.file_system());
+                    storage
+                        .add_task(task.clone())
+                        .await
+                        .map_err(|e| e as Box<dyn Error>)?;
+                }
+            }
+        } else {
+            // Server not available, write directly
+            let storage = get_task_storage(ctx.xdg_directories(), ctx.file_system());
+            storage
+                .add_task(task.clone())
+                .await
+                .map_err(|e| e as Box<dyn Error>)?;
+        }
 
         println!("\nTask successfully added to queue!");
         println!("Task ID: {}", task.id);

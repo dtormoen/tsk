@@ -18,7 +18,11 @@ impl Command for DebugCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         println!("Starting debug session: {}", self.name);
 
-        let repo_manager = RepoManager::new(ctx.file_system(), ctx.git_operations());
+        let repo_manager = RepoManager::new(
+            ctx.xdg_directories(),
+            ctx.file_system(),
+            ctx.git_operations(),
+        );
         let docker_manager = DockerManager::new(ctx.docker_client());
         let task_runner = TaskRunner::new(
             repo_manager,
