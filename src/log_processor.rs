@@ -219,6 +219,47 @@ impl LogProcessor {
         }
     }
 
+    /// Formats duration in milliseconds to a human-readable string.
+    ///
+    /// # Examples
+    /// - 1500 ms -> "1 second"
+    /// - 130000 ms -> "2 minutes, 10 seconds"
+    /// - 3661000 ms -> "1 hour, 1 minute, 1 second"
+    fn format_duration(&self, duration_ms: u64) -> String {
+        let total_seconds = duration_ms / 1000;
+        let hours = total_seconds / 3600;
+        let minutes = (total_seconds % 3600) / 60;
+        let seconds = total_seconds % 60;
+
+        let mut parts = Vec::new();
+
+        if hours > 0 {
+            parts.push(format!(
+                "{} hour{}",
+                hours,
+                if hours == 1 { "" } else { "s" }
+            ));
+        }
+
+        if minutes > 0 {
+            parts.push(format!(
+                "{} minute{}",
+                minutes,
+                if minutes == 1 { "" } else { "s" }
+            ));
+        }
+
+        if seconds > 0 || parts.is_empty() {
+            parts.push(format!(
+                "{} second{}",
+                seconds,
+                if seconds == 1 { "" } else { "s" }
+            ));
+        }
+
+        parts.join(", ")
+    }
+
     fn format_result_message(&mut self, msg: ClaudeMessage) -> Option<String> {
         // Parse and store the result status
         if let Some(subtype) = &msg.subtype {
@@ -252,8 +293,10 @@ impl LogProcessor {
             }
 
             if let Some(duration) = msg.duration_ms {
-                let seconds = duration as f64 / 1000.0;
-                output.push_str(&format!("⏱️ Duration: {:.1}s\n", seconds));
+                output.push_str(&format!(
+                    "⏱️ Duration: {}\n",
+                    self.format_duration(duration)
+                ));
             }
 
             if let Some(turns) = msg.num_turns {
@@ -350,7 +393,7 @@ mod tests {
         assert!(result.is_some());
         let formatted = result.unwrap();
         assert!(formatted.contains("❌ Task Result: error"));
-        assert!(formatted.contains("⏱️ Duration: 5.0s"));
+        assert!(formatted.contains("⏱️ Duration: 5 seconds"));
 
         // Check that the failure was parsed correctly
         let final_result = processor.get_final_result();
@@ -503,6 +546,59 @@ mod tests {
         assert_eq!(processor.get_priority_emoji("medium"), "🟡");
         assert_eq!(processor.get_priority_emoji("low"), "🟢");
         assert_eq!(processor.get_priority_emoji("unknown"), "⚪");
+    }
+
+    #[test]
+    fn test_process_result_message_with_long_duration() {
+        let mut processor = LogProcessor::new();
+        let json = r#"{
+            "type": "result",
+            "subtype": "success",
+            "duration_ms": 130000,
+            "result": "Task completed after processing"
+        }"#;
+
+        let result = processor.process_line(json);
+        assert!(result.is_some());
+        let formatted = result.unwrap();
+        assert!(formatted.contains("✅ Task Result: success"));
+        assert!(formatted.contains("⏱️ Duration: 2 minutes, 10 seconds"));
+    }
+
+    #[test]
+    fn test_format_duration() {
+        let processor = LogProcessor::new();
+
+        // Test seconds only
+        assert_eq!(processor.format_duration(0), "0 seconds");
+        assert_eq!(processor.format_duration(1000), "1 second");
+        assert_eq!(processor.format_duration(45000), "45 seconds");
+
+        // Test minutes and seconds
+        assert_eq!(processor.format_duration(60000), "1 minute");
+        assert_eq!(processor.format_duration(61000), "1 minute, 1 second");
+        assert_eq!(processor.format_duration(130000), "2 minutes, 10 seconds");
+        assert_eq!(processor.format_duration(180000), "3 minutes");
+
+        // Test hours, minutes, and seconds
+        assert_eq!(processor.format_duration(3600000), "1 hour");
+        assert_eq!(
+            processor.format_duration(3661000),
+            "1 hour, 1 minute, 1 second"
+        );
+        assert_eq!(
+            processor.format_duration(7321000),
+            "2 hours, 2 minutes, 1 second"
+        );
+        assert_eq!(processor.format_duration(10800000), "3 hours");
+
+        // Test edge cases
+        assert_eq!(processor.format_duration(3660000), "1 hour, 1 minute");
+        assert_eq!(processor.format_duration(7200000), "2 hours");
+        assert_eq!(
+            processor.format_duration(86399000),
+            "23 hours, 59 minutes, 59 seconds"
+        );
     }
 
     #[test]
