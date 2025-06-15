@@ -32,6 +32,7 @@ pub struct Task {
     pub completed_at: Option<DateTime<Utc>>,
     pub branch_name: Option<String>,
     pub error_message: Option<String>,
+    pub source_commit: Option<String>,
 }
 
 impl Task {
@@ -64,6 +65,7 @@ impl Task {
             completed_at: None,
             branch_name: None,
             error_message: None,
+            source_commit: None,
         }
     }
 
@@ -93,6 +95,7 @@ impl Task {
             completed_at: None,
             branch_name: None,
             error_message: None,
+            source_commit: None,
         }
     }
 }
@@ -240,8 +243,20 @@ impl TaskBuilder {
                 .await?
         };
 
+        // Capture the current commit SHA
+        let source_commit = match ctx.git_operations().get_current_commit(&repo_root).await {
+            Ok(commit) => Some(commit),
+            Err(e) => {
+                eprintln!(
+                    "Warning: Failed to get current commit for task '{}': {}",
+                    name, e
+                );
+                None
+            }
+        };
+
         // Create and return the task
-        let task = Task::new_with_id(
+        let mut task = Task::new_with_id(
             task_dir_name.clone(),
             repo_root,
             name,
@@ -251,6 +266,7 @@ impl TaskBuilder {
             self.agent,
             timeout,
         );
+        task.source_commit = source_commit;
 
         Ok(task)
     }
@@ -540,5 +556,82 @@ mod tests {
         assert!(content.contains("# Feature Template"));
         assert!(content.contains("My new feature"));
         assert!(!content.contains("{{DESCRIPTION}}"));
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_captures_source_commit() {
+        use crate::context::git_operations::tests::MockGitOperations;
+
+        let current_dir = std::env::current_dir().unwrap();
+        let fs = Arc::new(
+            MockFileSystem::new()
+                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string()),
+        );
+
+        let mock_git_ops = Arc::new(MockGitOperations::new());
+        mock_git_ops.set_get_current_commit_result(Ok(
+            "abc123def456789012345678901234567890abcd".to_string()
+        ));
+
+        let ctx = AppContext::builder()
+            .with_file_system(fs.clone())
+            .with_git_operations(mock_git_ops.clone())
+            .build();
+
+        let task = TaskBuilder::new()
+            .repo_root(current_dir.clone())
+            .name("test-task".to_string())
+            .task_type("generic".to_string())
+            .description(Some("Test description".to_string()))
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        // Verify the source commit was captured
+        assert_eq!(
+            task.source_commit,
+            Some("abc123def456789012345678901234567890abcd".to_string())
+        );
+
+        // Verify the git operation was called
+        let calls = mock_git_ops.get_get_current_commit_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0], current_dir.to_string_lossy().to_string());
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_handles_source_commit_error() {
+        use crate::context::git_operations::tests::MockGitOperations;
+
+        let current_dir = std::env::current_dir().unwrap();
+        let fs = Arc::new(
+            MockFileSystem::new()
+                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string()),
+        );
+
+        let mock_git_ops = Arc::new(MockGitOperations::new());
+        mock_git_ops.set_get_current_commit_result(Err("Not a git repository".to_string()));
+
+        let ctx = AppContext::builder()
+            .with_file_system(fs.clone())
+            .with_git_operations(mock_git_ops.clone())
+            .build();
+
+        let task = TaskBuilder::new()
+            .repo_root(current_dir.clone())
+            .name("test-task".to_string())
+            .task_type("generic".to_string())
+            .description(Some("Test description".to_string()))
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        // Verify the task was created successfully even though getting commit failed
+        assert_eq!(task.name, "test-task");
+        assert_eq!(task.source_commit, None);
+
+        // Verify the git operation was called
+        let calls = mock_git_ops.get_get_current_commit_calls();
+        assert_eq!(calls.len(), 1);
     }
 }

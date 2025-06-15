@@ -346,7 +346,7 @@ mod tests {
 
         // Create initial tasks.json with both tasks
         let tasks_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feature","description":"Queued task","instructions_file":null,"agent":null,"timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":null,"error_message":null}},{{"id":"{}","repo_root":"{}","name":"completed-task","task_type":"bug-fix","description":"Completed task","instructions_file":null,"agent":null,"timeout":30,"status":"COMPLETE","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":"2024-01-01T01:00:00Z","branch_name":null,"error_message":null}}]"#,
+            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feature","description":"Queued task","instructions_file":null,"agent":null,"timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":null,"error_message":null,"source_commit":null}},{{"id":"{}","repo_root":"{}","name":"completed-task","task_type":"bug-fix","description":"Completed task","instructions_file":null,"agent":null,"timeout":30,"status":"COMPLETE","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":"2024-01-01T01:00:00Z","branch_name":null,"error_message":null,"source_commit":null}}]"#,
             queued_task_id,
             repo_root.to_string_lossy(),
             completed_task_id,
@@ -437,7 +437,7 @@ mod tests {
 
         // Create tasks.json with the completed task
         let tasks_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"test-feature","task_type":"feature","description":"Test feature","instructions_file":null,"agent":null,"timeout":30,"status":"COMPLETE","created_at":"2024-01-15T14:30:00Z","started_at":null,"completed_at":"2024-01-15T15:00:00Z","branch_name":null,"error_message":null}}]"#,
+            r#"[{{"id":"{}","repo_root":"{}","name":"test-feature","task_type":"feature","description":"Test feature","instructions_file":null,"agent":null,"timeout":30,"status":"COMPLETE","created_at":"2024-01-15T14:30:00Z","started_at":null,"completed_at":"2024-01-15T15:00:00Z","branch_name":null,"error_message":null,"source_commit":null}}]"#,
             task_id,
             repo_root.to_string_lossy()
         );

@@ -30,6 +30,7 @@ impl RepoManager {
         &self,
         task_id: &str,
         repo_root: &Path,
+        source_commit: Option<&str>,
     ) -> Result<(PathBuf, String), String> {
         // Use the task ID directly for the directory name
         let task_dir_name = task_id;
@@ -58,9 +59,21 @@ impl RepoManager {
         self.copy_directory(&current_dir, &repo_path).await?;
 
         // Create a new branch in the copied repository
-        self.git_operations
-            .create_branch(&repo_path, &branch_name)
-            .await?;
+        match source_commit {
+            Some(commit_sha) => {
+                // Create branch from specific commit
+                self.git_operations
+                    .create_branch_from_commit(&repo_path, &branch_name, commit_sha)
+                    .await?;
+                println!("Created branch from commit: {}", commit_sha);
+            }
+            None => {
+                // Create branch from HEAD (existing behavior)
+                self.git_operations
+                    .create_branch(&repo_path, &branch_name)
+                    .await?;
+            }
+        }
 
         println!("Created repository copy at: {}", repo_path.display());
         println!("Branch: {}", branch_name);
@@ -226,7 +239,7 @@ mod tests {
 
         let repo_root = temp_dir.path();
         let result = manager
-            .copy_repo("2024-01-01-1200-test-task", repo_root)
+            .copy_repo("2024-01-01-1200-test-task", repo_root, None)
             .await;
 
         assert!(result.is_err());
@@ -336,5 +349,76 @@ mod tests {
         // Verify that delete_branch was NOT called
         let delete_calls = mock_git_ops.get_delete_branch_calls();
         assert_eq!(delete_calls.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_copy_repo_with_source_commit() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let xdg_directories = create_test_xdg_directories(&temp_dir);
+
+        // Create mock git operations
+        let mock_git_ops = Arc::new(MockGitOperations::new());
+        mock_git_ops.set_is_repo_result(Ok(true));
+
+        use crate::context::file_system::tests::MockFileSystem;
+        let fs = Arc::new(MockFileSystem::new());
+
+        let manager = RepoManager::new(xdg_directories, fs, mock_git_ops.clone());
+
+        let repo_root = temp_dir.path();
+        let source_commit = "abc123def456789012345678901234567890abcd";
+        let result = manager
+            .copy_repo("2024-01-01-1200-test-task", repo_root, Some(source_commit))
+            .await;
+
+        assert!(result.is_ok());
+        let (_, branch_name) = result.unwrap();
+        assert_eq!(branch_name, "tsk/2024-01-01-1200-test-task");
+
+        // Verify create_branch_from_commit was called
+        let create_from_commit_calls = mock_git_ops.get_create_branch_from_commit_calls();
+        assert_eq!(create_from_commit_calls.len(), 1);
+        assert_eq!(
+            create_from_commit_calls[0].1,
+            "tsk/2024-01-01-1200-test-task"
+        );
+        assert_eq!(create_from_commit_calls[0].2, source_commit);
+
+        // Verify regular create_branch was NOT called
+        let create_branch_calls = mock_git_ops.get_create_branch_calls();
+        assert_eq!(create_branch_calls.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_copy_repo_without_source_commit() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let xdg_directories = create_test_xdg_directories(&temp_dir);
+
+        // Create mock git operations
+        let mock_git_ops = Arc::new(MockGitOperations::new());
+        mock_git_ops.set_is_repo_result(Ok(true));
+
+        use crate::context::file_system::tests::MockFileSystem;
+        let fs = Arc::new(MockFileSystem::new());
+
+        let manager = RepoManager::new(xdg_directories, fs, mock_git_ops.clone());
+
+        let repo_root = temp_dir.path();
+        let result = manager
+            .copy_repo("2024-01-01-1200-test-task", repo_root, None)
+            .await;
+
+        assert!(result.is_ok());
+        let (_, branch_name) = result.unwrap();
+        assert_eq!(branch_name, "tsk/2024-01-01-1200-test-task");
+
+        // Verify regular create_branch was called
+        let create_branch_calls = mock_git_ops.get_create_branch_calls();
+        assert_eq!(create_branch_calls.len(), 1);
+        assert_eq!(create_branch_calls[0].1, "tsk/2024-01-01-1200-test-task");
+
+        // Verify create_branch_from_commit was NOT called
+        let create_from_commit_calls = mock_git_ops.get_create_branch_from_commit_calls();
+        assert_eq!(create_from_commit_calls.len(), 0);
     }
 }

@@ -40,6 +40,17 @@ pub trait GitOperations: Send + Sync {
 
     /// Delete a branch
     async fn delete_branch(&self, repo_path: &Path, branch_name: &str) -> Result<(), String>;
+
+    /// Get the current commit SHA
+    async fn get_current_commit(&self, repo_path: &Path) -> Result<String, String>;
+
+    /// Create a branch from a specific commit
+    async fn create_branch_from_commit(
+        &self,
+        repo_path: &Path,
+        branch_name: &str,
+        commit_sha: &str,
+    ) -> Result<(), String>;
 }
 
 pub struct DefaultGitOperations;
@@ -378,6 +389,68 @@ impl GitOperations for DefaultGitOperations {
         .await
         .map_err(|e| format!("Task join error: {}", e))?
     }
+
+    async fn get_current_commit(&self, repo_path: &Path) -> Result<String, String> {
+        tokio::task::spawn_blocking({
+            let repo_path = repo_path.to_owned();
+            move || -> Result<String, String> {
+                let repo = Repository::open(&repo_path)
+                    .map_err(|e| format!("Failed to open repository: {}", e))?;
+
+                let head = repo
+                    .head()
+                    .map_err(|e| format!("Failed to get HEAD: {}", e))?;
+
+                let commit = head
+                    .peel_to_commit()
+                    .map_err(|e| format!("Failed to get commit from HEAD: {}", e))?;
+
+                Ok(commit.id().to_string())
+            }
+        })
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
+    }
+
+    async fn create_branch_from_commit(
+        &self,
+        repo_path: &Path,
+        branch_name: &str,
+        commit_sha: &str,
+    ) -> Result<(), String> {
+        tokio::task::spawn_blocking({
+            let repo_path = repo_path.to_owned();
+            let branch_name = branch_name.to_owned();
+            let commit_sha = commit_sha.to_owned();
+            move || -> Result<(), String> {
+                let repo = Repository::open(&repo_path)
+                    .map_err(|e| format!("Failed to open repository: {}", e))?;
+
+                let oid = git2::Oid::from_str(&commit_sha)
+                    .map_err(|e| format!("Invalid commit SHA: {}", e))?;
+
+                let commit = repo
+                    .find_commit(oid)
+                    .map_err(|e| format!("Failed to find commit {}: {}", commit_sha, e))?;
+
+                repo.branch(&branch_name, &commit, false)
+                    .map_err(|e| format!("Failed to create branch: {}", e))?;
+
+                repo.set_head(&format!("refs/heads/{}", branch_name))
+                    .map_err(|e| format!("Failed to checkout branch: {}", e))?;
+
+                // Force update the working directory to match the commit
+                let mut checkout_opts = git2::build::CheckoutBuilder::new();
+                checkout_opts.force();
+                repo.checkout_head(Some(&mut checkout_opts))
+                    .map_err(|e| format!("Failed to update working directory: {}", e))?;
+
+                Ok(())
+            }
+        })
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
+    }
 }
 
 #[cfg(test)]
@@ -406,6 +479,10 @@ pub mod tests {
         has_commits_not_in_base_result: Arc<Mutex<Result<bool, String>>>,
         delete_branch_calls: Arc<Mutex<Vec<(String, String)>>>,
         delete_branch_result: Arc<Mutex<Result<(), String>>>,
+        get_current_commit_calls: Arc<Mutex<Vec<String>>>,
+        get_current_commit_result: Arc<Mutex<Result<String, String>>>,
+        create_branch_from_commit_calls: Arc<Mutex<Vec<(String, String, String)>>>,
+        create_branch_from_commit_result: Arc<Mutex<Result<(), String>>>,
     }
 
     impl MockGitOperations {
@@ -430,6 +507,12 @@ pub mod tests {
                 has_commits_not_in_base_result: Arc::new(Mutex::new(Ok(true))),
                 delete_branch_calls: Arc::new(Mutex::new(Vec::new())),
                 delete_branch_result: Arc::new(Mutex::new(Ok(()))),
+                get_current_commit_calls: Arc::new(Mutex::new(Vec::new())),
+                get_current_commit_result: Arc::new(Mutex::new(Ok(
+                    "abc123def456789012345678901234567890abcd".to_string(),
+                ))),
+                create_branch_from_commit_calls: Arc::new(Mutex::new(Vec::new())),
+                create_branch_from_commit_result: Arc::new(Mutex::new(Ok(()))),
             }
         }
 
@@ -495,6 +578,24 @@ pub mod tests {
 
         pub fn get_delete_branch_calls(&self) -> Vec<(String, String)> {
             self.delete_branch_calls.lock().unwrap().clone()
+        }
+
+        pub fn set_get_current_commit_result(&self, result: Result<String, String>) {
+            *self.get_current_commit_result.lock().unwrap() = result;
+        }
+
+        pub fn get_get_current_commit_calls(&self) -> Vec<String> {
+            self.get_current_commit_calls.lock().unwrap().clone()
+        }
+
+        #[allow(dead_code)]
+        pub fn set_create_branch_from_commit_result(&self, result: Result<(), String>) {
+            *self.create_branch_from_commit_result.lock().unwrap() = result;
+        }
+
+        #[allow(dead_code)]
+        pub fn get_create_branch_from_commit_calls(&self) -> Vec<(String, String, String)> {
+            self.create_branch_from_commit_calls.lock().unwrap().clone()
         }
     }
 
@@ -592,6 +693,31 @@ pub mod tests {
                 branch_name.to_string(),
             ));
             self.delete_branch_result.lock().unwrap().clone()
+        }
+
+        async fn get_current_commit(&self, repo_path: &Path) -> Result<String, String> {
+            self.get_current_commit_calls
+                .lock()
+                .unwrap()
+                .push(repo_path.to_string_lossy().to_string());
+            self.get_current_commit_result.lock().unwrap().clone()
+        }
+
+        async fn create_branch_from_commit(
+            &self,
+            repo_path: &Path,
+            branch_name: &str,
+            commit_sha: &str,
+        ) -> Result<(), String> {
+            self.create_branch_from_commit_calls.lock().unwrap().push((
+                repo_path.to_string_lossy().to_string(),
+                branch_name.to_string(),
+                commit_sha.to_string(),
+            ));
+            self.create_branch_from_commit_result
+                .lock()
+                .unwrap()
+                .clone()
         }
     }
 }

@@ -77,7 +77,7 @@ impl TaskRunner {
         // Copy repository for the task
         let (repo_path, branch_name) = self
             .repo_manager
-            .copy_repo(&task.id, &task.repo_root)
+            .copy_repo(&task.id, &task.repo_root, task.source_commit.as_deref())
             .await
             .map_err(|e| format!("Error copying repository: {}", e))?;
 
@@ -197,8 +197,11 @@ impl TaskRunner {
         // Run agent warmup
         agent.warmup().await?;
 
-        // Copy repository for the debug session
-        let (repo_path, branch_name) = self.repo_manager.copy_repo(task_name, repo_root).await?;
+        // Copy repository for the debug session (no source commit for debug)
+        let (repo_path, branch_name) = self
+            .repo_manager
+            .copy_repo(task_name, repo_root, None)
+            .await?;
 
         println!(
             "Successfully created repository copy at: {}",
@@ -324,6 +327,7 @@ mod tests {
             completed_at: None,
             branch_name: None,
             error_message: None,
+            source_commit: None,
         };
 
         let result = task_runner.execute_task(&task).await;

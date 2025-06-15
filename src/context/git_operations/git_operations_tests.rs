@@ -193,3 +193,123 @@ async fn test_mock_git_operations_remote_operations() {
     assert_eq!(remove_calls.len(), 1);
     assert_eq!(remove_calls[0].1, remote_name);
 }
+
+#[tokio::test]
+async fn test_get_current_commit() {
+    let git_ops = DefaultGitOperations;
+    let temp_dir = TempDir::new().unwrap();
+    let repo_path = temp_dir.path();
+
+    // Initialize a real git repository
+    let repo = git2::Repository::init(repo_path).unwrap();
+
+    // Configure git user for commit
+    let mut config = repo.config().unwrap();
+    config.set_str("user.name", "Test User").unwrap();
+    config.set_str("user.email", "test@example.com").unwrap();
+
+    // Create and commit a file
+    std::fs::write(repo_path.join("test.txt"), "Hello, world!").unwrap();
+    git_ops.add_all(repo_path).await.unwrap();
+    git_ops.commit(repo_path, "Initial commit").await.unwrap();
+
+    // Get the current commit
+    let commit_sha = git_ops.get_current_commit(repo_path).await.unwrap();
+    assert!(!commit_sha.is_empty());
+    assert_eq!(commit_sha.len(), 40); // SHA should be 40 characters
+
+    // Verify it's the same as what git2 reports
+    let head = repo.head().unwrap();
+    let head_commit = head.peel_to_commit().unwrap();
+    assert_eq!(commit_sha, head_commit.id().to_string());
+}
+
+#[tokio::test]
+async fn test_create_branch_from_commit() {
+    let git_ops = DefaultGitOperations;
+    let temp_dir = TempDir::new().unwrap();
+    let repo_path = temp_dir.path();
+
+    // Initialize a real git repository
+    let repo = git2::Repository::init(repo_path).unwrap();
+
+    // Configure git user for commit
+    let mut config = repo.config().unwrap();
+    config.set_str("user.name", "Test User").unwrap();
+    config.set_str("user.email", "test@example.com").unwrap();
+
+    // Create first commit
+    std::fs::write(repo_path.join("file1.txt"), "First file").unwrap();
+    git_ops.add_all(repo_path).await.unwrap();
+    git_ops.commit(repo_path, "First commit").await.unwrap();
+
+    // Get the first commit SHA
+    let first_commit_sha = git_ops.get_current_commit(repo_path).await.unwrap();
+
+    // Create second commit
+    std::fs::write(repo_path.join("file2.txt"), "Second file").unwrap();
+    git_ops.add_all(repo_path).await.unwrap();
+    git_ops.commit(repo_path, "Second commit").await.unwrap();
+
+    // Create a branch from the first commit
+    git_ops
+        .create_branch_from_commit(repo_path, "feature-from-first", &first_commit_sha)
+        .await
+        .unwrap();
+
+    // Verify we're on the new branch
+    let head = repo.head().unwrap();
+    let branch_name = head.shorthand().unwrap();
+    assert_eq!(branch_name, "feature-from-first");
+
+    // Verify the branch is at the first commit
+    let current_commit = head.peel_to_commit().unwrap();
+    assert_eq!(current_commit.id().to_string(), first_commit_sha);
+
+    // Verify the second file doesn't exist in the working directory
+    assert!(!repo_path.join("file2.txt").exists());
+    assert!(repo_path.join("file1.txt").exists());
+}
+
+#[tokio::test]
+async fn test_mock_get_current_commit() {
+    use super::tests::MockGitOperations;
+    let mock = MockGitOperations::new();
+
+    // Test get_current_commit
+    let commit_sha = mock.get_current_commit(Path::new("/test")).await.unwrap();
+    assert_eq!(commit_sha, "abc123def456789012345678901234567890abcd");
+
+    // Verify the call was recorded
+    let calls = mock.get_get_current_commit_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0], "/test");
+
+    // Test with error
+    mock.set_get_current_commit_result(Err("Failed to get commit".to_string()));
+    let result = mock.get_current_commit(Path::new("/test2")).await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_mock_create_branch_from_commit() {
+    use super::tests::MockGitOperations;
+    let mock = MockGitOperations::new();
+
+    // Test create_branch_from_commit
+    let result = mock
+        .create_branch_from_commit(
+            Path::new("/test"),
+            "feature-branch",
+            "abc123def456789012345678901234567890abcd",
+        )
+        .await;
+    assert!(result.is_ok());
+
+    // Verify the call was recorded
+    let calls = mock.get_create_branch_from_commit_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].0, "/test");
+    assert_eq!(calls[0].1, "feature-branch");
+    assert_eq!(calls[0].2, "abc123def456789012345678901234567890abcd");
+}
