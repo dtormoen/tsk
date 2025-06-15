@@ -29,6 +29,17 @@ pub trait GitOperations: Send + Sync {
     ) -> Result<(), String>;
 
     async fn remove_remote(&self, repo_path: &Path, remote_name: &str) -> Result<(), String>;
+
+    /// Check if a branch has commits that are not in the base branch
+    async fn has_commits_not_in_base(
+        &self,
+        repo_path: &Path,
+        branch_name: &str,
+        base_branch: &str,
+    ) -> Result<bool, String>;
+
+    /// Delete a branch
+    async fn delete_branch(&self, repo_path: &Path, branch_name: &str) -> Result<(), String>;
 }
 
 pub struct DefaultGitOperations;
@@ -288,6 +299,85 @@ impl GitOperations for DefaultGitOperations {
         .await
         .map_err(|e| format!("Task join error: {}", e))?
     }
+
+    async fn has_commits_not_in_base(
+        &self,
+        repo_path: &Path,
+        branch_name: &str,
+        base_branch: &str,
+    ) -> Result<bool, String> {
+        tokio::task::spawn_blocking({
+            let repo_path = repo_path.to_owned();
+            let branch_name = branch_name.to_owned();
+            let base_branch = base_branch.to_owned();
+            move || -> Result<bool, String> {
+                let repo = Repository::open(&repo_path)
+                    .map_err(|e| format!("Failed to open repository: {}", e))?;
+
+                // Get the branch reference
+                let branch_ref = format!("refs/heads/{}", branch_name);
+                let branch = repo
+                    .find_reference(&branch_ref)
+                    .map_err(|e| format!("Failed to find branch {}: {}", branch_name, e))?;
+
+                let branch_oid = branch
+                    .target()
+                    .ok_or_else(|| format!("Branch {} has no target", branch_name))?;
+
+                // Get the base branch reference
+                let base_ref = format!("refs/heads/{}", base_branch);
+                let base = repo
+                    .find_reference(&base_ref)
+                    .map_err(|e| format!("Failed to find base branch {}: {}", base_branch, e))?;
+
+                let base_oid = base
+                    .target()
+                    .ok_or_else(|| format!("Base branch {} has no target", base_branch))?;
+
+                // If they point to the same commit, there are no unique commits
+                if branch_oid == base_oid {
+                    return Ok(false);
+                }
+
+                // Check if the branch commit is reachable from the base branch
+                // If it is, then there are no unique commits in the branch
+                match repo.graph_descendant_of(base_oid, branch_oid) {
+                    Ok(true) => Ok(false), // branch is behind base, no unique commits
+                    Ok(false) => Ok(true), // branch has commits not in base
+                    Err(_) => {
+                        // If we can't determine the relationship, assume there are commits
+                        // This is safer than assuming there aren't
+                        Ok(true)
+                    }
+                }
+            }
+        })
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
+    }
+
+    async fn delete_branch(&self, repo_path: &Path, branch_name: &str) -> Result<(), String> {
+        tokio::task::spawn_blocking({
+            let repo_path = repo_path.to_owned();
+            let branch_name = branch_name.to_owned();
+            move || -> Result<(), String> {
+                let repo = Repository::open(&repo_path)
+                    .map_err(|e| format!("Failed to open repository: {}", e))?;
+
+                let mut branch = repo
+                    .find_branch(&branch_name, git2::BranchType::Local)
+                    .map_err(|e| format!("Failed to find branch {}: {}", branch_name, e))?;
+
+                branch
+                    .delete()
+                    .map_err(|e| format!("Failed to delete branch {}: {}", branch_name, e))?;
+
+                Ok(())
+            }
+        })
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
+    }
 }
 
 #[cfg(test)]
@@ -312,6 +402,10 @@ pub mod tests {
         fetch_branch_result: Arc<Mutex<Result<(), String>>>,
         remove_remote_calls: Arc<Mutex<Vec<(String, String)>>>,
         remove_remote_result: Arc<Mutex<Result<(), String>>>,
+        has_commits_not_in_base_calls: Arc<Mutex<Vec<(String, String, String)>>>,
+        has_commits_not_in_base_result: Arc<Mutex<Result<bool, String>>>,
+        delete_branch_calls: Arc<Mutex<Vec<(String, String)>>>,
+        delete_branch_result: Arc<Mutex<Result<(), String>>>,
     }
 
     impl MockGitOperations {
@@ -332,6 +426,10 @@ pub mod tests {
                 fetch_branch_result: Arc::new(Mutex::new(Ok(()))),
                 remove_remote_calls: Arc::new(Mutex::new(Vec::new())),
                 remove_remote_result: Arc::new(Mutex::new(Ok(()))),
+                has_commits_not_in_base_calls: Arc::new(Mutex::new(Vec::new())),
+                has_commits_not_in_base_result: Arc::new(Mutex::new(Ok(true))),
+                delete_branch_calls: Arc::new(Mutex::new(Vec::new())),
+                delete_branch_result: Arc::new(Mutex::new(Ok(()))),
             }
         }
 
@@ -379,6 +477,24 @@ pub mod tests {
 
         pub fn get_remove_remote_calls(&self) -> Vec<(String, String)> {
             self.remove_remote_calls.lock().unwrap().clone()
+        }
+
+        pub fn set_has_commits_not_in_base_result(&self, result: Result<bool, String>) {
+            *self.has_commits_not_in_base_result.lock().unwrap() = result;
+        }
+
+        #[allow(dead_code)]
+        pub fn get_has_commits_not_in_base_calls(&self) -> Vec<(String, String, String)> {
+            self.has_commits_not_in_base_calls.lock().unwrap().clone()
+        }
+
+        #[allow(dead_code)]
+        pub fn set_delete_branch_result(&self, result: Result<(), String>) {
+            *self.delete_branch_result.lock().unwrap() = result;
+        }
+
+        pub fn get_delete_branch_calls(&self) -> Vec<(String, String)> {
+            self.delete_branch_calls.lock().unwrap().clone()
         }
     }
 
@@ -454,6 +570,28 @@ pub mod tests {
                 remote_name.to_string(),
             ));
             self.remove_remote_result.lock().unwrap().clone()
+        }
+
+        async fn has_commits_not_in_base(
+            &self,
+            repo_path: &Path,
+            branch_name: &str,
+            base_branch: &str,
+        ) -> Result<bool, String> {
+            self.has_commits_not_in_base_calls.lock().unwrap().push((
+                repo_path.to_string_lossy().to_string(),
+                branch_name.to_string(),
+                base_branch.to_string(),
+            ));
+            self.has_commits_not_in_base_result.lock().unwrap().clone()
+        }
+
+        async fn delete_branch(&self, repo_path: &Path, branch_name: &str) -> Result<(), String> {
+            self.delete_branch_calls.lock().unwrap().push((
+                repo_path.to_string_lossy().to_string(),
+                branch_name.to_string(),
+            ));
+            self.delete_branch_result.lock().unwrap().clone()
         }
     }
 }

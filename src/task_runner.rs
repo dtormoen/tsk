@@ -133,17 +133,23 @@ impl TaskRunner {
         }
 
         // Fetch changes back to main repository
-        if let Err(e) = self
+        match self
             .repo_manager
             .fetch_changes(&repo_path, &branch_name)
             .await
         {
-            eprintln!("Error fetching changes: {}", e);
-        } else {
-            println!(
-                "Branch {} is now available in the main repository",
-                branch_name
-            );
+            Ok(true) => {
+                println!(
+                    "Branch {} is now available in the main repository",
+                    branch_name
+                );
+            }
+            Ok(false) => {
+                println!("No changes to merge - branch was not created");
+            }
+            Err(e) => {
+                eprintln!("Error fetching changes: {}", e);
+            }
         }
 
         // Get the final result from the log processor
@@ -219,17 +225,23 @@ impl TaskRunner {
         }
 
         // Fetch changes back to main repository
-        if let Err(e) = self
+        match self
             .repo_manager
             .fetch_changes(&repo_path, &branch_name)
             .await
         {
-            eprintln!("Error fetching changes: {}", e);
-        } else {
-            println!(
-                "Branch {} is now available in the main repository",
-                branch_name
-            );
+            Ok(true) => {
+                println!(
+                    "Branch {} is now available in the main repository",
+                    branch_name
+                );
+            }
+            Ok(false) => {
+                println!("No changes to merge - branch was not created");
+            }
+            Err(e) => {
+                eprintln!("Error fetching changes: {}", e);
+            }
         }
 
         Ok(())

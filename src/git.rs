@@ -127,7 +127,8 @@ impl RepoManager {
     }
 
     /// Fetch changes from the copied repository back to the main repository
-    pub async fn fetch_changes(&self, repo_path: &Path, branch_name: &str) -> Result<(), String> {
+    /// Returns false if no changes were fetched (branch has no new commits)
+    pub async fn fetch_changes(&self, repo_path: &Path, branch_name: &str) -> Result<bool, String> {
         let repo_path_str = repo_path
             .to_str()
             .ok_or_else(|| "Invalid repo path".to_string())?;
@@ -169,8 +170,27 @@ impl RepoManager {
             }
         }
 
+        // Now check if the fetched branch has any commits not in main
+        let has_commits = self
+            .git_operations
+            .has_commits_not_in_base(&main_repo, branch_name, "main")
+            .await?;
+
+        if !has_commits {
+            println!("No new commits in branch {} - deleting branch", branch_name);
+            // Delete the branch from the main repository since it has no new commits
+            if let Err(e) = self
+                .git_operations
+                .delete_branch(&main_repo, branch_name)
+                .await
+            {
+                eprintln!("Warning: Failed to delete branch {}: {}", branch_name, e);
+            }
+            return Ok(false);
+        }
+
         println!("Fetched changes from copied repository");
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -251,5 +271,64 @@ mod tests {
         let result = manager.commit_changes(repo_path, "Test commit").await;
 
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_fetch_changes_no_commits() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let repo_path = temp_dir.path();
+
+        // Create mock git operations
+        let mock_git_ops = Arc::new(MockGitOperations::new());
+        mock_git_ops.set_has_commits_not_in_base_result(Ok(false));
+
+        use crate::context::file_system::tests::MockFileSystem;
+        let fs = Arc::new(MockFileSystem::new());
+
+        let manager = RepoManager {
+            base_path: PathBuf::from(".tsk/tasks"),
+            file_system: fs,
+            git_operations: mock_git_ops.clone(),
+            repo_root: Some(temp_dir.path().to_path_buf()),
+        };
+
+        let result = manager.fetch_changes(repo_path, "tsk/test-branch").await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), false);
+
+        // Verify that delete_branch was called
+        let delete_calls = mock_git_ops.get_delete_branch_calls();
+        assert_eq!(delete_calls.len(), 1);
+        assert_eq!(delete_calls[0].1, "tsk/test-branch");
+    }
+
+    #[tokio::test]
+    async fn test_fetch_changes_with_commits() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let repo_path = temp_dir.path();
+
+        // Create mock git operations
+        let mock_git_ops = Arc::new(MockGitOperations::new());
+        mock_git_ops.set_has_commits_not_in_base_result(Ok(true));
+
+        use crate::context::file_system::tests::MockFileSystem;
+        let fs = Arc::new(MockFileSystem::new());
+
+        let manager = RepoManager {
+            base_path: PathBuf::from(".tsk/tasks"),
+            file_system: fs,
+            git_operations: mock_git_ops.clone(),
+            repo_root: Some(temp_dir.path().to_path_buf()),
+        };
+
+        let result = manager.fetch_changes(repo_path, "tsk/test-branch").await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), true);
+
+        // Verify that delete_branch was NOT called
+        let delete_calls = mock_git_ops.get_delete_branch_calls();
+        assert_eq!(delete_calls.len(), 0);
     }
 }

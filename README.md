@@ -18,7 +18,7 @@ Think of it as having a team of engineers who work autonomously but always submi
 ### Safe Autonomous Execution
 - AI agents run in sandboxed Docker containers with network and filesystem restrictions
 - Agents can modify code, run tests, and install dependencies without affecting your main environment
-- Every task produces a reviewable git branch, regardless of success or failure
+- Tasks that result in changes produce reviewable git branches for human review
 
 ### Human-in-the-Loop Design
 - You maintain control as the "lead engineer" reviewing all changes
@@ -42,7 +42,7 @@ tsk add --name "auth-review" \
 tsk add --name "add-notifications" --type "feature" \
   --description "Add email notifications when users register"
 
-# Run all queued tasks (each creates a branch)
+# Run all queued tasks (creates branches for tasks with changes)
 tsk run
 
 # Review the results
@@ -95,7 +95,7 @@ Task types are determined by available templates in the `templates/` folder. By 
 To add custom task types, create new template files in the `templates/` folder (e.g., `templates/bug-fix.md`)
 
 ### `tsk run`
-Executes all queued tasks, creating git branches for review.
+Executes all queued tasks, creating git branches for tasks that produce changes.
 
 ```bash
 tsk run [OPTIONS]
@@ -142,7 +142,7 @@ Task Status Report
 ```
 
 ### `tsk quick`
-Immediately executes a task and creates a branch for review.
+Immediately executes a task and creates a branch if changes are produced.
 
 ```bash
 tsk quick [--type <TASK_TYPE>] --description <DESCRIPTION>
@@ -212,7 +212,7 @@ tsk server [OPTIONS]
 1. **Task Queuing**: User defines task with type and detailed description
 2. **Environment Setup**: Copy repository and create isolated Docker container
 3. **Agent Execution**: Selected AI agent (Aider/Claude Code) runs autonomously
-4. **Result Capture**: All changes committed to a dedicated task branch
+4. **Result Capture**: Changes committed to a dedicated task branch (if any)
 5. **Quality Checks**: Automated tests, linting, and compilation validation
 6. **Human Review**: Developer reviews branch using standard git tools
 7. **Integration**: Merge acceptable changes, refine and retry others
