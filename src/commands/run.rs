@@ -1,17 +1,20 @@
 use super::Command;
 use crate::context::AppContext;
+use crate::repo_utils::find_repository_root;
 use crate::task::{Task, TaskStatus};
 use crate::task_manager::TaskManager;
 use crate::task_storage::get_task_storage;
 use async_trait::async_trait;
 use std::error::Error;
+use std::path::Path;
 
 pub struct RunCommand;
 
 #[async_trait]
 impl Command for RunCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
-        let storage = get_task_storage(ctx.file_system());
+        let repo_root = find_repository_root(Path::new("."))?;
+        let storage = get_task_storage(&repo_root, ctx.file_system());
         let tasks = storage.list_tasks().await?;
 
         let queued_tasks: Vec<Task> = tasks

@@ -25,6 +25,8 @@ mod log_processor;
 
 mod agent;
 
+mod repo_utils;
+
 #[cfg(test)]
 mod test_utils;
 

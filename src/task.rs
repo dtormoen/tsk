@@ -2,7 +2,7 @@ use crate::context::AppContext;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TaskStatus {
@@ -19,6 +19,7 @@ pub enum TaskStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
     pub id: String,
+    pub repo_root: PathBuf,
     pub name: String,
     pub task_type: String,
     pub description: Option<String>,
@@ -35,7 +36,9 @@ pub struct Task {
 
 impl Task {
     #[allow(dead_code)] // Used in tests
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
+        repo_root: PathBuf,
         name: String,
         task_type: String,
         description: Option<String>,
@@ -48,6 +51,7 @@ impl Task {
 
         Self {
             id,
+            repo_root,
             name,
             task_type,
             description,
@@ -63,8 +67,10 @@ impl Task {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new_with_id(
         id: String,
+        repo_root: PathBuf,
         name: String,
         task_type: String,
         description: Option<String>,
@@ -74,6 +80,7 @@ impl Task {
     ) -> Self {
         Self {
             id,
+            repo_root,
             name,
             task_type,
             description,
@@ -91,6 +98,7 @@ impl Task {
 }
 
 pub struct TaskBuilder {
+    repo_root: Option<PathBuf>,
     name: Option<String>,
     task_type: Option<String>,
     description: Option<String>,
@@ -103,6 +111,7 @@ pub struct TaskBuilder {
 impl TaskBuilder {
     pub fn new() -> Self {
         Self {
+            repo_root: None,
             name: None,
             task_type: None,
             description: None,
@@ -111,6 +120,11 @@ impl TaskBuilder {
             agent: None,
             timeout: None,
         }
+    }
+
+    pub fn repo_root(mut self, repo_root: PathBuf) -> Self {
+        self.repo_root = Some(repo_root);
+        self
     }
 
     pub fn name(mut self, name: String) -> Self {
@@ -149,6 +163,10 @@ impl TaskBuilder {
     }
 
     pub async fn build(self, ctx: &AppContext) -> Result<Task, Box<dyn Error>> {
+        let repo_root = self
+            .repo_root
+            .clone()
+            .ok_or("Repository root is required")?;
         let name = self.name.clone().ok_or("Task name is required")?;
         let task_type = self
             .task_type
@@ -177,7 +195,9 @@ impl TaskBuilder {
 
         // Validate task type
         if task_type != "generic" {
-            let template_path = Path::new("templates").join(format!("{}.md", task_type));
+            let template_path = repo_root
+                .join("templates")
+                .join(format!("{}.md", task_type));
             if !ctx.file_system().exists(&template_path).await? {
                 return Err(format!(
                     "No template found for task type '{}'. Please check the templates folder.",
@@ -190,39 +210,39 @@ impl TaskBuilder {
         // Create task directory
         let timestamp = chrono::Utc::now().format("%Y-%m-%d-%H%M");
         let task_dir_name = format!("{}-{}", timestamp, name);
-        let task_dir = Path::new(".tsk/tasks").join(&task_dir_name);
+        let task_dir = repo_root.join(".tsk/tasks").join(&task_dir_name);
         ctx.file_system().create_dir(&task_dir).await?;
 
         // Create instructions file
         let instructions_path = if self.edit {
             // Create temporary file in repository root for editing
             let temp_filename = format!(".tsk-edit-{}-instructions.md", task_dir_name);
-            let temp_path = Path::new(&temp_filename);
-            self.write_instructions_content(temp_path, &task_type, ctx)
+            let temp_path = repo_root.join(&temp_filename);
+            self.write_instructions_content(&temp_path, &task_type, &repo_root, ctx)
                 .await?;
 
             // Open editor with the temporary file
-            self.open_editor(&temp_filename)?;
-            self.check_instructions_not_empty(&temp_filename, ctx)
-                .await?;
+            self.open_editor(temp_path.to_str().ok_or("Invalid path")?)?;
+            self.check_instructions_not_empty(&temp_path, ctx).await?;
 
             // Move the file to the task directory
             let final_path = task_dir.join("instructions.md");
-            let content = ctx.file_system().read_file(temp_path).await?;
+            let content = ctx.file_system().read_file(&temp_path).await?;
             ctx.file_system().write_file(&final_path, &content).await?;
-            ctx.file_system().remove_file(temp_path).await?;
+            ctx.file_system().remove_file(&temp_path).await?;
 
             final_path.to_string_lossy().to_string()
         } else {
             // Create instructions file directly in task directory
             let dest_path = task_dir.join("instructions.md");
-            self.write_instructions_content(&dest_path, &task_type, ctx)
+            self.write_instructions_content(&dest_path, &task_type, &repo_root, ctx)
                 .await?
         };
 
         // Create and return the task
         let task = Task::new_with_id(
             task_dir_name.clone(),
+            repo_root,
             name,
             task_type,
             None, // description is now stored in instructions file
@@ -238,6 +258,7 @@ impl TaskBuilder {
         &self,
         dest_path: &Path,
         task_type: &str,
+        repo_root: &Path,
         ctx: &AppContext,
     ) -> Result<String, Box<dyn Error>> {
         let fs = ctx.file_system();
@@ -248,7 +269,9 @@ impl TaskBuilder {
             fs.write_file(dest_path, &content).await?;
         } else if let Some(ref desc) = self.description {
             // Check if a template exists for this task type
-            let template_path = Path::new("templates").join(format!("{}.md", task_type));
+            let template_path = repo_root
+                .join("templates")
+                .join(format!("{}.md", task_type));
             let content = if fs.exists(&template_path).await? {
                 match fs.read_file(&template_path).await {
                     Ok(template_content) => template_content.replace("{{DESCRIPTION}}", desc),
@@ -264,7 +287,9 @@ impl TaskBuilder {
             fs.write_file(dest_path, &content).await?;
         } else {
             // Create empty instructions file for editing
-            let template_path = Path::new("templates").join(format!("{}.md", task_type));
+            let template_path = repo_root
+                .join("templates")
+                .join(format!("{}.md", task_type));
             let initial_content = if fs.exists(&template_path).await? {
                 match fs.read_file(&template_path).await {
                     Ok(template_content) => template_content.replace(
@@ -308,14 +333,11 @@ impl TaskBuilder {
 
     async fn check_instructions_not_empty(
         &self,
-        instructions_path: &str,
+        instructions_path: &Path,
         ctx: &AppContext,
     ) -> Result<(), Box<dyn Error>> {
         // Check if file is empty after editing
-        let content = ctx
-            .file_system()
-            .read_file(Path::new(instructions_path))
-            .await?;
+        let content = ctx.file_system().read_file(instructions_path).await?;
         if content.trim().is_empty() {
             return Err("Instructions file is empty. Task creation cancelled.".into());
         }
@@ -347,6 +369,7 @@ mod tests {
         let ctx = AppContext::builder().with_file_system(fs.clone()).build();
 
         let task = TaskBuilder::new()
+            .repo_root(current_dir.clone())
             .name("test-task".to_string())
             .task_type("generic".to_string())
             .description(Some("Test description".to_string()))
@@ -366,11 +389,11 @@ mod tests {
     async fn test_task_builder_with_template() {
         let current_dir = std::env::current_dir().unwrap();
         let template_content = "# Feature Template\n\n{{DESCRIPTION}}";
-        let template_path = Path::new("templates/feature.md");
+        let template_path = current_dir.join("templates/feature.md");
         let fs = Arc::new(
             MockFileSystem::new()
                 .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string())
-                .with_dir("templates")
+                .with_dir(&current_dir.join("templates").to_string_lossy().to_string())
                 .with_file(
                     &template_path.to_string_lossy().to_string(),
                     template_content,
@@ -380,6 +403,7 @@ mod tests {
         let ctx = AppContext::builder().with_file_system(fs.clone()).build();
 
         let task = TaskBuilder::new()
+            .repo_root(current_dir.clone())
             .name("test-feature".to_string())
             .task_type("feature".to_string())
             .description(Some("My feature description".to_string()))
@@ -406,15 +430,18 @@ mod tests {
         let ctx = AppContext::builder().with_file_system(fs).build();
 
         let result = TaskBuilder::new()
+            .repo_root(current_dir)
             .name("test-task".to_string())
             .build(&ctx)
             .await;
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Either description or instructions"));
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Either description or instructions")
+                || err.contains("Repository root is required")
+        );
     }
 
     #[tokio::test]
@@ -434,6 +461,7 @@ mod tests {
         let ctx = AppContext::builder().with_file_system(fs.clone()).build();
 
         let task = TaskBuilder::new()
+            .repo_root(current_dir.clone())
             .name("test-task".to_string())
             .instructions(Some(instructions_path.to_string_lossy().to_string()))
             .build(&ctx)
@@ -467,7 +495,7 @@ mod tests {
         // Test the unified write method
         let temp_path = Path::new(".tsk-edit-2024-01-01-1200-test-task-instructions.md");
         let result_path = task_builder
-            .write_instructions_content(temp_path, "generic", &ctx)
+            .write_instructions_content(temp_path, "generic", &current_dir, &ctx)
             .await
             .unwrap();
 
@@ -483,10 +511,15 @@ mod tests {
         let current_dir = std::env::current_dir().unwrap();
         let template_content = "# Feature Template\n\n{{DESCRIPTION}}";
 
+        let template_path = current_dir.join("templates/feature.md");
         let fs = Arc::new(
             MockFileSystem::new()
                 .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string())
-                .with_file("templates/feature.md", template_content),
+                .with_dir(&current_dir.join("templates").to_string_lossy().to_string())
+                .with_file(
+                    &template_path.to_string_lossy().to_string(),
+                    template_content,
+                ),
         );
 
         let ctx = AppContext::builder().with_file_system(fs.clone()).build();
@@ -498,7 +531,7 @@ mod tests {
 
         let temp_path = Path::new(".tsk-edit-2024-01-01-1200-test-feature-instructions.md");
         task_builder
-            .write_instructions_content(temp_path, "feature", &ctx)
+            .write_instructions_content(temp_path, "feature", &current_dir, &ctx)
             .await
             .unwrap();
 

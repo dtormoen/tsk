@@ -8,7 +8,6 @@ pub struct RepoManager {
     base_path: PathBuf,
     file_system: Arc<dyn FileSystemOperations>,
     git_operations: Arc<dyn GitOperations>,
-    repo_root: Option<PathBuf>,
 }
 
 impl RepoManager {
@@ -20,19 +19,22 @@ impl RepoManager {
             base_path: PathBuf::from(".tsk/tasks"),
             file_system,
             git_operations,
-            repo_root: None,
         }
     }
 
-    /// Copy repository for a task using the task ID
+    /// Copy repository for a task using the task ID and repository root
     /// Returns the path to the copied repository and the branch name
-    pub async fn copy_repo(&self, task_id: &str) -> Result<(PathBuf, String), String> {
+    pub async fn copy_repo(
+        &self,
+        task_id: &str,
+        repo_root: &Path,
+    ) -> Result<(PathBuf, String), String> {
         // Use the task ID directly for the directory name
         let task_dir_name = task_id;
         let branch_name = format!("tsk/{}", task_id);
 
         // Create the task directory structure
-        let task_dir = self.base_path.join(task_dir_name);
+        let task_dir = repo_root.join(&self.base_path).join(task_dir_name);
         let repo_path = task_dir.join("repo");
 
         // Create directories if they don't exist
@@ -46,12 +48,8 @@ impl RepoManager {
             return Err("Not in a git repository".to_string());
         }
 
-        // Get the repository root
-        let current_dir = match &self.repo_root {
-            Some(root) => root.clone(),
-            None => std::env::current_dir()
-                .map_err(|e| format!("Failed to get current directory: {}", e))?,
-        };
+        // Use the provided repository root
+        let current_dir = repo_root.to_path_buf();
 
         // Copy the repository, excluding .tsk directory
         self.copy_directory(&current_dir, &repo_path).await?;
@@ -128,17 +126,18 @@ impl RepoManager {
 
     /// Fetch changes from the copied repository back to the main repository
     /// Returns false if no changes were fetched (branch has no new commits)
-    pub async fn fetch_changes(&self, repo_path: &Path, branch_name: &str) -> Result<bool, String> {
+    pub async fn fetch_changes(
+        &self,
+        repo_path: &Path,
+        branch_name: &str,
+        repo_root: &Path,
+    ) -> Result<bool, String> {
         let repo_path_str = repo_path
             .to_str()
             .ok_or_else(|| "Invalid repo path".to_string())?;
 
-        // Get the main repository path
-        let main_repo = match &self.repo_root {
-            Some(root) => root.clone(),
-            None => std::env::current_dir()
-                .map_err(|e| format!("Failed to get current directory: {}", e))?,
-        };
+        // Use the provided repository root
+        let main_repo = repo_root.to_path_buf();
 
         // Add the copied repository as a remote in the main repository
         let now: DateTime<Local> = Local::now();
@@ -216,10 +215,12 @@ mod tests {
             base_path: base_path.clone(),
             file_system: fs,
             git_operations: mock_git_ops,
-            repo_root: None,
         };
 
-        let result = manager.copy_repo("2024-01-01-1200-test-task").await;
+        let repo_root = temp_dir.path();
+        let result = manager
+            .copy_repo("2024-01-01-1200-test-task", repo_root)
+            .await;
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Not in a git repository");
@@ -241,7 +242,6 @@ mod tests {
             base_path: PathBuf::from(".tsk/tasks"),
             file_system: fs,
             git_operations: mock_git_ops,
-            repo_root: None,
         };
 
         let result = manager.commit_changes(repo_path, "Test commit").await;
@@ -265,7 +265,6 @@ mod tests {
             base_path: PathBuf::from(".tsk/tasks"),
             file_system: fs,
             git_operations: mock_git_ops,
-            repo_root: None,
         };
 
         let result = manager.commit_changes(repo_path, "Test commit").await;
@@ -289,10 +288,12 @@ mod tests {
             base_path: PathBuf::from(".tsk/tasks"),
             file_system: fs,
             git_operations: mock_git_ops.clone(),
-            repo_root: Some(temp_dir.path().to_path_buf()),
         };
 
-        let result = manager.fetch_changes(repo_path, "tsk/test-branch").await;
+        let repo_root = temp_dir.path();
+        let result = manager
+            .fetch_changes(repo_path, "tsk/test-branch", repo_root)
+            .await;
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), false);
@@ -319,10 +320,12 @@ mod tests {
             base_path: PathBuf::from(".tsk/tasks"),
             file_system: fs,
             git_operations: mock_git_ops.clone(),
-            repo_root: Some(temp_dir.path().to_path_buf()),
         };
 
-        let result = manager.fetch_changes(repo_path, "tsk/test-branch").await;
+        let repo_root = temp_dir.path();
+        let result = manager
+            .fetch_changes(repo_path, "tsk/test-branch", repo_root)
+            .await;
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), true);

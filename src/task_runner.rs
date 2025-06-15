@@ -3,7 +3,7 @@ use crate::context::file_system::FileSystemOperations;
 use crate::docker::DockerManager;
 use crate::git::RepoManager;
 use crate::task::Task;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub struct TaskExecutionResult {
@@ -67,7 +67,7 @@ impl TaskRunner {
         // Copy repository for the task
         let (repo_path, branch_name) = self
             .repo_manager
-            .copy_repo(&task.id)
+            .copy_repo(&task.id, &task.repo_root)
             .await
             .map_err(|e| format!("Error copying repository: {}", e))?;
 
@@ -135,7 +135,7 @@ impl TaskRunner {
         // Fetch changes back to main repository
         match self
             .repo_manager
-            .fetch_changes(&repo_path, &branch_name)
+            .fetch_changes(&repo_path, &branch_name, &task.repo_root)
             .await
         {
             Ok(true) => {
@@ -168,6 +168,7 @@ impl TaskRunner {
         &self,
         task_name: &str,
         agent_name: Option<&str>,
+        repo_root: &Path,
     ) -> Result<(), String> {
         // Get the agent
         let agent_name = agent_name.unwrap_or(AgentProvider::default_agent());
@@ -178,7 +179,7 @@ impl TaskRunner {
         agent.validate().await?;
 
         // Copy repository for the debug session
-        let (repo_path, branch_name) = self.repo_manager.copy_repo(task_name).await?;
+        let (repo_path, branch_name) = self.repo_manager.copy_repo(task_name, repo_root).await?;
 
         println!(
             "Successfully created repository copy at: {}",
@@ -227,7 +228,7 @@ impl TaskRunner {
         // Fetch changes back to main repository
         match self
             .repo_manager
-            .fetch_changes(&repo_path, &branch_name)
+            .fetch_changes(&repo_path, &branch_name, repo_root)
             .await
         {
             Ok(true) => {
@@ -285,6 +286,7 @@ mod tests {
 
         let task = Task {
             id: "test-task-123".to_string(),
+            repo_root: std::env::current_dir().unwrap(),
             name: "test-task".to_string(),
             task_type: "feature".to_string(),
             description: Some("Test description".to_string()),

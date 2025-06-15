@@ -1,9 +1,11 @@
 use super::Command;
 use crate::context::AppContext;
+use crate::repo_utils::find_repository_root;
 use crate::task::TaskBuilder;
 use crate::task_storage::get_task_storage;
 use async_trait::async_trait;
 use std::error::Error;
+use std::path::Path;
 
 pub struct AddCommand {
     pub name: String,
@@ -20,8 +22,12 @@ impl Command for AddCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         println!("Adding task to queue: {}", self.name);
 
+        // Find repository root
+        let repo_root = find_repository_root(Path::new("."))?;
+
         // Create task using TaskBuilder
         let task = TaskBuilder::new()
+            .repo_root(repo_root.clone())
             .name(self.name.clone())
             .task_type(self.r#type.clone())
             .description(self.description.clone())
@@ -33,7 +39,7 @@ impl Command for AddCommand {
             .await?;
 
         // Save task to storage
-        let storage = get_task_storage(ctx.file_system());
+        let storage = get_task_storage(&repo_root, ctx.file_system());
         storage.add_task(task.clone()).await?;
 
         println!("\nTask successfully added to queue!");

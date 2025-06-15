@@ -1,9 +1,11 @@
 use super::Command;
 use crate::context::AppContext;
+use crate::repo_utils::find_repository_root;
 use crate::task::TaskBuilder;
 use crate::task_manager::TaskManager;
 use async_trait::async_trait;
 use std::error::Error;
+use std::path::Path;
 
 pub struct QuickCommand {
     pub name: String,
@@ -21,8 +23,12 @@ impl Command for QuickCommand {
         println!("Executing quick task: {}", self.name);
         println!("Type: {}", self.r#type);
 
+        // Find repository root
+        let repo_root = find_repository_root(Path::new("."))?;
+
         // Create task using TaskBuilder
         let task = TaskBuilder::new()
+            .repo_root(repo_root.clone())
             .name(self.name.clone())
             .task_type(self.r#type.clone())
             .description(self.description.clone())

@@ -1,9 +1,11 @@
 use super::Command;
 use crate::context::AppContext;
+use crate::repo_utils::find_repository_root;
 use crate::task::TaskStatus;
 use crate::task_storage::get_task_storage;
 use async_trait::async_trait;
 use std::error::Error;
+use std::path::Path;
 use tabled::settings::Style;
 use tabled::{Table, Tabled};
 
@@ -28,7 +30,8 @@ struct TaskRow {
 #[async_trait]
 impl Command for ListCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
-        let storage = get_task_storage(ctx.file_system());
+        let repo_root = find_repository_root(Path::new("."))?;
+        let storage = get_task_storage(&repo_root, ctx.file_system());
         let tasks = storage.list_tasks().await?;
 
         if tasks.is_empty() {

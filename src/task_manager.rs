@@ -1,17 +1,17 @@
 use crate::context::{file_system::FileSystemOperations, AppContext};
 use crate::docker::DockerManager;
 use crate::git::RepoManager;
+use crate::repo_utils::find_repository_root;
 use crate::task::{Task, TaskStatus};
 use crate::task_runner::{TaskExecutionError, TaskExecutionResult, TaskRunner};
 use crate::task_storage::{get_task_storage, TaskStorage};
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 
 pub struct TaskManager {
     task_runner: TaskRunner,
     task_storage: Option<Box<dyn TaskStorage>>,
     file_system: Arc<dyn FileSystemOperations>,
-    repo_root: Option<PathBuf>,
 }
 
 impl TaskManager {
@@ -24,7 +24,6 @@ impl TaskManager {
             task_runner,
             task_storage: None,
             file_system: ctx.file_system(),
-            repo_root: None,
         })
     }
 
@@ -33,21 +32,14 @@ impl TaskManager {
         let docker_manager = DockerManager::new(ctx.docker_client());
         let task_runner = TaskRunner::new(repo_manager, docker_manager, ctx.file_system());
 
+        let repo_root = find_repository_root(Path::new("."))
+            .map_err(|e| format!("Failed to find repository root: {}", e))?;
+
         Ok(Self {
             task_runner,
-            task_storage: Some(get_task_storage(ctx.file_system())),
+            task_storage: Some(get_task_storage(&repo_root, ctx.file_system())),
             file_system: ctx.file_system(),
-            repo_root: None,
         })
-    }
-
-    /// Get the repository root path
-    fn get_repo_root(&self) -> Result<PathBuf, String> {
-        match &self.repo_root {
-            Some(root) => Ok(root.clone()),
-            None => std::env::current_dir()
-                .map_err(|e| format!("Failed to get current directory: {}", e)),
-        }
     }
 
     /// Execute a task from the queue (with status updates)
@@ -138,8 +130,8 @@ impl TaskManager {
             .map_err(|e| format!("Error deleting task from storage: {}", e))?;
 
         // Delete the task directory
-        let repo_root = self.get_repo_root()?;
-        let task_dir = repo_root.join(".tsk/tasks").join(task_id);
+        let task = task.unwrap();
+        let task_dir = task.repo_root.join(".tsk/tasks").join(task_id);
         if self.file_system.exists(&task_dir).await.unwrap_or(false) {
             self.file_system
                 .remove_dir(&task_dir)
@@ -171,9 +163,8 @@ impl TaskManager {
             .collect();
 
         // Delete completed tasks directories
-        let repo_root = self.get_repo_root()?;
         for task in &completed_tasks {
-            let task_dir = repo_root.join(".tsk/tasks").join(&task.id);
+            let task_dir = task.repo_root.join(".tsk/tasks").join(&task.id);
             if self.file_system.exists(&task_dir).await.unwrap_or(false) {
                 if let Err(e) = self.file_system.remove_dir(&task_dir).await {
                     eprintln!(
@@ -206,9 +197,11 @@ mod tests {
         use crate::context::git_operations::tests::MockGitOperations;
 
         // Create a task to test with
+        let repo_root = crate::repo_utils::find_repository_root(Path::new(".")).unwrap();
         let task_id = "test-task-123".to_string();
         let _task = Task::new_with_id(
             task_id.clone(),
+            repo_root.clone(),
             "test-task".to_string(),
             "feature".to_string(),
             Some("Test description".to_string()),
@@ -216,14 +209,13 @@ mod tests {
             None,
             30,
         );
-        let current_dir = std::env::current_dir().unwrap();
-        let task_dir_path = current_dir.join(".tsk/tasks").join(&task_id);
+        let task_dir_path = repo_root.join(".tsk/tasks").join(&task_id);
 
         // Create mock file system with necessary structure
-        let git_dir = current_dir.join(".git");
-        let tsk_dir = current_dir.join(".tsk");
-        let tasks_dir = current_dir.join(".tsk/tasks");
-        let tasks_json_path = ".tsk/tasks.json"; // Keep this relative for JsonTaskStorage
+        let git_dir = repo_root.join(".git");
+        let tsk_dir = repo_root.join(".tsk");
+        let tasks_dir = repo_root.join(".tsk/tasks");
+        let tasks_json_path = repo_root.join(".tsk/tasks.json");
 
         let fs = Arc::new(
             MockFileSystem::new()
@@ -232,7 +224,7 @@ mod tests {
                 .with_dir(&tasks_dir.to_string_lossy().to_string())
                 .with_dir(&task_dir_path.to_string_lossy().to_string())
                 .with_file(&format!("{}/test.txt", task_dir_path.to_string_lossy()), "test content")
-                .with_file(&tasks_json_path, &format!(r#"[{{"id":"{}","name":"test-task","task_type":"feature","description":"Test description","instructions_file":null,"agent":null,"timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":null,"error_message":null}}]"#, task_id))
+                .with_file(&tasks_json_path.to_string_lossy().to_string(), &format!(r#"[{{"id":"{}","repo_root":"{}","name":"test-task","task_type":"feature","description":"Test description","instructions_file":null,"agent":null,"timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":null,"error_message":null}}]"#, task_id, repo_root.to_string_lossy()))
         );
 
         let docker_client = Arc::new(FixedResponseDockerClient::default());
@@ -261,11 +253,13 @@ mod tests {
         use crate::context::git_operations::tests::MockGitOperations;
 
         // Create tasks with different statuses
+        let repo_root = crate::repo_utils::find_repository_root(Path::new(".")).unwrap();
         let queued_task_id = "queued-task-123".to_string();
         let completed_task_id = "completed-task-456".to_string();
 
         let _queued_task = Task::new_with_id(
             queued_task_id.clone(),
+            repo_root.clone(),
             "queued-task".to_string(),
             "feature".to_string(),
             Some("Queued task".to_string()),
@@ -276,6 +270,7 @@ mod tests {
 
         let mut completed_task = Task::new_with_id(
             completed_task_id.clone(),
+            repo_root.clone(),
             "completed-task".to_string(),
             "bug-fix".to_string(),
             Some("Completed task".to_string()),
@@ -284,22 +279,23 @@ mod tests {
             30,
         );
         completed_task.status = TaskStatus::Complete;
-
-        let current_dir = std::env::current_dir().unwrap();
-        let queued_dir_path = current_dir.join(".tsk/tasks").join(&queued_task_id);
-        let completed_dir_path = current_dir.join(".tsk/tasks").join(&completed_task_id);
+        let queued_dir_path = repo_root.join(".tsk/tasks").join(&queued_task_id);
+        let completed_dir_path = repo_root.join(".tsk/tasks").join(&completed_task_id);
 
         // Create initial tasks.json with both tasks
         let tasks_json = format!(
-            r#"[{{"id":"{}","name":"queued-task","task_type":"feature","description":"Queued task","instructions_file":null,"agent":null,"timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":null,"error_message":null}},{{"id":"{}","name":"completed-task","task_type":"bug-fix","description":"Completed task","instructions_file":null,"agent":null,"timeout":30,"status":"COMPLETE","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":"2024-01-01T01:00:00Z","branch_name":null,"error_message":null}}]"#,
-            queued_task_id, completed_task_id
+            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feature","description":"Queued task","instructions_file":null,"agent":null,"timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":null,"error_message":null}},{{"id":"{}","repo_root":"{}","name":"completed-task","task_type":"bug-fix","description":"Completed task","instructions_file":null,"agent":null,"timeout":30,"status":"COMPLETE","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":"2024-01-01T01:00:00Z","branch_name":null,"error_message":null}}]"#,
+            queued_task_id,
+            repo_root.to_string_lossy(),
+            completed_task_id,
+            repo_root.to_string_lossy()
         );
 
         // Create mock file system with necessary structure
-        let git_dir = current_dir.join(".git");
-        let tsk_dir = current_dir.join(".tsk");
-        let tasks_dir = current_dir.join(".tsk/tasks");
-        let tasks_json_path = ".tsk/tasks.json"; // Keep relative for JsonTaskStorage
+        let git_dir = repo_root.join(".git");
+        let tsk_dir = repo_root.join(".tsk");
+        let tasks_dir = repo_root.join(".tsk/tasks");
+        let tasks_json_path = repo_root.join(".tsk/tasks.json");
 
         let fs = Arc::new(
             MockFileSystem::new()
@@ -308,7 +304,7 @@ mod tests {
                 .with_dir(&tasks_dir.to_string_lossy().to_string())
                 .with_dir(&queued_dir_path.to_string_lossy().to_string())
                 .with_dir(&completed_dir_path.to_string_lossy().to_string())
-                .with_file(&tasks_json_path, &tasks_json),
+                .with_file(&tasks_json_path.to_string_lossy().to_string(), &tasks_json),
         );
 
         let docker_client = Arc::new(FixedResponseDockerClient::default());
@@ -344,9 +340,11 @@ mod tests {
         use crate::context::git_operations::tests::MockGitOperations;
 
         // Create a task with a specific ID using new_with_id
+        let repo_root = crate::repo_utils::find_repository_root(Path::new(".")).unwrap();
         let task_id = "2024-01-15-1430-test-feature".to_string();
         let mut completed_task = Task::new_with_id(
             task_id.clone(),
+            repo_root.clone(),
             "test-feature".to_string(),
             "feature".to_string(),
             Some("Test feature".to_string()),
@@ -355,21 +353,20 @@ mod tests {
             30,
         );
         completed_task.status = TaskStatus::Complete;
-
-        let current_dir = std::env::current_dir().unwrap();
-        let task_dir_path = current_dir.join(".tsk/tasks").join(&task_id);
+        let task_dir_path = repo_root.join(".tsk/tasks").join(&task_id);
 
         // Create tasks.json with the completed task
         let tasks_json = format!(
-            r#"[{{"id":"{}","name":"test-feature","task_type":"feature","description":"Test feature","instructions_file":null,"agent":null,"timeout":30,"status":"COMPLETE","created_at":"2024-01-15T14:30:00Z","started_at":null,"completed_at":"2024-01-15T15:00:00Z","branch_name":null,"error_message":null}}]"#,
-            task_id
+            r#"[{{"id":"{}","repo_root":"{}","name":"test-feature","task_type":"feature","description":"Test feature","instructions_file":null,"agent":null,"timeout":30,"status":"COMPLETE","created_at":"2024-01-15T14:30:00Z","started_at":null,"completed_at":"2024-01-15T15:00:00Z","branch_name":null,"error_message":null}}]"#,
+            task_id,
+            repo_root.to_string_lossy()
         );
 
         // Create mock file system with necessary structure
-        let git_dir = current_dir.join(".git");
-        let tsk_dir = current_dir.join(".tsk");
-        let tasks_dir = current_dir.join(".tsk/tasks");
-        let tasks_json_path = ".tsk/tasks.json"; // Keep relative for JsonTaskStorage
+        let git_dir = repo_root.join(".git");
+        let tsk_dir = repo_root.join(".tsk");
+        let tasks_dir = repo_root.join(".tsk/tasks");
+        let tasks_json_path = repo_root.join(".tsk/tasks.json");
 
         let fs = Arc::new(
             MockFileSystem::new()
@@ -381,7 +378,7 @@ mod tests {
                     &format!("{}/instructions.md", task_dir_path.to_string_lossy()),
                     "Test instructions",
                 )
-                .with_file(&tasks_json_path, &tasks_json),
+                .with_file(&tasks_json_path.to_string_lossy().to_string(), &tasks_json),
         );
 
         let docker_client = Arc::new(FixedResponseDockerClient::default());

@@ -129,8 +129,11 @@ impl TaskStorage for JsonTaskStorage {
 }
 
 // Factory function for getting task storage
-pub fn get_task_storage(file_system: Arc<dyn FileSystemOperations>) -> Box<dyn TaskStorage> {
-    let storage = JsonTaskStorage::new(Path::new(".tsk"), file_system);
+pub fn get_task_storage(
+    repo_root: &Path,
+    file_system: Arc<dyn FileSystemOperations>,
+) -> Box<dyn TaskStorage> {
+    let storage = JsonTaskStorage::new(&repo_root.join(".tsk"), file_system);
     Box::new(storage)
 }
 
@@ -149,6 +152,7 @@ mod tests {
 
         // Test adding a task
         let task = Task::new(
+            temp_dir.path().to_path_buf(),
             "test-task".to_string(),
             "feature".to_string(),
             Some("Test description".to_string()),
@@ -183,6 +187,7 @@ mod tests {
 
         // Test deleting tasks by status
         let task1 = Task::new(
+            temp_dir.path().to_path_buf(),
             "task1".to_string(),
             "feature".to_string(),
             Some("Task 1".to_string()),
@@ -191,6 +196,7 @@ mod tests {
             30,
         );
         let mut task2 = Task::new(
+            temp_dir.path().to_path_buf(),
             "task2".to_string(),
             "bug-fix".to_string(),
             Some("Task 2".to_string()),
@@ -200,6 +206,7 @@ mod tests {
         );
         task2.status = TaskStatus::Complete;
         let mut task3 = Task::new(
+            temp_dir.path().to_path_buf(),
             "task3".to_string(),
             "refactor".to_string(),
             Some("Task 3".to_string()),
