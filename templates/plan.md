@@ -4,9 +4,10 @@ Write a detailed document describing how to implement the following changes to t
 {{DESCRIPTION}}
 
 ## Planning Best Practices
+- Think carefully about how to achieve the stated goal
 - Consider the goal of the plan. Is there a better way to achieve the goal which has not been considered yet?
 - Carefully consider options to achieve the goal. Favor simplicity and long term scalability as the project grows
-- Consider how the suggested changes shold be tested and include this in the plan
+- Consider how the suggested changes should be tested and include this in the plan
 
 ## Document Format
 The document you produce should have the following format:
@@ -25,8 +26,9 @@ An overview of more than 1 options considered to accomplish the goal. This secti
 Provide a recommendation for the best approach to implement the requested changes.
 
 ## Implementation Plan
+This section should contain everything needed for someone or an agent to implement the plan. Start with a short, high level of the summary of the changes in the first paragraph to give an overview.
 
-Write out a concise summary of the changes needed to follow the recommended implementation. For larger changes, the changes can broken down into phases, but only do this for very complex changes. Reference the specific files, classes, and functions that need to be added, modified, or deleted.
+After the summary, write out concise, but comprehensive steps for implementing the change. For larger changes, the changes can broken down into phases, but only do this for very complex changes. Reference the specific files, classes, and functions that need to be added, modified, or deleted.
 ```
 
 Save the completed doc to the docs folder with a short, descriptive title.
