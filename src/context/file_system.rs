@@ -10,6 +10,7 @@ pub trait FileSystemOperations: Send + Sync {
     async fn read_file(&self, path: &Path) -> Result<String>;
     async fn exists(&self, path: &Path) -> Result<bool>;
     async fn remove_dir(&self, path: &Path) -> Result<()>;
+    async fn remove_file(&self, path: &Path) -> Result<()>;
     async fn copy_file(&self, from: &Path, to: &Path) -> Result<()>;
     async fn read_dir(&self, path: &Path) -> Result<Vec<std::path::PathBuf>>;
 }
@@ -64,6 +65,11 @@ impl FileSystemOperations for DefaultFileSystem {
 
     async fn remove_dir(&self, path: &Path) -> Result<()> {
         tokio::fs::remove_dir_all(path).await?;
+        Ok(())
+    }
+
+    async fn remove_file(&self, path: &Path) -> Result<()> {
+        tokio::fs::remove_file(path).await?;
         Ok(())
     }
 
@@ -193,6 +199,16 @@ pub mod tests {
                 .lock()
                 .unwrap()
                 .retain(|p, _| !p.starts_with(&path_str));
+            Ok(())
+        }
+
+        async fn remove_file(&self, path: &Path) -> Result<()> {
+            let path_str = path.to_string_lossy().to_string();
+            self.files
+                .lock()
+                .unwrap()
+                .remove(&path_str)
+                .ok_or_else(|| anyhow::anyhow!("File not found: {}", path_str))?;
             Ok(())
         }
 

@@ -194,16 +194,31 @@ impl TaskBuilder {
         ctx.file_system().create_dir(&task_dir).await?;
 
         // Create instructions file
-        let instructions_path = self
-            .create_instructions_file(&task_dir, &task_type, ctx)
-            .await?;
-
-        // Handle edit mode
-        if self.edit {
-            self.open_editor(&instructions_path)?;
-            self.check_instructions_not_empty(&instructions_path, ctx)
+        let instructions_path = if self.edit {
+            // Create temporary file in repository root for editing
+            let temp_filename = format!(".tsk-edit-{}-instructions.md", task_dir_name);
+            let temp_path = Path::new(&temp_filename);
+            self.write_instructions_content(temp_path, &task_type, ctx)
                 .await?;
-        }
+
+            // Open editor with the temporary file
+            self.open_editor(&temp_filename)?;
+            self.check_instructions_not_empty(&temp_filename, ctx)
+                .await?;
+
+            // Move the file to the task directory
+            let final_path = task_dir.join("instructions.md");
+            let content = ctx.file_system().read_file(temp_path).await?;
+            ctx.file_system().write_file(&final_path, &content).await?;
+            ctx.file_system().remove_file(temp_path).await?;
+
+            final_path.to_string_lossy().to_string()
+        } else {
+            // Create instructions file directly in task directory
+            let dest_path = task_dir.join("instructions.md");
+            self.write_instructions_content(&dest_path, &task_type, ctx)
+                .await?
+        };
 
         // Create and return the task
         let task = Task::new_with_id(
@@ -219,21 +234,18 @@ impl TaskBuilder {
         Ok(task)
     }
 
-    async fn create_instructions_file(
+    async fn write_instructions_content(
         &self,
-        task_dir: &Path,
+        dest_path: &Path,
         task_type: &str,
         ctx: &AppContext,
     ) -> Result<String, Box<dyn Error>> {
-        let dest_path = task_dir.join("instructions.md");
         let fs = ctx.file_system();
 
         if let Some(ref inst_path) = self.instructions {
             // Copy existing instructions file
             let content = fs.read_file(Path::new(inst_path)).await?;
-            fs.write_file(&dest_path, &content).await?;
-            println!("Copied instructions file to task directory");
-            Ok(dest_path.to_string_lossy().to_string())
+            fs.write_file(dest_path, &content).await?;
         } else if let Some(ref desc) = self.description {
             // Check if a template exists for this task type
             let template_path = Path::new("templates").join(format!("{}.md", task_type));
@@ -249,14 +261,8 @@ impl TaskBuilder {
                 desc.clone()
             };
 
-            fs.write_file(&dest_path, &content).await?;
-            if fs.exists(&template_path).await? {
-                println!("Created instructions file from {} template", task_type);
-            } else {
-                println!("Created instructions file from description");
-            }
-            Ok(dest_path.to_string_lossy().to_string())
-        } else if self.edit {
+            fs.write_file(dest_path, &content).await?;
+        } else {
             // Create empty instructions file for editing
             let template_path = Path::new("templates").join(format!("{}.md", task_type));
             let initial_content = if fs.exists(&template_path).await? {
@@ -271,12 +277,11 @@ impl TaskBuilder {
                 String::new()
             };
 
-            fs.write_file(&dest_path, &initial_content).await?;
-            println!("Created instructions file for editing");
-            Ok(dest_path.to_string_lossy().to_string())
-        } else {
-            return Err("No description or instructions provided".into());
+            fs.write_file(dest_path, &initial_content).await?;
         }
+
+        println!("Created instructions file: {}", dest_path.display());
+        Ok(dest_path.to_string_lossy().to_string())
     }
 
     fn open_editor(&self, instructions_path: &str) -> Result<(), Box<dyn Error>> {
@@ -442,5 +447,64 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(content, instructions_content);
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_write_instructions_content() {
+        let current_dir = std::env::current_dir().unwrap();
+        let fs = Arc::new(
+            MockFileSystem::new()
+                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string()),
+        );
+
+        let ctx = AppContext::builder().with_file_system(fs.clone()).build();
+
+        let task_builder = TaskBuilder::new()
+            .name("test-task".to_string())
+            .task_type("generic".to_string())
+            .description(Some("Test description".to_string()));
+
+        // Test the unified write method
+        let temp_path = Path::new(".tsk-edit-2024-01-01-1200-test-task-instructions.md");
+        let result_path = task_builder
+            .write_instructions_content(temp_path, "generic", &ctx)
+            .await
+            .unwrap();
+
+        assert_eq!(result_path, temp_path.to_string_lossy().to_string());
+
+        // Verify the content was written
+        let content = fs.read_file(temp_path).await.unwrap();
+        assert!(content.contains("Test description"));
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_write_instructions_content_with_template() {
+        let current_dir = std::env::current_dir().unwrap();
+        let template_content = "# Feature Template\n\n{{DESCRIPTION}}";
+
+        let fs = Arc::new(
+            MockFileSystem::new()
+                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string())
+                .with_file("templates/feature.md", template_content),
+        );
+
+        let ctx = AppContext::builder().with_file_system(fs.clone()).build();
+
+        let task_builder = TaskBuilder::new()
+            .name("test-feature".to_string())
+            .task_type("feature".to_string())
+            .description(Some("My new feature".to_string()));
+
+        let temp_path = Path::new(".tsk-edit-2024-01-01-1200-test-feature-instructions.md");
+        task_builder
+            .write_instructions_content(temp_path, "feature", &ctx)
+            .await
+            .unwrap();
+
+        let content = fs.read_file(temp_path).await.unwrap();
+        assert!(content.contains("# Feature Template"));
+        assert!(content.contains("My new feature"));
+        assert!(!content.contains("{{DESCRIPTION}}"));
     }
 }

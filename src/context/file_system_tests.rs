@@ -270,6 +270,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_default_file_system_remove_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let fs = DefaultFileSystem;
+
+        let file_path = temp_dir.path().join("test.txt");
+        let content = "Test content";
+
+        // Create file
+        fs.write_file(&file_path, content).await.unwrap();
+
+        // Verify it exists
+        assert!(fs.exists(&file_path).await.unwrap());
+
+        // Remove file
+        fs.remove_file(&file_path).await.unwrap();
+
+        // Verify it's gone
+        assert!(!fs.exists(&file_path).await.unwrap());
+
+        // Try to remove non-existent file - should error
+        let result = fs.remove_file(&file_path).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mock_file_system_remove_file() {
+        let mock_fs = MockFileSystem::new().with_file("/test/file.txt", "test content");
+
+        // Verify file exists
+        assert!(mock_fs.exists(Path::new("/test/file.txt")).await.unwrap());
+
+        // Remove file
+        mock_fs
+            .remove_file(Path::new("/test/file.txt"))
+            .await
+            .unwrap();
+
+        // Verify it's gone
+        assert!(!mock_fs.exists(Path::new("/test/file.txt")).await.unwrap());
+
+        // Try to remove non-existent file - should error
+        let result = mock_fs.remove_file(Path::new("/test/file.txt")).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("File not found"));
+    }
+
+    #[tokio::test]
     async fn test_file_system_operations_are_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
 
