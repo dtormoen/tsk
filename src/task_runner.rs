@@ -189,13 +189,17 @@ impl TaskRunner {
 
         println!("\nDocker container started successfully!");
         println!("Container name: {}", container_name);
-        println!("\nTo connect to the container, run:");
-        println!("  docker exec -it {} /bin/bash", container_name);
-        println!("\nPress any key to stop the container and exit...");
+        println!("\nStarting interactive session...");
 
-        // Wait for user input
-        use std::io::{self, Read};
-        let _ = io::stdin().read(&mut [0u8]).unwrap();
+        // Start interactive docker exec session
+        let status = std::process::Command::new("docker")
+            .args(["exec", "-it", &container_name, "/bin/bash"])
+            .status()
+            .map_err(|e| format!("Failed to execute docker exec: {}", e))?;
+
+        if !status.success() {
+            eprintln!("Interactive session exited with non-zero status");
+        }
 
         println!("\nStopping container...");
         self.docker_manager

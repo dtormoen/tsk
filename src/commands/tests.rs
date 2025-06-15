@@ -97,4 +97,16 @@ mod command_tests {
         // This test ensures that the Command trait can be used as a trait object
         fn _assert_object_safe(_: &dyn Command) {}
     }
+
+    #[tokio::test]
+    async fn test_debug_command_structure() {
+        let cmd = DebugCommand {
+            name: "test-debug".to_string(),
+            agent: Some("claude_code".to_string()),
+        };
+
+        // Verify the command has the expected fields
+        assert_eq!(cmd.name, "test-debug");
+        assert_eq!(cmd.agent, Some("claude_code".to_string()));
+    }
 }
