@@ -2,6 +2,7 @@ use crate::context::AppContext;
 use crate::task::{Task, TaskStatus};
 use crate::task_manager::TaskManager;
 use crate::task_storage::TaskStorage;
+use crate::terminal::{restore_terminal_title, set_terminal_title};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
@@ -34,10 +35,14 @@ impl TaskExecutor {
 
         println!("Task executor started");
 
+        // Set initial idle title
+        set_terminal_title("TSK Server Idle");
+
         loop {
             // Check if we should continue running
             if !*self.running.lock().await {
                 println!("Task executor stopping");
+                restore_terminal_title();
                 break;
             }
 
@@ -51,6 +56,9 @@ impl TaskExecutor {
             match queued_task {
                 Some(task) => {
                     println!("Executing task: {} ({})", task.name, task.id);
+
+                    // Update terminal title to show current task
+                    set_terminal_title(&format!("TSK: {}", task.name));
 
                     // Update task status to running
                     let mut running_task = task.clone();
@@ -90,6 +98,9 @@ impl TaskExecutor {
                             storage.update_task(failed_task).await?;
                         }
                     }
+
+                    // Restore idle title after task completion
+                    set_terminal_title("TSK Server Idle");
                 }
                 None => {
                     // No tasks to execute, wait a bit before checking again

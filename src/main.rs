@@ -33,6 +33,8 @@ mod server;
 
 mod client;
 
+mod terminal;
+
 #[cfg(test)]
 mod test_utils;
 

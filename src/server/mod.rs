@@ -4,6 +4,7 @@ pub mod protocol;
 
 use crate::context::AppContext;
 use crate::task_storage::{get_task_storage, TaskStorage};
+use crate::terminal::restore_terminal_title;
 use executor::TaskExecutor;
 use lifecycle::ServerLifecycle;
 use protocol::{Request, Response};
@@ -106,6 +107,9 @@ impl TskServer {
 
         // Clean up server resources
         self.lifecycle.cleanup()?;
+
+        // Ensure terminal title is restored
+        restore_terminal_title();
 
         Ok(())
     }
