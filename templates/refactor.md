@@ -2,12 +2,14 @@ You need to refactor the code in the following way:
 
 {{DESCRIPTION}}
 
+## Refactoring Best Practices
 While working on the change, keep in mind the following:
 - Leave the code better than when you got it.
 - Ruthlessly simplify. Maintain the core user experience, but don't shy from changes that simplify or improve.
+- Add documentation for functions, classes, and modules following rustdoc best practices where it is missing.
 - Look for and fix code smells.
 
-
+## Final Steps
 After you implement the change, please do the following steps:
 - Add or update tests to make sure everything is working as expected
 - Run `just precommit` to make sure files are formatted correctly and tests pass
