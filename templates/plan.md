@@ -8,6 +8,7 @@ Write a detailed document describing how to implement the following changes to t
 - Consider the goal of the plan. Is there a better way to achieve the goal which has not been considered yet?
 - Carefully consider options to achieve the goal. Favor simplicity and long term scalability as the project grows
 - Consider how the suggested changes should be tested and include this in the plan
+- IMPORTANT: Don't write any code, only produce the requested document
 
 ## Document Format
 The document you produce should have the following format:
