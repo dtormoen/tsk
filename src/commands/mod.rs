@@ -4,6 +4,7 @@ use std::error::Error;
 
 pub mod add;
 pub mod debug;
+pub mod docker_build;
 pub mod list;
 pub mod quick;
 pub mod run;
@@ -16,6 +17,7 @@ mod tests;
 
 pub use add::AddCommand;
 pub use debug::DebugCommand;
+pub use docker_build::DockerBuildCommand;
 pub use list::ListCommand;
 pub use quick::QuickCommand;
 pub use run::RunCommand;

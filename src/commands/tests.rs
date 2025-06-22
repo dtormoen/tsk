@@ -110,4 +110,10 @@ mod command_tests {
         assert_eq!(cmd.name, "test-debug");
         assert_eq!(cmd.agent, Some("claude_code".to_string()));
     }
+
+    #[test]
+    fn test_docker_build_command_instantiation() {
+        // Test that DockerBuildCommand can be instantiated
+        let _cmd = DockerBuildCommand;
+    }
 }

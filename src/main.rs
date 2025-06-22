@@ -2,8 +2,8 @@ use clap::{Parser, Subcommand};
 
 mod commands;
 use commands::{
-    AddCommand, Command, DebugCommand, ListCommand, QuickCommand, RunCommand, StopProxyCommand,
-    StopServerCommand, TasksCommand,
+    AddCommand, Command, DebugCommand, DockerBuildCommand, ListCommand, QuickCommand, RunCommand,
+    StopProxyCommand, StopServerCommand, TasksCommand,
 };
 
 mod context;
@@ -136,6 +136,8 @@ enum Commands {
         #[arg(short, long)]
         clean: bool,
     },
+    /// Build the TSK Docker images (tsk/base and tsk/proxy)
+    DockerBuild,
 }
 
 #[tokio::main]
@@ -186,6 +188,7 @@ async fn main() {
         Commands::List => Box::new(ListCommand),
         Commands::Run { server } => Box::new(RunCommand { server }),
         Commands::Tasks { delete, clean } => Box::new(TasksCommand { delete, clean }),
+        Commands::DockerBuild => Box::new(DockerBuildCommand),
     };
 
     if let Err(e) = command.execute(&app_context).await {
