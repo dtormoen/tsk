@@ -7,14 +7,18 @@ use std::error::Error;
 pub struct TasksCommand {
     pub delete: Option<String>,
     pub clean: bool,
+    pub retry: Option<String>,
+    pub edit: bool,
 }
 
 #[async_trait]
 impl Command for TasksCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         // Ensure at least one option is provided
-        if self.delete.is_none() && !self.clean {
-            return Err("Please specify either --delete <TASK_ID> or --clean".into());
+        if self.delete.is_none() && !self.clean && self.retry.is_none() {
+            return Err(
+                "Please specify either --delete <TASK_ID>, --clean, or --retry <TASK_ID>".into(),
+            );
         }
 
         let task_manager = TaskManager::with_storage(ctx)?;
@@ -34,6 +38,13 @@ impl Command for TasksCommand {
                 "Cleanup complete: {} completed task(s) deleted",
                 completed_count
             );
+        }
+
+        // Handle retry option
+        if let Some(ref task_id) = self.retry {
+            println!("Retrying task: {}", task_id);
+            let new_task_id = task_manager.retry_task(task_id, self.edit, ctx).await?;
+            println!("Task retried successfully. New task ID: {}", new_task_id);
         }
 
         Ok(())

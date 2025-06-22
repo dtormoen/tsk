@@ -82,6 +82,8 @@ mod command_tests {
         let cmd = TasksCommand {
             delete: None,
             clean: false,
+            retry: None,
+            edit: false,
         };
 
         let ctx = create_test_context();

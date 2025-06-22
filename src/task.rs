@@ -125,6 +125,39 @@ impl TaskBuilder {
         }
     }
 
+    pub async fn from_existing(task: &Task, ctx: &AppContext) -> Result<Self, Box<dyn Error>> {
+        let mut builder = Self::new();
+        builder.repo_root = Some(task.repo_root.clone());
+        builder.name = Some(task.name.clone());
+        builder.task_type = Some(task.task_type.clone());
+        builder.agent = task.agent.clone();
+        builder.timeout = Some(task.timeout);
+
+        // Copy the instructions file content if it exists
+        if let Some(ref instructions_file) = task.instructions_file {
+            let fs = ctx.file_system();
+
+            // Try to read the original instructions file
+            match fs.read_file(Path::new(instructions_file)).await {
+                Ok(content) => {
+                    // Store the content as the instructions to be used when building
+                    builder.instructions = Some(content);
+                }
+                Err(e) => {
+                    // If we can't read the instructions file, fall back to the task description
+                    eprintln!("Warning: Failed to read instructions file: {}", e);
+                    if let Some(ref desc) = task.description {
+                        builder.description = Some(desc.clone());
+                    }
+                }
+            }
+        } else if let Some(ref desc) = task.description {
+            builder.description = Some(desc.clone());
+        }
+
+        Ok(builder)
+    }
+
     pub fn repo_root(mut self, repo_root: PathBuf) -> Self {
         self.repo_root = Some(repo_root);
         self
@@ -280,10 +313,19 @@ impl TaskBuilder {
     ) -> Result<String, Box<dyn Error>> {
         let fs = ctx.file_system();
 
-        if let Some(ref inst_path) = self.instructions {
-            // Copy existing instructions file
-            let content = fs.read_file(Path::new(inst_path)).await?;
-            fs.write_file(dest_path, &content).await?;
+        if let Some(ref instructions) = self.instructions {
+            // Check if instructions is a file path or content
+            if instructions.contains('\n') || instructions.len() > 260 {
+                // Treat as content (multi-line or very long single line)
+                fs.write_file(dest_path, instructions).await?;
+            } else if fs.exists(Path::new(instructions)).await.unwrap_or(false) {
+                // Treat as file path
+                let content = fs.read_file(Path::new(instructions)).await?;
+                fs.write_file(dest_path, &content).await?;
+            } else {
+                // Treat as content (short single line)
+                fs.write_file(dest_path, instructions).await?;
+            }
         } else if let Some(ref desc) = self.description {
             // Check if a template exists for this task type
             let template_path = repo_root
@@ -597,6 +639,126 @@ mod tests {
         let calls = mock_git_ops.get_get_current_commit_calls();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0], current_dir.to_string_lossy().to_string());
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_from_existing() {
+        use crate::context::git_operations::tests::MockGitOperations;
+
+        let current_dir = std::env::current_dir().unwrap();
+        let instructions_content = "# Task Instructions\n\nOriginal instructions content";
+        let instructions_path = current_dir.join("test-instructions.md");
+
+        let fs = Arc::new(
+            MockFileSystem::new()
+                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string())
+                .with_file(
+                    &instructions_path.to_string_lossy().to_string(),
+                    instructions_content,
+                ),
+        );
+
+        let git_ops = Arc::new(MockGitOperations::new());
+
+        let ctx = AppContext::builder()
+            .with_file_system(fs.clone())
+            .with_git_operations(git_ops.clone())
+            .build();
+
+        // Create an existing task
+        let existing_task = Task::new_with_id(
+            "2024-01-01-1200-existing-task".to_string(),
+            current_dir.clone(),
+            "existing-task".to_string(),
+            "generic".to_string(),
+            Some("Existing task description".to_string()),
+            Some(instructions_path.to_string_lossy().to_string()),
+            Some("claude-code".to_string()),
+            45,
+        );
+
+        // Create a builder from the existing task
+        let builder = TaskBuilder::from_existing(&existing_task, &ctx)
+            .await
+            .unwrap();
+
+        // Build a new task from it
+        let new_task = builder
+            .name("retry-task".to_string())
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        // Verify the new task has the same properties
+        assert_eq!(new_task.name, "retry-task");
+        assert_eq!(new_task.task_type, "generic");
+        assert_eq!(new_task.agent, Some("claude-code".to_string()));
+        assert_eq!(new_task.timeout, 45);
+        assert!(new_task.instructions_file.is_some());
+
+        // Verify the instructions content was copied
+        let new_instructions_path = new_task.instructions_file.as_ref().unwrap();
+        let copied_content = fs
+            .read_file(Path::new(new_instructions_path))
+            .await
+            .unwrap();
+        assert_eq!(copied_content, instructions_content);
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_from_existing_missing_instructions() {
+        use crate::context::git_operations::tests::MockGitOperations;
+
+        let current_dir = std::env::current_dir().unwrap();
+        let instructions_path = current_dir.join("missing-instructions.md");
+
+        let fs = Arc::new(
+            MockFileSystem::new()
+                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string()),
+        );
+
+        let git_ops = Arc::new(MockGitOperations::new());
+
+        let ctx = AppContext::builder()
+            .with_file_system(fs.clone())
+            .with_git_operations(git_ops.clone())
+            .build();
+
+        // Create an existing task with missing instructions file
+        let existing_task = Task::new_with_id(
+            "2024-01-01-1200-existing-task".to_string(),
+            current_dir.clone(),
+            "existing-task".to_string(),
+            "generic".to_string(),
+            Some("Existing task description".to_string()),
+            Some(instructions_path.to_string_lossy().to_string()),
+            None,
+            30,
+        );
+
+        // Create a builder from the existing task
+        let builder = TaskBuilder::from_existing(&existing_task, &ctx)
+            .await
+            .unwrap();
+
+        // Build a new task from it
+        let new_task = builder
+            .name("retry-task".to_string())
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        // Verify the new task falls back to description
+        assert_eq!(new_task.name, "retry-task");
+        assert!(new_task.instructions_file.is_some());
+
+        // Verify the instructions content uses the description
+        let new_instructions_path = new_task.instructions_file.as_ref().unwrap();
+        let content = fs
+            .read_file(Path::new(new_instructions_path))
+            .await
+            .unwrap();
+        assert!(content.contains("Existing task description"));
     }
 
     #[tokio::test]

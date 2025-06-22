@@ -129,12 +129,20 @@ enum Commands {
     /// Manage tasks in the task list
     Tasks {
         /// Delete a specific task by ID
-        #[arg(short, long, value_name = "TASK_ID")]
+        #[arg(short, long, value_name = "TASK_ID", conflicts_with_all = ["clean", "retry"])]
         delete: Option<String>,
 
         /// Delete all completed tasks and all quick tasks
-        #[arg(short, long)]
+        #[arg(short, long, conflicts_with_all = ["delete", "retry"])]
         clean: bool,
+
+        /// Retry a task by creating a new task with the same instructions
+        #[arg(short, long, value_name = "TASK_ID", conflicts_with_all = ["delete", "clean"])]
+        retry: Option<String>,
+
+        /// Open the instructions file in $EDITOR after creation (only with --retry)
+        #[arg(short, long, requires = "retry")]
+        edit: bool,
     },
     /// Build the TSK Docker images (tsk/base and tsk/proxy)
     DockerBuild,
@@ -187,7 +195,17 @@ async fn main() {
         Commands::StopServer => Box::new(StopServerCommand),
         Commands::List => Box::new(ListCommand),
         Commands::Run { server } => Box::new(RunCommand { server }),
-        Commands::Tasks { delete, clean } => Box::new(TasksCommand { delete, clean }),
+        Commands::Tasks {
+            delete,
+            clean,
+            retry,
+            edit,
+        } => Box::new(TasksCommand {
+            delete,
+            clean,
+            retry,
+            edit,
+        }),
         Commands::DockerBuild => Box::new(DockerBuildCommand),
     };
 

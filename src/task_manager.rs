@@ -3,7 +3,7 @@ use crate::docker::DockerManager;
 use crate::git::RepoManager;
 use crate::repo_utils::find_repository_root;
 use crate::storage::XdgDirectories;
-use crate::task::{Task, TaskStatus};
+use crate::task::{Task, TaskBuilder, TaskStatus};
 use crate::task_runner::{TaskExecutionError, TaskExecutionResult, TaskRunner};
 use crate::task_storage::{get_task_storage, TaskStorage};
 use std::path::Path;
@@ -207,6 +207,59 @@ impl TaskManager {
 
         Ok(deleted_count)
     }
+
+    /// Retry a task by creating a new task with the same instructions
+    pub async fn retry_task(
+        &self,
+        task_id: &str,
+        edit_instructions: bool,
+        ctx: &AppContext,
+    ) -> Result<String, String> {
+        // Get task storage
+        let storage = match &self.task_storage {
+            Some(s) => s,
+            None => return Err("Task storage not initialized".to_string()),
+        };
+
+        // Retrieve the original task
+        let original_task = storage
+            .get_task(task_id)
+            .await
+            .map_err(|e| format!("Error getting task: {}", e))?;
+
+        let original_task = match original_task {
+            Some(task) => task,
+            None => return Err(format!("Task with ID '{}' not found", task_id)),
+        };
+
+        // Validate that the task has been executed (not Queued)
+        if original_task.status == TaskStatus::Queued {
+            return Err("Cannot retry a task that hasn't been executed yet".to_string());
+        }
+
+        // Create a new task name with format: retry-{original_name}
+        let new_task_name = format!("retry-{}", original_task.name);
+
+        // Use TaskBuilder to create the new task, leveraging from_existing
+        let mut builder = TaskBuilder::from_existing(&original_task, ctx)
+            .await
+            .map_err(|e| format!("Failed to create task from existing: {}", e))?;
+
+        builder = builder.name(new_task_name).edit(edit_instructions);
+
+        let new_task = builder
+            .build(ctx)
+            .await
+            .map_err(|e| format!("Failed to build retry task: {}", e))?;
+
+        // Store the new task
+        storage
+            .add_task(new_task.clone())
+            .await
+            .map_err(|e| format!("Error adding retry task to storage: {}", e))?;
+
+        Ok(new_task.id)
+    }
 }
 
 #[cfg(test)]
@@ -392,6 +445,258 @@ mod tests {
             !completed_exists,
             "Completed task directory should be deleted"
         );
+    }
+
+    #[tokio::test]
+    async fn test_retry_task() {
+        use crate::context::file_system::tests::MockFileSystem;
+        use crate::context::git_operations::tests::MockGitOperations;
+        use std::env;
+
+        // Set up XDG environment variables for testing
+        let temp_dir = std::env::temp_dir();
+        let test_data_dir = temp_dir.join("tsk-test-data-retry");
+        let test_runtime_dir = temp_dir.join("tsk-test-runtime-retry");
+        env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
+        env::set_var(
+            "XDG_RUNTIME_DIR",
+            test_runtime_dir.to_string_lossy().to_string(),
+        );
+
+        // Create XdgDirectories instance
+        let xdg = Arc::new(XdgDirectories::new().unwrap());
+
+        // Create a completed task to retry
+        let repo_root = crate::repo_utils::find_repository_root(Path::new(".")).unwrap();
+        let repo_hash = crate::storage::get_repo_hash(&repo_root);
+        let task_id = "2024-01-01-1200-original-task".to_string();
+        let mut completed_task = Task::new_with_id(
+            task_id.clone(),
+            repo_root.clone(),
+            "original-task".to_string(),
+            "generic".to_string(),
+            Some("Original task description".to_string()),
+            None,
+            Some("claude-code".to_string()),
+            45,
+        );
+        completed_task.status = TaskStatus::Complete;
+        completed_task.instructions_file = Some(format!(
+            "{}/tasks/{}/{}/instructions.md",
+            test_data_dir.to_string_lossy(),
+            repo_hash,
+            task_id
+        ));
+
+        // Get XDG paths
+        let task_dir_path = xdg.task_dir(&task_id, &repo_hash);
+        let instructions_path = task_dir_path.join("instructions.md");
+        let tasks_json_path = xdg.tasks_file();
+        let data_dir = xdg.data_dir().to_path_buf();
+        let tasks_dir = data_dir.join("tasks");
+
+        // Create tasks.json with the completed task
+        let tasks_json = format!(
+            r#"[{{"id":"{}","repo_root":"{}","name":"original-task","task_type":"generic","description":"Original task description","instructions_file":"{}","agent":"claude-code","timeout":45,"status":"COMPLETE","created_at":"2024-01-01T12:00:00Z","started_at":"2024-01-01T12:30:00Z","completed_at":"2024-01-01T13:00:00Z","branch_name":null,"error_message":null,"source_commit":null}}]"#,
+            task_id,
+            repo_root.to_string_lossy(),
+            instructions_path.to_string_lossy()
+        );
+
+        // Create mock file system with necessary structure
+        let git_dir = repo_root.join(".git");
+        let instructions_content =
+            "# Original Task Instructions\n\nThis is the original task content.";
+
+        let fs = Arc::new(
+            MockFileSystem::new()
+                .with_dir(&git_dir.to_string_lossy().to_string())
+                .with_dir(&data_dir.to_string_lossy().to_string())
+                .with_dir(&tasks_dir.to_string_lossy().to_string())
+                .with_dir(&task_dir_path.to_string_lossy().to_string())
+                .with_file(
+                    &instructions_path.to_string_lossy().to_string(),
+                    instructions_content,
+                )
+                .with_file(&tasks_json_path.to_string_lossy().to_string(), &tasks_json),
+        );
+
+        let docker_client = Arc::new(FixedResponseDockerClient::default());
+        let git_ops = Arc::new(MockGitOperations::new());
+
+        let ctx = AppContext::builder()
+            .with_docker_client(docker_client)
+            .with_file_system(fs.clone())
+            .with_git_operations(git_ops)
+            .with_xdg_directories(xdg.clone())
+            .build();
+
+        let task_manager = TaskManager::with_storage(&ctx).unwrap();
+
+        // Retry the task
+        let result = task_manager.retry_task(&task_id, false, &ctx).await;
+        assert!(result.is_ok(), "Failed to retry task: {:?}", result);
+        let new_task_id = result.unwrap();
+
+        // Verify new task ID format
+        assert!(new_task_id.contains("retry-original-task"));
+
+        // Verify task was added to storage
+        let storage = get_task_storage(xdg.clone(), fs.clone());
+        let new_task = storage.get_task(&new_task_id).await.unwrap();
+        assert!(new_task.is_some());
+        let new_task = new_task.unwrap();
+        assert_eq!(new_task.name, "retry-original-task");
+        assert_eq!(new_task.task_type, "generic");
+        assert_eq!(new_task.agent, Some("claude-code".to_string()));
+        assert_eq!(new_task.timeout, 45);
+        assert_eq!(new_task.status, TaskStatus::Queued);
+
+        // Verify instructions file was created
+        let new_task_dir = xdg.task_dir(&new_task_id, &repo_hash);
+        let new_instructions_path = new_task_dir.join("instructions.md");
+        assert!(fs.exists(&new_instructions_path).await.unwrap());
+
+        // Verify instructions content was copied
+        let copied_content = fs.read_file(&new_instructions_path).await.unwrap();
+        assert_eq!(copied_content, instructions_content);
+    }
+
+    #[tokio::test]
+    async fn test_retry_task_not_found() {
+        use crate::context::file_system::tests::MockFileSystem;
+        use crate::context::git_operations::tests::MockGitOperations;
+        use std::env;
+
+        // Set up XDG environment variables for testing
+        let temp_dir = std::env::temp_dir();
+        let test_data_dir = temp_dir.join("tsk-test-data-retry-notfound");
+        let test_runtime_dir = temp_dir.join("tsk-test-runtime-retry-notfound");
+        env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
+        env::set_var(
+            "XDG_RUNTIME_DIR",
+            test_runtime_dir.to_string_lossy().to_string(),
+        );
+
+        // Create XdgDirectories instance
+        let xdg = Arc::new(XdgDirectories::new().unwrap());
+
+        // Get XDG paths
+        let repo_root = crate::repo_utils::find_repository_root(Path::new(".")).unwrap();
+        let tasks_json_path = xdg.tasks_file();
+        let data_dir = xdg.data_dir().to_path_buf();
+        let tasks_dir = data_dir.join("tasks");
+
+        // Create empty tasks.json
+        let tasks_json = "[]";
+
+        // Create mock file system with necessary structure
+        let git_dir = repo_root.join(".git");
+
+        let fs = Arc::new(
+            MockFileSystem::new()
+                .with_dir(&git_dir.to_string_lossy().to_string())
+                .with_dir(&data_dir.to_string_lossy().to_string())
+                .with_dir(&tasks_dir.to_string_lossy().to_string())
+                .with_file(&tasks_json_path.to_string_lossy().to_string(), tasks_json),
+        );
+
+        let docker_client = Arc::new(FixedResponseDockerClient::default());
+        let git_ops = Arc::new(MockGitOperations::new());
+
+        let ctx = AppContext::builder()
+            .with_docker_client(docker_client)
+            .with_file_system(fs.clone())
+            .with_git_operations(git_ops)
+            .with_xdg_directories(xdg)
+            .build();
+
+        let task_manager = TaskManager::with_storage(&ctx).unwrap();
+
+        // Try to retry a non-existent task
+        let result = task_manager
+            .retry_task("non-existent-task", false, &ctx)
+            .await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("Task with ID 'non-existent-task' not found"));
+    }
+
+    #[tokio::test]
+    async fn test_retry_task_queued_error() {
+        use crate::context::file_system::tests::MockFileSystem;
+        use crate::context::git_operations::tests::MockGitOperations;
+        use std::env;
+
+        // Set up XDG environment variables for testing
+        let temp_dir = std::env::temp_dir();
+        let test_data_dir = temp_dir.join("tsk-test-data-retry-queued");
+        let test_runtime_dir = temp_dir.join("tsk-test-runtime-retry-queued");
+        env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
+        env::set_var(
+            "XDG_RUNTIME_DIR",
+            test_runtime_dir.to_string_lossy().to_string(),
+        );
+
+        // Create XdgDirectories instance
+        let xdg = Arc::new(XdgDirectories::new().unwrap());
+
+        // Create a queued task (should not be retryable)
+        let repo_root = crate::repo_utils::find_repository_root(Path::new(".")).unwrap();
+        let task_id = "2024-01-01-1200-queued-task".to_string();
+        let _queued_task = Task::new_with_id(
+            task_id.clone(),
+            repo_root.clone(),
+            "queued-task".to_string(),
+            "feature".to_string(),
+            Some("Queued task description".to_string()),
+            None,
+            None,
+            30,
+        );
+
+        // Get XDG paths
+        let tasks_json_path = xdg.tasks_file();
+        let data_dir = xdg.data_dir().to_path_buf();
+        let tasks_dir = data_dir.join("tasks");
+
+        // Create tasks.json with the queued task
+        let tasks_json = format!(
+            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feature","description":"Queued task description","instructions_file":null,"agent":null,"timeout":30,"status":"QUEUED","created_at":"2024-01-01T12:00:00Z","started_at":null,"completed_at":null,"branch_name":null,"error_message":null,"source_commit":null}}]"#,
+            task_id,
+            repo_root.to_string_lossy()
+        );
+
+        // Create mock file system with necessary structure
+        let git_dir = repo_root.join(".git");
+
+        let fs = Arc::new(
+            MockFileSystem::new()
+                .with_dir(&git_dir.to_string_lossy().to_string())
+                .with_dir(&data_dir.to_string_lossy().to_string())
+                .with_dir(&tasks_dir.to_string_lossy().to_string())
+                .with_file(&tasks_json_path.to_string_lossy().to_string(), &tasks_json),
+        );
+
+        let docker_client = Arc::new(FixedResponseDockerClient::default());
+        let git_ops = Arc::new(MockGitOperations::new());
+
+        let ctx = AppContext::builder()
+            .with_docker_client(docker_client)
+            .with_file_system(fs.clone())
+            .with_git_operations(git_ops)
+            .with_xdg_directories(xdg)
+            .build();
+
+        let task_manager = TaskManager::with_storage(&ctx).unwrap();
+
+        // Try to retry a queued task
+        let result = task_manager.retry_task(&task_id, false, &ctx).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("Cannot retry a task that hasn't been executed yet"));
     }
 
     #[tokio::test]
