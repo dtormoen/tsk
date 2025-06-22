@@ -5,7 +5,7 @@ use crate::task::TaskBuilder;
 use crate::task_manager::TaskManager;
 use async_trait::async_trait;
 use std::error::Error;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub struct QuickCommand {
     pub name: String,
@@ -32,7 +32,7 @@ impl Command for QuickCommand {
             .name(self.name.clone())
             .task_type(self.r#type.clone())
             .description(self.description.clone())
-            .instructions(self.instructions.clone())
+            .instructions_file(self.instructions.as_ref().map(PathBuf::from))
             .edit(self.edit)
             .agent(self.agent.clone())
             .timeout(self.timeout)
