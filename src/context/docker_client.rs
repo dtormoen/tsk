@@ -49,7 +49,17 @@ impl DefaultDockerClient {
     pub fn new() -> Self {
         match Docker::connect_with_local_defaults() {
             Ok(docker) => Self { docker },
-            Err(e) => panic!("Failed to connect to Docker: {}", e),
+            Err(e) => panic!(
+                "Failed to connect to Docker: {}\n\n\
+                Please ensure Docker is installed and running:\n\
+                  - On macOS: Open Docker Desktop application\n\
+                  - On Linux: Run 'sudo systemctl start docker' or 'sudo service docker start'\n\
+                  - Check Docker status with: 'docker ps'\n\n\
+                If Docker is running, check permissions:\n\
+                  - On Linux: Ensure your user is in the docker group: 'sudo usermod -aG docker $USER'\n\
+                  - Then log out and back in for group changes to take effect",
+                e
+            ),
         }
     }
 }
