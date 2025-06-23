@@ -243,7 +243,7 @@ impl TaskBuilder {
             // Create temporary file in repository root for editing
             let temp_filename = format!(".tsk-edit-{}-instructions.md", task_dir_name);
             let temp_path = repo_root.join(&temp_filename);
-            self.write_instructions_content(&temp_path, &task_type, &repo_root, ctx)
+            self.write_instructions_content(&temp_path, &task_type, ctx)
                 .await?;
 
             // Open editor with the temporary file
@@ -260,7 +260,7 @@ impl TaskBuilder {
         } else {
             // Create instructions file directly in task directory
             let dest_path = task_dir.join("instructions.md");
-            self.write_instructions_content(&dest_path, &task_type, &repo_root, ctx)
+            self.write_instructions_content(&dest_path, &task_type, ctx)
                 .await?
         };
 
@@ -296,7 +296,6 @@ impl TaskBuilder {
         &self,
         dest_path: &Path,
         task_type: &str,
-        _repo_root: &Path,
         ctx: &AppContext,
     ) -> Result<String, Box<dyn Error>> {
         let fs = ctx.file_system();
@@ -573,7 +572,7 @@ mod tests {
         // Test the unified write method
         let temp_path = Path::new(".tsk-edit-2024-01-01-1200-test-task-instructions.md");
         let result_path = task_builder
-            .write_instructions_content(temp_path, "generic", &current_dir, &ctx)
+            .write_instructions_content(temp_path, "generic", &ctx)
             .await
             .unwrap();
 
@@ -609,7 +608,7 @@ mod tests {
 
         let temp_path = Path::new(".tsk-edit-2024-01-01-1200-test-feature-instructions.md");
         task_builder
-            .write_instructions_content(temp_path, "feature", &current_dir, &ctx)
+            .write_instructions_content(temp_path, "feature", &ctx)
             .await
             .unwrap();
 
