@@ -1,7 +1,6 @@
 # Rust tech stack layer
 
-# Switch to agent user to install Rust and just
-USER agent
+# Already running as agent user from base layer
 WORKDIR /home/agent
 
 # Install Rust for the agent user

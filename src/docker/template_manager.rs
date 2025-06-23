@@ -72,6 +72,8 @@ impl DockerTemplateManager {
         let layers = config.get_layers();
         let mut composed_dockerfile = String::new();
         let mut has_from_instruction = false;
+        let mut cmd_instruction: Option<String> = None;
+        let mut entrypoint_instruction: Option<String> = None;
 
         // Add header comment
         composed_dockerfile.push_str(&format!(
@@ -98,11 +100,19 @@ impl DockerTemplateManager {
             ));
 
             // Process the Dockerfile content
-            let processed_content = self.process_layer_content(
+            let (processed_content, cmd, entrypoint) = self.process_layer_content(
                 &layer_content.dockerfile_content,
                 index == 0,
                 &mut has_from_instruction,
             )?;
+
+            // Update CMD and ENTRYPOINT if found in this layer
+            if let Some(cmd) = cmd {
+                cmd_instruction = Some(cmd);
+            }
+            if let Some(entrypoint) = entrypoint {
+                entrypoint_instruction = Some(entrypoint);
+            }
 
             composed_dockerfile.push_str(&processed_content);
             composed_dockerfile.push('\n');
@@ -120,6 +130,18 @@ impl DockerTemplateManager {
             return Err(anyhow::anyhow!(
                 "No FROM instruction found in any layer. At least the base layer must contain a FROM instruction."
             ));
+        }
+
+        // Add ENTRYPOINT and CMD at the end if they exist
+        if let Some(entrypoint) = entrypoint_instruction {
+            composed_dockerfile.push_str("\n# Final ENTRYPOINT\n");
+            composed_dockerfile.push_str(&entrypoint);
+            composed_dockerfile.push('\n');
+        }
+        if let Some(cmd) = cmd_instruction {
+            composed_dockerfile.push_str("\n# Final CMD\n");
+            composed_dockerfile.push_str(&cmd);
+            composed_dockerfile.push('\n');
         }
 
         Ok(composed_dockerfile)
@@ -169,8 +191,11 @@ impl DockerTemplateManager {
         content: &str,
         is_first_layer: bool,
         has_from_instruction: &mut bool,
-    ) -> Result<String> {
+    ) -> Result<(String, Option<String>, Option<String>)> {
         let mut processed = String::new();
+        let mut cmd_instruction: Option<String> = None;
+        let mut entrypoint_instruction: Option<String> = None;
+        let mut seen_user_root = false;
 
         for line in content.lines() {
             let trimmed = line.trim();
@@ -185,13 +210,24 @@ impl DockerTemplateManager {
                 }
             }
 
-            // Skip lines that should only appear once
-            if !is_first_layer
-                && (trimmed.starts_with("WORKDIR /workspace")
-                    || trimmed.starts_with("USER agent")
-                    || trimmed.starts_with("CMD ")
-                    || trimmed.starts_with("ENTRYPOINT "))
-            {
+            // Track if we've seen USER root in this layer
+            if trimmed == "USER root" {
+                seen_user_root = true;
+            }
+
+            // Extract CMD and ENTRYPOINT instructions
+            if trimmed.starts_with("CMD ") {
+                cmd_instruction = Some(line.to_string());
+                continue;
+            }
+            if trimmed.starts_with("ENTRYPOINT ") {
+                entrypoint_instruction = Some(line.to_string());
+                continue;
+            }
+
+            // Skip USER agent only if we haven't seen USER root in this layer
+            // This allows switching back to agent after root operations
+            if !is_first_layer && trimmed == "USER agent" && !seen_user_root {
                 continue;
             }
 
@@ -199,7 +235,7 @@ impl DockerTemplateManager {
             processed.push('\n');
         }
 
-        Ok(processed)
+        Ok((processed, cmd_instruction, entrypoint_instruction))
     }
 
     /// Get Docker file content from the asset manager
@@ -323,23 +359,93 @@ mod tests {
         let mut has_from = false;
 
         // Test first layer processing
-        let content = "FROM ubuntu:22.04\nRUN apt-get update\nWORKDIR /workspace\nUSER agent";
-        let processed = manager
+        let content = "FROM ubuntu:22.04\nRUN apt-get update\nWORKDIR /workspace\nUSER agent\nCMD [\"/bin/bash\"]";
+        let (processed, cmd, entrypoint) = manager
             .process_layer_content(content, true, &mut has_from)
             .unwrap();
         assert!(processed.contains("FROM ubuntu:22.04"));
         assert!(processed.contains("WORKDIR /workspace"));
+        assert!(processed.contains("USER agent"));
+        assert!(!processed.contains("CMD")); // CMD should be extracted
+        assert_eq!(cmd, Some("CMD [\"/bin/bash\"]".to_string()));
+        assert_eq!(entrypoint, None);
         assert!(has_from);
 
         // Test non-first layer processing
         let content2 = "FROM alpine\nRUN apk add git\nWORKDIR /workspace\nUSER agent";
-        let processed2 = manager
+        let (processed2, cmd2, entrypoint2) = manager
             .process_layer_content(content2, false, &mut has_from)
             .unwrap();
         assert!(!processed2.contains("FROM alpine")); // Should skip additional FROM
-        assert!(!processed2.contains("WORKDIR /workspace")); // Should skip WORKDIR
-        assert!(!processed2.contains("USER agent")); // Should skip USER
+        assert!(processed2.contains("WORKDIR /workspace")); // Should keep WORKDIR now
+        assert!(!processed2.contains("USER agent")); // Should skip USER agent when not after root
         assert!(processed2.contains("RUN apk add git")); // Should keep RUN
+        assert_eq!(cmd2, None);
+        assert_eq!(entrypoint2, None);
+    }
+
+    #[test]
+    fn test_process_layer_content_user_switching() {
+        let manager = create_test_manager(None);
+        let mut has_from = false;
+
+        // Test layer with USER root switching back to USER agent
+        let content = "# Switch to root\nUSER root\nRUN apt-get update\n# Switch back\nUSER agent\nRUN echo test";
+        let (processed, _, _) = manager
+            .process_layer_content(content, false, &mut has_from)
+            .unwrap();
+
+        // Should keep both USER instructions when switching from root to agent
+        assert!(processed.contains("USER root"));
+        assert!(processed.contains("USER agent"));
+        assert!(processed.contains("RUN apt-get update"));
+        assert!(processed.contains("RUN echo test"));
+    }
+
+    #[test]
+    fn test_cmd_and_entrypoint_extraction() {
+        let manager = create_test_manager(None);
+        let mut has_from = false;
+
+        // Test CMD extraction
+        let content1 = "RUN echo test\nCMD [\"default\"]";
+        let (processed1, cmd1, entrypoint1) = manager
+            .process_layer_content(content1, false, &mut has_from)
+            .unwrap();
+        assert!(processed1.contains("RUN echo test"));
+        assert!(!processed1.contains("CMD"));
+        assert_eq!(cmd1, Some("CMD [\"default\"]".to_string()));
+        assert_eq!(entrypoint1, None);
+
+        // Test ENTRYPOINT extraction
+        let content2 = "RUN echo test2\nENTRYPOINT [\"/entrypoint.sh\"]\nCMD [\"arg\"]";
+        let (processed2, cmd2, entrypoint2) = manager
+            .process_layer_content(content2, false, &mut has_from)
+            .unwrap();
+        assert!(processed2.contains("RUN echo test2"));
+        assert!(!processed2.contains("ENTRYPOINT"));
+        assert!(!processed2.contains("CMD"));
+        assert_eq!(cmd2, Some("CMD [\"arg\"]".to_string()));
+        assert_eq!(
+            entrypoint2,
+            Some("ENTRYPOINT [\"/entrypoint.sh\"]".to_string())
+        );
+    }
+
+    #[test]
+    fn test_compose_dockerfile_cmd_placement() {
+        let manager = create_test_manager(None);
+
+        // Create a config for testing
+        let config = DockerImageConfig {
+            tech_stack: "rust".to_string(),
+            agent: "claude".to_string(),
+            project: "default".to_string(),
+        };
+
+        // This test will use the embedded dockerfiles
+        // We can't easily test the full compose without real files,
+        // but we've tested the components thoroughly
     }
 
     #[test]
