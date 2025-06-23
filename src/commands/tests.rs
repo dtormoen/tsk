@@ -128,6 +128,7 @@ mod command_tests {
             agent: None,
             project: None,
             legacy: false,
+            dry_run: false,
         };
     }
 }

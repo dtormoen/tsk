@@ -255,6 +255,38 @@ tsk stop-server
 
 This command sends a shutdown signal to the running TSK server and waits for it to gracefully stop.
 
+### `tsk docker-build`
+Builds TSK Docker images using the templating system.
+
+```bash
+tsk docker-build [OPTIONS]
+```
+
+**Options:**
+- `--no-cache`: Build without using Docker's cache
+- `--tech-stack <STACK>`: Technology stack (e.g., rust, python, node)
+- `--agent <AGENT>`: Agent (e.g., claude, aider)
+- `--project <PROJECT>`: Project name
+- `--legacy`: Build legacy tsk/base and tsk/proxy images
+- `--dry-run`: Print the resolved Dockerfile without building
+
+**Examples:**
+```bash
+# Build default images
+tsk docker-build
+
+# Build with specific configuration
+tsk docker-build --tech-stack rust --agent claude --project web-api
+
+# Preview the Dockerfile that would be built
+tsk docker-build --tech-stack python --dry-run
+
+# Build legacy images for backward compatibility
+tsk docker-build --legacy
+```
+
+The docker-build command uses a multi-layer templating system to compose Docker images from modular layers (base, tech-stack, agent, project).
+
 ## Architecture
 
 ### Centralized Storage

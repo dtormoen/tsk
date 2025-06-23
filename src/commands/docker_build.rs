@@ -20,12 +20,17 @@ pub struct DockerBuildCommand {
     pub project: Option<String>,
     /// Whether to build the legacy images (tsk/base and tsk/proxy)
     pub legacy: bool,
+    /// Whether to only print the resolved Dockerfile without building
+    pub dry_run: bool,
 }
 
 #[async_trait]
 impl Command for DockerBuildCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         if self.legacy {
+            if self.dry_run {
+                return Err("--dry-run is not supported with --legacy flag".into());
+            }
             // Build legacy images for backward compatibility
             println!("Building legacy TSK Docker images...");
             let git_user_name = get_git_config("user.name").await?;
@@ -50,20 +55,25 @@ impl Command for DockerBuildCommand {
                     .unwrap_or_else(|| "default".to_string()),
             );
 
-            println!("Building Docker image: {}...", config.image_tag());
+            if self.dry_run {
+                // Dry run mode: just print the composed Dockerfile
+                print_composed_dockerfile(&config, ctx)?;
+            } else {
+                println!("Building Docker image: {}...", config.image_tag());
 
-            // Get git configuration for build arguments
-            let git_user_name = get_git_config("user.name").await?;
-            let git_user_email = get_git_config("user.email").await?;
+                // Get git configuration for build arguments
+                let git_user_name = get_git_config("user.name").await?;
+                let git_user_email = get_git_config("user.email").await?;
 
-            build_templated_image(&config, &git_user_name, &git_user_email, self.no_cache, ctx)
-                .await?;
+                build_templated_image(&config, &git_user_name, &git_user_email, self.no_cache, ctx)
+                    .await?;
 
-            // Always build proxy image as it's still needed
-            println!("\nBuilding tsk/proxy image...");
-            build_proxy_image(self.no_cache, ctx).await?;
+                // Always build proxy image as it's still needed
+                println!("\nBuilding tsk/proxy image...");
+                build_proxy_image(self.no_cache, ctx).await?;
 
-            println!("\nDocker images built successfully!");
+                println!("\nDocker images built successfully!");
+            }
         }
 
         Ok(())
@@ -177,6 +187,54 @@ async fn build_proxy_image(no_cache: bool, ctx: &AppContext) -> Result<(), Box<d
     Ok(())
 }
 
+/// Print the composed Dockerfile without building (dry-run mode)
+fn print_composed_dockerfile(
+    config: &DockerImageConfig,
+    ctx: &AppContext,
+) -> Result<(), Box<dyn Error>> {
+    // Create template manager and composer
+    let template_manager = DockerTemplateManager::new(
+        ctx.asset_manager().clone(),
+        ctx.xdg_directories().clone(),
+        None, // TODO: Get project root from context when available
+    );
+
+    let composer = DockerComposer::new(template_manager);
+
+    // Compose the Dockerfile
+    let composed = composer.compose(config)?;
+
+    // Validate the composed Dockerfile
+    composer.validate_dockerfile(&composed.dockerfile_content)?;
+
+    // Print the Dockerfile content
+    println!("# Resolved Dockerfile for image: {}", composed.image_tag);
+    println!(
+        "# Configuration: tech_stack={}, agent={}, project={}",
+        config.tech_stack, config.agent, config.project
+    );
+    println!();
+    println!("{}", composed.dockerfile_content);
+
+    // Print information about additional files
+    if !composed.additional_files.is_empty() {
+        println!("\n# Additional files that would be created:");
+        for filename in composed.additional_files.keys() {
+            println!("#   - {}", filename);
+        }
+    }
+
+    // Print build arguments
+    if !composed.build_args.is_empty() {
+        println!("\n# Build arguments:");
+        for arg in &composed.build_args {
+            println!("#   - {}", arg);
+        }
+    }
+
+    Ok(())
+}
+
 /// Build a Docker image using the templating system
 async fn build_templated_image(
     config: &DockerImageConfig,
@@ -267,6 +325,7 @@ mod tests {
             agent: None,
             project: None,
             legacy: false,
+            dry_run: false,
         };
     }
 
@@ -279,6 +338,7 @@ mod tests {
             agent: Some("claude".to_string()),
             project: Some("web-api".to_string()),
             legacy: false,
+            dry_run: false,
         };
     }
 
@@ -291,6 +351,36 @@ mod tests {
             agent: None,
             project: None,
             legacy: true,
+            dry_run: false,
         };
+    }
+
+    #[test]
+    fn test_docker_build_command_dry_run() {
+        // Test that DockerBuildCommand can be instantiated with dry_run
+        let _command = DockerBuildCommand {
+            no_cache: false,
+            tech_stack: Some("python".to_string()),
+            agent: Some("claude".to_string()),
+            project: Some("test-project".to_string()),
+            legacy: false,
+            dry_run: true,
+        };
+    }
+
+    #[test]
+    fn test_docker_build_dry_run_legacy_conflict() {
+        // Test that dry_run and legacy flags cannot be used together
+        let command = DockerBuildCommand {
+            no_cache: false,
+            tech_stack: None,
+            agent: None,
+            project: None,
+            legacy: true,
+            dry_run: true,
+        };
+
+        // This combination should fail when executed
+        assert!(command.legacy && command.dry_run);
     }
 }

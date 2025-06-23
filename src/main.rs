@@ -153,6 +153,10 @@ enum Commands {
         /// Build legacy tsk/base and tsk/proxy images
         #[arg(long)]
         legacy: bool,
+
+        /// Print the resolved Dockerfile without building
+        #[arg(long)]
+        dry_run: bool,
     },
     /// List available task templates and their sources
     Templates,
@@ -230,12 +234,14 @@ async fn main() {
             agent,
             project,
             legacy,
+            dry_run,
         } => Box::new(DockerBuildCommand {
             no_cache,
             tech_stack,
             agent,
             project,
             legacy,
+            dry_run,
         }),
         Commands::Templates => Box::new(TemplatesCommand),
     };
