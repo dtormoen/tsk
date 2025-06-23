@@ -23,7 +23,7 @@ impl Command for DockerBuildCommand {
         let image_manager = ctx.docker_image_manager();
 
         let tech_stack = self.tech_stack.as_deref().unwrap_or("default");
-        let agent = self.agent.as_deref().unwrap_or("claude");
+        let agent = self.agent.as_deref().unwrap_or("claude-code");
         let project = self.project.as_deref();
 
         if self.dry_run {

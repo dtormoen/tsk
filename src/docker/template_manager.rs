@@ -341,7 +341,7 @@ mod tests {
     fn test_docker_image_config_layers() {
         let config = DockerImageConfig::new(
             "rust".to_string(),
-            "claude".to_string(),
+            "claude-code".to_string(),
             "web-api".to_string(),
         );
 
@@ -349,7 +349,7 @@ mod tests {
         assert_eq!(layers.len(), 4);
         assert_eq!(layers[0].name, "base");
         assert_eq!(layers[1].name, "rust");
-        assert_eq!(layers[2].name, "claude");
+        assert_eq!(layers[2].name, "claude-code");
         assert_eq!(layers[3].name, "web-api");
     }
 
@@ -467,10 +467,10 @@ mod tests {
 
         assert_eq!(
             manager.extract_layer_name(
-                "dockerfiles/agent/claude/Dockerfile",
+                "dockerfiles/agent/claude-code/Dockerfile",
                 &DockerLayerType::Agent
             ),
-            Some("claude".to_string())
+            Some("claude-code".to_string())
         );
 
         assert_eq!(

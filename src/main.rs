@@ -142,7 +142,7 @@ enum Commands {
         #[arg(long)]
         tech_stack: Option<String>,
 
-        /// Agent (e.g., claude, aider)
+        /// Agent (e.g., claude-code, aider)
         #[arg(long)]
         agent: Option<String>,
 

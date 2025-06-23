@@ -56,11 +56,8 @@ impl DockerImageManager {
     ) -> Result<DockerImage> {
         let project = project.unwrap_or("default");
 
-        // Map agent names to dockerfile directories
-        let dockerfile_agent = match agent {
-            "claude-code" => "claude",
-            _ => agent,
-        };
+        // Use agent name directly for dockerfile directories
+        let dockerfile_agent = agent;
 
         // Create config with the requested layers
         let config = DockerImageConfig::new(
@@ -185,11 +182,8 @@ impl DockerImageManager {
     ) -> Result<DockerImage> {
         let project = project.unwrap_or("default");
 
-        // Map agent names to dockerfile directories
-        let dockerfile_agent = match agent {
-            "claude-code" => "claude",
-            _ => agent,
-        };
+        // Use agent name directly for dockerfile directories
+        let dockerfile_agent = agent;
 
         // Create configuration
         let config = DockerImageConfig::new(
@@ -457,7 +451,7 @@ mod tests {
         let manager = create_test_manager();
 
         // Test with non-existent tech stack (should fail)
-        let result = manager.get_image("non-existent-stack", "claude", Some("default"));
+        let result = manager.get_image("non-existent-stack", "claude-code", Some("default"));
         assert!(result.is_err());
 
         let err = result.unwrap_err();
