@@ -8,6 +8,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 pub mod embedded;
+pub mod filesystem;
+pub mod layered;
 pub mod utils;
 
 #[cfg(test)]

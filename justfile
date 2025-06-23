@@ -5,7 +5,7 @@ install:
     cargo install --path .
 
 test:
-    cargo test -- --test-threads=1
+    cargo test
 
 format:
     cargo fmt

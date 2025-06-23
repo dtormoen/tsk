@@ -7,8 +7,9 @@ pub mod tsk_client;
 #[cfg(test)]
 mod tests;
 
-use crate::assets::AssetManager;
+use crate::assets::{layered::LayeredAssetManager, AssetManager};
 use crate::notifications::NotificationClient;
+use crate::repo_utils::find_repository_root;
 use crate::storage::XdgDirectories;
 use docker_client::DockerClient;
 use file_system::FileSystemOperations;
@@ -81,6 +82,12 @@ pub struct AppContextBuilder {
     terminal_operations: Option<Arc<dyn TerminalOperations>>,
     tsk_client: Option<Arc<dyn TskClient>>,
     xdg_directories: Option<Arc<XdgDirectories>>,
+}
+
+impl Default for AppContextBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AppContextBuilder {
@@ -165,9 +172,14 @@ impl AppContextBuilder {
         });
 
         AppContext {
-            asset_manager: self
-                .asset_manager
-                .unwrap_or_else(|| Arc::new(crate::assets::embedded::EmbeddedAssetManager::new())),
+            asset_manager: self.asset_manager.unwrap_or_else(|| {
+                // Try to find the repository root for project-level templates
+                let project_root = find_repository_root(std::path::Path::new(".")).ok();
+                Arc::new(LayeredAssetManager::new_with_standard_layers(
+                    project_root.as_deref(),
+                    &xdg_directories,
+                ))
+            }),
             docker_client: self
                 .docker_client
                 .unwrap_or_else(|| Arc::new(docker_client::DefaultDockerClient::new())),

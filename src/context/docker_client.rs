@@ -64,6 +64,12 @@ impl DefaultDockerClient {
     }
 }
 
+impl Default for DefaultDockerClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl DockerClient for DefaultDockerClient {
     #[cfg(test)]

@@ -1,39 +1,10 @@
 use clap::{Parser, Subcommand};
 
-mod commands;
-use commands::{
+use tsk::commands::{
     AddCommand, Command, DebugCommand, DockerBuildCommand, ListCommand, QuickCommand, RunCommand,
-    StopProxyCommand, StopServerCommand, TasksCommand,
+    StopProxyCommand, StopServerCommand, TasksCommand, TemplatesCommand,
 };
-
-mod assets;
-mod context;
-use context::AppContext;
-
-mod git;
-
-mod docker;
-
-mod task;
-
-mod task_storage;
-
-mod task_manager;
-
-mod task_runner;
-
-mod agent;
-
-mod repo_utils;
-
-mod notifications;
-
-mod storage;
-
-mod server;
-
-#[cfg(test)]
-mod test_utils;
+use tsk::context::AppContext;
 
 #[derive(Parser)]
 #[command(name = "tsk")]
@@ -151,6 +122,8 @@ enum Commands {
         #[arg(long)]
         no_cache: bool,
     },
+    /// List available task templates and their sources
+    Templates,
 }
 
 #[tokio::main]
@@ -212,56 +185,11 @@ async fn main() {
             edit,
         }),
         Commands::DockerBuild { no_cache } => Box::new(DockerBuildCommand { no_cache }),
+        Commands::Templates => Box::new(TemplatesCommand),
     };
 
     if let Err(e) = command.execute(&app_context).await {
         eprintln!("Error: {}", e);
         std::process::exit(1);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::fs;
-    use std::path::Path;
-    use tempfile::TempDir;
-
-    #[test]
-    fn test_template_validation() {
-        // Create a temporary directory for templates
-        let temp_dir = TempDir::new().unwrap();
-        let templates_dir = temp_dir.path().join("templates");
-        fs::create_dir_all(&templates_dir).unwrap();
-
-        // Create a test template
-        let test_template_path = templates_dir.join("test-type.md");
-        fs::write(&test_template_path, "Test template content").unwrap();
-
-        // Test that validation passes for existing template
-        let template_path = templates_dir.join("test-type.md");
-        assert!(template_path.exists());
-
-        // Test that validation fails for non-existing template
-        let missing_template_path = templates_dir.join("missing-type.md");
-        assert!(!missing_template_path.exists());
-    }
-
-    #[test]
-    fn test_generic_type_no_template_required() {
-        // The 'generic' type should not require a template
-        let templates_dir = Path::new("templates");
-        let _generic_template = templates_dir.join("generic.md");
-
-        // Even if generic.md doesn't exist, it should be allowed
-        // This is handled by the r#type != "generic" check in the code
-        assert!(true); // Placeholder assertion - in real code this would be tested via CLI
-    }
-
-    #[test]
-    fn test_task_type_default_value() {
-        // Test that the default value for task type is "generic"
-        // This is set via clap's default_value attribute
-        // In a real integration test, we would parse CLI args
-        assert!(true); // Placeholder - clap handles this via default_value
     }
 }
