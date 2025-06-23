@@ -2,7 +2,6 @@ use super::Command;
 use crate::context::AppContext;
 use async_trait::async_trait;
 use std::error::Error;
-use std::path::Path;
 use tokio::process::Command as ProcessCommand;
 
 /// Command to build the TSK Docker images (tsk/base and tsk/proxy)
@@ -13,7 +12,7 @@ pub struct DockerBuildCommand {
 
 #[async_trait]
 impl Command for DockerBuildCommand {
-    async fn execute(&self, _ctx: &AppContext) -> Result<(), Box<dyn Error>> {
+    async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         println!("Building TSK Docker images...");
 
         // Get git configuration for build arguments
@@ -22,11 +21,11 @@ impl Command for DockerBuildCommand {
 
         // Build tsk/base image
         println!("\nBuilding tsk/base image...");
-        build_base_image(&git_user_name, &git_user_email, self.no_cache).await?;
+        build_base_image(&git_user_name, &git_user_email, self.no_cache, ctx).await?;
 
         // Build tsk/proxy image
         println!("\nBuilding tsk/proxy image...");
-        build_proxy_image(self.no_cache).await?;
+        build_proxy_image(self.no_cache, ctx).await?;
 
         println!("\nDocker images built successfully!");
         Ok(())
@@ -66,16 +65,11 @@ async fn build_base_image(
     git_user_name: &str,
     git_user_email: &str,
     no_cache: bool,
+    ctx: &AppContext,
 ) -> Result<(), Box<dyn Error>> {
-    let dockerfile_path = Path::new("dockerfiles/tsk-base");
-
-    if !dockerfile_path.exists() {
-        return Err(format!(
-            "Dockerfile directory not found: {}",
-            dockerfile_path.display()
-        )
-        .into());
-    }
+    // Extract dockerfile to temporary directory
+    let dockerfile_dir =
+        crate::assets::utils::extract_dockerfile_to_temp(ctx.asset_manager().as_ref(), "tsk-base")?;
 
     let mut args = vec!["build".to_string()];
 
@@ -99,9 +93,12 @@ async fn build_base_image(
 
     let status = ProcessCommand::new("docker")
         .args(args)
-        .current_dir(dockerfile_path)
+        .current_dir(&dockerfile_dir)
         .status()
         .await?;
+
+    // Clean up the temporary directory
+    let _ = std::fs::remove_dir_all(&dockerfile_dir);
 
     if !status.success() {
         return Err("Failed to build tsk/base image".into());
@@ -111,16 +108,12 @@ async fn build_base_image(
 }
 
 /// Build the tsk/proxy Docker image
-async fn build_proxy_image(no_cache: bool) -> Result<(), Box<dyn Error>> {
-    let dockerfile_path = Path::new("dockerfiles/tsk-proxy");
-
-    if !dockerfile_path.exists() {
-        return Err(format!(
-            "Dockerfile directory not found: {}",
-            dockerfile_path.display()
-        )
-        .into());
-    }
+async fn build_proxy_image(no_cache: bool, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
+    // Extract dockerfile to temporary directory
+    let dockerfile_dir = crate::assets::utils::extract_dockerfile_to_temp(
+        ctx.asset_manager().as_ref(),
+        "tsk-proxy",
+    )?;
 
     let mut args = vec!["build".to_string()];
 
@@ -132,9 +125,12 @@ async fn build_proxy_image(no_cache: bool) -> Result<(), Box<dyn Error>> {
 
     let status = ProcessCommand::new("docker")
         .args(args)
-        .current_dir(dockerfile_path)
+        .current_dir(&dockerfile_dir)
         .status()
         .await?;
+
+    // Clean up the temporary directory
+    let _ = std::fs::remove_dir_all(&dockerfile_dir);
 
     if !status.success() {
         return Err("Failed to build tsk/proxy image".into());

@@ -220,13 +220,12 @@ impl TaskBuilder {
 
         // Validate task type
         if task_type != "generic" {
-            let template_path = repo_root
-                .join("templates")
-                .join(format!("{}.md", task_type));
-            if !ctx.file_system().exists(&template_path).await? {
+            let available_templates = ctx.asset_manager().list_templates();
+            if !available_templates.contains(&task_type.to_string()) {
                 return Err(format!(
-                    "No template found for task type '{}'. Please check the templates folder.",
-                    task_type
+                    "No template found for task type '{}'. Available templates: {}",
+                    task_type,
+                    available_templates.join(", ")
                 )
                 .into());
             }
@@ -297,7 +296,7 @@ impl TaskBuilder {
         &self,
         dest_path: &Path,
         task_type: &str,
-        repo_root: &Path,
+        _repo_root: &Path,
         ctx: &AppContext,
     ) -> Result<String, Box<dyn Error>> {
         let fs = ctx.file_system();
@@ -308,14 +307,11 @@ impl TaskBuilder {
             fs.write_file(dest_path, &content).await?;
         } else if let Some(ref desc) = self.description {
             // Check if a template exists for this task type
-            let template_path = repo_root
-                .join("templates")
-                .join(format!("{}.md", task_type));
-            let content = if fs.exists(&template_path).await? {
-                match fs.read_file(&template_path).await {
+            let content = if task_type != "generic" {
+                match ctx.asset_manager().get_template(task_type) {
                     Ok(template_content) => template_content.replace("{{DESCRIPTION}}", desc),
                     Err(e) => {
-                        eprintln!("Warning: Failed to read template file: {}", e);
+                        eprintln!("Warning: Failed to read template: {}", e);
                         desc.clone()
                     }
                 }
@@ -326,11 +322,8 @@ impl TaskBuilder {
             fs.write_file(dest_path, &content).await?;
         } else {
             // Create empty instructions file for editing
-            let template_path = repo_root
-                .join("templates")
-                .join(format!("{}.md", task_type));
-            let initial_content = if fs.exists(&template_path).await? {
-                match fs.read_file(&template_path).await {
+            let initial_content = if task_type != "generic" {
+                match ctx.asset_manager().get_template(task_type) {
                     Ok(template_content) => template_content.replace(
                         "{{DESCRIPTION}}",
                         "<!-- TODO: Add your task description here -->",
@@ -393,9 +386,56 @@ impl Default for TaskBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assets::AssetManager;
     use crate::context::file_system::{tests::MockFileSystem, FileSystemOperations};
     use crate::context::AppContext;
+    use anyhow::Result;
+    use async_trait::async_trait;
     use std::sync::Arc;
+
+    // Mock AssetManager for testing
+    struct MockAssetManager {
+        templates: std::collections::HashMap<String, String>,
+    }
+
+    impl MockAssetManager {
+        fn new() -> Self {
+            Self {
+                templates: std::collections::HashMap::new(),
+            }
+        }
+
+        fn with_template(mut self, name: &str, content: &str) -> Self {
+            self.templates.insert(name.to_string(), content.to_string());
+            self
+        }
+    }
+
+    #[async_trait]
+    impl AssetManager for MockAssetManager {
+        fn get_template(&self, template_type: &str) -> Result<String> {
+            self.templates
+                .get(template_type)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("Template '{}' not found", template_type))
+        }
+
+        fn get_dockerfile(&self, _dockerfile_name: &str) -> Result<Vec<u8>> {
+            Ok(vec![])
+        }
+
+        fn get_dockerfile_file(&self, _dockerfile_name: &str, _file_path: &str) -> Result<Vec<u8>> {
+            Ok(vec![])
+        }
+
+        fn list_templates(&self) -> Vec<String> {
+            self.templates.keys().cloned().collect()
+        }
+
+        fn list_dockerfiles(&self) -> Vec<String> {
+            vec![]
+        }
+    }
 
     #[tokio::test]
     async fn test_task_builder_basic() {
@@ -428,18 +468,18 @@ mod tests {
     async fn test_task_builder_with_template() {
         let current_dir = std::env::current_dir().unwrap();
         let template_content = "# Feature Template\n\n{{DESCRIPTION}}";
-        let template_path = current_dir.join("templates/feature.md");
         let fs = Arc::new(
             MockFileSystem::new()
-                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string())
-                .with_dir(&current_dir.join("templates").to_string_lossy().to_string())
-                .with_file(
-                    &template_path.to_string_lossy().to_string(),
-                    template_content,
-                ),
+                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string()),
         );
 
-        let ctx = AppContext::builder().with_file_system(fs.clone()).build();
+        let asset_manager =
+            Arc::new(MockAssetManager::new().with_template("feature", template_content));
+
+        let ctx = AppContext::builder()
+            .with_file_system(fs.clone())
+            .with_asset_manager(asset_manager)
+            .build();
 
         let task = TaskBuilder::new()
             .repo_root(current_dir.clone())
@@ -549,18 +589,18 @@ mod tests {
         let current_dir = std::env::current_dir().unwrap();
         let template_content = "# Feature Template\n\n{{DESCRIPTION}}";
 
-        let template_path = current_dir.join("templates/feature.md");
         let fs = Arc::new(
             MockFileSystem::new()
-                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string())
-                .with_dir(&current_dir.join("templates").to_string_lossy().to_string())
-                .with_file(
-                    &template_path.to_string_lossy().to_string(),
-                    template_content,
-                ),
+                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string()),
         );
 
-        let ctx = AppContext::builder().with_file_system(fs.clone()).build();
+        let asset_manager =
+            Arc::new(MockAssetManager::new().with_template("feature", template_content));
+
+        let ctx = AppContext::builder()
+            .with_file_system(fs.clone())
+            .with_asset_manager(asset_manager)
+            .build();
 
         let task_builder = TaskBuilder::new()
             .name("test-feature".to_string())

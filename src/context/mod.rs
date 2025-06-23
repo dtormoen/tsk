@@ -7,6 +7,7 @@ pub mod tsk_client;
 #[cfg(test)]
 mod tests;
 
+use crate::assets::AssetManager;
 use crate::notifications::NotificationClient;
 use crate::storage::XdgDirectories;
 use docker_client::DockerClient;
@@ -23,6 +24,7 @@ pub use terminal::TerminalOperations as TerminalOperationsTrait;
 
 #[derive(Clone)]
 pub struct AppContext {
+    asset_manager: Arc<dyn AssetManager>,
     docker_client: Arc<dyn DockerClient>,
     file_system: Arc<dyn FileSystemOperations>,
     git_operations: Arc<dyn GitOperations>,
@@ -35,6 +37,10 @@ pub struct AppContext {
 impl AppContext {
     pub fn builder() -> AppContextBuilder {
         AppContextBuilder::new()
+    }
+
+    pub fn asset_manager(&self) -> Arc<dyn AssetManager> {
+        Arc::clone(&self.asset_manager)
     }
 
     pub fn docker_client(&self) -> Arc<dyn DockerClient> {
@@ -67,6 +73,7 @@ impl AppContext {
 }
 
 pub struct AppContextBuilder {
+    asset_manager: Option<Arc<dyn AssetManager>>,
     docker_client: Option<Arc<dyn DockerClient>>,
     file_system: Option<Arc<dyn FileSystemOperations>>,
     git_operations: Option<Arc<dyn GitOperations>>,
@@ -79,6 +86,7 @@ pub struct AppContextBuilder {
 impl AppContextBuilder {
     pub fn new() -> Self {
         Self {
+            asset_manager: None,
             docker_client: None,
             file_system: None,
             git_operations: None,
@@ -87,6 +95,12 @@ impl AppContextBuilder {
             tsk_client: None,
             xdg_directories: None,
         }
+    }
+
+    #[allow(dead_code)]
+    pub fn with_asset_manager(mut self, asset_manager: Arc<dyn AssetManager>) -> Self {
+        self.asset_manager = Some(asset_manager);
+        self
     }
 
     #[allow(dead_code)]
@@ -151,6 +165,9 @@ impl AppContextBuilder {
         });
 
         AppContext {
+            asset_manager: self
+                .asset_manager
+                .unwrap_or_else(|| Arc::new(crate::assets::embedded::EmbeddedAssetManager::new())),
             docker_client: self
                 .docker_client
                 .unwrap_or_else(|| Arc::new(docker_client::DefaultDockerClient::new())),

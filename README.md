@@ -31,6 +31,31 @@ Think of it as having a team of engineers who work autonomously but always submi
 - Supports headless/batch execution of existing tools
 - Extensible architecture for adding new AI agents
 
+## Installation
+
+### From Source (Development)
+
+```bash
+# Clone the repository
+git clone https://github.com/dtormoen/tsk.git
+cd tsk
+
+# Build the Docker images (required)
+cargo run -- docker-build
+
+# Install TSK to your system
+cargo install --path .
+# Or use just:
+just install
+
+# TSK is now available on your PATH
+tsk --help
+```
+
+### Binary Installation
+
+Once installed, TSK is available as a standalone binary that includes all templates and dockerfiles embedded within it. You can run `tsk` from any directory without needing the source repository.
+
 ## Quick Start
 
 ```bash

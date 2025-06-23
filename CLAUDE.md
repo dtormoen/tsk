@@ -20,9 +20,11 @@ cargo clippy -- -D warnings
 
 # Justfile commands (recommended)
 just build                         # Build project
+just install                       # Install TSK binary to system
 just test                          # Run tests with proper threading
 just format                        # Format and lint code
 just precommit                     # Full CI checks (fmt, clippy, test, help)
+just docker-build                  # Build Docker images using embedded assets
 ```
 
 ## Architecture Overview

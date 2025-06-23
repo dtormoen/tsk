@@ -1,6 +1,9 @@
 build:
     cargo build
 
+install:
+    cargo install --path .
+
 test:
     cargo test -- --test-threads=1
 
@@ -16,11 +19,7 @@ precommit:
     cargo run -- --help
 
 docker-build:
-    cd dockerfiles/tsk-base && docker build \
-        --build-arg GIT_USER_NAME="$(git config --global user.name)" \
-        --build-arg GIT_USER_EMAIL="$(git config --global user.email)" \
-        -t tsk/base .
-    cd dockerfiles/tsk-proxy && docker build -t tsk/proxy .
+    cargo run -- docker-build
 
 nuke-tsk:
     rm -rf .tsk

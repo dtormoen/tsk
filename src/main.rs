@@ -6,6 +6,7 @@ use commands::{
     StopProxyCommand, StopServerCommand, TasksCommand,
 };
 
+mod assets;
 mod context;
 use context::AppContext;
 
