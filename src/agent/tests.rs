@@ -10,7 +10,6 @@ fn test_agent_provider_get_agent() {
     assert!(agent.is_ok());
     let agent = agent.unwrap();
     assert_eq!(agent.name(), "claude-code");
-    assert_eq!(agent.docker_image(), "tsk/base");
 }
 
 #[test]
@@ -43,9 +42,6 @@ fn test_agent_provider_is_valid_agent() {
 #[test]
 fn test_claude_code_agent_properties() {
     let agent = ClaudeCodeAgent::new();
-
-    // Test docker image
-    assert_eq!(agent.docker_image(), "tsk/base");
 
     // Test name
     assert_eq!(agent.name(), "claude-code");
@@ -115,55 +111,23 @@ fn test_claude_code_agent_create_log_processor() {
     let _ = log_processor.get_full_log();
 }
 
-#[test]
-fn test_claude_code_agent_docker_image_with_config() {
-    let agent = ClaudeCodeAgent::new();
-
-    // Test with both tech stack and project
-    assert_eq!(
-        agent.docker_image_with_config(Some("rust"), Some("web-api")),
-        "tsk/rust/claude-code/web-api"
-    );
-
-    // Test with only tech stack
-    assert_eq!(
-        agent.docker_image_with_config(Some("python"), None),
-        "tsk/base"
-    );
-
-    // Test with only project (should use default)
-    assert_eq!(
-        agent.docker_image_with_config(None, Some("cli-tool")),
-        "tsk/base"
-    );
-
-    // Test with neither (should use default)
-    assert_eq!(agent.docker_image_with_config(None, None), "tsk/base");
-}
-
 /// Test agent for testing purposes
 #[allow(dead_code)]
 struct TestAgent {
     name: String,
-    docker_image: String,
 }
 
 #[allow(dead_code)]
 impl TestAgent {
-    fn new(name: &str, docker_image: &str) -> Self {
+    fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
-            docker_image: docker_image.to_string(),
         }
     }
 }
 
 #[async_trait::async_trait]
 impl Agent for TestAgent {
-    fn docker_image(&self) -> &str {
-        &self.docker_image
-    }
-
     fn build_command(&self, instruction_path: &str) -> Vec<String> {
         vec!["test".to_string(), instruction_path.to_string()]
     }

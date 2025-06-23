@@ -434,10 +434,10 @@ mod tests {
 
     #[test]
     fn test_compose_dockerfile_cmd_placement() {
-        let manager = create_test_manager(None);
+        let _manager = create_test_manager(None);
 
         // Create a config for testing
-        let config = DockerImageConfig {
+        let _config = DockerImageConfig {
             tech_stack: "rust".to_string(),
             agent: "claude".to_string(),
             project: "default".to_string(),

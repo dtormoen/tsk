@@ -127,7 +127,6 @@ mod command_tests {
             tech_stack: None,
             agent: None,
             project: None,
-            legacy: false,
             dry_run: false,
         };
     }

@@ -1,6 +1,6 @@
 use crate::agent::AgentProvider;
 use crate::context::file_system::FileSystemOperations;
-use crate::docker::DockerManager;
+use crate::docker::{image_manager::DockerImageManager, DockerManager};
 use crate::git::RepoManager;
 use crate::notifications::NotificationClient;
 use crate::task::Task;
@@ -30,6 +30,7 @@ impl From<String> for TaskExecutionError {
 pub struct TaskRunner {
     repo_manager: RepoManager,
     docker_manager: DockerManager,
+    docker_image_manager: Arc<DockerImageManager>,
     file_system: Arc<dyn FileSystemOperations>,
     notification_client: Arc<dyn NotificationClient>,
 }
@@ -38,12 +39,14 @@ impl TaskRunner {
     pub fn new(
         repo_manager: RepoManager,
         docker_manager: DockerManager,
+        docker_image_manager: Arc<DockerImageManager>,
         file_system: Arc<dyn FileSystemOperations>,
         notification_client: Arc<dyn NotificationClient>,
     ) -> Self {
         Self {
             repo_manager,
             docker_manager,
+            docker_image_manager,
             file_system,
             notification_client,
         }
@@ -101,14 +104,28 @@ impl TaskRunner {
         println!("\n{}", "=".repeat(60));
 
         let output = {
-            // Get the appropriate Docker image based on task configuration
-            let docker_image =
-                agent.docker_image_with_config(task.tech_stack.as_deref(), task.project.as_deref());
+            // Ensure the Docker image exists
+            let docker_image = self
+                .docker_image_manager
+                .ensure_image(
+                    task.tech_stack.as_deref().unwrap_or("default"),
+                    agent_name,
+                    task.project.as_deref(),
+                    false,
+                )
+                .await
+                .map_err(|e| format!("Error ensuring Docker image: {}", e))?;
+
+            if docker_image.used_fallback {
+                println!(
+                    "Note: Using default project layer as project-specific layer was not found"
+                );
+            }
 
             // Use streaming version
             self.docker_manager
                 .run_task_container(
-                    &docker_image,
+                    &docker_image.tag,
                     &repo_path,
                     command.clone(),
                     Some(&instructions_file_path),
@@ -215,9 +232,20 @@ impl TaskRunner {
         // Launch Docker container
         println!("Launching Docker container with {} agent...", agent.name());
 
+        // Ensure the Docker image exists
+        let docker_image = self
+            .docker_image_manager
+            .ensure_image(
+                "default", // Default tech stack for debug
+                agent_name, None, // No project for debug
+                false,
+            )
+            .await
+            .map_err(|e| format!("Error ensuring Docker image: {}", e))?;
+
         let container_name = self
             .docker_manager
-            .create_debug_container(agent.docker_image(), &repo_path, agent.as_ref())
+            .create_debug_container(&docker_image.tag, &repo_path, agent.as_ref())
             .await?;
 
         println!("\nDocker container started successfully!");
@@ -311,10 +339,38 @@ mod tests {
         std::env::set_var("XDG_RUNTIME_DIR", "/tmp/test-xdg-runtime");
         let xdg_directories = Arc::new(crate::storage::XdgDirectories::new().unwrap());
 
-        let repo_manager = RepoManager::new(xdg_directories, fs.clone(), git_ops);
-        let docker_manager = crate::docker::DockerManager::new(docker_client);
+        let repo_manager = RepoManager::new(xdg_directories.clone(), fs.clone(), git_ops);
+        let docker_manager = crate::docker::DockerManager::new(docker_client.clone());
+
+        // Create a mock docker image manager
+        use crate::assets::embedded::EmbeddedAssetManager;
+        use crate::docker::composer::DockerComposer;
+        use crate::docker::template_manager::DockerTemplateManager;
+
+        let template_manager = DockerTemplateManager::new(
+            Arc::new(EmbeddedAssetManager),
+            xdg_directories.clone(),
+            None,
+        );
+        let composer = DockerComposer::new(DockerTemplateManager::new(
+            Arc::new(EmbeddedAssetManager),
+            xdg_directories,
+            None,
+        ));
+        let docker_image_manager = Arc::new(DockerImageManager::new(
+            docker_client,
+            template_manager,
+            composer,
+        ));
+
         let notification_client = Arc::new(crate::notifications::NoOpNotificationClient);
-        let task_runner = TaskRunner::new(repo_manager, docker_manager, fs, notification_client);
+        let task_runner = TaskRunner::new(
+            repo_manager,
+            docker_manager,
+            docker_image_manager,
+            fs,
+            notification_client,
+        );
 
         let task = Task {
             id: "test-task-123".to_string(),

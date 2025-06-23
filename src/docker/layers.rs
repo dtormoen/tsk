@@ -143,7 +143,7 @@ impl DockerImageConfig {
     /// Creates a default configuration
     pub fn default_config() -> Self {
         Self {
-            tech_stack: "base".to_string(),
+            tech_stack: "default".to_string(),
             agent: "claude".to_string(),
             project: "default".to_string(),
         }
@@ -223,10 +223,10 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = DockerImageConfig::default_config();
-        assert_eq!(config.tech_stack, "base");
+        assert_eq!(config.tech_stack, "default");
         assert_eq!(config.agent, "claude");
         assert_eq!(config.project, "default");
-        assert_eq!(config.image_tag(), "tsk/base/claude/default");
+        assert_eq!(config.image_tag(), "tsk/default/claude/default");
     }
 
     #[test]

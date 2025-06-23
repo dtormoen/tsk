@@ -8,15 +8,11 @@ use std::process::Command;
 use std::sync::Arc;
 
 /// Claude Code AI agent implementation
-pub struct ClaudeCodeAgent {
-    docker_image: String,
-}
+pub struct ClaudeCodeAgent;
 
 impl ClaudeCodeAgent {
     pub fn new() -> Self {
-        Self {
-            docker_image: "tsk/base".to_string(),
-        }
+        Self
     }
 }
 
@@ -28,10 +24,6 @@ impl Default for ClaudeCodeAgent {
 
 #[async_trait]
 impl Agent for ClaudeCodeAgent {
-    fn docker_image(&self) -> &str {
-        &self.docker_image
-    }
-
     fn build_command(&self, instruction_path: &str) -> Vec<String> {
         // Get just the filename from the instruction path
         let filename = Path::new(instruction_path)

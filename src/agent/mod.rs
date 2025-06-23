@@ -15,18 +15,6 @@ pub use provider::AgentProvider;
 /// Trait defining the interface for AI agents that can execute tasks
 #[async_trait]
 pub trait Agent: Send + Sync {
-    /// Returns the Docker image name for this agent
-    fn docker_image(&self) -> &str;
-
-    /// Returns the Docker image name for this agent with custom configuration
-    fn docker_image_with_config(&self, tech_stack: Option<&str>, project: Option<&str>) -> String {
-        // Default implementation uses the new naming convention if config is provided
-        match (tech_stack, project) {
-            (Some(ts), Some(p)) => format!("tsk/{}/{}/{}", ts, self.name(), p),
-            _ => self.docker_image().to_string(),
-        }
-    }
-
     /// Returns the command to execute the agent with the given instruction file
     fn build_command(&self, instruction_path: &str) -> Vec<String>;
 

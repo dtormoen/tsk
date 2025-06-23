@@ -52,10 +52,13 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Task status: Queued → Running → Complete/Failed
 - Branch naming: `tsk/{task-id}` (where task-id is `{timestamp}-{task-type}-{task-name}`)
 
-**Docker Integration** (`src/docker.rs`)
+**Docker Integration** (`src/docker/`)
+- `DockerImageManager`: Centralized Docker image management with intelligent layering
 - Security-first containers with dropped capabilities
 - Network isolation via proxy (Squid) for API-only access
 - Volume mounting for repository copies and agent config
+- Layered image system: base → tech-stack → agent → project
+- Automatic fallback to default project layer when specific layer is missing
 
 **Storage** (`src/storage/`)
 - `XdgDirectories`: Manages XDG-compliant directory structure
@@ -102,6 +105,11 @@ TSK implements a command pattern with dependency injection for testability. The 
 
 ### Docker Infrastructure
 
-- **Base Image** (`dockerfiles/tsk-base/`): Ubuntu 22.04 with Claude Code, Rust toolchain, Node.js
+- **Layered Images**: Four-layer system for flexible customization
+  - Base layer: Ubuntu 22.04 base OS and common tools
+  - Tech-stack layer: Language-specific toolchains (default, rust, python, etc.)
+  - Agent layer: AI agent installations (claude, etc.)
+  - Project layer: Project-specific dependencies (optional, falls back to default)
 - **Proxy Image** (`dockerfiles/tsk-proxy/`): Squid proxy for controlled network access
-- Git configuration inherited via Docker build args from host user.
+- Git configuration inherited via Docker build args from host user
+- Automatic image rebuilding when missing during task execution

@@ -1,4 +1,5 @@
 pub mod composer;
+pub mod image_manager;
 pub mod layers;
 pub mod template_manager;
 

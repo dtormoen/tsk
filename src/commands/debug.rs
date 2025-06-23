@@ -27,6 +27,7 @@ impl Command for DebugCommand {
         let task_runner = TaskRunner::new(
             repo_manager,
             docker_manager,
+            ctx.docker_image_manager(),
             ctx.file_system(),
             ctx.notification_client(),
         );

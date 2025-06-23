@@ -8,6 +8,7 @@ pub mod tsk_client;
 mod tests;
 
 use crate::assets::{layered::LayeredAssetManager, AssetManager};
+use crate::docker::image_manager::DockerImageManager;
 use crate::notifications::NotificationClient;
 use crate::repo_utils::find_repository_root;
 use crate::storage::XdgDirectories;
@@ -27,6 +28,7 @@ pub use terminal::TerminalOperations as TerminalOperationsTrait;
 pub struct AppContext {
     asset_manager: Arc<dyn AssetManager>,
     docker_client: Arc<dyn DockerClient>,
+    docker_image_manager: Arc<DockerImageManager>,
     file_system: Arc<dyn FileSystemOperations>,
     git_operations: Arc<dyn GitOperations>,
     notification_client: Arc<dyn NotificationClient>,
@@ -46,6 +48,10 @@ impl AppContext {
 
     pub fn docker_client(&self) -> Arc<dyn DockerClient> {
         Arc::clone(&self.docker_client)
+    }
+
+    pub fn docker_image_manager(&self) -> Arc<DockerImageManager> {
+        Arc::clone(&self.docker_image_manager)
     }
 
     pub fn file_system(&self) -> Arc<dyn FileSystemOperations> {
@@ -76,6 +82,7 @@ impl AppContext {
 pub struct AppContextBuilder {
     asset_manager: Option<Arc<dyn AssetManager>>,
     docker_client: Option<Arc<dyn DockerClient>>,
+    docker_image_manager: Option<Arc<DockerImageManager>>,
     file_system: Option<Arc<dyn FileSystemOperations>>,
     git_operations: Option<Arc<dyn GitOperations>>,
     notification_client: Option<Arc<dyn NotificationClient>>,
@@ -95,6 +102,7 @@ impl AppContextBuilder {
         Self {
             asset_manager: None,
             docker_client: None,
+            docker_image_manager: None,
             file_system: None,
             git_operations: None,
             notification_client: None,
@@ -113,6 +121,15 @@ impl AppContextBuilder {
     #[allow(dead_code)]
     pub fn with_docker_client(mut self, docker_client: Arc<dyn DockerClient>) -> Self {
         self.docker_client = Some(docker_client);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn with_docker_image_manager(
+        mut self,
+        docker_image_manager: Arc<DockerImageManager>,
+    ) -> Self {
+        self.docker_image_manager = Some(docker_image_manager);
         self
     }
 
@@ -171,18 +188,49 @@ impl AppContextBuilder {
             Arc::new(tsk_client::DefaultTskClient::new(xdg_directories.clone()))
         });
 
+        let docker_client = self
+            .docker_client
+            .unwrap_or_else(|| Arc::new(docker_client::DefaultDockerClient::new()));
+
+        let asset_manager = self.asset_manager.unwrap_or_else(|| {
+            // Try to find the repository root for project-level templates
+            let project_root = find_repository_root(std::path::Path::new(".")).ok();
+            Arc::new(LayeredAssetManager::new_with_standard_layers(
+                project_root.as_deref(),
+                &xdg_directories,
+            ))
+        });
+
+        let docker_image_manager = self.docker_image_manager.unwrap_or_else(|| {
+            use crate::docker::composer::DockerComposer;
+            use crate::docker::template_manager::DockerTemplateManager;
+
+            // Try to find the repository root for project-level templates
+            let project_root = find_repository_root(std::path::Path::new(".")).ok();
+
+            let template_manager = DockerTemplateManager::new(
+                asset_manager.clone(),
+                xdg_directories.clone(),
+                project_root.clone(),
+            );
+
+            let composer = DockerComposer::new(DockerTemplateManager::new(
+                asset_manager.clone(),
+                xdg_directories.clone(),
+                project_root,
+            ));
+
+            Arc::new(DockerImageManager::new(
+                docker_client.clone(),
+                template_manager,
+                composer,
+            ))
+        });
+
         AppContext {
-            asset_manager: self.asset_manager.unwrap_or_else(|| {
-                // Try to find the repository root for project-level templates
-                let project_root = find_repository_root(std::path::Path::new(".")).ok();
-                Arc::new(LayeredAssetManager::new_with_standard_layers(
-                    project_root.as_deref(),
-                    &xdg_directories,
-                ))
-            }),
-            docker_client: self
-                .docker_client
-                .unwrap_or_else(|| Arc::new(docker_client::DefaultDockerClient::new())),
+            asset_manager,
+            docker_client,
+            docker_image_manager,
             file_system: self
                 .file_system
                 .unwrap_or_else(|| Arc::new(file_system::DefaultFileSystem)),
