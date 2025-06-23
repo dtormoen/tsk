@@ -241,9 +241,7 @@ impl TaskManager {
         let new_task_name = format!("retry-{}", original_task.name);
 
         // Use TaskBuilder to create the new task, leveraging from_existing
-        let mut builder = TaskBuilder::from_existing(&original_task, ctx)
-            .await
-            .map_err(|e| format!("Failed to create task from existing: {}", e))?;
+        let mut builder = TaskBuilder::from_existing(&original_task);
 
         builder = builder.name(new_task_name).edit(edit_instructions);
 

@@ -106,8 +106,6 @@ pub struct TaskBuilder {
     name: Option<String>,
     task_type: Option<String>,
     description: Option<String>,
-    /// Direct instructions content as a string
-    instructions_content: Option<String>,
     /// Path to a file containing instructions
     instructions_file_path: Option<PathBuf>,
     edit: bool,
@@ -122,7 +120,6 @@ impl TaskBuilder {
             name: None,
             task_type: None,
             description: None,
-            instructions_content: None,
             instructions_file_path: None,
             edit: false,
             agent: None,
@@ -130,9 +127,8 @@ impl TaskBuilder {
         }
     }
 
-    /// Creates a TaskBuilder from an existing task, reading its instructions file content
-    /// if available. This is used for retrying tasks.
-    pub async fn from_existing(task: &Task, ctx: &AppContext) -> Result<Self, Box<dyn Error>> {
+    /// Creates a TaskBuilder from an existing task. This is used for retrying tasks.
+    pub fn from_existing(task: &Task) -> Self {
         let mut builder = Self::new();
         builder.repo_root = Some(task.repo_root.clone());
         builder.name = Some(task.name.clone());
@@ -140,29 +136,14 @@ impl TaskBuilder {
         builder.agent = task.agent.clone();
         builder.timeout = Some(task.timeout);
 
-        // Copy the instructions file content if it exists
+        // Copy the instructions file path if it exists
         if let Some(ref instructions_file) = task.instructions_file {
-            let fs = ctx.file_system();
-
-            // Try to read the original instructions file
-            match fs.read_file(Path::new(instructions_file)).await {
-                Ok(content) => {
-                    // Store the content directly as instructions_content
-                    builder.instructions_content = Some(content);
-                }
-                Err(e) => {
-                    // If we can't read the instructions file, fall back to the task description
-                    eprintln!("Warning: Failed to read instructions file: {}", e);
-                    if let Some(ref desc) = task.description {
-                        builder.description = Some(desc.clone());
-                    }
-                }
-            }
+            builder.instructions_file_path = Some(PathBuf::from(instructions_file));
         } else if let Some(ref desc) = task.description {
             builder.description = Some(desc.clone());
         }
 
-        Ok(builder)
+        builder
     }
 
     pub fn repo_root(mut self, repo_root: PathBuf) -> Self {
@@ -182,13 +163,6 @@ impl TaskBuilder {
 
     pub fn description(mut self, description: Option<String>) -> Self {
         self.description = description;
-        self
-    }
-
-    /// Sets the instructions content directly as a string
-    #[allow(dead_code)] // Public API method that may be used by external code
-    pub fn instructions(mut self, instructions: Option<String>) -> Self {
-        self.instructions_content = instructions;
         self
     }
 
@@ -226,20 +200,9 @@ impl TaskBuilder {
         let timeout = self.timeout.unwrap_or(30);
 
         // Validate input
-        if self.description.is_none()
-            && self.instructions_content.is_none()
-            && self.instructions_file_path.is_none()
-            && !self.edit
-        {
+        if self.description.is_none() && self.instructions_file_path.is_none() && !self.edit {
             return Err(
-                "Either description, instructions content, or instructions file must be provided, or use edit mode".into(),
-            );
-        }
-
-        // Validate that only one instruction method is used
-        if self.instructions_content.is_some() && self.instructions_file_path.is_some() {
-            return Err(
-                "Cannot provide both instructions content and instructions file path".into(),
+                "Either description or instructions file must be provided, or use edit mode".into(),
             );
         }
 
@@ -339,10 +302,7 @@ impl TaskBuilder {
     ) -> Result<String, Box<dyn Error>> {
         let fs = ctx.file_system();
 
-        if let Some(ref content) = self.instructions_content {
-            // Direct content provided
-            fs.write_file(dest_path, content).await?;
-        } else if let Some(ref file_path) = self.instructions_file_path {
+        if let Some(ref file_path) = self.instructions_file_path {
             // File path provided - read and copy content
             let content = fs.read_file(file_path).await?;
             fs.write_file(dest_path, &content).await?;
@@ -517,7 +477,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
-            err.contains("Either description, instructions content, or instructions file")
+            err.contains("Either description or instructions file")
                 || err.contains("Repository root is required")
         );
     }
@@ -547,34 +507,6 @@ mod tests {
             .unwrap();
 
         // Verify instructions file was copied
-        let task_instructions_path = task.instructions_file.as_ref().unwrap();
-        let content = fs
-            .read_file(Path::new(task_instructions_path))
-            .await
-            .unwrap();
-        assert_eq!(content, instructions_content);
-    }
-
-    #[tokio::test]
-    async fn test_task_builder_with_instructions_content() {
-        let current_dir = std::env::current_dir().unwrap();
-        let instructions_content = "# Direct instructions content\n\nThis is the task content.";
-        let fs = Arc::new(
-            MockFileSystem::new()
-                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string()),
-        );
-
-        let ctx = AppContext::builder().with_file_system(fs.clone()).build();
-
-        let task = TaskBuilder::new()
-            .repo_root(current_dir.clone())
-            .name("test-task".to_string())
-            .instructions(Some(instructions_content.to_string()))
-            .build(&ctx)
-            .await
-            .unwrap();
-
-        // Verify instructions file was created with the content
         let task_instructions_path = task.instructions_file.as_ref().unwrap();
         let content = fs
             .read_file(Path::new(task_instructions_path))
@@ -725,9 +657,7 @@ mod tests {
         );
 
         // Create a builder from the existing task
-        let builder = TaskBuilder::from_existing(&existing_task, &ctx)
-            .await
-            .unwrap();
+        let builder = TaskBuilder::from_existing(&existing_task);
 
         // Build a new task from it
         let new_task = builder
@@ -743,12 +673,13 @@ mod tests {
         assert_eq!(new_task.timeout, 45);
         assert!(new_task.instructions_file.is_some());
 
-        // Verify the instructions content was copied
+        // Verify the instructions file path was preserved and content was copied
         let new_instructions_path = new_task.instructions_file.as_ref().unwrap();
         let copied_content = fs
             .read_file(Path::new(new_instructions_path))
             .await
             .unwrap();
+        // The new task should have the content from the original instructions file
         assert_eq!(copied_content, instructions_content);
     }
 
@@ -784,53 +715,15 @@ mod tests {
         );
 
         // Create a builder from the existing task
-        let builder = TaskBuilder::from_existing(&existing_task, &ctx)
-            .await
-            .unwrap();
+        let builder = TaskBuilder::from_existing(&existing_task);
 
-        // Build a new task from it
-        let new_task = builder
-            .name("retry-task".to_string())
-            .build(&ctx)
-            .await
-            .unwrap();
+        // Build a new task from it - should fail because instructions file doesn't exist
+        let result = builder.name("retry-task".to_string()).build(&ctx).await;
 
-        // Verify the new task falls back to description
-        assert_eq!(new_task.name, "retry-task");
-        assert!(new_task.instructions_file.is_some());
-
-        // Verify the instructions content uses the description
-        let new_instructions_path = new_task.instructions_file.as_ref().unwrap();
-        let content = fs
-            .read_file(Path::new(new_instructions_path))
-            .await
-            .unwrap();
-        assert!(content.contains("Existing task description"));
-    }
-
-    #[tokio::test]
-    async fn test_task_builder_validates_exclusive_instructions() {
-        let current_dir = std::env::current_dir().unwrap();
-        let fs = Arc::new(
-            MockFileSystem::new()
-                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string()),
-        );
-
-        let ctx = AppContext::builder().with_file_system(fs).build();
-
-        let result = TaskBuilder::new()
-            .repo_root(current_dir.clone())
-            .name("test-task".to_string())
-            .instructions(Some("Direct content".to_string()))
-            .instructions_file(Some(current_dir.join("file.md")))
-            .build(&ctx)
-            .await;
-
+        // Verify it fails with appropriate error
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Cannot provide both instructions content and instructions file path"));
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("missing-instructions.md"));
     }
 
     #[tokio::test]

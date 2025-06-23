@@ -29,9 +29,10 @@ mod command_tests {
         let ctx = create_test_context();
         let result = cmd.execute(&ctx).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains(
-            "Either description, instructions content, or instructions file must be provided"
-        ));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Either description or instructions file must be provided"));
     }
 
     #[tokio::test]
@@ -70,9 +71,10 @@ mod command_tests {
         let ctx = create_test_context();
         let result = cmd.execute(&ctx).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains(
-            "Either description, instructions content, or instructions file must be provided"
-        ));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Either description or instructions file must be provided"));
     }
 
     #[tokio::test]
