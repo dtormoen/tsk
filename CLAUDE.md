@@ -40,7 +40,10 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `list`: Display task status and results
 - `debug`: Launch interactive containers for troubleshooting
 - `tasks`: Manage task queue (delete/clean operations)
+- `templates`: Manage task type templates
+- `docker-build`: Build required docker images
 - `stop-server`: Stop the running TSK server
+- `stop-proxy`: Stop the running TSK proxy
 
 **Task Management** (`src/task.rs`, `src/task_storage.rs`, `src/task_manager.rs`)
 - `TaskBuilder` provides consistent task creation with builder pattern
@@ -52,8 +55,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 **Docker Integration** (`src/docker.rs`)
 - Security-first containers with dropped capabilities
 - Network isolation via proxy (Squid) for API-only access
-- Resource limits: 4GB memory, 4 CPU cores
-- Volume mounting for repository copies and Claude config
+- Volume mounting for repository copies and agent config
 
 **Storage** (`src/storage/`)
 - `XdgDirectories`: Manages XDG-compliant directory structure
@@ -79,21 +81,27 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `GitOperations` trait abstracts all git operations for improved testability and separation of concerns
 - `XdgDirectories` provides XDG-compliant directory paths for centralized storage
 
+### Development Conventions
+
+- Avoid the use of `#[cfg(test)]` and `#[allow(dead_code)]` directives in code
+- Always keep documentation up to date following rustdoc best practices
+- Keep CLAUDE.md file simple, but up to date
+
 ### Testing Conventions
 
 - Avoid mocks, especially for traits that are not in the `AppContext`
 - Avoid tests with side effects like modifying resources in the `AppContext` or changing directories
 - Make tests thread safe so they can be run in parallel
 - Keep tests simple and concise while still testing core functionality
-- Avoid the use of `#[cfg(test)]` directives in code
+- Avoid the use of `#[cfg(test)]` and `#[allow(dead_code)]` directives in code
 
 ### Branch and Task Conventions
 
-Tasks create timestamped branches: `tsk/2024-06-01-1430-feat-add-auth`
-Template-based task descriptions encourage structured problem statements.
+- Tasks create timestamped branches: `tsk/2024-06-01-1430-feat-add-auth`
+- Template-based task descriptions encourage structured problem statements.
 
 ### Docker Infrastructure
 
-**Base Image** (`dockerfiles/tsk-base/`): Ubuntu 22.04 with Claude Code, Rust toolchain, Node.js
-**Proxy Image** (`dockerfiles/tsk-proxy/`): Squid proxy for controlled network access
-Git configuration inherited via Docker build args from host user.
+- **Base Image** (`dockerfiles/tsk-base/`): Ubuntu 22.04 with Claude Code, Rust toolchain, Node.js
+- **Proxy Image** (`dockerfiles/tsk-proxy/`): Squid proxy for controlled network access
+- Git configuration inherited via Docker build args from host user.
