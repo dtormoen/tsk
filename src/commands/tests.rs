@@ -24,6 +24,8 @@ mod command_tests {
             edit: false,
             agent: None,
             timeout: 30,
+            tech_stack: None,
+            project: None,
         };
 
         let ctx = create_test_context();
@@ -45,6 +47,8 @@ mod command_tests {
             edit: false,
             agent: None,
             timeout: 30,
+            tech_stack: None,
+            project: None,
         };
 
         let ctx = create_test_context();
@@ -66,6 +70,8 @@ mod command_tests {
             edit: false,
             agent: None,
             timeout: 30,
+            tech_stack: None,
+            project: None,
         };
 
         let ctx = create_test_context();
@@ -116,6 +122,12 @@ mod command_tests {
     #[test]
     fn test_docker_build_command_instantiation() {
         // Test that DockerBuildCommand can be instantiated
-        let _cmd = DockerBuildCommand { no_cache: false };
+        let _cmd = DockerBuildCommand {
+            no_cache: false,
+            tech_stack: None,
+            agent: None,
+            project: None,
+            legacy: false,
+        };
     }
 }

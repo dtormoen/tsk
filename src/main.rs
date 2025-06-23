@@ -45,6 +45,14 @@ enum Commands {
         /// Task timeout in minutes
         #[arg(long, default_value = "30")]
         timeout: u32,
+
+        /// Technology stack for Docker image (e.g., rust, python, node)
+        #[arg(long)]
+        tech_stack: Option<String>,
+
+        /// Project name for Docker image
+        #[arg(long)]
+        project: Option<String>,
     },
     /// List all queued tasks
     List,
@@ -83,6 +91,14 @@ enum Commands {
         /// Task timeout in minutes
         #[arg(long, default_value = "30")]
         timeout: u32,
+
+        /// Technology stack for Docker image (e.g., rust, python, node)
+        #[arg(long)]
+        tech_stack: Option<String>,
+
+        /// Project name for Docker image
+        #[arg(long)]
+        project: Option<String>,
     },
     /// Launch a Docker container for interactive debugging
     Debug {
@@ -116,11 +132,27 @@ enum Commands {
         #[arg(short, long, requires = "retry")]
         edit: bool,
     },
-    /// Build the TSK Docker images (tsk/base and tsk/proxy)
+    /// Build TSK Docker images
     DockerBuild {
         /// Build without using Docker's cache
         #[arg(long)]
         no_cache: bool,
+
+        /// Technology stack (e.g., rust, python, node)
+        #[arg(long)]
+        tech_stack: Option<String>,
+
+        /// Agent (e.g., claude, aider)
+        #[arg(long)]
+        agent: Option<String>,
+
+        /// Project name
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Build legacy tsk/base and tsk/proxy images
+        #[arg(long)]
+        legacy: bool,
     },
     /// List available task templates and their sources
     Templates,
@@ -142,6 +174,8 @@ async fn main() {
             edit,
             agent,
             timeout,
+            tech_stack,
+            project,
         } => Box::new(AddCommand {
             name,
             r#type,
@@ -150,6 +184,8 @@ async fn main() {
             edit,
             agent,
             timeout,
+            tech_stack,
+            project,
         }),
         Commands::Quick {
             name,
@@ -159,6 +195,8 @@ async fn main() {
             edit,
             agent,
             timeout,
+            tech_stack,
+            project,
         } => Box::new(QuickCommand {
             name,
             r#type,
@@ -167,6 +205,8 @@ async fn main() {
             edit,
             agent,
             timeout,
+            tech_stack,
+            project,
         }),
         Commands::Debug { name, agent } => Box::new(DebugCommand { name, agent }),
         Commands::StopProxy => Box::new(StopProxyCommand),
@@ -184,7 +224,19 @@ async fn main() {
             retry,
             edit,
         }),
-        Commands::DockerBuild { no_cache } => Box::new(DockerBuildCommand { no_cache }),
+        Commands::DockerBuild {
+            no_cache,
+            tech_stack,
+            agent,
+            project,
+            legacy,
+        } => Box::new(DockerBuildCommand {
+            no_cache,
+            tech_stack,
+            agent,
+            project,
+            legacy,
+        }),
         Commands::Templates => Box::new(TemplatesCommand),
     };
 

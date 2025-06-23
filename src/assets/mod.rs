@@ -33,4 +33,38 @@ pub trait AssetManager: Send + Sync {
     /// List all available dockerfiles
     #[allow(dead_code)]
     fn list_dockerfiles(&self) -> Vec<String>;
+
+    /// Get a Docker layer file
+    fn get_docker_layer(&self, layer_type: &str, layer_name: &str) -> Result<Vec<u8>> {
+        // Default implementation for backward compatibility
+        // Uses the existing dockerfile methods
+        let dockerfile_name = if layer_type == "base" {
+            "base".to_string()
+        } else {
+            format!("{}/{}", layer_type, layer_name)
+        };
+        self.get_dockerfile(&dockerfile_name)
+    }
+
+    /// List available Docker layers of a specific type
+    fn list_docker_layers(&self, layer_type: &str) -> Vec<String> {
+        // Default implementation for backward compatibility
+        let prefix = if layer_type == "base" {
+            "base".to_string()
+        } else {
+            format!("{}/", layer_type)
+        };
+
+        self.list_dockerfiles()
+            .into_iter()
+            .filter(|name| name.starts_with(&prefix))
+            .map(|name| {
+                if layer_type == "base" {
+                    "base".to_string()
+                } else {
+                    name.strip_prefix(&prefix).unwrap_or(&name).to_string()
+                }
+            })
+            .collect()
+    }
 }

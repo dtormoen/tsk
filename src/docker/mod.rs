@@ -1,3 +1,7 @@
+pub mod composer;
+pub mod layers;
+pub mod template_manager;
+
 use crate::agent::Agent;
 use crate::context::docker_client::DockerClient;
 use bollard::container::{Config, CreateContainerOptions, LogsOptions, RemoveContainerOptions};

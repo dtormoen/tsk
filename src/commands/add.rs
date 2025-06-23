@@ -15,6 +15,8 @@ pub struct AddCommand {
     pub edit: bool,
     pub agent: Option<String>,
     pub timeout: u32,
+    pub tech_stack: Option<String>,
+    pub project: Option<String>,
 }
 
 #[async_trait]
@@ -35,6 +37,8 @@ impl Command for AddCommand {
             .edit(self.edit)
             .agent(self.agent.clone())
             .timeout(self.timeout)
+            .tech_stack(self.tech_stack.clone())
+            .project(self.project.clone())
             .build(ctx)
             .await?;
 

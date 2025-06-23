@@ -115,6 +115,32 @@ fn test_claude_code_agent_create_log_processor() {
     let _ = log_processor.get_full_log();
 }
 
+#[test]
+fn test_claude_code_agent_docker_image_with_config() {
+    let agent = ClaudeCodeAgent::new();
+
+    // Test with both tech stack and project
+    assert_eq!(
+        agent.docker_image_with_config(Some("rust"), Some("web-api")),
+        "tsk/rust/claude-code/web-api"
+    );
+
+    // Test with only tech stack
+    assert_eq!(
+        agent.docker_image_with_config(Some("python"), None),
+        "tsk/base"
+    );
+
+    // Test with only project (should use default)
+    assert_eq!(
+        agent.docker_image_with_config(None, Some("cli-tool")),
+        "tsk/base"
+    );
+
+    // Test with neither (should use default)
+    assert_eq!(agent.docker_image_with_config(None, None), "tsk/base");
+}
+
 /// Test agent for testing purposes
 #[allow(dead_code)]
 struct TestAgent {

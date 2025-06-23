@@ -101,10 +101,14 @@ impl TaskRunner {
         println!("\n{}", "=".repeat(60));
 
         let output = {
+            // Get the appropriate Docker image based on task configuration
+            let docker_image =
+                agent.docker_image_with_config(task.tech_stack.as_deref(), task.project.as_deref());
+
             // Use streaming version
             self.docker_manager
                 .run_task_container(
-                    agent.docker_image(),
+                    &docker_image,
                     &repo_path,
                     command.clone(),
                     Some(&instructions_file_path),
@@ -328,6 +332,8 @@ mod tests {
             branch_name: None,
             error_message: None,
             source_commit: None,
+            tech_stack: None,
+            project: None,
         };
 
         let result = task_runner.execute_task(&task).await;

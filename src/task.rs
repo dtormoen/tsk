@@ -33,6 +33,9 @@ pub struct Task {
     pub branch_name: Option<String>,
     pub error_message: Option<String>,
     pub source_commit: Option<String>,
+    // Docker configuration
+    pub tech_stack: Option<String>,
+    pub project: Option<String>,
 }
 
 impl Task {
@@ -66,6 +69,8 @@ impl Task {
             branch_name: None,
             error_message: None,
             source_commit: None,
+            tech_stack: None,
+            project: None,
         }
     }
 
@@ -96,6 +101,8 @@ impl Task {
             branch_name: None,
             error_message: None,
             source_commit: None,
+            tech_stack: None,
+            project: None,
         }
     }
 }
@@ -111,6 +118,8 @@ pub struct TaskBuilder {
     edit: bool,
     agent: Option<String>,
     timeout: Option<u32>,
+    tech_stack: Option<String>,
+    project: Option<String>,
 }
 
 impl TaskBuilder {
@@ -124,6 +133,8 @@ impl TaskBuilder {
             edit: false,
             agent: None,
             timeout: None,
+            tech_stack: None,
+            project: None,
         }
     }
 
@@ -135,6 +146,8 @@ impl TaskBuilder {
         builder.task_type = Some(task.task_type.clone());
         builder.agent = task.agent.clone();
         builder.timeout = Some(task.timeout);
+        builder.tech_stack = task.tech_stack.clone();
+        builder.project = task.project.clone();
 
         // Copy the instructions file path if it exists
         if let Some(ref instructions_file) = task.instructions_file {
@@ -184,6 +197,16 @@ impl TaskBuilder {
 
     pub fn timeout(mut self, timeout: u32) -> Self {
         self.timeout = Some(timeout);
+        self
+    }
+
+    pub fn tech_stack(mut self, tech_stack: Option<String>) -> Self {
+        self.tech_stack = tech_stack;
+        self
+    }
+
+    pub fn project(mut self, project: Option<String>) -> Self {
+        self.project = project;
         self
     }
 
@@ -288,6 +311,8 @@ impl TaskBuilder {
             timeout,
         );
         task.source_commit = source_commit;
+        task.tech_stack = self.tech_stack;
+        task.project = self.project;
 
         Ok(task)
     }
@@ -799,5 +824,58 @@ mod tests {
         // Verify the git operation was called
         let calls = mock_git_ops.get_get_current_commit_calls();
         assert_eq!(calls.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_with_docker_config() {
+        let current_dir = std::env::current_dir().unwrap();
+        let fs = Arc::new(
+            MockFileSystem::new()
+                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string()),
+        );
+
+        let ctx = AppContext::builder().with_file_system(fs.clone()).build();
+
+        let task = TaskBuilder::new()
+            .repo_root(current_dir.clone())
+            .name("test-task".to_string())
+            .task_type("generic".to_string())
+            .description(Some("Test description".to_string()))
+            .tech_stack(Some("rust".to_string()))
+            .project(Some("web-api".to_string()))
+            .timeout(60)
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        assert_eq!(task.name, "test-task");
+        assert_eq!(task.tech_stack, Some("rust".to_string()));
+        assert_eq!(task.project, Some("web-api".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_from_existing_preserves_docker_config() {
+        let current_dir = std::env::current_dir().unwrap();
+
+        // Create an existing task with Docker config
+        let mut existing_task = Task::new_with_id(
+            "2024-01-01-1200-existing-task".to_string(),
+            current_dir.clone(),
+            "existing-task".to_string(),
+            "generic".to_string(),
+            Some("Test description".to_string()),
+            None,
+            Some("claude-code".to_string()),
+            30,
+        );
+        existing_task.tech_stack = Some("python".to_string());
+        existing_task.project = Some("ml-service".to_string());
+
+        // Create a builder from the existing task
+        let builder = TaskBuilder::from_existing(&existing_task);
+
+        // Verify Docker config is preserved
+        assert_eq!(builder.tech_stack, Some("python".to_string()));
+        assert_eq!(builder.project, Some("ml-service".to_string()));
     }
 }
