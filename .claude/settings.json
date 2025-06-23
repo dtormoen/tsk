@@ -11,5 +11,11 @@
       "Bash(just test:*)"
     ],
     "deny": []
-  }
+  },
+  "env": {
+    "BASH_MAX_TIMEOUT_MS": 300000,
+    "BASH_DEFAULT_TIMEOUT_MS": 300000,
+    "DISABLE_TELEMETRY": 1
+  },
+  "includeCoAuthoredBy": false
 }
