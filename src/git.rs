@@ -239,7 +239,7 @@ mod tests {
 
         let repo_root = temp_dir.path();
         let result = manager
-            .copy_repo("2024-01-01-1200-test-task", repo_root, None)
+            .copy_repo("2024-01-01-1200-generic-test-task", repo_root, None)
             .await;
 
         assert!(result.is_err());
@@ -368,19 +368,23 @@ mod tests {
         let repo_root = temp_dir.path();
         let source_commit = "abc123def456789012345678901234567890abcd";
         let result = manager
-            .copy_repo("2024-01-01-1200-test-task", repo_root, Some(source_commit))
+            .copy_repo(
+                "2024-01-01-1200-generic-test-task",
+                repo_root,
+                Some(source_commit),
+            )
             .await;
 
         assert!(result.is_ok());
         let (_, branch_name) = result.unwrap();
-        assert_eq!(branch_name, "tsk/2024-01-01-1200-test-task");
+        assert_eq!(branch_name, "tsk/2024-01-01-1200-generic-test-task");
 
         // Verify create_branch_from_commit was called
         let create_from_commit_calls = mock_git_ops.get_create_branch_from_commit_calls();
         assert_eq!(create_from_commit_calls.len(), 1);
         assert_eq!(
             create_from_commit_calls[0].1,
-            "tsk/2024-01-01-1200-test-task"
+            "tsk/2024-01-01-1200-generic-test-task"
         );
         assert_eq!(create_from_commit_calls[0].2, source_commit);
 
@@ -405,17 +409,20 @@ mod tests {
 
         let repo_root = temp_dir.path();
         let result = manager
-            .copy_repo("2024-01-01-1200-test-task", repo_root, None)
+            .copy_repo("2024-01-01-1200-generic-test-task", repo_root, None)
             .await;
 
         assert!(result.is_ok());
         let (_, branch_name) = result.unwrap();
-        assert_eq!(branch_name, "tsk/2024-01-01-1200-test-task");
+        assert_eq!(branch_name, "tsk/2024-01-01-1200-generic-test-task");
 
         // Verify regular create_branch was called
         let create_branch_calls = mock_git_ops.get_create_branch_calls();
         assert_eq!(create_branch_calls.len(), 1);
-        assert_eq!(create_branch_calls[0].1, "tsk/2024-01-01-1200-test-task");
+        assert_eq!(
+            create_branch_calls[0].1,
+            "tsk/2024-01-01-1200-generic-test-task"
+        );
 
         // Verify create_branch_from_commit was NOT called
         let create_from_commit_calls = mock_git_ops.get_create_branch_from_commit_calls();

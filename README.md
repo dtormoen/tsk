@@ -73,23 +73,23 @@ tsk run
 # Review the results
 tsk list
 # Output:
-# ✓ auth-review → branch: tsk/auth-review-20240531-143022
-# ⚠ extract-service → branch: tsk/extract-service-20240531-143055 (tests failed)
+# ✓ auth-review → branch: tsk/2024-05-31-1430-fix-auth-review
+# ⚠ extract-service → branch: tsk/2024-05-31-1430-refactor-extract-service (tests failed)
 
 # Review the auth changes
-git checkout tsk/auth-review-20240531-143022
+git checkout tsk/2024-05-31-1430-fix-auth-review
 git diff main...HEAD
 
 # Looks good! Merge it
 git checkout main
-git merge tsk/auth-review-20240531-143022
+git merge tsk/2024-05-31-1430-fix-auth-review
 
 # The refactoring needs work - refine and retry
 tsk add --name "extract-service-v2" \
   --description "Extract user notification logic into NotificationService class. Keep existing public API unchanged and ensure all tests pass."
 
 # Or create a task with interactive editing
-tsk add --name "complex-feature" --type "feature" --edit
+tsk add --name "complex-feature" --type "feat" --edit
 # This will open your $EDITOR to create detailed instructions
 ```
 
@@ -134,10 +134,14 @@ tsk add --name <TASK_NAME> [--type <TASK_TYPE>] --description <DESCRIPTION>
 **Note:** If neither `--description` nor `--instructions` is provided, you must use `--edit` to create instructions interactively.
 
 **Task Types:**
-Task types are determined by available templates in the `templates/` folder. By default, the following template is provided:
-- `feature`: Template for implementing new functionality
+Task types are determined by available templates in the `templates/` folder. By default, the following templates are provided:
+- `feat`: Template for implementing new features
+- `fix`: Template for bug fixes
+- `refactor`: Template for code refactoring
+- `doc`: Template for documentation updates
+- `plan`: Template for planning tasks
 
-To add custom task types, create new template files in the `templates/` folder (e.g., `templates/bug-fix.md`)
+To add custom task types, create new template files in the `templates/` folder (e.g., `templates/chore.md`)
 
 ### `tsk run`
 Executes all queued tasks, creating git branches for tasks that produce changes.

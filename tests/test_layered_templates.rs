@@ -13,18 +13,14 @@ fn test_layered_template_resolution_priority() {
     let project_dir = temp_dir.path().join("project");
     let project_templates = project_dir.join(".tsk").join("templates");
     fs::create_dir_all(&project_templates).unwrap();
-    fs::write(
-        project_templates.join("feature.md"),
-        "Project feature template",
-    )
-    .unwrap();
+    fs::write(project_templates.join("feat.md"), "Project feat template").unwrap();
     fs::write(project_templates.join("fix.md"), "Project fix template").unwrap();
 
     // Create user config directory
     let config_dir = temp_dir.path().join("config");
     let user_templates = config_dir.join("templates");
     fs::create_dir_all(&user_templates).unwrap();
-    fs::write(user_templates.join("feature.md"), "User feature template").unwrap();
+    fs::write(user_templates.join("feat.md"), "User feat template").unwrap();
     fs::write(user_templates.join("doc.md"), "User doc template").unwrap();
 
     // Create XDG directories
@@ -40,8 +36,8 @@ fn test_layered_template_resolution_priority() {
 
     // Test priority: project > user > built-in
     assert_eq!(
-        manager.get_template("feature").unwrap(),
-        "Project feature template"
+        manager.get_template("feat").unwrap(),
+        "Project feat template"
     );
     assert_eq!(manager.get_template("fix").unwrap(), "Project fix template");
     assert_eq!(manager.get_template("doc").unwrap(), "User doc template");
@@ -54,7 +50,7 @@ fn test_layered_template_resolution_priority() {
 
     // Test listing all templates
     let all_templates = manager.list_templates();
-    assert!(all_templates.contains(&"feature".to_string()));
+    assert!(all_templates.contains(&"feat".to_string()));
     assert!(all_templates.contains(&"fix".to_string()));
     assert!(all_templates.contains(&"doc".to_string()));
     assert!(all_templates.contains(&"refactor".to_string()));
@@ -68,7 +64,7 @@ fn test_filesystem_asset_manager_with_missing_directory() {
     let manager = FileSystemAssetManager::new(nonexistent_dir);
 
     // Should return error for missing templates
-    assert!(manager.get_template("feature").is_err());
+    assert!(manager.get_template("feat").is_err());
 
     // Should return empty list
     assert!(manager.list_templates().is_empty());
@@ -128,7 +124,7 @@ async fn test_app_context_uses_layered_asset_manager() {
     assert_eq!(template.unwrap(), "Custom project template");
 
     // Verify it still has access to built-in templates
-    assert!(app_context.asset_manager().get_template("feature").is_ok());
+    assert!(app_context.asset_manager().get_template("feat").is_ok());
 }
 
 #[test]
@@ -139,13 +135,13 @@ fn test_template_listing_deduplication() {
     let project_dir = temp_dir.path().join("project");
     let project_templates = project_dir.join(".tsk").join("templates");
     fs::create_dir_all(&project_templates).unwrap();
-    fs::write(project_templates.join("feature.md"), "Project feature").unwrap();
+    fs::write(project_templates.join("feat.md"), "Project feat").unwrap();
 
     // Create user config directory
     let config_dir = temp_dir.path().join("config");
     let user_templates = config_dir.join("templates");
     fs::create_dir_all(&user_templates).unwrap();
-    fs::write(user_templates.join("feature.md"), "User feature").unwrap();
+    fs::write(user_templates.join("feat.md"), "User feat").unwrap();
     fs::write(user_templates.join("custom.md"), "User custom").unwrap();
 
     let xdg_dirs = XdgDirectories::new_with_paths(
@@ -159,9 +155,9 @@ fn test_template_listing_deduplication() {
 
     let templates = manager.list_templates();
 
-    // Should only have one "feature" entry (deduplicated)
-    let feature_count = templates.iter().filter(|t| t == &"feature").count();
-    assert_eq!(feature_count, 1);
+    // Should only have one "feat" entry (deduplicated)
+    let feat_count = templates.iter().filter(|t| t == &"feat").count();
+    assert_eq!(feat_count, 1);
 
     // Should have custom template
     assert!(templates.contains(&"custom".to_string()));

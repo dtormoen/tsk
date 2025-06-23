@@ -47,7 +47,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `TaskStorage` trait abstracts storage with JSON-based implementation
 - Centralized JSON persistence in XDG data directory (`$XDG_DATA_HOME/tsk/tasks.json`)
 - Task status: Queued → Running → Complete/Failed
-- Branch naming: `tsk/{task-id}` (where task-id is `{timestamp}-{task-name}`)
+- Branch naming: `tsk/{task-id}` (where task-id is `{timestamp}-{task-type}-{task-name}`)
 
 **Docker Integration** (`src/docker.rs`)
 - Security-first containers with dropped capabilities
@@ -89,7 +89,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 
 ### Branch and Task Conventions
 
-Tasks create timestamped branches: `tsk/2024-06-01-1430-add-auth-feature`
+Tasks create timestamped branches: `tsk/2024-06-01-1430-feat-add-auth`
 Template-based task descriptions encourage structured problem statements.
 
 ### Docker Infrastructure

@@ -82,10 +82,10 @@ mod tests {
         fs::create_dir(&templates_dir).unwrap();
 
         let template_content = "# Feature Template\n\n{{DESCRIPTION}}";
-        fs::write(templates_dir.join("feature.md"), template_content).unwrap();
+        fs::write(templates_dir.join("feat.md"), template_content).unwrap();
 
         let manager = FileSystemAssetManager::new(templates_dir);
-        let result = manager.get_template("feature").unwrap();
+        let result = manager.get_template("feat").unwrap();
 
         assert_eq!(result, template_content);
     }
@@ -109,7 +109,7 @@ mod tests {
         let templates_dir = temp_dir.path().join("templates");
         fs::create_dir(&templates_dir).unwrap();
 
-        fs::write(templates_dir.join("feature.md"), "content").unwrap();
+        fs::write(templates_dir.join("feat.md"), "content").unwrap();
         fs::write(templates_dir.join("fix.md"), "content").unwrap();
         fs::write(templates_dir.join("doc.md"), "content").unwrap();
         fs::write(templates_dir.join("not-a-template.txt"), "content").unwrap();
@@ -117,7 +117,7 @@ mod tests {
         let manager = FileSystemAssetManager::new(templates_dir);
         let templates = manager.list_templates();
 
-        assert_eq!(templates, vec!["doc", "feature", "fix"]);
+        assert_eq!(templates, vec!["doc", "feat", "fix"]);
     }
 
     #[test]

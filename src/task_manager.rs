@@ -293,7 +293,7 @@ mod tests {
             task_id.clone(),
             repo_root.clone(),
             "test-task".to_string(),
-            "feature".to_string(),
+            "feat".to_string(),
             Some("Test description".to_string()),
             None,
             None,
@@ -316,7 +316,7 @@ mod tests {
                 .with_dir(&tasks_dir.to_string_lossy().to_string())
                 .with_dir(&task_dir_path.to_string_lossy().to_string())
                 .with_file(&format!("{}/test.txt", task_dir_path.to_string_lossy()), "test content")
-                .with_file(&tasks_json_path.to_string_lossy().to_string(), &format!(r#"[{{"id":"{}","repo_root":"{}","name":"test-task","task_type":"feature","description":"Test description","instructions_file":null,"agent":null,"timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":null,"error_message":null}}]"#, task_id, repo_root.to_string_lossy()))
+                .with_file(&tasks_json_path.to_string_lossy().to_string(), &format!(r#"[{{"id":"{}","repo_root":"{}","name":"test-task","task_type":"feat","description":"Test description","instructions_file":null,"agent":null,"timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":null,"error_message":null}}]"#, task_id, repo_root.to_string_lossy()))
         );
 
         let docker_client = Arc::new(FixedResponseDockerClient::default());
@@ -369,7 +369,7 @@ mod tests {
             queued_task_id.clone(),
             repo_root.clone(),
             "queued-task".to_string(),
-            "feature".to_string(),
+            "feat".to_string(),
             Some("Queued task".to_string()),
             None,
             None,
@@ -380,7 +380,7 @@ mod tests {
             completed_task_id.clone(),
             repo_root.clone(),
             "completed-task".to_string(),
-            "bug-fix".to_string(),
+            "fix".to_string(),
             Some("Completed task".to_string()),
             None,
             None,
@@ -397,7 +397,7 @@ mod tests {
 
         // Create initial tasks.json with both tasks
         let tasks_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feature","description":"Queued task","instructions_file":null,"agent":null,"timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":null,"error_message":null,"source_commit":null}},{{"id":"{}","repo_root":"{}","name":"completed-task","task_type":"bug-fix","description":"Completed task","instructions_file":null,"agent":null,"timeout":30,"status":"COMPLETE","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":"2024-01-01T01:00:00Z","branch_name":null,"error_message":null,"source_commit":null}}]"#,
+            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feat","description":"Queued task","instructions_file":null,"agent":null,"timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":null,"error_message":null,"source_commit":null}},{{"id":"{}","repo_root":"{}","name":"completed-task","task_type":"fix","description":"Completed task","instructions_file":null,"agent":null,"timeout":30,"status":"COMPLETE","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":"2024-01-01T01:00:00Z","branch_name":null,"error_message":null,"source_commit":null}}]"#,
             queued_task_id,
             repo_root.to_string_lossy(),
             completed_task_id,
@@ -467,7 +467,7 @@ mod tests {
         // Create a completed task to retry
         let repo_root = crate::repo_utils::find_repository_root(Path::new(".")).unwrap();
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
-        let task_id = "2024-01-01-1200-original-task".to_string();
+        let task_id = "2024-01-01-1200-generic-original-task".to_string();
         let mut completed_task = Task::new_with_id(
             task_id.clone(),
             repo_root.clone(),
@@ -537,7 +537,7 @@ mod tests {
         let new_task_id = result.unwrap();
 
         // Verify new task ID format
-        assert!(new_task_id.contains("retry-original-task"));
+        assert!(new_task_id.contains("generic-retry-original-task"));
 
         // Verify task was added to storage
         let storage = get_task_storage(xdg.clone(), fs.clone());
@@ -642,12 +642,12 @@ mod tests {
 
         // Create a queued task (should not be retryable)
         let repo_root = crate::repo_utils::find_repository_root(Path::new(".")).unwrap();
-        let task_id = "2024-01-01-1200-queued-task".to_string();
+        let task_id = "2024-01-01-1200-feat-queued-task".to_string();
         let _queued_task = Task::new_with_id(
             task_id.clone(),
             repo_root.clone(),
             "queued-task".to_string(),
-            "feature".to_string(),
+            "feat".to_string(),
             Some("Queued task description".to_string()),
             None,
             None,
@@ -661,7 +661,7 @@ mod tests {
 
         // Create tasks.json with the queued task
         let tasks_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feature","description":"Queued task description","instructions_file":null,"agent":null,"timeout":30,"status":"QUEUED","created_at":"2024-01-01T12:00:00Z","started_at":null,"completed_at":null,"branch_name":null,"error_message":null,"source_commit":null}}]"#,
+            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feat","description":"Queued task description","instructions_file":null,"agent":null,"timeout":30,"status":"QUEUED","created_at":"2024-01-01T12:00:00Z","started_at":null,"completed_at":null,"branch_name":null,"error_message":null,"source_commit":null}}]"#,
             task_id,
             repo_root.to_string_lossy()
         );
@@ -719,12 +719,12 @@ mod tests {
         // Create a task with a specific ID using new_with_id
         let repo_root = crate::repo_utils::find_repository_root(Path::new(".")).unwrap();
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
-        let task_id = "2024-01-15-1430-test-feature".to_string();
+        let task_id = "2024-01-15-1430-feat-test-feature".to_string();
         let mut completed_task = Task::new_with_id(
             task_id.clone(),
             repo_root.clone(),
             "test-feature".to_string(),
-            "feature".to_string(),
+            "feat".to_string(),
             Some("Test feature".to_string()),
             None,
             None,
@@ -740,7 +740,7 @@ mod tests {
 
         // Create tasks.json with the completed task
         let tasks_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"test-feature","task_type":"feature","description":"Test feature","instructions_file":null,"agent":null,"timeout":30,"status":"COMPLETE","created_at":"2024-01-15T14:30:00Z","started_at":null,"completed_at":"2024-01-15T15:00:00Z","branch_name":null,"error_message":null,"source_commit":null}}]"#,
+            r#"[{{"id":"{}","repo_root":"{}","name":"test-feature","task_type":"feat","description":"Test feature","instructions_file":null,"agent":null,"timeout":30,"status":"COMPLETE","created_at":"2024-01-15T14:30:00Z","started_at":null,"completed_at":"2024-01-15T15:00:00Z","branch_name":null,"error_message":null,"source_commit":null}}]"#,
             task_id,
             repo_root.to_string_lossy()
         );

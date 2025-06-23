@@ -1,5 +1,5 @@
 use crate::context::AppContext;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::path::{Path, PathBuf};
@@ -50,8 +50,13 @@ impl Task {
         agent: Option<String>,
         timeout: u32,
     ) -> Self {
-        let timestamp = Utc::now();
-        let id = format!("{}-{}", timestamp.format("%Y-%m-%d-%H%M"), name);
+        let timestamp = Local::now();
+        let id = format!(
+            "{}-{}-{}",
+            timestamp.format("%Y-%m-%d-%H%M"),
+            task_type,
+            name
+        );
 
         Self {
             id,
@@ -63,7 +68,7 @@ impl Task {
             agent,
             timeout,
             status: TaskStatus::Queued,
-            created_at: timestamp,
+            created_at: Utc::now(),
             started_at: None,
             completed_at: None,
             branch_name: None,
@@ -255,8 +260,8 @@ impl TaskBuilder {
         }
 
         // Create task directory in centralized location
-        let timestamp = chrono::Utc::now().format("%Y-%m-%d-%H%M");
-        let task_dir_name = format!("{}-{}", timestamp, name);
+        let timestamp = chrono::Local::now().format("%Y-%m-%d-%H%M");
+        let task_dir_name = format!("{}-{}-{}", timestamp, task_type, name);
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
         let task_dir = ctx.xdg_directories().task_dir(&task_dir_name, &repo_hash);
         ctx.file_system().create_dir(&task_dir).await?;
@@ -498,7 +503,7 @@ mod tests {
         );
 
         let asset_manager =
-            Arc::new(MockAssetManager::new().with_template("feature", template_content));
+            Arc::new(MockAssetManager::new().with_template("feat", template_content));
 
         let ctx = AppContext::builder()
             .with_file_system(fs.clone())
@@ -508,13 +513,13 @@ mod tests {
         let task = TaskBuilder::new()
             .repo_root(current_dir.clone())
             .name("test-feature".to_string())
-            .task_type("feature".to_string())
+            .task_type("feat".to_string())
             .description(Some("My feature description".to_string()))
             .build(&ctx)
             .await
             .unwrap();
 
-        assert_eq!(task.task_type, "feature");
+        assert_eq!(task.task_type, "feat");
 
         // Verify instructions file was created with template
         let instructions_path = task.instructions_file.as_ref().unwrap();
@@ -619,7 +624,7 @@ mod tests {
         );
 
         let asset_manager =
-            Arc::new(MockAssetManager::new().with_template("feature", template_content));
+            Arc::new(MockAssetManager::new().with_template("feat", template_content));
 
         let ctx = AppContext::builder()
             .with_file_system(fs.clone())
@@ -628,12 +633,12 @@ mod tests {
 
         let task_builder = TaskBuilder::new()
             .name("test-feature".to_string())
-            .task_type("feature".to_string())
+            .task_type("feat".to_string())
             .description(Some("My new feature".to_string()));
 
         let temp_path = Path::new(".tsk-edit-2024-01-01-1200-test-feature-instructions.md");
         task_builder
-            .write_instructions_content(temp_path, "feature", &ctx)
+            .write_instructions_content(temp_path, "feat", &ctx)
             .await
             .unwrap();
 
@@ -710,7 +715,7 @@ mod tests {
 
         // Create an existing task
         let existing_task = Task::new_with_id(
-            "2024-01-01-1200-existing-task".to_string(),
+            "2024-01-01-1200-generic-existing-task".to_string(),
             current_dir.clone(),
             "existing-task".to_string(),
             "generic".to_string(),
@@ -768,7 +773,7 @@ mod tests {
 
         // Create an existing task with missing instructions file
         let existing_task = Task::new_with_id(
-            "2024-01-01-1200-existing-task".to_string(),
+            "2024-01-01-1200-generic-existing-task".to_string(),
             current_dir.clone(),
             "existing-task".to_string(),
             "generic".to_string(),
@@ -859,7 +864,7 @@ mod tests {
 
         // Create an existing task with Docker config
         let mut existing_task = Task::new_with_id(
-            "2024-01-01-1200-existing-task".to_string(),
+            "2024-01-01-1200-generic-existing-task".to_string(),
             current_dir.clone(),
             "existing-task".to_string(),
             "generic".to_string(),
@@ -877,5 +882,71 @@ mod tests {
         // Verify Docker config is preserved
         assert_eq!(builder.tech_stack, Some("python".to_string()));
         assert_eq!(builder.project, Some("ml-service".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_task_id_generation_with_task_type() {
+        let current_dir = std::env::current_dir().unwrap();
+        let fs = Arc::new(
+            MockFileSystem::new()
+                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string()),
+        );
+
+        let ctx = AppContext::builder().with_file_system(fs.clone()).build();
+
+        // Test with "feat" task type
+        let task = TaskBuilder::new()
+            .repo_root(current_dir.clone())
+            .name("new-feature".to_string())
+            .task_type("feat".to_string())
+            .description(Some("Test feature".to_string()))
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        // Verify task ID format includes task type
+        assert!(task.id.contains("-feat-new-feature"));
+        assert_eq!(task.task_type, "feat");
+
+        // Test with "fix" task type
+        let task2 = TaskBuilder::new()
+            .repo_root(current_dir.clone())
+            .name("bug-fix".to_string())
+            .task_type("fix".to_string())
+            .description(Some("Test fix".to_string()))
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        assert!(task2.id.contains("-fix-bug-fix"));
+        assert_eq!(task2.task_type, "fix");
+
+        // Test branch name generation follows the same pattern
+        let branch_name = format!("tsk/{}", task.id);
+        assert!(branch_name.contains("tsk/"));
+        assert!(branch_name.contains("-feat-new-feature"));
+    }
+
+    #[test]
+    fn test_task_new_with_local_time() {
+        let task = Task::new(
+            PathBuf::from("/test"),
+            "test-task".to_string(),
+            "feat".to_string(),
+            Some("Test description".to_string()),
+            None,
+            None,
+            30,
+        );
+
+        // Verify task ID includes task type
+        assert!(task.id.contains("-feat-test-task"));
+
+        // Verify the ID has the expected format
+        let parts: Vec<&str> = task.id.split('-').collect();
+        assert!(parts.len() >= 6); // YYYY-MM-DD-HHMM-feat-test-task
+        assert_eq!(parts[4], "feat");
+        assert_eq!(parts[5], "test");
+        assert_eq!(parts[6], "task");
     }
 }

@@ -15,7 +15,7 @@ mod tests {
         let manager = EmbeddedAssetManager::new();
 
         // Test getting a known template
-        let result = manager.get_template("feature");
+        let result = manager.get_template("feat");
         assert!(result.is_ok());
         let content = result.unwrap();
         assert!(content.contains("Feature"));
@@ -40,7 +40,7 @@ mod tests {
         assert!(!templates.is_empty());
 
         // Check that known templates are included
-        assert!(templates.contains(&"feature".to_string()));
+        assert!(templates.contains(&"feat".to_string()));
         assert!(templates.contains(&"fix".to_string()));
         assert!(templates.contains(&"doc".to_string()));
         assert!(templates.contains(&"plan".to_string()));
