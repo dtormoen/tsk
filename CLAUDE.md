@@ -82,7 +82,20 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Factory pattern prevents accidental operations in tests
 - `FileSystemOperations` trait abstracts all file system operations for testability
 - `GitOperations` trait abstracts all git operations for improved testability and separation of concerns
+- `RepositoryContext` trait provides auto-detection of tech stack and project name from repository files
 - `XdgDirectories` provides XDG-compliant directory paths for centralized storage
+
+**Auto-Detection** (`src/context/repository_context.rs`)
+- Automatic detection of technology stack based on repository files:
+  - Rust: `Cargo.toml` → "rust"
+  - Python: `pyproject.toml`, `requirements.txt`, `setup.py` → "python"
+  - Node.js: `package.json` → "node"
+  - Go: `go.mod` → "go"
+  - Java: `pom.xml`, `build.gradle`, `build.gradle.kts` → "java"
+  - Default: "default" (when no specific files found)
+- Automatic project name detection from repository directory name with cleaning for Docker compatibility
+- Used by `TaskBuilder`, `DockerBuildCommand`, and `DebugCommand` when `--tech-stack` and `--project` flags are not provided
+- Provides user feedback when auto-detection is used vs. explicit flags
 
 ### Development Conventions
 

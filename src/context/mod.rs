@@ -1,6 +1,7 @@
 pub mod docker_client;
 pub mod file_system;
 pub mod git_operations;
+pub mod repository_context;
 pub mod terminal;
 pub mod tsk_client;
 
@@ -15,6 +16,7 @@ use crate::storage::XdgDirectories;
 use docker_client::DockerClient;
 use file_system::FileSystemOperations;
 use git_operations::GitOperations;
+use repository_context::RepositoryContext;
 use terminal::TerminalOperations;
 
 use std::sync::Arc;
@@ -32,6 +34,7 @@ pub struct AppContext {
     file_system: Arc<dyn FileSystemOperations>,
     git_operations: Arc<dyn GitOperations>,
     notification_client: Arc<dyn NotificationClient>,
+    repository_context: Arc<dyn RepositoryContext>,
     terminal_operations: Arc<dyn TerminalOperations>,
     tsk_client: Arc<dyn TskClient>,
     xdg_directories: Arc<XdgDirectories>,
@@ -66,6 +69,10 @@ impl AppContext {
         Arc::clone(&self.notification_client)
     }
 
+    pub fn repository_context(&self) -> Arc<dyn RepositoryContext> {
+        Arc::clone(&self.repository_context)
+    }
+
     pub fn terminal_operations(&self) -> Arc<dyn TerminalOperations> {
         Arc::clone(&self.terminal_operations)
     }
@@ -86,6 +93,7 @@ pub struct AppContextBuilder {
     file_system: Option<Arc<dyn FileSystemOperations>>,
     git_operations: Option<Arc<dyn GitOperations>>,
     notification_client: Option<Arc<dyn NotificationClient>>,
+    repository_context: Option<Arc<dyn RepositoryContext>>,
     terminal_operations: Option<Arc<dyn TerminalOperations>>,
     tsk_client: Option<Arc<dyn TskClient>>,
     xdg_directories: Option<Arc<XdgDirectories>>,
@@ -106,6 +114,7 @@ impl AppContextBuilder {
             file_system: None,
             git_operations: None,
             notification_client: None,
+            repository_context: None,
             terminal_operations: None,
             tsk_client: None,
             xdg_directories: None,
@@ -151,6 +160,15 @@ impl AppContextBuilder {
         notification_client: Arc<dyn NotificationClient>,
     ) -> Self {
         self.notification_client = Some(notification_client);
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn with_repository_context(
+        mut self,
+        repository_context: Arc<dyn RepositoryContext>,
+    ) -> Self {
+        self.repository_context = Some(repository_context);
         self
     }
 
@@ -227,19 +245,28 @@ impl AppContextBuilder {
             ))
         });
 
+        let file_system = self
+            .file_system
+            .unwrap_or_else(|| Arc::new(file_system::DefaultFileSystem));
+
+        let repository_context = self.repository_context.unwrap_or_else(|| {
+            Arc::new(repository_context::DefaultRepositoryContext::new(
+                file_system.clone(),
+            ))
+        });
+
         AppContext {
             asset_manager,
             docker_client,
             docker_image_manager,
-            file_system: self
-                .file_system
-                .unwrap_or_else(|| Arc::new(file_system::DefaultFileSystem)),
+            file_system,
             git_operations: self
                 .git_operations
                 .unwrap_or_else(|| Arc::new(git_operations::DefaultGitOperations)),
             notification_client: self
                 .notification_client
                 .unwrap_or_else(|| crate::notifications::create_notification_client()),
+            repository_context,
             terminal_operations: self
                 .terminal_operations
                 .unwrap_or_else(|| Arc::new(terminal::DefaultTerminalOperations::new())),

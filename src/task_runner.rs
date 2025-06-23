@@ -206,6 +206,8 @@ impl TaskRunner {
         task_name: &str,
         agent_name: Option<&str>,
         repo_root: &Path,
+        tech_stack: &str,
+        project: Option<&str>,
     ) -> Result<(), String> {
         // Get the agent
         let agent_name = agent_name.unwrap_or(AgentProvider::default_agent());
@@ -235,11 +237,7 @@ impl TaskRunner {
         // Ensure the Docker image exists
         let docker_image = self
             .docker_image_manager
-            .ensure_image(
-                "default", // Default tech stack for debug
-                agent_name, None, // No project for debug
-                false,
-            )
+            .ensure_image(tech_stack, agent_name, project, false)
             .await
             .map_err(|e| format!("Error ensuring Docker image: {}", e))?;
 

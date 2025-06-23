@@ -22,9 +22,65 @@ impl Command for DockerBuildCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         let image_manager = ctx.docker_image_manager();
 
-        let tech_stack = self.tech_stack.as_deref().unwrap_or("default");
+        // Auto-detect tech_stack if not provided
+        let tech_stack = match &self.tech_stack {
+            Some(ts) => {
+                println!("Using tech stack: {}", ts);
+                ts.clone()
+            }
+            None => {
+                use crate::repo_utils::find_repository_root;
+                let repo_root = find_repository_root(std::path::Path::new("."))
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+                match ctx.repository_context().detect_tech_stack(&repo_root).await {
+                    Ok(detected) => {
+                        println!("Auto-detected tech stack: {}", detected);
+                        detected
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: Failed to detect tech stack: {}. Using default.",
+                            e
+                        );
+                        "default".to_string()
+                    }
+                }
+            }
+        };
+
         let agent = self.agent.as_deref().unwrap_or("claude-code");
-        let project = self.project.as_deref();
+
+        // Auto-detect project if not provided
+        let project = match &self.project {
+            Some(p) => {
+                println!("Using project: {}", p);
+                Some(p.clone())
+            }
+            None => {
+                use crate::repo_utils::find_repository_root;
+                let repo_root = find_repository_root(std::path::Path::new("."))
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+                match ctx
+                    .repository_context()
+                    .detect_project_name(&repo_root)
+                    .await
+                {
+                    Ok(detected) => {
+                        println!("Auto-detected project name: {}", detected);
+                        Some(detected)
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: Failed to detect project name: {}. Using default.",
+                            e
+                        );
+                        Some("default".to_string())
+                    }
+                }
+            }
+        };
 
         if self.dry_run {
             // Dry run mode: just print the composed Dockerfile
@@ -42,9 +98,9 @@ impl Command for DockerBuildCommand {
             let composer = DockerComposer::new(template_manager);
 
             let config = DockerImageConfig::new(
-                tech_stack.to_string(),
+                tech_stack.clone(),
                 agent.to_string(),
-                project.unwrap_or("default").to_string(),
+                project.as_deref().unwrap_or("default").to_string(),
             );
 
             let composed = composer.compose(&config)?;
@@ -55,7 +111,7 @@ impl Command for DockerBuildCommand {
                 "# Configuration: tech_stack={}, agent={}, project={}",
                 tech_stack,
                 agent,
-                project.unwrap_or("default")
+                project.as_deref().unwrap_or("default")
             );
             println!();
             println!("{}", composed.dockerfile_content);
@@ -76,7 +132,7 @@ impl Command for DockerBuildCommand {
         } else {
             // Build the main image
             let image = image_manager
-                .build_image(tech_stack, agent, project, self.no_cache)
+                .build_image(&tech_stack, agent, project.as_deref(), self.no_cache)
                 .await?;
             println!("Successfully built Docker image: {}", image.tag);
 

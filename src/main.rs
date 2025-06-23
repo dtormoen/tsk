@@ -109,6 +109,14 @@ enum Commands {
         /// Specific agent to use (defaults to claude-code)
         #[arg(short, long)]
         agent: Option<String>,
+
+        /// Technology stack for Docker image (e.g., rust, python, node)
+        #[arg(long)]
+        tech_stack: Option<String>,
+
+        /// Project name for Docker image
+        #[arg(long)]
+        project: Option<String>,
     },
     /// Stop the TSK proxy container
     StopProxy,
@@ -208,7 +216,17 @@ async fn main() {
             tech_stack,
             project,
         }),
-        Commands::Debug { name, agent } => Box::new(DebugCommand { name, agent }),
+        Commands::Debug {
+            name,
+            agent,
+            tech_stack,
+            project,
+        } => Box::new(DebugCommand {
+            name,
+            agent,
+            tech_stack,
+            project,
+        }),
         Commands::StopProxy => Box::new(StopProxyCommand),
         Commands::StopServer => Box::new(StopServerCommand),
         Commands::List => Box::new(ListCommand),

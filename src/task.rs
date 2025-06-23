@@ -304,6 +304,53 @@ impl TaskBuilder {
             }
         };
 
+        // Auto-detect tech_stack and project if not provided
+        let tech_stack = match self.tech_stack {
+            Some(ts) => {
+                println!("Using tech stack: {}", ts);
+                Some(ts)
+            }
+            None => match ctx.repository_context().detect_tech_stack(&repo_root).await {
+                Ok(detected) => {
+                    println!("Auto-detected tech stack: {}", detected);
+                    Some(detected)
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Failed to detect tech stack: {}. Using default.",
+                        e
+                    );
+                    Some("default".to_string())
+                }
+            },
+        };
+
+        let project = match self.project {
+            Some(p) => {
+                println!("Using project: {}", p);
+                Some(p)
+            }
+            None => {
+                match ctx
+                    .repository_context()
+                    .detect_project_name(&repo_root)
+                    .await
+                {
+                    Ok(detected) => {
+                        println!("Auto-detected project name: {}", detected);
+                        Some(detected)
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: Failed to detect project name: {}. Using default.",
+                            e
+                        );
+                        Some("default".to_string())
+                    }
+                }
+            }
+        };
+
         // Create and return the task
         let mut task = Task::new_with_id(
             task_dir_name.clone(),
@@ -316,8 +363,8 @@ impl TaskBuilder {
             timeout,
         );
         task.source_commit = source_commit;
-        task.tech_stack = self.tech_stack;
-        task.project = self.project;
+        task.tech_stack = tech_stack;
+        task.project = project;
 
         Ok(task)
     }
