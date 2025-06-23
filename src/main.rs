@@ -145,7 +145,11 @@ enum Commands {
         edit: bool,
     },
     /// Build the TSK Docker images (tsk/base and tsk/proxy)
-    DockerBuild,
+    DockerBuild {
+        /// Build without using Docker's cache
+        #[arg(long)]
+        no_cache: bool,
+    },
 }
 
 #[tokio::main]
@@ -206,7 +210,7 @@ async fn main() {
             retry,
             edit,
         }),
-        Commands::DockerBuild => Box::new(DockerBuildCommand),
+        Commands::DockerBuild { no_cache } => Box::new(DockerBuildCommand { no_cache }),
     };
 
     if let Err(e) = command.execute(&app_context).await {

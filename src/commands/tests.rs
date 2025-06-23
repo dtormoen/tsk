@@ -116,6 +116,6 @@ mod command_tests {
     #[test]
     fn test_docker_build_command_instantiation() {
         // Test that DockerBuildCommand can be instantiated
-        let _cmd = DockerBuildCommand;
+        let _cmd = DockerBuildCommand { no_cache: false };
     }
 }
