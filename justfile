@@ -19,8 +19,4 @@ precommit:
     cargo run -- --help
 
 docker-build:
-    cargo run -- docker-build
-
-nuke-tsk:
-    rm -rf .tsk
-    git for-each-ref --format="%(refname:short)" refs/heads/tsk/\* | xargs git branch -D
+    cargo run -- docker-build --no-cache
