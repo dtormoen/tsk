@@ -1,343 +1,100 @@
-# tsk - Autonomous AI Agent Task Manager
+# TSK - AI Agent Task Manager
 
-A Rust-based CLI tool for delegating development tasks to AI agents running in sandboxed environments. TSK enables you to work with AI coding tools like Aider and Claude Code as if you're managing a team of engineers - assign tasks, get back git branches, and maintain human oversight through familiar code review workflows.
+⚠️⚠️ **EARLY DEVELOPMENT SOFTWARE** ⚠️⚠️
 
-## Overview
+This project is in early development. Breaking changes are expected.
 
-TSK provides a "lead engineer + AI team" workflow by:
-- Delegating specific development tasks to autonomous AI agents
-- Running agents in isolated Docker containers for safe execution
-- Creating dedicated git branches for each task
-- Enabling human review and approval through standard git workflows
-- Supporting iterative refinement when tasks need improvement
+A Rust CLI tool that lets you delegate development tasks to AI agents running in sandboxed Docker environments. Get back git branches for human review.
 
-Think of it as having a team of engineers who work autonomously but always submit their work for review before merging.
+## What it does
 
-## Key Benefits
+TSK enables a "lead engineer + AI team" workflow:
+1. **Assign tasks** to AI agents with natural language descriptions and task type templates to automate prompt boilerplate
+2. **Agents work autonomously** in isolated Docker containers
+3. **Get git branches** back with their changes for review
+4. **Review and merge** using your normal git workflow
 
-### Safe Autonomous Execution
-- AI agents run in sandboxed Docker containers with network and filesystem restrictions
-- Agents can modify code, run tests, and install dependencies without affecting your main environment
-- Tasks that result in changes produce reviewable git branches for human review
-
-### Human-in-the-Loop Design
-- You maintain control as the "lead engineer" reviewing all changes
-- Failed or incomplete tasks become learning opportunities for better task descriptions
-- Familiar git-based review workflow using tools you already know
-- Natural iteration cycle: review → refine instructions → retry
-
-### Agent Tool Integration
-- Leverages AI coding tools (Currently Claude Code)
-- Supports headless/batch execution of existing tools
-- Extensible architecture for adding new AI agents
+Think of it as having a team of engineers who work independently and submit pull requests for review.
 
 ## Installation
 
-### From Source (Development)
+### Requirements
+
+- [Rust](https://rustup.rs/) - Rust toolchain and Cargo
+- [Docker](https://docs.docker.com/get-docker/) - Container runtime
+- [Git](https://git-scm.com/downloads) - Version control system
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) - AI agent (help us support more agents!)
+
+### Install TSK
 
 ```bash
-# Clone the repository
+# Clone and build
 git clone https://github.com/dtormoen/tsk.git
 cd tsk
 
-# Build the Docker images (required)
-cargo run -- docker-build
-
-# Install TSK to your system
+# Install to system
 cargo install --path .
-# Or use just:
-just install
 
-# TSK is now available on your PATH
-tsk --help
+# Build Docker images (required)
+tsk docker-build
 ```
-
-### Binary Installation
-
-Once installed, TSK is available as a standalone binary that includes all templates and dockerfiles embedded within it. You can run `tsk` from any directory without needing the source repository.
 
 ## Quick Start
 
 ```bash
-# Delegate a generic task (no type needed)
-tsk add --name "auth-review" \
-  --description "Review the authentication module for security vulnerabilities, focus on input validation and session management"
+# Add a task using the "feat" task template
+tsk add --type "feat" --name "greeting" --description "Add a warm greeting to all CLI commands"
 
-# Add a feature task (using the feature template)
-tsk add --name "add-notifications" --type "feature" \
-  --description "Add email notifications when users register"
-
-# Run all queued tasks (creates branches for tasks with changes)
+# Run all queued tasks
 tsk run
 
-# Review the results
+# Check results
 tsk list
-# Output:
-# ✓ auth-review → branch: tsk/2024-05-31-1430-fix-auth-review
-# ⚠ extract-service → branch: tsk/2024-05-31-1430-refactor-extract-service (tests failed)
 
-# Review the auth changes
-git checkout tsk/2024-05-31-1430-fix-auth-review
+# Review the changes
+git checkout tsk/2025-06-23-1430-feat-greeting
 git diff main...HEAD
 
-# Looks good! Merge it
-git checkout main
-git merge tsk/2024-05-31-1430-fix-auth-review
-
-# The refactoring needs work - refine and retry
-tsk add --name "extract-service-v2" \
-  --description "Extract user notification logic into NotificationService class. Keep existing public API unchanged and ensure all tests pass."
-
-# Or create a task with interactive editing
-tsk add --name "complex-feature" --type "feat" --edit
-# This will open your $EDITOR to create detailed instructions
+# Merge if it looks good
+git checkout main && git merge tsk/2025-06-23-1430-feat-greeting
 ```
 
-### Server Mode Quick Start
+### Server Mode
+
+For continuous task processing across multiple repositories:
 
 ```bash
-# Start the TSK server in one terminal
+# Start server
 tsk run --server
 
-# In another terminal, add tasks from any repository
-cd ~/projects/project-a
-tsk add --name "fix-auth" --description "Fix authentication bug in login handler"
+# Add tasks from any repo
+cd ~/project-a && tsk add --type "fix" --name "task1" --description "..."
+cd ~/project-b && tsk add --type "feat" --name "task2" --description "..."
 
-cd ~/projects/project-b  
-tsk add --name "add-logging" --description "Add debug logging to API endpoints"
-
-# List all tasks across repositories
-tsk list
-
-# Stop the server when done
+# Stop server
 tsk stop-server
 ```
 
-## Command Reference
+## Commands
 
-### `tsk add`
-Queues a task for autonomous execution by an AI agent.
+- `tsk add` - Queue a task
+- `tsk run` - Execute queued tasks (or `--server` for daemon mode)
+- `tsk list` - View task status and branches
+- `tsk templates` - View available task type templates
+- `tsk quick` - Execute a task immediately
+- `tsk debug` - Start an interactive docker container
+- `tsk tasks --clean` - Clean up completed tasks
+- `tsk docker-build` - Build required docker containers
 
-```bash
-tsk add --name <TASK_NAME> [--type <TASK_TYPE>] --description <DESCRIPTION>
-```
-
-**Options:**
-- `--name, -n`: Unique identifier for the task
-- `--type, -t`: Task type (optional, defaults to 'generic'). Must have a corresponding template in the templates/ folder
-- `--description, -d`: Detailed description of what needs to be accomplished
-- `--instructions, -i`: Path to instructions file to pass to the agent (alternative to --description)
-- `--edit, -e`: Open the instructions file in $EDITOR after creation for interactive editing
-- `--agent, -a`: Specific agent to use (defaults to claude-code)
-- `--timeout`: Task timeout in minutes (default: 30)
-
-**Note:** If neither `--description` nor `--instructions` is provided, you must use `--edit` to create instructions interactively.
-
-**Task Types:**
-Task types are determined by available templates in the `templates/` folder. By default, the following templates are provided:
-- `feat`: Template for implementing new features
-- `fix`: Template for bug fixes
-- `refactor`: Template for code refactoring
-- `doc`: Template for documentation updates
-- `plan`: Template for planning tasks
-
-To add custom task types, create new template files in the `templates/` folder (e.g., `templates/chore.md`)
-
-### `tsk run`
-Executes all queued tasks, creating git branches for tasks that produce changes.
-
-```bash
-tsk run [OPTIONS]
-```
-
-**Options:**
-- `--server, -s`: Run in server mode, continuously processing tasks from any repository
-- `--parallel, -p`: Number of concurrent tasks (default: 1)
-- `--timeout, -t`: Task timeout in minutes (default: 30)
-- `--dry-run`: Preview execution plan without running tasks
-
-**Server Mode:**
-When run with `--server`, TSK starts as a background daemon that:
-- Accepts task additions from any repository via Unix socket
-- Executes tasks sequentially (one at a time)
-- Continues running until explicitly stopped
-- Stores all task data centrally in XDG-compliant directories
-
-### `tsk list`
-Displays all tasks with their current status and resulting branches.
-
-```bash
-tsk list [OPTIONS]
-```
-
-**Options:**
-- `--status, -s`: Filter by status (pending|running|completed|failed)
-
-**Output Example:**
-```
-Task Status Report
-==================
-
-✓ auth-review (completed 2m ago)
-  Branch: tsk/auth-review-20240531-143022
-  Agent: aider-gpt4
-  Files: 3 modified, 1 added
-  Tests: ✓ passing
-
-⚠ extract-service (completed 5m ago)
-  Branch: tsk/extract-service-20240531-143055
-  Agent: aider-gpt4
-  Files: 8 modified, 2 added
-  Tests: ✗ 2 failing
-
-⏳ add-logging (running for 3m)
-  Agent: claude-code
-  Progress: Analyzing codebase structure...
-
-📋 optimize-queries (pending)
-  Queued: 10m ago
-```
-
-### `tsk quick`
-Immediately executes a task and creates a branch if changes are produced.
-
-```bash
-tsk quick [--type <TASK_TYPE>] --description <DESCRIPTION>
-```
-
-**Options:**
-- `--name, -n`: Unique identifier for the task
-- `--type, -t`: Task type (optional, defaults to 'generic'). Must have a corresponding template in the templates/ folder
-- `--description, -d`: Task description
-- `--instructions, -i`: Path to instructions file to pass to the agent (alternative to --description)
-- `--edit, -e`: Open the instructions file in $EDITOR after creation for interactive editing
-- `--agent, -a`: Specific agent to use (defaults to claude-code)
-- `--timeout`: Task timeout in minutes (default: 30)
-
-**Note:** If neither `--description` nor `--instructions` is provided, you must use `--edit` to create instructions interactively.
-
-### `tsk tasks`
-Manages tasks in the task list, allowing deletion of specific tasks or cleanup of completed tasks.
-
-```bash
-tsk tasks [OPTIONS]
-```
-
-**Options:**
-- `--delete, -d <TASK_ID>`: Delete a specific task by ID
-- `--clean, -c`: Delete all completed tasks and all quick tasks
-
-**Examples:**
-```bash
-# Delete a specific task
-tsk tasks --delete 2024-06-01-1430-auth-review
-
-# Clean up completed tasks and quick tasks
-tsk tasks --clean
-```
-
-### `tsk debug`
-Launches a Docker container for interactive debugging.
-
-```bash
-tsk debug --name <SESSION_NAME> [--agent <AGENT_NAME>]
-```
-
-**Options:**
-- `--name, -n`: Unique identifier for the debug session
-- `--agent, -a`: Specific agent to use (defaults to claude-code)
-
-This command creates an interactive Docker container with the same environment as tasks,
-allowing you to manually test and debug agent behavior.
-
-### `tsk stop-server`
-Stops the running TSK server daemon.
-
-```bash
-tsk stop-server
-```
-
-This command sends a shutdown signal to the running TSK server and waits for it to gracefully stop.
-
-### `tsk docker-build`
-Builds TSK Docker images using the templating system.
-
-```bash
-tsk docker-build [OPTIONS]
-```
-
-**Options:**
-- `--no-cache`: Build without using Docker's cache
-- `--tech-stack <STACK>`: Technology stack (e.g., rust, python, node)
-- `--agent <AGENT>`: Agent (e.g., claude, aider)
-- `--project <PROJECT>`: Project name
-- `--legacy`: Build legacy tsk/base and tsk/proxy images
-- `--dry-run`: Print the resolved Dockerfile without building
-
-**Examples:**
-```bash
-# Build default images
-tsk docker-build
-
-# Build with specific configuration
-tsk docker-build --tech-stack rust --agent claude --project web-api
-
-# Preview the Dockerfile that would be built
-tsk docker-build --tech-stack python --dry-run
-
-# Build legacy images for backward compatibility
-tsk docker-build --legacy
-```
-
-The docker-build command uses a multi-layer templating system to compose Docker images from modular layers (base, tech-stack, agent, project).
-
-## Architecture
-
-### Centralized Storage
-
-TSK uses XDG Base Directory specification for storing task data centrally:
-- **Data Directory**: `$XDG_DATA_HOME/tsk/` (defaults to `~/.local/share/tsk/`)
-  - `tasks.json`: Central task database
-  - `tasks/`: Task-specific directories containing repository copies
-- **Runtime Directory**: `$XDG_RUNTIME_DIR/tsk/` (defaults to `/tmp/tsk-$UID/`)
-  - `tsk.sock`: Unix socket for client-server communication
-  - `tsk.pid`: Server process ID file
-
-This centralized approach allows:
-- Task management across multiple repositories
-- Server mode operation for continuous task processing
-- Clean separation of task data from repository content
-
-### Execution Flow
-
-1. **Task Queuing**: User defines task with type and detailed description
-2. **Environment Setup**: Copy repository and create isolated Docker container
-3. **Agent Execution**: Selected AI agent (Aider/Claude Code) runs autonomously
-4. **Result Capture**: Changes committed to a dedicated task branch (if any)
-5. **Quality Checks**: Automated tests, linting, and compilation validation
-6. **Human Review**: Developer reviews branch using standard git tools
-7. **Integration**: Merge acceptable changes, refine and retry others
-
-### Agent Integration
-
-TSK supports multiple AI agents through an extensible plugin system. Each agent can define its own Docker image, volumes, environment variables, and log processing logic.
-
-**Currently Supported Agents:**
-- `claude-code`: Claude Code AI assistant (default)
-
-**Agent Architecture:**
-- Agents implement a common trait interface for consistency
-- Each agent can specify custom Docker configurations
-- Log processors handle agent-specific output formatting
-- Agent validation ensures proper configuration before execution
-
-TSK acts as an orchestration layer for existing AI coding tools
+Run `tsk help` or `tsk help <command>` for detailed options.
 
 ## Contributing
 
-### Development Setup
-```bash
-cargo build
-cargo test
-```
+This project uses:
+- `cargo test` for running tests
+- `just precommit` for full CI checks
+- See [CLAUDE.md](CLAUDE.md) for development guidelines
 
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.

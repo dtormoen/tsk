@@ -1,1 +1,0 @@
-Append a single line to hello.md at the root of the repo that says "Hello from <goofy robot name>" where you come up with a new goofy robot name to fill in the template each time you run it. If the file does not exist, create it.

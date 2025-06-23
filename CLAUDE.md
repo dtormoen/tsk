@@ -11,7 +11,7 @@ TSK is a Rust-based CLI tool for delegating development tasks to AI agents runni
 ```bash
 # Build and development
 cargo build
-cargo test -- --test-threads=1    # Tests must run serially
+cargo test
 RUST_LOG=debug cargo run
 
 # Code quality
