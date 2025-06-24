@@ -58,11 +58,7 @@ impl TaskRunner {
         task: &Task,
     ) -> Result<TaskExecutionResult, TaskExecutionError> {
         // Get the agent for this task
-        let agent_name = task
-            .agent
-            .as_deref()
-            .unwrap_or(AgentProvider::default_agent());
-        let agent = AgentProvider::get_agent(agent_name)
+        let agent = AgentProvider::get_agent(&task.agent)
             .map_err(|e| format!("Error getting agent: {}", e))?;
 
         // Validate the agent
@@ -80,17 +76,14 @@ impl TaskRunner {
         // Copy repository for the task
         let (repo_path, branch_name) = self
             .repo_manager
-            .copy_repo(&task.id, &task.repo_root, task.source_commit.as_deref())
+            .copy_repo(&task.id, &task.repo_root, Some(&task.source_commit))
             .await
             .map_err(|e| format!("Error copying repository: {}", e))?;
 
         println!("Created repository copy at: {}", repo_path.display());
 
-        // Ensure we have an instructions file
-        let instructions_file_path = match &task.instructions_file {
-            Some(path) => PathBuf::from(path),
-            None => return Err("No instructions file provided".to_string().into()),
-        };
+        // Get the instructions file path
+        let instructions_file_path = PathBuf::from(&task.instructions_file);
 
         // Build the command using the agent
         let command =
@@ -107,12 +100,7 @@ impl TaskRunner {
             // Ensure the Docker image exists
             let docker_image = self
                 .docker_image_manager
-                .ensure_image(
-                    task.tech_stack.as_deref().unwrap_or("default"),
-                    agent_name,
-                    task.project.as_deref(),
-                    false,
-                )
+                .ensure_image(&task.tech_stack, &task.agent, Some(&task.project), false)
                 .await
                 .map_err(|e| format!("Error ensuring Docker image: {}", e))?;
 
@@ -375,19 +363,18 @@ mod tests {
             repo_root: std::env::current_dir().unwrap(),
             name: "test-task".to_string(),
             task_type: "feature".to_string(),
-            description: Some("Test description".to_string()),
-            instructions_file: Some("instructions.md".to_string()),
-            agent: None,
+            instructions_file: "instructions.md".to_string(),
+            agent: "claude-code".to_string(),
             timeout: 30,
             status: TaskStatus::Queued,
             created_at: chrono::Utc::now(),
             started_at: None,
             completed_at: None,
-            branch_name: None,
+            branch_name: "tsk/test-task-123".to_string(),
             error_message: None,
-            source_commit: None,
-            tech_stack: None,
-            project: None,
+            source_commit: "abc123".to_string(),
+            tech_stack: "default".to_string(),
+            project: "default".to_string(),
         };
 
         let result = task_runner.execute_task(&task).await;

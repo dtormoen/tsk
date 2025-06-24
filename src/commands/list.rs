@@ -73,7 +73,7 @@ impl Command for ListCommand {
                         TaskStatus::Failed => "FAILED".to_string(),
                         TaskStatus::Complete => "COMPLETE".to_string(),
                     },
-                    agent: task.agent.clone().unwrap_or_else(|| "auto".to_string()),
+                    agent: task.agent.clone(),
                     created: task.created_at.format("%Y-%m-%d %H:%M").to_string(),
                 })
                 .collect();

@@ -184,10 +184,13 @@ mod tests {
             temp_dir.path().to_path_buf(),
             "test-task".to_string(),
             "feature".to_string(),
-            Some("Test description".to_string()),
-            None,
-            None,
+            "instructions.md".to_string(),
+            "claude-code".to_string(),
             30,
+            "tsk/test-task".to_string(),
+            "abc123".to_string(),
+            "default".to_string(),
+            "default".to_string(),
         );
 
         storage.add_task(task.clone()).await.unwrap();
@@ -219,29 +222,38 @@ mod tests {
             temp_dir.path().to_path_buf(),
             "task1".to_string(),
             "feature".to_string(),
-            Some("Task 1".to_string()),
-            None,
-            None,
+            "instructions.md".to_string(),
+            "claude-code".to_string(),
             30,
+            "tsk/task1".to_string(),
+            "abc123".to_string(),
+            "default".to_string(),
+            "default".to_string(),
         );
         let mut task2 = Task::new(
             temp_dir.path().to_path_buf(),
             "task2".to_string(),
             "bug-fix".to_string(),
-            Some("Task 2".to_string()),
-            None,
-            None,
+            "instructions.md".to_string(),
+            "claude-code".to_string(),
             30,
+            "tsk/task2".to_string(),
+            "abc123".to_string(),
+            "default".to_string(),
+            "default".to_string(),
         );
         task2.status = TaskStatus::Complete;
         let mut task3 = Task::new(
             temp_dir.path().to_path_buf(),
             "task3".to_string(),
             "refactor".to_string(),
-            Some("Task 3".to_string()),
-            None,
-            None,
+            "instructions.md".to_string(),
+            "claude-code".to_string(),
             30,
+            "tsk/task3".to_string(),
+            "abc123".to_string(),
+            "default".to_string(),
+            "default".to_string(),
         );
         task3.status = TaskStatus::Failed;
 

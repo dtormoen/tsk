@@ -4,38 +4,58 @@ use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
+/// Represents the execution status of a task
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TaskStatus {
+    /// Task is in the queue waiting to be executed
     #[serde(rename = "QUEUED")]
     Queued,
+    /// Task is currently being executed
     #[serde(rename = "RUNNING")]
     Running,
+    /// Task execution failed
     #[serde(rename = "FAILED")]
     Failed,
+    /// Task completed successfully
     #[serde(rename = "COMPLETE")]
     Complete,
 }
 
+/// Represents a TSK task with all required fields for execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
+    /// Unique identifier for the task (format: YYYY-MM-DD-HHMM-{task_type}-{name})
     pub id: String,
+    /// Absolute path to the repository root where the task was created
     pub repo_root: PathBuf,
+    /// Human-readable name for the task
     pub name: String,
+    /// Type of task (e.g., "feat", "fix", "refactor")
     pub task_type: String,
-    pub description: Option<String>,
-    pub instructions_file: Option<String>,
-    pub agent: Option<String>,
+    /// Path to the instructions file containing task details
+    pub instructions_file: String,
+    /// AI agent to use for task execution (e.g., "claude-code")
+    pub agent: String,
+    /// Timeout in minutes for task execution
     pub timeout: u32,
+    /// Current status of the task
     pub status: TaskStatus,
+    /// When the task was created
     pub created_at: DateTime<Utc>,
+    /// When the task started execution (if started)
     pub started_at: Option<DateTime<Utc>>,
+    /// When the task completed (if completed)
     pub completed_at: Option<DateTime<Utc>>,
-    pub branch_name: Option<String>,
+    /// Git branch name for this task (format: tsk/{task-id})
+    pub branch_name: String,
+    /// Error message if task failed
     pub error_message: Option<String>,
-    pub source_commit: Option<String>,
-    // Docker configuration
-    pub tech_stack: Option<String>,
-    pub project: Option<String>,
+    /// Git commit SHA from which the task was created
+    pub source_commit: String,
+    /// Technology stack for Docker image selection (e.g., "rust", "python", "default")
+    pub tech_stack: String,
+    /// Project name for Docker image selection (defaults to "default")
+    pub project: String,
 }
 
 impl Task {
@@ -45,10 +65,13 @@ impl Task {
         repo_root: PathBuf,
         name: String,
         task_type: String,
-        description: Option<String>,
-        instructions_file: Option<String>,
-        agent: Option<String>,
+        instructions_file: String,
+        agent: String,
         timeout: u32,
+        branch_name: String,
+        source_commit: String,
+        tech_stack: String,
+        project: String,
     ) -> Self {
         let timestamp = Local::now();
         let id = format!(
@@ -63,7 +86,6 @@ impl Task {
             repo_root,
             name,
             task_type,
-            description,
             instructions_file,
             agent,
             timeout,
@@ -71,11 +93,11 @@ impl Task {
             created_at: Utc::now(),
             started_at: None,
             completed_at: None,
-            branch_name: None,
+            branch_name,
             error_message: None,
-            source_commit: None,
-            tech_stack: None,
-            project: None,
+            source_commit,
+            tech_stack,
+            project,
         }
     }
 
@@ -85,17 +107,19 @@ impl Task {
         repo_root: PathBuf,
         name: String,
         task_type: String,
-        description: Option<String>,
-        instructions_file: Option<String>,
-        agent: Option<String>,
+        instructions_file: String,
+        agent: String,
         timeout: u32,
+        branch_name: String,
+        source_commit: String,
+        tech_stack: String,
+        project: String,
     ) -> Self {
         Self {
             id,
             repo_root,
             name,
             task_type,
-            description,
             instructions_file,
             agent,
             timeout,
@@ -103,11 +127,11 @@ impl Task {
             created_at: Utc::now(),
             started_at: None,
             completed_at: None,
-            branch_name: None,
+            branch_name,
             error_message: None,
-            source_commit: None,
-            tech_stack: None,
-            project: None,
+            source_commit,
+            tech_stack,
+            project,
         }
     }
 }
@@ -149,17 +173,13 @@ impl TaskBuilder {
         builder.repo_root = Some(task.repo_root.clone());
         builder.name = Some(task.name.clone());
         builder.task_type = Some(task.task_type.clone());
-        builder.agent = task.agent.clone();
+        builder.agent = Some(task.agent.clone());
         builder.timeout = Some(task.timeout);
-        builder.tech_stack = task.tech_stack.clone();
-        builder.project = task.project.clone();
+        builder.tech_stack = Some(task.tech_stack.clone());
+        builder.project = Some(task.project.clone());
 
-        // Copy the instructions file path if it exists
-        if let Some(ref instructions_file) = task.instructions_file {
-            builder.instructions_file_path = Some(PathBuf::from(instructions_file));
-        } else if let Some(ref desc) = task.description {
-            builder.description = Some(desc.clone());
-        }
+        // Copy the instructions file path
+        builder.instructions_file_path = Some(PathBuf::from(&task.instructions_file));
 
         builder
     }
@@ -234,16 +254,20 @@ impl TaskBuilder {
             );
         }
 
-        // Validate agent if specified
-        if let Some(ref agent_name) = self.agent {
-            if !crate::agent::AgentProvider::is_valid_agent(agent_name) {
-                let available_agents = crate::agent::AgentProvider::list_agents().join(", ");
-                return Err(format!(
-                    "Unknown agent '{}'. Available agents: {}",
-                    agent_name, available_agents
-                )
-                .into());
-            }
+        // Get agent or use default
+        let agent = self
+            .agent
+            .clone()
+            .unwrap_or_else(|| crate::agent::AgentProvider::default_agent().to_string());
+
+        // Validate agent
+        if !crate::agent::AgentProvider::is_valid_agent(&agent) {
+            let available_agents = crate::agent::AgentProvider::list_agents().join(", ");
+            return Err(format!(
+                "Unknown agent '{}'. Available agents: {}",
+                agent, available_agents
+            )
+            .into());
         }
 
         // Validate task type
@@ -294,13 +318,11 @@ impl TaskBuilder {
 
         // Capture the current commit SHA
         let source_commit = match ctx.git_operations().get_current_commit(&repo_root).await {
-            Ok(commit) => Some(commit),
+            Ok(commit) => commit,
             Err(e) => {
-                eprintln!(
-                    "Warning: Failed to get current commit for task '{}': {}",
-                    name, e
+                return Err(
+                    format!("Failed to get current commit for task '{}': {}", name, e).into(),
                 );
-                None
             }
         };
 
@@ -308,19 +330,19 @@ impl TaskBuilder {
         let tech_stack = match self.tech_stack {
             Some(ts) => {
                 println!("Using tech stack: {}", ts);
-                Some(ts)
+                ts
             }
             None => match ctx.repository_context().detect_tech_stack(&repo_root).await {
                 Ok(detected) => {
                     println!("Auto-detected tech stack: {}", detected);
-                    Some(detected)
+                    detected
                 }
                 Err(e) => {
                     eprintln!(
                         "Warning: Failed to detect tech stack: {}. Using default.",
                         e
                     );
-                    Some("default".to_string())
+                    "default".to_string()
                 }
             },
         };
@@ -328,7 +350,7 @@ impl TaskBuilder {
         let project = match self.project {
             Some(p) => {
                 println!("Using project: {}", p);
-                Some(p)
+                p
             }
             None => {
                 match ctx
@@ -338,33 +360,36 @@ impl TaskBuilder {
                 {
                     Ok(detected) => {
                         println!("Auto-detected project name: {}", detected);
-                        Some(detected)
+                        detected
                     }
                     Err(e) => {
                         eprintln!(
                             "Warning: Failed to detect project name: {}. Using default.",
                             e
                         );
-                        Some("default".to_string())
+                        "default".to_string()
                     }
                 }
             }
         };
 
+        // Generate branch name from task ID
+        let branch_name = format!("tsk/{}", task_dir_name);
+
         // Create and return the task
-        let mut task = Task::new_with_id(
+        let task = Task::new_with_id(
             task_dir_name.clone(),
             repo_root,
             name,
             task_type,
-            None, // description is now stored in instructions file
-            Some(instructions_path),
-            self.agent,
+            instructions_path,
+            agent,
             timeout,
+            branch_name,
+            source_commit,
+            tech_stack,
+            project,
         );
-        task.source_commit = source_commit;
-        task.tech_stack = tech_stack;
-        task.project = project;
 
         Ok(task)
     }
@@ -536,7 +561,7 @@ mod tests {
         assert_eq!(task.name, "test-task");
         assert_eq!(task.task_type, "generic");
         assert_eq!(task.timeout, 60);
-        assert!(task.instructions_file.is_some());
+        assert!(!task.instructions_file.is_empty());
         assert!(task.id.contains("test-task"));
     }
 
@@ -569,7 +594,7 @@ mod tests {
         assert_eq!(task.task_type, "feat");
 
         // Verify instructions file was created with template
-        let instructions_path = task.instructions_file.as_ref().unwrap();
+        let instructions_path = &task.instructions_file;
         let content = fs.read_file(Path::new(instructions_path)).await.unwrap();
         assert_eq!(content, "# Feature Template\n\nMy feature description");
     }
@@ -623,7 +648,7 @@ mod tests {
             .unwrap();
 
         // Verify instructions file was copied
-        let task_instructions_path = task.instructions_file.as_ref().unwrap();
+        let task_instructions_path = &task.instructions_file;
         let content = fs
             .read_file(Path::new(task_instructions_path))
             .await
@@ -727,7 +752,7 @@ mod tests {
         // Verify the source commit was captured
         assert_eq!(
             task.source_commit,
-            Some("abc123def456789012345678901234567890abcd".to_string())
+            "abc123def456789012345678901234567890abcd".to_string()
         );
 
         // Verify the git operation was called
@@ -754,6 +779,7 @@ mod tests {
         );
 
         let git_ops = Arc::new(MockGitOperations::new());
+        git_ops.set_get_current_commit_result(Ok("abc123".to_string()));
 
         let ctx = AppContext::builder()
             .with_file_system(fs.clone())
@@ -766,10 +792,13 @@ mod tests {
             current_dir.clone(),
             "existing-task".to_string(),
             "generic".to_string(),
-            Some("Existing task description".to_string()),
-            Some(instructions_path.to_string_lossy().to_string()),
-            Some("claude-code".to_string()),
+            instructions_path.to_string_lossy().to_string(),
+            "claude-code".to_string(),
             45,
+            "tsk/2024-01-01-1200-generic-existing-task".to_string(),
+            "abc123".to_string(),
+            "default".to_string(),
+            "default".to_string(),
         );
 
         // Create a builder from the existing task
@@ -785,14 +814,13 @@ mod tests {
         // Verify the new task has the same properties
         assert_eq!(new_task.name, "retry-task");
         assert_eq!(new_task.task_type, "generic");
-        assert_eq!(new_task.agent, Some("claude-code".to_string()));
+        assert_eq!(new_task.agent, "claude-code".to_string());
         assert_eq!(new_task.timeout, 45);
-        assert!(new_task.instructions_file.is_some());
+        assert!(!new_task.instructions_file.is_empty());
 
         // Verify the instructions file path was preserved and content was copied
-        let new_instructions_path = new_task.instructions_file.as_ref().unwrap();
         let copied_content = fs
-            .read_file(Path::new(new_instructions_path))
+            .read_file(Path::new(&new_task.instructions_file))
             .await
             .unwrap();
         // The new task should have the content from the original instructions file
@@ -812,6 +840,7 @@ mod tests {
         );
 
         let git_ops = Arc::new(MockGitOperations::new());
+        git_ops.set_get_current_commit_result(Ok("abc123".to_string()));
 
         let ctx = AppContext::builder()
             .with_file_system(fs.clone())
@@ -824,10 +853,13 @@ mod tests {
             current_dir.clone(),
             "existing-task".to_string(),
             "generic".to_string(),
-            Some("Existing task description".to_string()),
-            Some(instructions_path.to_string_lossy().to_string()),
-            None,
+            instructions_path.to_string_lossy().to_string(),
+            "claude-code".to_string(),
             30,
+            "tsk/2024-01-01-1200-generic-existing-task".to_string(),
+            "abc123".to_string(),
+            "default".to_string(),
+            "default".to_string(),
         );
 
         // Create a builder from the existing task
@@ -860,18 +892,18 @@ mod tests {
             .with_git_operations(mock_git_ops.clone())
             .build();
 
-        let task = TaskBuilder::new()
+        let result = TaskBuilder::new()
             .repo_root(current_dir.clone())
             .name("test-task".to_string())
             .task_type("generic".to_string())
             .description(Some("Test description".to_string()))
             .build(&ctx)
-            .await
-            .unwrap();
+            .await;
 
-        // Verify the task was created successfully even though getting commit failed
-        assert_eq!(task.name, "test-task");
-        assert_eq!(task.source_commit, None);
+        // Task creation should fail because getting commit failed
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Failed to get current commit"));
 
         // Verify the git operation was called
         let calls = mock_git_ops.get_get_current_commit_calls();
@@ -901,8 +933,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(task.name, "test-task");
-        assert_eq!(task.tech_stack, Some("rust".to_string()));
-        assert_eq!(task.project, Some("web-api".to_string()));
+        assert_eq!(task.tech_stack, "rust".to_string());
+        assert_eq!(task.project, "web-api".to_string());
     }
 
     #[tokio::test]
@@ -910,18 +942,19 @@ mod tests {
         let current_dir = std::env::current_dir().unwrap();
 
         // Create an existing task with Docker config
-        let mut existing_task = Task::new_with_id(
+        let existing_task = Task::new_with_id(
             "2024-01-01-1200-generic-existing-task".to_string(),
             current_dir.clone(),
             "existing-task".to_string(),
             "generic".to_string(),
-            Some("Test description".to_string()),
-            None,
-            Some("claude-code".to_string()),
+            "instructions.md".to_string(),
+            "claude-code".to_string(),
             30,
+            "tsk/2024-01-01-1200-generic-existing-task".to_string(),
+            "abc123".to_string(),
+            "python".to_string(),
+            "ml-service".to_string(),
         );
-        existing_task.tech_stack = Some("python".to_string());
-        existing_task.project = Some("ml-service".to_string());
 
         // Create a builder from the existing task
         let builder = TaskBuilder::from_existing(&existing_task);
@@ -980,10 +1013,13 @@ mod tests {
             PathBuf::from("/test"),
             "test-task".to_string(),
             "feat".to_string(),
-            Some("Test description".to_string()),
-            None,
-            None,
+            "instructions.md".to_string(),
+            "claude-code".to_string(),
             30,
+            "tsk/test-task".to_string(),
+            "abc123".to_string(),
+            "default".to_string(),
+            "default".to_string(),
         );
 
         // Verify task ID includes task type

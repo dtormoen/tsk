@@ -84,9 +84,6 @@ impl Command for RunCommand {
             println!("\n{}", "=".repeat(60));
             println!("Running task: {} ({})", task.name, task.id);
             println!("Type: {}", task.task_type);
-            if let Some(ref desc) = task.description {
-                println!("Description: {}", desc);
-            }
             println!("{}", "=".repeat(60));
 
             // Update terminal title for current task

@@ -91,7 +91,7 @@ impl TaskManager {
                 if let Some(ref storage) = self.task_storage {
                     let mut updated_task = task.clone();
                     updated_task.completed_at = Some(chrono::Utc::now());
-                    updated_task.branch_name = Some(result.branch_name.clone());
+                    updated_task.branch_name = result.branch_name.clone();
 
                     // Check if we have a parsed result from the log processor
                     if let Some(task_result) = result.task_result.as_ref() {
@@ -296,10 +296,13 @@ mod tests {
             repo_root.clone(),
             "test-task".to_string(),
             "feat".to_string(),
-            Some("Test description".to_string()),
-            None,
-            None,
+            "instructions.md".to_string(),
+            "claude-code".to_string(),
             30,
+            format!("tsk/{}", task_id),
+            "abc123".to_string(),
+            "default".to_string(),
+            "default".to_string(),
         );
 
         // Get XDG paths
@@ -318,7 +321,7 @@ mod tests {
                 .with_dir(&tasks_dir.to_string_lossy().to_string())
                 .with_dir(&task_dir_path.to_string_lossy().to_string())
                 .with_file(&format!("{}/test.txt", task_dir_path.to_string_lossy()), "test content")
-                .with_file(&tasks_json_path.to_string_lossy().to_string(), &format!(r#"[{{"id":"{}","repo_root":"{}","name":"test-task","task_type":"feat","description":"Test description","instructions_file":null,"agent":null,"timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":null,"error_message":null}}]"#, task_id, repo_root.to_string_lossy()))
+                .with_file(&tasks_json_path.to_string_lossy().to_string(), &format!(r#"[{{"id":"{}","repo_root":"{}","name":"test-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","tech_stack":"default","project":"default"}}]"#, task_id, repo_root.to_string_lossy(), task_id))
         );
 
         let docker_client = Arc::new(FixedResponseDockerClient::default());
@@ -372,10 +375,13 @@ mod tests {
             repo_root.clone(),
             "queued-task".to_string(),
             "feat".to_string(),
-            Some("Queued task".to_string()),
-            None,
-            None,
+            "instructions.md".to_string(),
+            "claude-code".to_string(),
             30,
+            format!("tsk/{}", queued_task_id),
+            "abc123".to_string(),
+            "default".to_string(),
+            "default".to_string(),
         );
 
         let mut completed_task = Task::new_with_id(
@@ -383,10 +389,13 @@ mod tests {
             repo_root.clone(),
             "completed-task".to_string(),
             "fix".to_string(),
-            Some("Completed task".to_string()),
-            None,
-            None,
+            "instructions.md".to_string(),
+            "claude-code".to_string(),
             30,
+            format!("tsk/{}", completed_task_id),
+            "abc123".to_string(),
+            "default".to_string(),
+            "default".to_string(),
         );
         completed_task.status = TaskStatus::Complete;
 
@@ -399,11 +408,13 @@ mod tests {
 
         // Create initial tasks.json with both tasks
         let tasks_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feat","description":"Queued task","instructions_file":null,"agent":null,"timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":null,"error_message":null,"source_commit":null}},{{"id":"{}","repo_root":"{}","name":"completed-task","task_type":"fix","description":"Completed task","instructions_file":null,"agent":null,"timeout":30,"status":"COMPLETE","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":"2024-01-01T01:00:00Z","branch_name":null,"error_message":null,"source_commit":null}}]"#,
+            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","tech_stack":"default","project":"default"}},{{"id":"{}","repo_root":"{}","name":"completed-task","task_type":"fix","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"COMPLETE","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":"2024-01-01T01:00:00Z","branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","tech_stack":"default","project":"default"}}]"#,
             queued_task_id,
             repo_root.to_string_lossy(),
+            queued_task_id,
             completed_task_id,
-            repo_root.to_string_lossy()
+            repo_root.to_string_lossy(),
+            completed_task_id
         );
 
         // Create mock file system with necessary structure
@@ -475,18 +486,20 @@ mod tests {
             repo_root.clone(),
             "original-task".to_string(),
             "generic".to_string(),
-            Some("Original task description".to_string()),
-            None,
-            Some("claude-code".to_string()),
+            format!(
+                "{}/tasks/{}/{}/instructions.md",
+                test_data_dir.to_string_lossy(),
+                repo_hash,
+                task_id
+            ),
+            "claude-code".to_string(),
             45,
+            format!("tsk/{}", task_id),
+            "abc123".to_string(),
+            "default".to_string(),
+            "default".to_string(),
         );
         completed_task.status = TaskStatus::Complete;
-        completed_task.instructions_file = Some(format!(
-            "{}/tasks/{}/{}/instructions.md",
-            test_data_dir.to_string_lossy(),
-            repo_hash,
-            task_id
-        ));
 
         // Get XDG paths
         let task_dir_path = xdg.task_dir(&task_id, &repo_hash);
@@ -497,10 +510,11 @@ mod tests {
 
         // Create tasks.json with the completed task
         let tasks_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"original-task","task_type":"generic","description":"Original task description","instructions_file":"{}","agent":"claude-code","timeout":45,"status":"COMPLETE","created_at":"2024-01-01T12:00:00Z","started_at":"2024-01-01T12:30:00Z","completed_at":"2024-01-01T13:00:00Z","branch_name":null,"error_message":null,"source_commit":null}}]"#,
+            r#"[{{"id":"{}","repo_root":"{}","name":"original-task","task_type":"generic","instructions_file":"{}","agent":"claude-code","timeout":45,"status":"COMPLETE","created_at":"2024-01-01T12:00:00Z","started_at":"2024-01-01T12:30:00Z","completed_at":"2024-01-01T13:00:00Z","branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","tech_stack":"default","project":"default"}}]"#,
             task_id,
             repo_root.to_string_lossy(),
-            instructions_path.to_string_lossy()
+            instructions_path.to_string_lossy(),
+            task_id
         );
 
         // Create mock file system with necessary structure
@@ -548,7 +562,7 @@ mod tests {
         let new_task = new_task.unwrap();
         assert_eq!(new_task.name, "retry-original-task");
         assert_eq!(new_task.task_type, "generic");
-        assert_eq!(new_task.agent, Some("claude-code".to_string()));
+        assert_eq!(new_task.agent, "claude-code".to_string());
         assert_eq!(new_task.timeout, 45);
         assert_eq!(new_task.status, TaskStatus::Queued);
 
@@ -650,10 +664,13 @@ mod tests {
             repo_root.clone(),
             "queued-task".to_string(),
             "feat".to_string(),
-            Some("Queued task description".to_string()),
-            None,
-            None,
+            "instructions.md".to_string(),
+            "claude-code".to_string(),
             30,
+            format!("tsk/{}", task_id),
+            "abc123".to_string(),
+            "default".to_string(),
+            "default".to_string(),
         );
 
         // Get XDG paths
@@ -663,9 +680,10 @@ mod tests {
 
         // Create tasks.json with the queued task
         let tasks_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feat","description":"Queued task description","instructions_file":null,"agent":null,"timeout":30,"status":"QUEUED","created_at":"2024-01-01T12:00:00Z","started_at":null,"completed_at":null,"branch_name":null,"error_message":null,"source_commit":null}}]"#,
+            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"QUEUED","created_at":"2024-01-01T12:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","tech_stack":"default","project":"default"}}]"#,
             task_id,
-            repo_root.to_string_lossy()
+            repo_root.to_string_lossy(),
+            task_id
         );
 
         // Create mock file system with necessary structure
@@ -727,10 +745,13 @@ mod tests {
             repo_root.clone(),
             "test-feature".to_string(),
             "feat".to_string(),
-            Some("Test feature".to_string()),
-            None,
-            None,
+            "instructions.md".to_string(),
+            "claude-code".to_string(),
             30,
+            format!("tsk/{}", task_id),
+            "abc123".to_string(),
+            "default".to_string(),
+            "default".to_string(),
         );
         completed_task.status = TaskStatus::Complete;
 
@@ -742,9 +763,10 @@ mod tests {
 
         // Create tasks.json with the completed task
         let tasks_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"test-feature","task_type":"feat","description":"Test feature","instructions_file":null,"agent":null,"timeout":30,"status":"COMPLETE","created_at":"2024-01-15T14:30:00Z","started_at":null,"completed_at":"2024-01-15T15:00:00Z","branch_name":null,"error_message":null,"source_commit":null}}]"#,
+            r#"[{{"id":"{}","repo_root":"{}","name":"test-feature","task_type":"feat","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"COMPLETE","created_at":"2024-01-15T14:30:00Z","started_at":null,"completed_at":"2024-01-15T15:00:00Z","branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","tech_stack":"default","project":"default"}}]"#,
             task_id,
-            repo_root.to_string_lossy()
+            repo_root.to_string_lossy(),
+            task_id
         );
 
         // Create mock file system with necessary structure
