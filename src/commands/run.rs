@@ -1,13 +1,11 @@
 use super::Command;
 use crate::context::AppContext;
-use crate::repo_utils::find_repository_root;
 use crate::server::TskServer;
 use crate::task::{Task, TaskStatus};
 use crate::task_manager::TaskManager;
 use crate::task_storage::get_task_storage;
 use async_trait::async_trait;
 use std::error::Error;
-use std::path::Path;
 use std::sync::Arc;
 
 pub struct RunCommand {
@@ -56,7 +54,6 @@ impl Command for RunCommand {
         }
 
         // Run in client mode (execute current tasks and exit)
-        let _repo_root = find_repository_root(Path::new("."))?;
         let storage = get_task_storage(ctx.xdg_directories(), ctx.file_system());
         let tasks = storage
             .list_tasks()

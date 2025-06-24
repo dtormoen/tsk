@@ -1,12 +1,10 @@
 use crate::context::{file_system::FileSystemOperations, AppContext};
 use crate::docker::DockerManager;
 use crate::git::RepoManager;
-use crate::repo_utils::find_repository_root;
 use crate::storage::XdgDirectories;
 use crate::task::{Task, TaskBuilder, TaskStatus};
 use crate::task_runner::{TaskExecutionError, TaskExecutionResult, TaskRunner};
 use crate::task_storage::{get_task_storage, TaskStorage};
-use std::path::Path;
 use std::sync::Arc;
 
 pub struct TaskManager {
@@ -54,9 +52,6 @@ impl TaskManager {
             ctx.file_system(),
             ctx.notification_client(),
         );
-
-        let _repo_root = find_repository_root(Path::new("."))
-            .map_err(|e| format!("Failed to find repository root: {}", e))?;
 
         Ok(Self {
             task_runner,
@@ -266,6 +261,7 @@ impl TaskManager {
 mod tests {
     use super::*;
     use crate::test_utils::FixedResponseDockerClient;
+    use std::path::Path;
     use std::sync::Arc;
 
     #[tokio::test]
@@ -806,5 +802,58 @@ mod tests {
         // Verify directory was deleted
         let task_dir_exists = fs.exists(&task_dir_path).await.unwrap();
         assert!(!task_dir_exists, "Task directory should have been deleted");
+    }
+
+    #[tokio::test]
+    async fn test_with_storage_no_git_repo() {
+        use crate::context::file_system::tests::MockFileSystem;
+        use crate::context::git_operations::tests::MockGitOperations;
+        use std::env;
+
+        // Set up XDG environment variables for testing
+        let temp_dir = std::env::temp_dir();
+        let test_data_dir = temp_dir.join("tsk-test-data-no-git");
+        let test_runtime_dir = temp_dir.join("tsk-test-runtime-no-git");
+        env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
+        env::set_var(
+            "XDG_RUNTIME_DIR",
+            test_runtime_dir.to_string_lossy().to_string(),
+        );
+
+        // Create XdgDirectories instance
+        let xdg = Arc::new(XdgDirectories::new().unwrap());
+
+        // Get XDG paths
+        let tasks_json_path = xdg.tasks_file();
+        let data_dir = xdg.data_dir().to_path_buf();
+        let tasks_dir = data_dir.join("tasks");
+
+        // Create empty tasks.json
+        let tasks_json = "[]";
+
+        // Create mock file system WITHOUT a .git directory
+        let fs = Arc::new(
+            MockFileSystem::new()
+                .with_dir(&data_dir.to_string_lossy().to_string())
+                .with_dir(&tasks_dir.to_string_lossy().to_string())
+                .with_file(&tasks_json_path.to_string_lossy().to_string(), tasks_json),
+        );
+
+        let docker_client = Arc::new(FixedResponseDockerClient::default());
+        let git_ops = Arc::new(MockGitOperations::new());
+
+        let ctx = AppContext::builder()
+            .with_docker_client(docker_client)
+            .with_file_system(fs.clone())
+            .with_git_operations(git_ops)
+            .with_xdg_directories(xdg)
+            .build();
+
+        // This should succeed even without being in a git repository
+        let result = TaskManager::with_storage(&ctx);
+        assert!(
+            result.is_ok(),
+            "TaskManager::with_storage should work without a git repository"
+        );
     }
 }
