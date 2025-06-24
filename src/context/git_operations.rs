@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use git2::{Repository, RepositoryOpenFlags};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[async_trait]
 pub trait GitOperations: Send + Sync {
@@ -51,6 +51,9 @@ pub trait GitOperations: Send + Sync {
         branch_name: &str,
         commit_sha: &str,
     ) -> Result<(), String>;
+
+    /// Get list of tracked files in the repository
+    async fn get_tracked_files(&self, repo_path: &Path) -> Result<Vec<PathBuf>, String>;
 }
 
 pub struct DefaultGitOperations;
@@ -451,6 +454,43 @@ impl GitOperations for DefaultGitOperations {
         .await
         .map_err(|e| format!("Task join error: {}", e))?
     }
+
+    async fn get_tracked_files(&self, repo_path: &Path) -> Result<Vec<PathBuf>, String> {
+        tokio::task::spawn_blocking({
+            let repo_path = repo_path.to_owned();
+            move || -> Result<Vec<PathBuf>, String> {
+                let repo = Repository::open(&repo_path)
+                    .map_err(|e| format!("Failed to open repository: {}", e))?;
+
+                let head = repo
+                    .head()
+                    .map_err(|e| format!("Failed to get HEAD: {}", e))?;
+
+                let tree = head
+                    .peel_to_tree()
+                    .map_err(|e| format!("Failed to get tree from HEAD: {}", e))?;
+
+                let mut tracked_files = Vec::new();
+
+                tree.walk(git2::TreeWalkMode::PreOrder, |path, entry| {
+                    if entry.kind() == Some(git2::ObjectType::Blob) {
+                        let file_path = if path.is_empty() {
+                            PathBuf::from(entry.name().unwrap_or(""))
+                        } else {
+                            PathBuf::from(path).join(entry.name().unwrap_or(""))
+                        };
+                        tracked_files.push(file_path);
+                    }
+                    git2::TreeWalkResult::Ok
+                })
+                .map_err(|e| format!("Failed to walk tree: {}", e))?;
+
+                Ok(tracked_files)
+            }
+        })
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
+    }
 }
 
 #[cfg(test)]
@@ -483,6 +523,8 @@ pub mod tests {
         get_current_commit_result: Arc<Mutex<Result<String, String>>>,
         create_branch_from_commit_calls: Arc<Mutex<Vec<(String, String, String)>>>,
         create_branch_from_commit_result: Arc<Mutex<Result<(), String>>>,
+        get_tracked_files_calls: Arc<Mutex<Vec<String>>>,
+        get_tracked_files_result: Arc<Mutex<Result<Vec<PathBuf>, String>>>,
     }
 
     impl MockGitOperations {
@@ -513,6 +555,8 @@ pub mod tests {
                 ))),
                 create_branch_from_commit_calls: Arc::new(Mutex::new(Vec::new())),
                 create_branch_from_commit_result: Arc::new(Mutex::new(Ok(()))),
+                get_tracked_files_calls: Arc::new(Mutex::new(Vec::new())),
+                get_tracked_files_result: Arc::new(Mutex::new(Ok(vec![]))),
             }
         }
 
@@ -596,6 +640,15 @@ pub mod tests {
         #[allow(dead_code)]
         pub fn get_create_branch_from_commit_calls(&self) -> Vec<(String, String, String)> {
             self.create_branch_from_commit_calls.lock().unwrap().clone()
+        }
+
+        pub fn set_get_tracked_files_result(&self, result: Result<Vec<PathBuf>, String>) {
+            *self.get_tracked_files_result.lock().unwrap() = result;
+        }
+
+        #[allow(dead_code)]
+        pub fn get_get_tracked_files_calls(&self) -> Vec<String> {
+            self.get_tracked_files_calls.lock().unwrap().clone()
         }
     }
 
@@ -718,6 +771,14 @@ pub mod tests {
                 .lock()
                 .unwrap()
                 .clone()
+        }
+
+        async fn get_tracked_files(&self, repo_path: &Path) -> Result<Vec<PathBuf>, String> {
+            self.get_tracked_files_calls
+                .lock()
+                .unwrap()
+                .push(repo_path.to_string_lossy().to_string());
+            self.get_tracked_files_result.lock().unwrap().clone()
         }
     }
 }

@@ -94,6 +94,7 @@ impl FileSystemOperations for DefaultFileSystem {
 pub mod tests {
     use super::*;
     use std::collections::HashMap;
+    use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
     #[derive(Clone)]
@@ -131,6 +132,19 @@ pub mod tests {
         #[allow(dead_code)]
         pub fn get_dirs(&self) -> Vec<String> {
             self.dirs.lock().unwrap().clone()
+        }
+
+        pub fn set_files(&self, files: HashMap<PathBuf, String>) {
+            let mut file_map = self.files.lock().unwrap();
+            file_map.clear();
+            for (path, content) in files {
+                let path_str = path.to_string_lossy().to_string();
+                if content == "dir" {
+                    self.dirs.lock().unwrap().push(path_str);
+                } else {
+                    file_map.insert(path_str, content);
+                }
+            }
         }
     }
 

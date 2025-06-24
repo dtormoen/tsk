@@ -25,6 +25,7 @@ impl RepoManager {
     }
 
     /// Copy repository for a task using the task ID and repository root
+    /// Only copies git-tracked files and the .git directory, excluding build artifacts
     /// Returns the path to the copied repository and the branch name
     pub async fn copy_repo(
         &self,
@@ -55,8 +56,42 @@ impl RepoManager {
         // Use the provided repository root
         let current_dir = repo_root.to_path_buf();
 
-        // Copy the repository, excluding .tsk directory
-        self.copy_directory(&current_dir, &repo_path).await?;
+        // Get list of tracked files from git
+        let tracked_files = self.git_operations.get_tracked_files(&current_dir).await?;
+
+        // Copy .git directory first
+        let git_src = current_dir.join(".git");
+        let git_dst = repo_path.join(".git");
+        if self
+            .file_system
+            .exists(&git_src)
+            .await
+            .map_err(|e| format!("Failed to check if .git exists: {}", e))?
+        {
+            self.copy_directory(&git_src, &git_dst).await?;
+        }
+
+        // Copy all tracked files
+        for file_path in tracked_files {
+            let src_path = current_dir.join(&file_path);
+            let dst_path = repo_path.join(&file_path);
+
+            // Create parent directory if it doesn't exist
+            if let Some(parent) = dst_path.parent() {
+                self.file_system
+                    .create_dir(parent)
+                    .await
+                    .map_err(|e| format!("Failed to create parent directory: {}", e))?;
+            }
+
+            // Copy the file
+            self.file_system
+                .copy_file(&src_path, &dst_path)
+                .await
+                .map_err(|e| {
+                    format!("Failed to copy tracked file {}: {}", file_path.display(), e)
+                })?;
+        }
 
         // Create a new branch in the copied repository
         match source_commit {
@@ -81,6 +116,7 @@ impl RepoManager {
     }
 
     /// Copy directory recursively, excluding .tsk directory
+    /// Note: Only used for copying the .git directory
     #[allow(clippy::only_used_in_recursion)]
     async fn copy_directory(&self, src: &Path, dst: &Path) -> Result<(), String> {
         self.file_system
@@ -213,6 +249,7 @@ impl RepoManager {
 mod tests {
     use super::*;
     use crate::context::git_operations::tests::MockGitOperations;
+    use std::collections::HashMap;
     use tempfile::TempDir;
 
     fn create_test_xdg_directories(temp_dir: &TempDir) -> Arc<XdgDirectories> {
@@ -263,7 +300,7 @@ mod tests {
 
         let result = manager.commit_changes(repo_path, "Test commit").await;
 
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Error: {:?}", result);
     }
 
     #[tokio::test]
@@ -283,7 +320,7 @@ mod tests {
 
         let result = manager.commit_changes(repo_path, "Test commit").await;
 
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Error: {:?}", result);
     }
 
     #[tokio::test]
@@ -310,7 +347,7 @@ mod tests {
             .fetch_changes(repo_path, "tsk/test-branch", repo_root)
             .await;
 
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Error: {:?}", result);
         assert_eq!(result.unwrap(), false);
 
         // Verify that delete_branch was called
@@ -343,7 +380,7 @@ mod tests {
             .fetch_changes(repo_path, "tsk/test-branch", repo_root)
             .await;
 
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Error: {:?}", result);
         assert_eq!(result.unwrap(), true);
 
         // Verify that delete_branch was NOT called
@@ -359,9 +396,22 @@ mod tests {
         // Create mock git operations
         let mock_git_ops = Arc::new(MockGitOperations::new());
         mock_git_ops.set_is_repo_result(Ok(true));
+        mock_git_ops.set_get_tracked_files_result(Ok(vec![
+            PathBuf::from("src/main.rs"),
+            PathBuf::from("Cargo.toml"),
+        ]));
 
         use crate::context::file_system::tests::MockFileSystem;
         let fs = Arc::new(MockFileSystem::new());
+        // Add mock files with absolute paths
+        let mut files = HashMap::new();
+        files.insert(temp_dir.path().join(".git"), "dir".to_string());
+        files.insert(
+            temp_dir.path().join("src/main.rs"),
+            "file content".to_string(),
+        );
+        files.insert(temp_dir.path().join("Cargo.toml"), "[package]".to_string());
+        fs.set_files(files);
 
         let manager = RepoManager::new(xdg_directories, fs, mock_git_ops.clone());
 
@@ -375,7 +425,7 @@ mod tests {
             )
             .await;
 
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Error: {:?}", result);
         let (_, branch_name) = result.unwrap();
         assert_eq!(branch_name, "tsk/2024-01-01-1200-generic-test-task");
 
@@ -401,9 +451,15 @@ mod tests {
         // Create mock git operations
         let mock_git_ops = Arc::new(MockGitOperations::new());
         mock_git_ops.set_is_repo_result(Ok(true));
+        mock_git_ops.set_get_tracked_files_result(Ok(vec![PathBuf::from("README.md")]));
 
         use crate::context::file_system::tests::MockFileSystem;
         let fs = Arc::new(MockFileSystem::new());
+        // Add mock files with absolute paths
+        let mut files = HashMap::new();
+        files.insert(temp_dir.path().join(".git"), "dir".to_string());
+        files.insert(temp_dir.path().join("README.md"), "# README".to_string());
+        fs.set_files(files);
 
         let manager = RepoManager::new(xdg_directories, fs, mock_git_ops.clone());
 
@@ -412,7 +468,7 @@ mod tests {
             .copy_repo("2024-01-01-1200-generic-test-task", repo_root, None)
             .await;
 
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Error: {:?}", result);
         let (_, branch_name) = result.unwrap();
         assert_eq!(branch_name, "tsk/2024-01-01-1200-generic-test-task");
 
@@ -427,5 +483,65 @@ mod tests {
         // Verify create_branch_from_commit was NOT called
         let create_from_commit_calls = mock_git_ops.get_create_branch_from_commit_calls();
         assert_eq!(create_from_commit_calls.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_copy_repo_only_copies_tracked_files() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let xdg_directories = create_test_xdg_directories(&temp_dir);
+
+        // Create mock git operations
+        let mock_git_ops = Arc::new(MockGitOperations::new());
+        mock_git_ops.set_is_repo_result(Ok(true));
+        // Only track specific files, not the build artifacts
+        mock_git_ops.set_get_tracked_files_result(Ok(vec![
+            PathBuf::from("src/main.rs"),
+            PathBuf::from("Cargo.toml"),
+        ]));
+
+        use crate::context::file_system::tests::MockFileSystem;
+        let fs = Arc::new(MockFileSystem::new());
+        // Add mock files including untracked build artifacts with absolute paths
+        let mut files = HashMap::new();
+        files.insert(temp_dir.path().join(".git"), "dir".to_string());
+        files.insert(
+            temp_dir.path().join("src/main.rs"),
+            "fn main() {}".to_string(),
+        );
+        files.insert(temp_dir.path().join("Cargo.toml"), "[package]".to_string());
+        files.insert(
+            temp_dir.path().join("target/debug/app"),
+            "binary".to_string(),
+        ); // untracked
+        files.insert(temp_dir.path().join("build.log"), "log content".to_string()); // untracked
+        fs.set_files(files);
+
+        let manager = RepoManager::new(xdg_directories.clone(), fs.clone(), mock_git_ops.clone());
+
+        let repo_root = temp_dir.path();
+        let result = manager
+            .copy_repo("2024-01-01-1200-generic-test-task", repo_root, None)
+            .await;
+
+        assert!(result.is_ok(), "Error: {:?}", result);
+        let (repo_path, _) = result.unwrap();
+
+        // Verify only tracked files were copied
+        let copied_files = fs.get_files();
+        let repo_path_str = repo_path.to_string_lossy();
+
+        // Check that tracked files exist in destination
+        assert!(copied_files.contains_key(&format!("{}/src/main.rs", repo_path_str)));
+        assert!(copied_files.contains_key(&format!("{}/Cargo.toml", repo_path_str)));
+
+        // Check that untracked files were NOT copied
+        assert!(!copied_files.contains_key(&format!("{}/target/debug/app", repo_path_str)));
+        assert!(!copied_files.contains_key(&format!("{}/build.log", repo_path_str)));
+
+        // Check that .git directory was copied
+        let copied_dirs = fs.get_dirs();
+        assert!(copied_dirs
+            .iter()
+            .any(|d| d == &format!("{}/.git", repo_path_str)));
     }
 }
