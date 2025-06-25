@@ -67,3 +67,40 @@ impl Command for QuickCommand {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::{NoOpDockerClient, NoOpTskClient};
+    use std::sync::Arc;
+
+    fn create_test_context() -> AppContext {
+        AppContext::builder()
+            .with_docker_client(Arc::new(NoOpDockerClient))
+            .with_tsk_client(Arc::new(NoOpTskClient))
+            .build()
+    }
+
+    #[tokio::test]
+    async fn test_quick_command_validation_no_input() {
+        let cmd = QuickCommand {
+            name: "test".to_string(),
+            r#type: "generic".to_string(),
+            description: None,
+            instructions: None,
+            edit: false,
+            agent: None,
+            timeout: 30,
+            tech_stack: None,
+            project: None,
+        };
+
+        let ctx = create_test_context();
+        let result = cmd.execute(&ctx).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Either description or instructions file must be provided"));
+    }
+}

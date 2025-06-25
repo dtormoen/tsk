@@ -5,9 +5,6 @@ mod claude_code;
 mod log_processor;
 mod provider;
 
-#[cfg(test)]
-mod tests;
-
 pub use self::log_processor::LogProcessor;
 pub use claude_code::{ClaudeCodeAgent, TaskResult};
 pub use provider::AgentProvider;
@@ -48,5 +45,80 @@ pub trait Agent: Send + Sync {
     /// The default implementation does nothing, allowing backward compatibility.
     async fn warmup(&self) -> Result<(), String> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    /// Test agent for testing purposes
+    struct TestAgent {
+        name: String,
+    }
+
+    impl TestAgent {
+        fn new(name: &str) -> Self {
+            Self {
+                name: name.to_string(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Agent for TestAgent {
+        fn build_command(&self, instruction_path: &str) -> Vec<String> {
+            vec!["test".to_string(), instruction_path.to_string()]
+        }
+
+        fn volumes(&self) -> Vec<(String, String, String)> {
+            vec![("/test".to_string(), "/test".to_string(), ":ro".to_string())]
+        }
+
+        fn environment(&self) -> Vec<(String, String)> {
+            vec![("TEST_VAR".to_string(), "test_value".to_string())]
+        }
+
+        fn create_log_processor(
+            &self,
+            _file_system: Arc<dyn crate::context::file_system::FileSystemOperations>,
+        ) -> Box<dyn LogProcessor> {
+            struct TestLogProcessor;
+
+            #[async_trait]
+            impl LogProcessor for TestLogProcessor {
+                fn process_line(&mut self, _line: &str) -> Option<String> {
+                    Some("test".to_string())
+                }
+
+                fn get_full_log(&self) -> String {
+                    "test log".to_string()
+                }
+
+                async fn save_full_log(&self, _path: &Path) -> Result<(), String> {
+                    Ok(())
+                }
+
+                fn get_final_result(&self) -> Option<&super::TaskResult> {
+                    None
+                }
+            }
+
+            Box::new(TestLogProcessor)
+        }
+
+        fn name(&self) -> &str {
+            &self.name
+        }
+    }
+
+    #[test]
+    fn test_agent_trait_is_object_safe() {
+        // This test ensures that the Agent trait can be used as a trait object
+        fn _assert_object_safe(_: &dyn Agent) {}
+
+        let agent = TestAgent::new("test");
+        _assert_object_safe(&agent);
     }
 }

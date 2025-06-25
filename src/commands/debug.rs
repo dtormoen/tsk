@@ -98,3 +98,24 @@ impl Command for DebugCommand {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_debug_command_structure() {
+        let cmd = DebugCommand {
+            name: "test-debug".to_string(),
+            agent: Some("claude_code".to_string()),
+            tech_stack: None,
+            project: None,
+        };
+
+        // Verify the command has the expected fields
+        assert_eq!(cmd.name, "test-debug");
+        assert_eq!(cmd.agent, Some("claude_code".to_string()));
+        assert_eq!(cmd.tech_stack, None);
+        assert_eq!(cmd.project, None);
+    }
+}

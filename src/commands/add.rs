@@ -91,3 +91,63 @@ impl Command for AddCommand {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::{NoOpDockerClient, NoOpTskClient};
+    use std::sync::Arc;
+
+    fn create_test_context() -> AppContext {
+        AppContext::builder()
+            .with_docker_client(Arc::new(NoOpDockerClient))
+            .with_tsk_client(Arc::new(NoOpTskClient))
+            .build()
+    }
+
+    #[tokio::test]
+    async fn test_add_command_validation_no_input() {
+        let cmd = AddCommand {
+            name: "test".to_string(),
+            r#type: "generic".to_string(),
+            description: None,
+            instructions: None,
+            edit: false,
+            agent: None,
+            timeout: 30,
+            tech_stack: None,
+            project: None,
+        };
+
+        let ctx = create_test_context();
+        let result = cmd.execute(&ctx).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Either description or instructions file must be provided"));
+    }
+
+    #[tokio::test]
+    async fn test_add_command_invalid_task_type() {
+        let cmd = AddCommand {
+            name: "test".to_string(),
+            r#type: "nonexistent".to_string(),
+            description: Some("test description".to_string()),
+            instructions: None,
+            edit: false,
+            agent: None,
+            timeout: 30,
+            tech_stack: None,
+            project: None,
+        };
+
+        let ctx = create_test_context();
+        let result = cmd.execute(&ctx).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No template found for task type"));
+    }
+}

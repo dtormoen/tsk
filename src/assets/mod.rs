@@ -12,9 +12,6 @@ pub mod filesystem;
 pub mod layered;
 pub mod utils;
 
-#[cfg(test)]
-mod tests;
-
 /// Trait for managing TSK assets including templates and dockerfiles
 #[async_trait]
 pub trait AssetManager: Send + Sync {
@@ -31,7 +28,6 @@ pub trait AssetManager: Send + Sync {
     fn list_templates(&self) -> Vec<String>;
 
     /// List all available dockerfiles
-    #[allow(dead_code)]
     fn list_dockerfiles(&self) -> Vec<String>;
 
     /// Get a Docker layer file

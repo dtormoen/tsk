@@ -7,7 +7,7 @@
 use super::AssetManager;
 use anyhow::{Context, Result};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Extract a dockerfile and its associated files to a temporary directory
 ///
@@ -60,86 +60,41 @@ pub fn extract_dockerfile_to_temp(
     Ok(temp_path)
 }
 
-/// Extract a dockerfile to a specific directory
-///
-/// This function extracts all files for a given dockerfile to a specified directory.
-/// The directory must exist and be writable.
-///
-/// # Arguments
-///
-/// * `asset_manager` - The asset manager to use for retrieving dockerfile files
-/// * `dockerfile_name` - The name of the dockerfile (e.g., "tsk-base", "tsk-proxy")
-/// * `dest_dir` - The destination directory for the extracted files
-#[allow(dead_code)]
-pub fn extract_dockerfile_to_dir(
-    asset_manager: &dyn AssetManager,
-    dockerfile_name: &str,
-    dest_dir: &Path,
-) -> Result<()> {
-    // Ensure the destination directory exists
-    if !dest_dir.exists() {
-        return Err(anyhow::anyhow!(
-            "Destination directory does not exist: {}",
-            dest_dir.display()
-        ));
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::assets::embedded::EmbeddedAssetManager;
+
+    #[test]
+    fn test_asset_extraction() {
+        let manager = EmbeddedAssetManager::new();
+
+        // Test extracting tsk-base dockerfile
+        let result = extract_dockerfile_to_temp(&manager, "tsk-base");
+        assert!(result.is_ok());
+
+        let temp_dir = result.unwrap();
+        assert!(temp_dir.exists());
+        assert!(temp_dir.join("Dockerfile").exists());
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
-    // Extract the main Dockerfile
-    let dockerfile_content = asset_manager.get_dockerfile(dockerfile_name)?;
-    let dockerfile_path = dest_dir.join("Dockerfile");
-    fs::write(&dockerfile_path, dockerfile_content).context("Failed to write Dockerfile")?;
+    #[test]
+    fn test_asset_extraction_with_additional_files() {
+        let manager = EmbeddedAssetManager::new();
 
-    // Try to extract additional files
-    let additional_files = ["squid.conf", "entrypoint.sh", "requirements.txt"];
+        // Test extracting tsk-proxy dockerfile (which has squid.conf)
+        let result = extract_dockerfile_to_temp(&manager, "tsk-proxy");
+        assert!(result.is_ok());
 
-    for file_name in &additional_files {
-        match asset_manager.get_dockerfile_file(dockerfile_name, file_name) {
-            Ok(content) => {
-                let file_path = dest_dir.join(file_name);
-                fs::write(&file_path, content)
-                    .with_context(|| format!("Failed to write {}", file_name))?;
-            }
-            Err(_) => {
-                // File doesn't exist, which is fine
-                continue;
-            }
-        }
+        let temp_dir = result.unwrap();
+        assert!(temp_dir.exists());
+        assert!(temp_dir.join("Dockerfile").exists());
+        assert!(temp_dir.join("squid.conf").exists());
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
-
-    Ok(())
-}
-
-/// List all files in a dockerfile directory
-///
-/// This function returns a list of all files available for a given dockerfile.
-/// This is useful for debugging and for knowing what files to expect.
-///
-/// # Arguments
-///
-/// * `asset_manager` - The asset manager to use
-/// * `dockerfile_name` - The name of the dockerfile
-///
-/// # Returns
-///
-/// A vector of file names (not including the directory path)
-#[allow(dead_code)]
-pub fn list_dockerfile_files(
-    asset_manager: &dyn AssetManager,
-    dockerfile_name: &str,
-) -> Vec<String> {
-    let mut files = vec!["Dockerfile".to_string()];
-
-    // Check for common additional files
-    let additional_files = ["squid.conf", "entrypoint.sh", "requirements.txt"];
-
-    for file_name in &additional_files {
-        if asset_manager
-            .get_dockerfile_file(dockerfile_name, file_name)
-            .is_ok()
-        {
-            files.push(file_name.to_string());
-        }
-    }
-
-    files
 }

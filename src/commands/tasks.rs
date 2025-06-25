@@ -50,3 +50,35 @@ impl Command for TasksCommand {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::{NoOpDockerClient, NoOpTskClient};
+    use std::sync::Arc;
+
+    fn create_test_context() -> AppContext {
+        AppContext::builder()
+            .with_docker_client(Arc::new(NoOpDockerClient))
+            .with_tsk_client(Arc::new(NoOpTskClient))
+            .build()
+    }
+
+    #[tokio::test]
+    async fn test_tasks_command_validation_no_options() {
+        let cmd = TasksCommand {
+            delete: None,
+            clean: false,
+            retry: None,
+            edit: false,
+        };
+
+        let ctx = create_test_context();
+        let result = cmd.execute(&ctx).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Please specify either --delete"));
+    }
+}

@@ -862,4 +862,76 @@ mod tests {
         let full_log = processor.get_full_log();
         assert_eq!(full_log, "Line 1\nLine 2\nLine 3");
     }
+
+    #[test]
+    fn test_claude_code_agent_properties() {
+        let agent = ClaudeCodeAgent::new();
+
+        // Test name
+        assert_eq!(agent.name(), "claude-code");
+
+        // Test volumes
+        let volumes = agent.volumes();
+        assert_eq!(volumes.len(), 2);
+
+        // Should mount .claude directory and .claude.json file
+        let volume_paths: Vec<&str> = volumes
+            .iter()
+            .map(|(_, container_path, _)| container_path.as_str())
+            .collect();
+        assert!(volume_paths.contains(&"/home/agent/.claude"));
+        assert!(volume_paths.contains(&"/home/agent/.claude.json"));
+
+        // Test environment variables
+        let env = agent.environment();
+        assert_eq!(env.len(), 2);
+
+        let env_map: std::collections::HashMap<_, _> = env.into_iter().collect();
+        assert_eq!(env_map.get("HOME"), Some(&"/home/agent".to_string()));
+        assert_eq!(env_map.get("USER"), Some(&"agent".to_string()));
+    }
+
+    #[test]
+    fn test_claude_code_agent_build_command() {
+        let agent = ClaudeCodeAgent::new();
+
+        // Test with full path
+        let command = agent.build_command("/tmp/instructions.md");
+        assert_eq!(command.len(), 3);
+        assert_eq!(command[0], "sh");
+        assert_eq!(command[1], "-c");
+        assert!(command[2].contains("cat /instructions/instructions.md"));
+        assert!(command[2].contains("claude -p --verbose --output-format stream-json"));
+
+        // Test with complex path
+        let command = agent.build_command("/path/to/task/instructions.txt");
+        assert!(command[2].contains("cat /instructions/instructions.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_claude_code_agent_validate_without_config() {
+        // Create a temporary HOME directory without .claude.json
+        let temp_dir = tempfile::tempdir().unwrap();
+        std::env::set_var("HOME", temp_dir.path());
+
+        let agent = ClaudeCodeAgent::new();
+        let result = agent.validate().await;
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("Claude configuration not found"));
+    }
+
+    #[test]
+    fn test_claude_code_agent_create_log_processor() {
+        let fs = Arc::new(MockFileSystem::new());
+        let agent = ClaudeCodeAgent::new();
+
+        let log_processor = agent.create_log_processor(fs);
+
+        // Just verify we can create a log processor
+        // The actual log processor functionality is tested elsewhere
+        let _ = log_processor.get_full_log();
+    }
 }
