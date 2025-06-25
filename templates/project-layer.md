@@ -22,10 +22,6 @@ Your Dockerfile should:
 4. **Pre-compile or pre-build when beneficial**: For compiled languages, consider pre-building dependencies
 5. **Keep the layer focused**: Only include what speeds up builds or is required for the project
 
-## Project Description
-
-{{DESCRIPTION}}
-
 ## Instructions
 
 1. First, examine the repository to understand:
@@ -58,7 +54,7 @@ Your Dockerfile should:
    COPY Cargo.toml Cargo.lock ./
    # Create dummy main.rs to build dependencies
    RUN mkdir src && echo "fn main() {}" > src/main.rs
-   # Build dependencies
+   # Build dependencies (artifacts go to $CARGO_TARGET_DIR set in tech-stack layer)
    RUN cargo build --release
    # Remove dummy source
    RUN rm -rf src
