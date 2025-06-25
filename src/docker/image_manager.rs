@@ -5,8 +5,8 @@
 //! and simplified APIs for the rest of the system.
 
 use anyhow::{Context, Result};
+use bollard::image::BuildImageOptions;
 use std::sync::Arc;
-use tempfile::TempDir;
 use tokio::process::Command as ProcessCommand;
 
 use crate::context::docker_client::DockerClient;
@@ -25,6 +25,7 @@ pub struct DockerImage {
 
 /// Manages Docker images for TSK
 pub struct DockerImageManager {
+    docker_client: Arc<dyn DockerClient>,
     template_manager: DockerTemplateManager,
     composer: DockerComposer,
 }
@@ -32,11 +33,12 @@ pub struct DockerImageManager {
 impl DockerImageManager {
     /// Creates a new DockerImageManager
     pub fn new(
-        _docker_client: Arc<dyn DockerClient>,
+        docker_client: Arc<dyn DockerClient>,
         template_manager: DockerTemplateManager,
         composer: DockerComposer,
     ) -> Self {
         Self {
+            docker_client,
             template_manager,
             composer,
         }
@@ -232,14 +234,71 @@ impl DockerImageManager {
     pub async fn build_proxy_image(&self, no_cache: bool) -> Result<DockerImage> {
         println!("Building proxy image: tsk/proxy");
 
-        // For now, use the legacy build approach for proxy
-        // In the future, this could be converted to use the layer system
-        build_proxy_image_legacy(no_cache).await?;
+        // Build the proxy image using the new approach
+        self.build_proxy_image_internal(no_cache).await?;
 
         Ok(DockerImage {
             tag: "tsk/proxy".to_string(),
             used_fallback: false,
         })
+    }
+
+    /// Internal method to build the proxy image using DockerClient
+    async fn build_proxy_image_internal(&self, no_cache: bool) -> Result<()> {
+        use crate::assets::embedded::EmbeddedAssetManager;
+        use crate::assets::utils::extract_dockerfile_to_temp;
+
+        // Extract dockerfile to temporary directory
+        let asset_manager = EmbeddedAssetManager;
+        let dockerfile_dir = extract_dockerfile_to_temp(&asset_manager, "tsk-proxy")
+            .context("Failed to extract proxy Dockerfile")?;
+
+        // Create tar archive from the proxy dockerfile directory
+        let tar_archive = self
+            .create_tar_archive_from_directory(&dockerfile_dir)
+            .context("Failed to create tar archive for proxy build")?;
+
+        // Clean up the temporary directory
+        let _ = std::fs::remove_dir_all(&dockerfile_dir);
+
+        // Build options for proxy
+        let options = BuildImageOptions {
+            dockerfile: "Dockerfile".to_string(),
+            t: "tsk/proxy".to_string(),
+            nocache: no_cache,
+            ..Default::default()
+        };
+
+        // Build the image using the DockerClient
+        let build_output = self
+            .docker_client
+            .build_image(options, tar_archive)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to build proxy image: {}", e))?;
+
+        // Print build output for visibility
+        for line in build_output {
+            println!("{}", line);
+        }
+
+        Ok(())
+    }
+
+    /// Create a tar archive from a directory
+    fn create_tar_archive_from_directory(&self, dir_path: &std::path::Path) -> Result<Vec<u8>> {
+        use tar::Builder;
+
+        let mut tar_data = Vec::new();
+        {
+            let mut builder = Builder::new(&mut tar_data);
+
+            // Add all files from the directory to the tar archive
+            builder.append_dir_all(".", dir_path)?;
+
+            builder.finish()?;
+        }
+
+        Ok(tar_data)
     }
 
     /// Check if a Docker image exists
@@ -249,13 +308,10 @@ impl DockerImageManager {
             return Ok(true);
         }
 
-        let output = ProcessCommand::new("docker")
-            .args(["images", "-q", tag])
-            .output()
+        self.docker_client
+            .image_exists(tag)
             .await
-            .context("Failed to check if Docker image exists")?;
-
-        Ok(!output.stdout.is_empty())
+            .map_err(|e| anyhow::anyhow!(e))
     }
 
     /// Build a Docker image from composed content
@@ -266,57 +322,77 @@ impl DockerImageManager {
         git_user_email: &str,
         no_cache: bool,
     ) -> Result<()> {
-        // Create temporary directory for the build context
-        let temp_dir =
-            TempDir::new().context("Failed to create temporary directory for Docker build")?;
+        // Create tar archive from the composed content
+        let tar_archive = self
+            .create_tar_archive(composed)
+            .context("Failed to create tar archive for Docker build")?;
 
-        self.composer
-            .write_to_directory(composed, temp_dir.path())
-            .context("Failed to write Dockerfile to temporary directory")?;
+        // Prepare build options
+        let mut build_args = std::collections::HashMap::new();
 
-        // Build the Docker image
-        let mut args = vec!["build".to_string()];
-
-        if no_cache {
-            args.push("--no-cache".to_string());
-        }
-
-        // Add build arguments
+        // Add build arguments if they exist in the Dockerfile
         if composed.build_args.contains("GIT_USER_NAME") {
-            args.extend([
-                "--build-arg".to_string(),
-                format!("GIT_USER_NAME={}", git_user_name),
-            ]);
+            build_args.insert("GIT_USER_NAME".to_string(), git_user_name.to_string());
         }
 
         if composed.build_args.contains("GIT_USER_EMAIL") {
-            args.extend([
-                "--build-arg".to_string(),
-                format!("GIT_USER_EMAIL={}", git_user_email),
-            ]);
+            build_args.insert("GIT_USER_EMAIL".to_string(), git_user_email.to_string());
         }
 
-        args.extend([
-            "-t".to_string(),
-            composed.image_tag.clone(),
-            ".".to_string(),
-        ]);
+        let options = BuildImageOptions {
+            dockerfile: "Dockerfile".to_string(),
+            t: composed.image_tag.clone(),
+            nocache: no_cache,
+            buildargs: build_args,
+            ..Default::default()
+        };
 
-        let status = ProcessCommand::new("docker")
-            .args(&args)
-            .current_dir(temp_dir.path())
-            .status()
+        // Build the image using the DockerClient
+        let build_output = self
+            .docker_client
+            .build_image(options, tar_archive)
             .await
-            .context("Failed to execute docker build command")?;
+            .map_err(|e| anyhow::anyhow!("Docker build failed: {}", e))?;
 
-        if !status.success() {
-            return Err(anyhow::anyhow!(
-                "Docker build failed for image {}",
-                composed.image_tag
-            ));
+        // Print build output for visibility
+        for line in build_output {
+            println!("{}", line);
         }
 
         Ok(())
+    }
+
+    /// Create a tar archive from composed Dockerfile content
+    fn create_tar_archive(&self, composed: &ComposedDockerfile) -> Result<Vec<u8>> {
+        use tar::Builder;
+
+        let mut tar_data = Vec::new();
+        {
+            let mut builder = Builder::new(&mut tar_data);
+
+            // Add Dockerfile
+            let dockerfile_bytes = composed.dockerfile_content.as_bytes();
+            let mut header = tar::Header::new_gnu();
+            header.set_path("Dockerfile")?;
+            header.set_size(dockerfile_bytes.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append(&header, dockerfile_bytes)?;
+
+            // Add additional files
+            for (filename, content) in &composed.additional_files {
+                let mut header = tar::Header::new_gnu();
+                header.set_path(filename)?;
+                header.set_size(content.len() as u64);
+                header.set_mode(0o644);
+                header.set_cksum();
+                builder.append(&header, content.as_slice())?;
+            }
+
+            builder.finish()?;
+        }
+
+        Ok(tar_data)
     }
 }
 
@@ -350,41 +426,6 @@ async fn get_git_config(key: &str) -> Result<String> {
     }
 
     Ok(value)
-}
-
-/// Build the proxy image
-async fn build_proxy_image_legacy(no_cache: bool) -> Result<()> {
-    use crate::assets::embedded::EmbeddedAssetManager;
-
-    // Extract dockerfile to temporary directory
-    let asset_manager = EmbeddedAssetManager;
-    let dockerfile_dir =
-        crate::assets::utils::extract_dockerfile_to_temp(&asset_manager, "tsk-proxy")
-            .context("Failed to extract proxy Dockerfile")?;
-
-    let mut args = vec!["build".to_string()];
-
-    if no_cache {
-        args.push("--no-cache".to_string());
-    }
-
-    args.extend(["-t".to_string(), "tsk/proxy".to_string(), ".".to_string()]);
-
-    let status = ProcessCommand::new("docker")
-        .args(args)
-        .current_dir(&dockerfile_dir)
-        .status()
-        .await
-        .context("Failed to execute docker build command for proxy")?;
-
-    // Clean up the temporary directory
-    let _ = std::fs::remove_dir_all(&dockerfile_dir);
-
-    if !status.success() {
-        return Err(anyhow::anyhow!("Failed to build tsk/proxy image"));
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]

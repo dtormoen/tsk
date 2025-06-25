@@ -1,6 +1,7 @@
 use crate::context::docker_client::DockerClient;
 use async_trait::async_trait;
 use bollard::container::{Config, CreateContainerOptions, LogsOptions, RemoveContainerOptions};
+use bollard::image::BuildImageOptions;
 use futures_util::Stream;
 use std::sync::{Arc, Mutex};
 
@@ -61,6 +62,18 @@ impl DockerClient for NoOpDockerClient {
     }
 
     async fn network_exists(&self, _name: &str) -> Result<bool, String> {
+        Ok(true)
+    }
+
+    async fn build_image(
+        &self,
+        _options: BuildImageOptions<String>,
+        _tar_archive: Vec<u8>,
+    ) -> Result<Vec<String>, String> {
+        Ok(vec!["Building image...".to_string()])
+    }
+
+    async fn image_exists(&self, _tag: &str) -> Result<bool, String> {
         Ok(true)
     }
 }
@@ -152,6 +165,18 @@ impl DockerClient for FixedResponseDockerClient {
 
     async fn network_exists(&self, _name: &str) -> Result<bool, String> {
         Ok(self.network_exists)
+    }
+
+    async fn build_image(
+        &self,
+        _options: BuildImageOptions<String>,
+        _tar_archive: Vec<u8>,
+    ) -> Result<Vec<String>, String> {
+        Ok(vec!["Building image...".to_string()])
+    }
+
+    async fn image_exists(&self, _tag: &str) -> Result<bool, String> {
+        Ok(true)
     }
 }
 
@@ -288,5 +313,17 @@ impl DockerClient for TrackedDockerClient {
 
     async fn network_exists(&self, _name: &str) -> Result<bool, String> {
         Ok(self.network_exists)
+    }
+
+    async fn build_image(
+        &self,
+        _options: BuildImageOptions<String>,
+        _tar_archive: Vec<u8>,
+    ) -> Result<Vec<String>, String> {
+        Ok(vec!["Building image...".to_string()])
+    }
+
+    async fn image_exists(&self, _tag: &str) -> Result<bool, String> {
+        Ok(true)
     }
 }

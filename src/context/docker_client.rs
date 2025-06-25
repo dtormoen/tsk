@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use bollard::container::{Config, CreateContainerOptions, LogsOptions, RemoveContainerOptions};
+use bollard::image::{BuildImageOptions, ListImagesOptions};
 use bollard::network::{CreateNetworkOptions, ListNetworksOptions};
 use bollard::Docker;
 use futures_util::stream::{Stream, StreamExt};
@@ -38,6 +39,29 @@ pub trait DockerClient: Send + Sync {
     async fn create_network(&self, name: &str) -> Result<String, String>;
 
     async fn network_exists(&self, name: &str) -> Result<bool, String>;
+
+    /// Build a Docker image from a tar archive containing a Dockerfile and associated files
+    ///
+    /// # Arguments
+    /// * `options` - Build options including image tag, build args, and cache settings
+    /// * `tar_archive` - Tar archive containing Dockerfile and any additional files
+    ///
+    /// # Returns
+    /// A vector of build output messages on success, or an error message on failure
+    async fn build_image(
+        &self,
+        options: BuildImageOptions<String>,
+        tar_archive: Vec<u8>,
+    ) -> Result<Vec<String>, String>;
+
+    /// Check if a Docker image exists locally
+    ///
+    /// # Arguments
+    /// * `tag` - The image tag to check (e.g., "tsk/rust/claude/web-api")
+    ///
+    /// # Returns
+    /// True if the image exists, false otherwise
+    async fn image_exists(&self, tag: &str) -> Result<bool, String>;
 }
 
 #[derive(Clone)]
@@ -178,5 +202,51 @@ impl DockerClient for DefaultDockerClient {
             .map_err(|e| format!("Failed to list networks: {}", e))?;
 
         Ok(!networks.is_empty())
+    }
+
+    async fn build_image(
+        &self,
+        options: BuildImageOptions<String>,
+        tar_archive: Vec<u8>,
+    ) -> Result<Vec<String>, String> {
+        let mut output = Vec::new();
+
+        let mut stream = self
+            .docker
+            .build_image(options, None, Some(tar_archive.into()));
+
+        while let Some(build_info) = stream.next().await {
+            match build_info {
+                Ok(info) => {
+                    if let Some(stream) = info.stream {
+                        output.push(stream);
+                    }
+                    if let Some(error) = info.error {
+                        return Err(format!("Docker build error: {}", error));
+                    }
+                }
+                Err(e) => return Err(format!("Failed to build image: {}", e)),
+            }
+        }
+
+        Ok(output)
+    }
+
+    async fn image_exists(&self, tag: &str) -> Result<bool, String> {
+        let mut filters = HashMap::new();
+        filters.insert("reference", vec![tag]);
+
+        let options = ListImagesOptions {
+            filters,
+            ..Default::default()
+        };
+
+        let images = self
+            .docker
+            .list_images(Some(options))
+            .await
+            .map_err(|e| format!("Failed to list images: {}", e))?;
+
+        Ok(!images.is_empty())
     }
 }
