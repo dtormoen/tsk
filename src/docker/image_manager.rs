@@ -168,7 +168,7 @@ impl DockerImageManager {
             project.unwrap_or("default")
         };
 
-        self.build_image(tech_stack, agent, Some(actual_project), false)
+        self.build_image(tech_stack, agent, Some(actual_project), true)
             .await?;
 
         Ok(image)
