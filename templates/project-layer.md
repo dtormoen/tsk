@@ -55,7 +55,7 @@ Your Dockerfile should:
    # Create dummy main.rs to build dependencies
    RUN mkdir src && echo "fn main() {}" > src/main.rs
    # Build dependencies (artifacts go to $CARGO_TARGET_DIR set in tech-stack layer)
-   RUN cargo build --release
+   RUN cargo build
    # Remove dummy source
    RUN rm -rf src
    ```
