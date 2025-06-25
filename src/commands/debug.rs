@@ -1,8 +1,10 @@
 use super::Command;
+use crate::agent::AgentProvider;
 use crate::context::AppContext;
 use crate::docker::DockerManager;
 use crate::git::RepoManager;
 use crate::repo_utils::find_repository_root;
+use crate::task::Task;
 use crate::task_runner::TaskRunner;
 use async_trait::async_trait;
 use std::error::Error;
@@ -70,6 +72,49 @@ impl Command for DebugCommand {
             }
         };
 
+        // Create a debug instructions file
+        let debug_instructions = format!(
+            "# Debug Session: {}\n\nThis is an interactive debug session for exploring and testing.",
+            self.name
+        );
+        let temp_dir = ctx.xdg_directories().runtime_dir().join("tmp");
+        ctx.file_system().create_dir(&temp_dir).await?;
+        let instructions_file = temp_dir.join(format!("{}-debug.md", self.name));
+        ctx.file_system()
+            .write_file(&instructions_file, &debug_instructions)
+            .await?;
+
+        // Get current commit for the task
+        let source_commit = ctx
+            .git_operations()
+            .get_current_commit(&repo_root)
+            .await
+            .unwrap_or_else(|_| "HEAD".to_string());
+
+        // Create a minimal task for debug session
+        let timestamp = chrono::Local::now();
+        let task_id = format!("{}-debug-{}", timestamp.format("%Y-%m-%d-%H%M"), self.name);
+        let branch_name = format!("tsk/{}", task_id);
+
+        let agent = self
+            .agent
+            .clone()
+            .unwrap_or_else(|| AgentProvider::default_agent().to_string());
+
+        let task = Task::new_with_id(
+            task_id,
+            repo_root.clone(),
+            self.name.clone(),
+            "debug".to_string(),
+            instructions_file.to_string_lossy().to_string(),
+            agent,
+            0, // No timeout for debug sessions
+            branch_name,
+            source_commit,
+            tech_stack,
+            project.unwrap_or_else(|| "default".to_string()),
+        );
+
         let repo_manager = RepoManager::new(
             ctx.xdg_directories(),
             ctx.file_system(),
@@ -84,16 +129,14 @@ impl Command for DebugCommand {
             ctx.notification_client(),
         );
 
+        // Execute task in interactive mode
         task_runner
-            .run_debug_container(
-                &self.name,
-                self.agent.as_deref(),
-                &repo_root,
-                &tech_stack,
-                project.as_deref(),
-            )
+            .execute_task(&task, true)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.message)?;
+
+        // Clean up the temporary instructions file
+        let _ = ctx.file_system().remove_file(&instructions_file).await;
 
         Ok(())
     }

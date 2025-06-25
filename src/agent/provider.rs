@@ -1,4 +1,4 @@
-use super::{Agent, ClaudeCodeAgent};
+use super::{Agent, ClaudeCodeAgent, NoOpAgent};
 use std::sync::Arc;
 
 /// Provider for creating and managing AI agents
@@ -9,13 +9,14 @@ impl AgentProvider {
     pub fn get_agent(name: &str) -> anyhow::Result<Arc<dyn Agent>> {
         match name {
             "claude-code" => Ok(Arc::new(ClaudeCodeAgent::new())),
+            "no-op" => Ok(Arc::new(NoOpAgent)),
             _ => Err(anyhow::anyhow!("Unknown agent: {}", name)),
         }
     }
 
     /// List all available agents
     pub fn list_agents() -> Vec<&'static str> {
-        vec!["claude-code"]
+        vec!["claude-code", "no-op"]
     }
 
     /// Get the default agent name
@@ -66,6 +67,22 @@ mod tests {
     #[test]
     fn test_agent_provider_is_valid_agent() {
         assert!(AgentProvider::is_valid_agent("claude-code"));
+        assert!(AgentProvider::is_valid_agent("no-op"));
         assert!(!AgentProvider::is_valid_agent("invalid-agent"));
+    }
+
+    #[test]
+    fn test_agent_provider_get_no_op_agent() {
+        // Test getting the no-op agent
+        let agent = AgentProvider::get_agent("no-op");
+        assert!(agent.is_ok());
+        let agent = agent.unwrap();
+        assert_eq!(agent.name(), "no-op");
+    }
+
+    #[test]
+    fn test_agent_provider_list_includes_no_op() {
+        let agents = AgentProvider::list_agents();
+        assert!(agents.contains(&"no-op"));
     }
 }

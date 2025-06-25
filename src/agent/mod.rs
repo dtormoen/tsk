@@ -3,10 +3,13 @@ use std::sync::Arc;
 
 mod claude_code;
 mod log_processor;
+mod no_op;
+mod no_op_log_processor;
 mod provider;
 
 pub use self::log_processor::LogProcessor;
 pub use claude_code::{ClaudeCodeAgent, TaskResult};
+pub use no_op::NoOpAgent;
 pub use provider::AgentProvider;
 
 /// Trait defining the interface for AI agents that can execute tasks
@@ -120,5 +123,56 @@ mod tests {
 
         let agent = TestAgent::new("test");
         _assert_object_safe(&agent);
+    }
+
+    #[tokio::test]
+    async fn test_no_op_agent() {
+        let agent = NoOpAgent;
+
+        // Test agent name
+        assert_eq!(agent.name(), "no-op");
+
+        // Test build_command
+        let command = agent.build_command("/instructions/test.md");
+        assert_eq!(command.len(), 3);
+        assert_eq!(command[0], "sh");
+        assert_eq!(command[1], "-c");
+        assert!(command[2].contains("cat '/instructions/test.md'"));
+
+        // Test volumes
+        let volumes = agent.volumes();
+        assert!(volumes.is_empty());
+
+        // Test environment
+        let env = agent.environment();
+        assert!(env.is_empty());
+
+        // Test validation (should always succeed)
+        assert!(agent.validate().await.is_ok());
+
+        // Test warmup (should always succeed)
+        assert!(agent.warmup().await.is_ok());
+    }
+
+    #[test]
+    fn test_no_op_log_processor() {
+        use super::no_op_log_processor::NoOpLogProcessor;
+
+        let mut processor = NoOpLogProcessor::new();
+
+        // Test process_line passes through
+        let line = "test output line";
+        let result = processor.process_line(line);
+        assert_eq!(result, Some(line.to_string()));
+
+        // Test get_full_log
+        processor.process_line("line 1");
+        processor.process_line("line 2");
+        let full_log = processor.get_full_log();
+        assert!(full_log.contains("line 1"));
+        assert!(full_log.contains("line 2"));
+
+        // Test get_final_result returns None
+        assert!(processor.get_final_result().is_none());
     }
 }

@@ -4,7 +4,7 @@ use crate::docker::{image_manager::DockerImageManager, DockerManager};
 use crate::git::RepoManager;
 use crate::notifications::NotificationClient;
 use crate::task::Task;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 pub struct TaskExecutionResult {
@@ -56,6 +56,7 @@ impl TaskRunner {
     pub async fn execute_task(
         &self,
         task: &Task,
+        is_interactive: bool,
     ) -> Result<TaskExecutionResult, TaskExecutionError> {
         // Get the agent for this task
         let agent = AgentProvider::get_agent(&task.agent)
@@ -110,23 +111,62 @@ impl TaskRunner {
                 );
             }
 
-            // Use streaming version
-            self.docker_manager
-                .run_task_container(
-                    &docker_image.tag,
-                    &repo_path,
-                    command.clone(),
-                    Some(&instructions_file_path),
-                    agent.as_ref(),
-                    |log_line| {
-                        // Process each line of output
-                        if let Some(formatted) = log_processor.process_line(log_line) {
-                            println!("{}", formatted);
-                        }
-                    },
-                )
-                .await
-                .map_err(|e| format!("Error running container: {}", e))?
+            if is_interactive {
+                // Create interactive container
+                let container_name = self
+                    .docker_manager
+                    .create_task_container_interactive(
+                        &docker_image.tag,
+                        &repo_path,
+                        Some(&instructions_file_path),
+                        agent.as_ref(),
+                    )
+                    .await
+                    .map_err(|e| format!("Error creating interactive container: {}", e))?;
+
+                println!("\nDocker container started successfully!");
+                println!("Container name: {}", container_name);
+                println!("\nStarting interactive session...");
+
+                // Start interactive docker exec session
+                let status = std::process::Command::new("docker")
+                    .args(["exec", "-it", &container_name, "/bin/bash"])
+                    .status()
+                    .map_err(|e| format!("Failed to execute docker exec: {}", e))?;
+
+                if !status.success() {
+                    eprintln!("Interactive session exited with non-zero status");
+                }
+
+                println!("\nStopping container...");
+                self.docker_manager
+                    .stop_and_remove_container(&container_name)
+                    .await
+                    .map_err(|e| format!("Error stopping container: {}", e))?;
+
+                println!("Container stopped and removed successfully");
+
+                // Return empty output for interactive sessions
+                String::new()
+            } else {
+                // Use streaming version for non-interactive
+                self.docker_manager
+                    .run_task_container(
+                        &docker_image.tag,
+                        &repo_path,
+                        command.clone(),
+                        Some(&instructions_file_path),
+                        agent.as_ref(),
+                        |log_line| {
+                            // Process each line of output
+                            if let Some(formatted) = log_processor.process_line(log_line) {
+                                println!("{}", formatted);
+                            }
+                        },
+                    )
+                    .await
+                    .map_err(|e| format!("Error running container: {}", e))?
+            }
         };
 
         println!("\n{}", "=".repeat(60));
@@ -186,106 +226,6 @@ impl TaskRunner {
             output,
             task_result,
         })
-    }
-
-    /// Run debug container for a task
-    pub async fn run_debug_container(
-        &self,
-        task_name: &str,
-        agent_name: Option<&str>,
-        repo_root: &Path,
-        tech_stack: &str,
-        project: Option<&str>,
-    ) -> Result<(), String> {
-        // Get the agent
-        let agent_name = agent_name.unwrap_or(AgentProvider::default_agent());
-        let agent = AgentProvider::get_agent(agent_name)
-            .map_err(|e| format!("Error getting agent: {}", e))?;
-
-        // Validate the agent
-        agent.validate().await?;
-
-        // Run agent warmup
-        agent.warmup().await?;
-
-        // Copy repository for the debug session (no source commit for debug)
-        let (repo_path, branch_name) = self
-            .repo_manager
-            .copy_repo(task_name, repo_root, None)
-            .await?;
-
-        println!(
-            "Successfully created repository copy at: {}",
-            repo_path.display()
-        );
-
-        // Launch Docker container
-        println!("Launching Docker container with {} agent...", agent.name());
-
-        // Ensure the Docker image exists - always rebuild to pick up any changes
-        let docker_image = self
-            .docker_image_manager
-            .ensure_image(tech_stack, agent_name, project, true)
-            .await
-            .map_err(|e| format!("Error ensuring Docker image: {}", e))?;
-
-        let container_name = self
-            .docker_manager
-            .create_debug_container(&docker_image.tag, &repo_path, agent.as_ref())
-            .await?;
-
-        println!("\nDocker container started successfully!");
-        println!("Container name: {}", container_name);
-        println!("\nStarting interactive session...");
-
-        // Start interactive docker exec session
-        let status = std::process::Command::new("docker")
-            .args(["exec", "-it", &container_name, "/bin/bash"])
-            .status()
-            .map_err(|e| format!("Failed to execute docker exec: {}", e))?;
-
-        if !status.success() {
-            eprintln!("Interactive session exited with non-zero status");
-        }
-
-        println!("\nStopping container...");
-        self.docker_manager
-            .stop_and_remove_container(&container_name)
-            .await?;
-
-        println!("Container stopped and removed successfully");
-
-        // Commit any changes made during debug session
-        let commit_message = format!("TSK debug session changes for: {}", task_name);
-        if let Err(e) = self
-            .repo_manager
-            .commit_changes(&repo_path, &commit_message)
-            .await
-        {
-            eprintln!("Error committing changes: {}", e);
-        }
-
-        // Fetch changes back to main repository
-        match self
-            .repo_manager
-            .fetch_changes(&repo_path, &branch_name, repo_root)
-            .await
-        {
-            Ok(true) => {
-                println!(
-                    "Branch {} is now available in the main repository",
-                    branch_name
-                );
-            }
-            Ok(false) => {
-                println!("No changes to merge - branch was not created");
-            }
-            Err(e) => {
-                eprintln!("Error fetching changes: {}", e);
-            }
-        }
-
-        Ok(())
     }
 }
 
@@ -392,7 +332,7 @@ mod tests {
             project: "default".to_string(),
         };
 
-        let result = task_runner.execute_task(&task).await;
+        let result = task_runner.execute_task(&task, false).await;
 
         assert!(result.is_ok(), "Error: {:?}", result.as_ref().err());
         let execution_result = result.unwrap();

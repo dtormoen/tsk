@@ -212,10 +212,23 @@ impl DockerManager {
         }
     }
 
-    pub async fn create_debug_container(
+    pub async fn stop_and_remove_container(&self, container_name: &str) -> Result<(), String> {
+        self.client
+            .remove_container(
+                container_name,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+            )
+            .await
+    }
+
+    pub async fn create_task_container_interactive(
         &self,
         image: &str,
         worktree_path: &Path,
+        instructions_file_path: Option<&PathBuf>,
         agent: &dyn Agent,
     ) -> Result<String, String> {
         // Ensure network and proxy are running
@@ -227,7 +240,7 @@ impl DockerManager {
             .to_str()
             .ok_or_else(|| "Invalid worktree path".to_string())?;
 
-        // Run sleep infinity for debug container
+        // Run sleep infinity for interactive container
         let sleep_command = Some(vec!["sleep".to_string(), "infinity".to_string()]);
 
         let config = Self::create_base_container_config(
@@ -235,11 +248,11 @@ impl DockerManager {
             worktree_path_str,
             sleep_command,
             true, // interactive
-            None, // no instructions file for debug containers
+            instructions_file_path,
             Some(agent),
         );
 
-        let container_name = format!("tsk-debug-{}", chrono::Utc::now().timestamp());
+        let container_name = format!("tsk-interactive-{}", chrono::Utc::now().timestamp());
         let options = CreateContainerOptions {
             name: container_name.clone(),
             platform: None,
@@ -249,18 +262,6 @@ impl DockerManager {
         self.client.start_container(&container_id).await?;
 
         Ok(container_name)
-    }
-
-    pub async fn stop_and_remove_container(&self, container_name: &str) -> Result<(), String> {
-        self.client
-            .remove_container(
-                container_name,
-                Some(RemoveContainerOptions {
-                    force: true,
-                    ..Default::default()
-                }),
-            )
-            .await
     }
 
     pub async fn run_task_container<F>(

@@ -38,7 +38,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `run`: Execute all queued tasks (or start server with `--server` flag)
 - `quick`: Immediately execute single tasks
 - `list`: Display task status and results
-- `debug`: Launch interactive containers for troubleshooting
+- `debug`: Launch interactive containers for troubleshooting (uses unified task execution with no-op agent)
 - `tasks`: Manage task queue (delete/clean operations)
 - `templates`: Manage task type templates
 - `docker-build`: Build required docker images

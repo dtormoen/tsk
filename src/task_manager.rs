@@ -78,7 +78,7 @@ impl TaskManager {
         }
 
         // Execute the task
-        let execution_result = self.task_runner.execute_task(task).await;
+        let execution_result = self.task_runner.execute_task(task, false).await;
 
         match execution_result {
             Ok(result) => {
