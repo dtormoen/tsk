@@ -153,6 +153,20 @@ struct ClaudeMessage {
     result: Option<String>,
     total_cost: Option<f64>,
     session_id: Option<String>,
+    timestamp: Option<String>,
+    #[serde(rename = "toolUseResult")]
+    tool_use_result: Option<ToolUseResult>,
+    summary: Option<String>,
+}
+
+/// Tool use result from user messages
+#[derive(Debug, Deserialize, Serialize)]
+struct ToolUseResult {
+    stdout: Option<String>,
+    stderr: Option<String>,
+    is_error: Option<bool>,
+    error: Option<String>,
+    filenames: Option<Vec<String>>,
 }
 
 /// Message content structure from Claude Code
@@ -165,7 +179,17 @@ struct MessageContent {
     content_type: Option<String>,
     model: Option<String>,
     stop_reason: Option<String>,
-    usage: Option<Value>,
+    usage: Option<Usage>,
+}
+
+/// Usage information from Claude Code
+#[derive(Debug, Deserialize, Serialize)]
+struct Usage {
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+    cache_creation_input_tokens: Option<u64>,
+    cache_read_input_tokens: Option<u64>,
+    service_tier: Option<String>,
 }
 
 /// Todo item structure from Claude Code's TodoWrite tool
@@ -189,6 +213,14 @@ pub struct TaskResult {
 }
 
 /// Claude Code specific log processor that parses and formats JSON output
+/// 
+/// This processor provides rich output including:
+/// - Tool usage information (Edit, Bash, Write, etc.)
+/// - Tool result summaries from user messages
+/// - TODO list updates with status indicators
+/// - Assistant reasoning and conversation
+/// - Summary messages
+/// - Cost calculations from token usage
 struct ClaudeCodeLogProcessor {
     full_log: Vec<String>,
     final_result: Option<TaskResult>,
@@ -209,8 +241,16 @@ impl ClaudeCodeLogProcessor {
     fn format_message(&mut self, msg: ClaudeMessage) -> Option<String> {
         match msg.message_type.as_str() {
             "assistant" => self.format_assistant_message(msg),
-            "user" => self.format_user_message(),
+            "user" => self.format_user_message(&msg),
             "result" => self.format_result_message(msg),
+            "summary" => {
+                // Show summary messages
+                if let Some(summary_text) = msg.summary {
+                    Some(format!("📋 Summary: {summary_text}"))
+                } else {
+                    Some("📋 [summary]".to_string())
+                }
+            }
             other_type => {
                 // For other message types, just show a brief indicator
                 Some(format!("📋 [{other_type}]"))
@@ -218,61 +258,204 @@ impl ClaudeCodeLogProcessor {
         }
     }
 
-    /// Formats a user message indicator
-    fn format_user_message(&self) -> Option<String> {
-        Some("👤 [user]".to_string())
+    /// Formats a user message with tool result information
+    fn format_user_message(&self, msg: &ClaudeMessage) -> Option<String> {
+        if let Some(tool_result) = &msg.tool_use_result {
+            let mut output = String::new();
+
+            // Check for specific tool results
+            if let Some(filenames) = &tool_result.filenames {
+                let count = filenames.len();
+                output.push_str(&format!(
+                    "👤 Tool result: Found {count} file{}",
+                    if count == 1 { "" } else { "s" }
+                ));
+            } else if let Some(stdout) = &tool_result.stdout {
+                if stdout.contains("test result: ok") {
+                    output.push_str("👤 Tool result: Tests passed ✅");
+                } else if stdout.contains("test result: FAILED") {
+                    output.push_str("👤 Tool result: Tests failed ❌");
+                } else if stdout.trim().is_empty() {
+                    output.push_str("👤 Tool result: Command completed");
+                } else {
+                    // For other outputs, show a brief summary
+                    let first_line = stdout.lines().next().unwrap_or("").trim();
+                    if first_line.len() > 50 {
+                        output.push_str(&format!("👤 Tool result: {}...", &first_line[..50]));
+                    } else {
+                        output.push_str(&format!("👤 Tool result: {first_line}"));
+                    }
+                }
+            } else if let Some(error) = &tool_result.error {
+                output.push_str(&format!("👤 Tool error: {error}"));
+            } else if tool_result.is_error == Some(true) {
+                output.push_str("👤 Tool result: Error occurred");
+            } else {
+                output.push_str("👤 Tool result: Completed");
+            }
+
+            Some(output)
+        } else {
+            // Check if this is a regular user message with content
+            if let Some(message) = &msg.message {
+                if let Some(Value::String(text)) = &message.content {
+                    // Show brief summary of user message
+                    let first_line = text.lines().next().unwrap_or("").trim();
+                    if first_line.starts_with("# ") {
+                        Some(format!("👤 User: {}", first_line.trim_start_matches("# ")))
+                    } else if first_line.len() > 60 {
+                        Some(format!("👤 User: {}...", &first_line[..60]))
+                    } else if !first_line.is_empty() {
+                        Some(format!("👤 User: {first_line}"))
+                    } else {
+                        Some("👤 [user]".to_string())
+                    }
+                } else {
+                    Some("👤 [user]".to_string())
+                }
+            } else {
+                Some("👤 [user]".to_string())
+            }
+        }
     }
 
-    /// Formats an assistant message, extracting text content and todo updates
+    /// Formats an assistant message, extracting text content, tool uses, and todo updates
     fn format_assistant_message(&self, msg: ClaudeMessage) -> Option<String> {
         if let Some(message) = msg.message {
             if let Some(content) = message.content {
                 match content {
                     Value::Array(contents) => {
                         let mut output = String::new();
-                        let mut has_todo_update = false;
 
                         for item in contents {
-                            // Check for TodoWrite tool use
+                            // Check for tool use
                             if let Some(tool_name) = item.get("name").and_then(|n| n.as_str()) {
-                                if tool_name == "TodoWrite" {
-                                    if let Some(input) = item.get("input") {
-                                        if let Some(todos) = input.get("todos") {
-                                            if let Ok(todo_items) =
-                                                serde_json::from_value::<Vec<TodoItem>>(
-                                                    todos.clone(),
-                                                )
-                                            {
-                                                has_todo_update = true;
-                                                output.push_str(
-                                                    &self.format_todo_update(&todo_items),
-                                                );
+                                match tool_name {
+                                    "TodoWrite" => {
+                                        if let Some(input) = item.get("input") {
+                                            if let Some(todos) = input.get("todos") {
+                                                if let Ok(todo_items) =
+                                                    serde_json::from_value::<Vec<TodoItem>>(
+                                                        todos.clone(),
+                                                    )
+                                                {
+                                                    output.push_str(
+                                                        &self.format_todo_update(&todo_items),
+                                                    );
+                                                }
                                             }
                                         }
+                                    }
+                                    "Read" | "LS" | "NotebookRead" => {
+                                        // Skip file reading operations as requested
+                                    }
+                                    "Edit" | "MultiEdit" => {
+                                        if let Some(input) = item.get("input") {
+                                            if let Some(file_path) =
+                                                input.get("file_path").and_then(|f| f.as_str())
+                                            {
+                                                let file_name = file_path
+                                                    .rsplit('/')
+                                                    .next()
+                                                    .unwrap_or(file_path);
+                                                if tool_name == "MultiEdit" {
+                                                    if let Some(edits) = input
+                                                        .get("edits")
+                                                        .and_then(|e| e.as_array())
+                                                    {
+                                                        output.push_str(&format!(
+                                                            "🔧 Editing {file_name} ({} changes)\n",
+                                                            edits.len()
+                                                        ));
+                                                    } else {
+                                                        output.push_str(&format!(
+                                                            "🔧 Editing {file_name}\n"
+                                                        ));
+                                                    }
+                                                } else {
+                                                    output.push_str(&format!(
+                                                        "🔧 Editing {file_name}\n"
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    "Bash" => {
+                                        if let Some(input) = item.get("input") {
+                                            if let Some(cmd) =
+                                                input.get("command").and_then(|c| c.as_str())
+                                            {
+                                                let cmd_preview = if cmd.len() > 60 {
+                                                    format!("{}...", &cmd[..60])
+                                                } else {
+                                                    cmd.to_string()
+                                                };
+                                                output.push_str(&format!(
+                                                    "🖥️ Running: {cmd_preview}\n"
+                                                ));
+                                            }
+                                        }
+                                    }
+                                    "Write" => {
+                                        if let Some(input) = item.get("input") {
+                                            if let Some(file_path) =
+                                                input.get("file_path").and_then(|f| f.as_str())
+                                            {
+                                                let file_name = file_path
+                                                    .rsplit('/')
+                                                    .next()
+                                                    .unwrap_or(file_path);
+                                                output
+                                                    .push_str(&format!("📝 Writing {file_name}\n"));
+                                            }
+                                        }
+                                    }
+                                    "Grep" => {
+                                        if let Some(input) = item.get("input") {
+                                            if let Some(pattern) =
+                                                input.get("pattern").and_then(|p| p.as_str())
+                                            {
+                                                output.push_str(&format!(
+                                                    "🔍 Searching for: {pattern}\n"
+                                                ));
+                                            }
+                                        }
+                                    }
+                                    "WebSearch" => {
+                                        if let Some(input) = item.get("input") {
+                                            if let Some(query) =
+                                                input.get("query").and_then(|q| q.as_str())
+                                            {
+                                                output
+                                                    .push_str(&format!("🌐 Web search: {query}\n"));
+                                            }
+                                        }
+                                    }
+                                    _ => {
+                                        // Other tools
+                                        output.push_str(&format!("🔧 Using {tool_name}\n"));
                                     }
                                 }
                             }
 
                             // Process regular text content
                             if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
-                                if !output.is_empty() && !has_todo_update {
-                                    output.push('\n');
+                                if !text.trim().is_empty() {
+                                    if !output.is_empty() {
+                                        output.push('\n');
+                                    }
+                                    output.push_str(&format!("🤖 {text}"));
                                 }
-                                output.push_str(text);
                             }
                         }
 
                         if !output.is_empty() {
-                            if has_todo_update {
-                                Some(output)
-                            } else {
-                                Some(format!("🤖 Assistant:\n{output}"))
-                            }
+                            Some(output.trim_end().to_string())
                         } else {
                             None
                         }
                     }
-                    Value::String(text) => Some(format!("🤖 Assistant:\n{text}")),
+                    Value::String(text) => Some(format!("🤖 {text}")),
                     _ => None,
                 }
             } else {
@@ -389,10 +572,23 @@ impl ClaudeCodeLogProcessor {
                 }
             });
 
+            // Calculate cost from usage if not directly provided
+            let cost_usd = msg.cost_usd.or_else(|| {
+                if let Some(message_content) = &msg.message {
+                    if let Some(usage) = &message_content.usage {
+                        self.calculate_cost_from_usage(usage)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            });
+
             self.final_result = Some(TaskResult {
                 success,
                 message: message.clone(),
-                cost_usd: msg.cost_usd,
+                cost_usd,
                 duration_ms: msg.duration_ms,
             });
 
@@ -405,7 +601,7 @@ impl ClaudeCodeLogProcessor {
             let status_emoji = if success { "✅" } else { "❌" };
             output.push_str(&format!("{status_emoji} Task Result: {subtype}\n"));
 
-            if let Some(cost) = msg.cost_usd {
+            if let Some(cost) = cost_usd {
                 output.push_str(&format!("💰 Cost: ${cost:.2}\n"));
             }
 
@@ -423,6 +619,32 @@ impl ClaudeCodeLogProcessor {
             output.push_str(&"─".repeat(60));
 
             Some(output)
+        } else {
+            None
+        }
+    }
+
+    /// Calculates approximate cost from token usage
+    fn calculate_cost_from_usage(&self, usage: &Usage) -> Option<f64> {
+        // Approximate pricing for Claude Opus
+        // These are rough estimates and should be updated based on actual pricing
+        const INPUT_COST_PER_1K: f64 = 0.015; // $15 per million tokens
+        const OUTPUT_COST_PER_1K: f64 = 0.075; // $75 per million tokens
+        const CACHE_WRITE_COST_PER_1K: f64 = 0.01875; // 25% more than input
+        const CACHE_READ_COST_PER_1K: f64 = 0.0015; // 90% cheaper than input
+
+        let input_tokens = usage.input_tokens.unwrap_or(0) as f64;
+        let output_tokens = usage.output_tokens.unwrap_or(0) as f64;
+        let cache_write_tokens = usage.cache_creation_input_tokens.unwrap_or(0) as f64;
+        let cache_read_tokens = usage.cache_read_input_tokens.unwrap_or(0) as f64;
+
+        let total_cost = (input_tokens * INPUT_COST_PER_1K / 1000.0)
+            + (output_tokens * OUTPUT_COST_PER_1K / 1000.0)
+            + (cache_write_tokens * CACHE_WRITE_COST_PER_1K / 1000.0)
+            + (cache_read_tokens * CACHE_READ_COST_PER_1K / 1000.0);
+
+        if total_cost > 0.0 {
+            Some(total_cost)
         } else {
             None
         }
@@ -484,7 +706,7 @@ mod tests {
         }"#;
 
         let result = processor.process_line(json);
-        assert_eq!(result, Some("🤖 Assistant:\nHello, world!".to_string()));
+        assert_eq!(result, Some("🤖 Hello, world!".to_string()));
     }
 
     #[test]
@@ -810,7 +1032,118 @@ mod tests {
         }"#;
 
         let result = processor.process_line(json);
-        assert_eq!(result, Some("👤 [user]".to_string()));
+        assert_eq!(result, Some("👤 User: User input message".to_string()));
+    }
+
+    #[test]
+    fn test_user_message_with_tool_result() {
+        let fs = Arc::new(MockFileSystem::new());
+        let mut processor = ClaudeCodeLogProcessor::new(fs);
+        let json = r#"{
+            "type": "user",
+            "toolUseResult": {
+                "stdout": "test result: ok. 5 passed; 0 failed",
+                "stderr": "",
+                "is_error": false
+            }
+        }"#;
+
+        let result = processor.process_line(json);
+        assert_eq!(result, Some("👤 Tool result: Tests passed ✅".to_string()));
+    }
+
+    #[test]
+    fn test_user_message_with_file_search_result() {
+        let fs = Arc::new(MockFileSystem::new());
+        let mut processor = ClaudeCodeLogProcessor::new(fs);
+        let json = r#"{
+            "type": "user",
+            "toolUseResult": {
+                "filenames": ["file1.rs", "file2.rs", "file3.rs"]
+            }
+        }"#;
+
+        let result = processor.process_line(json);
+        assert_eq!(result, Some("👤 Tool result: Found 3 files".to_string()));
+    }
+
+    #[test]
+    fn test_assistant_message_with_tool_use() {
+        let fs = Arc::new(MockFileSystem::new());
+        let mut processor = ClaudeCodeLogProcessor::new(fs);
+        let json = r#"{
+            "type": "assistant",
+            "message": {
+                "content": [{
+                    "type": "tool_use",
+                    "name": "Bash",
+                    "input": {
+                        "command": "cargo test --all"
+                    }
+                }]
+            }
+        }"#;
+
+        let result = processor.process_line(json);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("🖥️ Running: cargo test --all"));
+    }
+
+    #[test]
+    fn test_assistant_message_with_edit_tool() {
+        let fs = Arc::new(MockFileSystem::new());
+        let mut processor = ClaudeCodeLogProcessor::new(fs);
+        let json = r#"{
+            "type": "assistant",
+            "message": {
+                "content": [{
+                    "type": "tool_use",
+                    "name": "Edit",
+                    "input": {
+                        "file_path": "/workspace/src/main.rs"
+                    }
+                }]
+            }
+        }"#;
+
+        let result = processor.process_line(json);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("🔧 Editing main.rs"));
+    }
+
+    #[test]
+    fn test_cost_calculation_from_usage() {
+        let fs = Arc::new(MockFileSystem::new());
+        let processor = ClaudeCodeLogProcessor::new(fs);
+
+        let usage = Usage {
+            input_tokens: Some(1000),
+            output_tokens: Some(500),
+            cache_creation_input_tokens: Some(0),
+            cache_read_input_tokens: Some(0),
+            service_tier: Some("standard".to_string()),
+        };
+
+        let cost = processor.calculate_cost_from_usage(&usage);
+        assert!(cost.is_some());
+        // 1000 * 0.015 / 1000 + 500 * 0.075 / 1000 = 0.015 + 0.0375 = 0.0525
+        assert!((cost.unwrap() - 0.0525).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_summary_message() {
+        let fs = Arc::new(MockFileSystem::new());
+        let mut processor = ClaudeCodeLogProcessor::new(fs);
+        let json = r#"{
+            "type": "summary",
+            "summary": "Test Summary: Running unit tests"
+        }"#;
+
+        let result = processor.process_line(json);
+        assert_eq!(
+            result,
+            Some("📋 Summary: Test Summary: Running unit tests".to_string())
+        );
     }
 
     #[test]
