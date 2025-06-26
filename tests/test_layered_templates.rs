@@ -90,7 +90,7 @@ fn test_template_content_validation() {
 }
 
 #[tokio::test]
-async fn test_app_context_uses_layered_asset_manager() {
+async fn test_app_context_with_layered_asset_manager() {
     // Create a temporary git repository
     let temp_dir = TempDir::new().unwrap();
     let repo_dir = temp_dir.path().join("repo");
@@ -118,13 +118,19 @@ async fn test_app_context_uses_layered_asset_manager() {
     // Build AppContext
     let app_context = AppContext::builder().build();
 
+    // Create asset manager on-demand
+    let asset_manager = LayeredAssetManager::new_with_standard_layers(
+        Some(&repo_dir),
+        &app_context.xdg_directories(),
+    );
+
     // Verify it can access the custom template
-    let template = app_context.asset_manager().get_template("custom");
+    let template = asset_manager.get_template("custom");
     assert!(template.is_ok());
     assert_eq!(template.unwrap(), "Custom project template");
 
     // Verify it still has access to built-in templates
-    assert!(app_context.asset_manager().get_template("feat").is_ok());
+    assert!(asset_manager.get_template("feat").is_ok());
 }
 
 #[test]

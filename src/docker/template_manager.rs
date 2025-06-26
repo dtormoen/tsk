@@ -5,7 +5,7 @@
 //! in project, user, and embedded locations in priority order.
 
 use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::assets::AssetManager;
@@ -16,25 +16,23 @@ use crate::storage::xdg::XdgDirectories;
 pub struct DockerTemplateManager {
     asset_manager: Arc<dyn AssetManager>,
     xdg_dirs: Arc<XdgDirectories>,
-    project_root: Option<PathBuf>,
 }
 
 impl DockerTemplateManager {
     /// Creates a new DockerTemplateManager
-    pub fn new(
-        asset_manager: Arc<dyn AssetManager>,
-        xdg_dirs: Arc<XdgDirectories>,
-        project_root: Option<PathBuf>,
-    ) -> Self {
+    pub fn new(asset_manager: Arc<dyn AssetManager>, xdg_dirs: Arc<XdgDirectories>) -> Self {
         Self {
             asset_manager,
             xdg_dirs,
-            project_root,
         }
     }
 
     /// Get the content of a specific Docker layer
-    pub fn get_layer_content(&self, layer: &DockerLayer) -> Result<DockerLayerContent> {
+    pub fn get_layer_content(
+        &self,
+        layer: &DockerLayer,
+        _project_root: Option<&Path>,
+    ) -> Result<DockerLayerContent> {
         let layer_path = format!("dockerfiles/{}", layer.asset_path());
 
         // Try to get the Dockerfile for this layer
@@ -68,7 +66,11 @@ impl DockerTemplateManager {
     }
 
     /// Compose a complete Dockerfile from multiple layers
-    pub fn compose_dockerfile(&self, config: &DockerImageConfig) -> Result<String> {
+    pub fn compose_dockerfile(
+        &self,
+        config: &DockerImageConfig,
+        project_root: Option<&Path>,
+    ) -> Result<String> {
         let layers = config.get_layers();
         let mut composed_dockerfile = String::new();
         let mut has_from_instruction = false;
@@ -83,7 +85,7 @@ impl DockerTemplateManager {
 
         for (index, layer) in layers.iter().enumerate() {
             // Skip layers that don't exist (except base which is required)
-            let layer_content = match self.get_layer_content(layer) {
+            let layer_content = match self.get_layer_content(layer, project_root) {
                 Ok(content) => content,
                 Err(_) if layer.layer_type != DockerLayerType::Base => {
                     // Non-base layers are optional
@@ -148,7 +150,11 @@ impl DockerTemplateManager {
     }
 
     /// List available layers of a specific type
-    pub fn list_available_layers(&self, layer_type: DockerLayerType) -> Vec<String> {
+    pub fn list_available_layers(
+        &self,
+        layer_type: DockerLayerType,
+        project_root: Option<&Path>,
+    ) -> Vec<String> {
         let mut layers = std::collections::HashSet::new();
 
         let layer_dir = match layer_type {
@@ -173,10 +179,19 @@ impl DockerTemplateManager {
         }
 
         // Check project directory
-        if let Some(ref project_root) = self.project_root {
+        if let Some(project_root) = project_root {
             let project_docker_dir = project_root.join(".tsk").join("dockerfiles");
             if project_docker_dir.exists() {
+                eprintln!(
+                    "Scanning project dockerfiles directory: {}",
+                    project_docker_dir.display()
+                );
                 self.scan_directory_for_layers(&project_docker_dir, &layer_type, &mut layers);
+            } else {
+                eprintln!(
+                    "No project dockerfiles directory found at: {}",
+                    project_docker_dir.display()
+                );
             }
         }
 
@@ -321,7 +336,7 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    fn create_test_manager(project_root: Option<PathBuf>) -> DockerTemplateManager {
+    fn create_test_manager() -> DockerTemplateManager {
         let temp_dir = TempDir::new().unwrap();
         let xdg_dirs = XdgDirectories::new_with_paths(
             temp_dir.path().to_path_buf(),
@@ -330,11 +345,7 @@ mod tests {
             temp_dir.path().to_path_buf(),
         );
 
-        DockerTemplateManager::new(
-            Arc::new(EmbeddedAssetManager),
-            Arc::new(xdg_dirs),
-            project_root,
-        )
+        DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), Arc::new(xdg_dirs))
     }
 
     #[test]
@@ -355,7 +366,7 @@ mod tests {
 
     #[test]
     fn test_process_layer_content() {
-        let manager = create_test_manager(None);
+        let manager = create_test_manager();
         let mut has_from = false;
 
         // Test first layer processing
@@ -386,7 +397,7 @@ mod tests {
 
     #[test]
     fn test_process_layer_content_user_switching() {
-        let manager = create_test_manager(None);
+        let manager = create_test_manager();
         let mut has_from = false;
 
         // Test layer with USER root switching back to USER agent
@@ -404,7 +415,7 @@ mod tests {
 
     #[test]
     fn test_cmd_and_entrypoint_extraction() {
-        let manager = create_test_manager(None);
+        let manager = create_test_manager();
         let mut has_from = false;
 
         // Test CMD extraction
@@ -434,7 +445,7 @@ mod tests {
 
     #[test]
     fn test_compose_dockerfile_cmd_placement() {
-        let _manager = create_test_manager(None);
+        let _manager = create_test_manager();
 
         // Create a config for testing
         let _config = DockerImageConfig {
@@ -450,7 +461,7 @@ mod tests {
 
     #[test]
     fn test_extract_layer_name() {
-        let manager = create_test_manager(None);
+        let manager = create_test_manager();
 
         assert_eq!(
             manager.extract_layer_name("dockerfiles/base/Dockerfile", &DockerLayerType::Base),
@@ -505,7 +516,7 @@ mod tests {
         )
         .unwrap();
 
-        let manager = create_test_manager(None);
+        let manager = create_test_manager();
         let mut layers = std::collections::HashSet::new();
 
         // Test base layer scanning

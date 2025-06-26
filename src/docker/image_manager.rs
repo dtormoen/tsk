@@ -55,6 +55,7 @@ impl DockerImageManager {
         tech_stack: &str,
         agent: &str,
         project: Option<&str>,
+        project_root: Option<&std::path::Path>,
     ) -> Result<DockerImage> {
         let project = project.unwrap_or("default");
 
@@ -71,7 +72,11 @@ impl DockerImageManager {
         // Check if all layers exist
         let mut missing_layers = Vec::new();
         for layer in config.get_layers() {
-            if self.template_manager.get_layer_content(&layer).is_err() {
+            if self
+                .template_manager
+                .get_layer_content(&layer, project_root)
+                .is_err()
+            {
                 missing_layers.push(layer);
             }
         }
@@ -109,7 +114,7 @@ impl DockerImageManager {
                         "Technology stack '{}' not found. Available tech stacks: {:?}",
                         tech_stack,
                         self.template_manager
-                            .list_available_layers(DockerLayerType::TechStack)
+                            .list_available_layers(DockerLayerType::TechStack, project_root)
                     ));
                 }
                 DockerLayerType::Agent => {
@@ -117,7 +122,7 @@ impl DockerImageManager {
                         "Agent '{}' not found. Available agents: {:?}",
                         agent,
                         self.template_manager
-                            .list_available_layers(DockerLayerType::Agent)
+                            .list_available_layers(DockerLayerType::Agent, project_root)
                     ));
                 }
                 DockerLayerType::Project => {
@@ -147,10 +152,11 @@ impl DockerImageManager {
         tech_stack: &str,
         agent: &str,
         project: Option<&str>,
+        project_root: Option<&std::path::Path>,
         force_rebuild: bool,
     ) -> Result<DockerImage> {
         // Get the image configuration (with fallback if needed)
-        let image = self.get_image(tech_stack, agent, project)?;
+        let image = self.get_image(tech_stack, agent, project, project_root)?;
 
         // Check if image exists unless force rebuild
         if !force_rebuild && self.image_exists(&image.tag).await? {
@@ -168,7 +174,7 @@ impl DockerImageManager {
             project.unwrap_or("default")
         };
 
-        self.build_image(tech_stack, agent, Some(actual_project), false)
+        self.build_image(tech_stack, agent, Some(actual_project), project_root, false)
             .await?;
 
         Ok(image)
@@ -180,9 +186,19 @@ impl DockerImageManager {
         tech_stack: &str,
         agent: &str,
         project: Option<&str>,
+        project_root: Option<&std::path::Path>,
         no_cache: bool,
     ) -> Result<DockerImage> {
         let project = project.unwrap_or("default");
+
+        // Log which repository context is being used
+        match project_root {
+            Some(root) => println!(
+                "Building Docker image using project root: {}",
+                root.display()
+            ),
+            None => println!("Building Docker image without project-specific context"),
+        }
 
         // Use agent name directly for dockerfile directories
         let dockerfile_agent = agent;
@@ -197,7 +213,7 @@ impl DockerImageManager {
         // Compose the Dockerfile
         let composed = self
             .composer
-            .compose(&config)
+            .compose(&config, project_root)
             .with_context(|| format!("Failed to compose Dockerfile for {}", config.image_tag()))?;
 
         // Validate the composed Dockerfile
@@ -221,7 +237,10 @@ impl DockerImageManager {
         let used_fallback = project != "default"
             && self
                 .template_manager
-                .get_layer_content(&crate::docker::layers::DockerLayer::project(project))
+                .get_layer_content(
+                    &crate::docker::layers::DockerLayer::project(project),
+                    project_root,
+                )
                 .is_err();
 
         Ok(DockerImage {
@@ -468,16 +487,12 @@ mod tests {
             temp_dir.path().to_path_buf(),
         );
 
-        let template_manager = DockerTemplateManager::new(
-            Arc::new(EmbeddedAssetManager),
-            Arc::new(xdg_dirs.clone()),
-            None,
-        );
+        let template_manager =
+            DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), Arc::new(xdg_dirs.clone()));
 
         let composer = DockerComposer::new(DockerTemplateManager::new(
             Arc::new(EmbeddedAssetManager),
             Arc::new(xdg_dirs),
-            None,
         ));
 
         DockerImageManager::new(docker_client, template_manager, composer)
@@ -488,7 +503,7 @@ mod tests {
         let manager = create_test_manager();
 
         // Test with all default layers (should exist in embedded assets)
-        let result = manager.get_image("default", "claude-code", Some("default"));
+        let result = manager.get_image("default", "claude-code", Some("default"), None);
         assert!(result.is_ok());
 
         let image = result.unwrap();
@@ -501,7 +516,8 @@ mod tests {
         let manager = create_test_manager();
 
         // Test with non-existent project layer (should fall back to default)
-        let result = manager.get_image("default", "claude-code", Some("non-existent-project"));
+        let result =
+            manager.get_image("default", "claude-code", Some("non-existent-project"), None);
         assert!(result.is_ok());
 
         let image = result.unwrap();
@@ -514,7 +530,7 @@ mod tests {
         let manager = create_test_manager();
 
         // Test with non-existent tech stack (should fail)
-        let result = manager.get_image("non-existent-stack", "claude-code", Some("default"));
+        let result = manager.get_image("non-existent-stack", "claude-code", Some("default"), None);
         assert!(result.is_err());
 
         let err = result.unwrap_err();
@@ -528,7 +544,7 @@ mod tests {
         let manager = create_test_manager();
 
         // Test with non-existent agent (should fail)
-        let result = manager.get_image("default", "non-existent-agent", Some("default"));
+        let result = manager.get_image("default", "non-existent-agent", Some("default"), None);
         assert!(result.is_err());
 
         let err = result.unwrap_err();
@@ -542,7 +558,7 @@ mod tests {
         let manager = create_test_manager();
 
         // Test with None project (should use "default")
-        let result = manager.get_image("default", "claude-code", None);
+        let result = manager.get_image("default", "claude-code", None, None);
         assert!(result.is_ok());
 
         let image = result.unwrap();

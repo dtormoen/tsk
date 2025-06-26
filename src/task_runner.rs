@@ -92,7 +92,13 @@ impl TaskRunner {
             // Ensure the Docker image exists - always rebuild to pick up any changes
             let docker_image = self
                 .docker_image_manager
-                .ensure_image(&task.tech_stack, &task.agent, Some(&task.project), true)
+                .ensure_image(
+                    &task.tech_stack,
+                    &task.agent,
+                    Some(&task.project),
+                    Some(&task.repo_root),
+                    true,
+                )
                 .await
                 .map_err(|e| format!("Error ensuring Docker image: {}", e))?;
 
@@ -235,15 +241,11 @@ mod tests {
         use crate::docker::composer::DockerComposer;
         use crate::docker::template_manager::DockerTemplateManager;
 
-        let template_manager = DockerTemplateManager::new(
-            Arc::new(EmbeddedAssetManager),
-            xdg_directories.clone(),
-            None,
-        );
+        let template_manager =
+            DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), xdg_directories.clone());
         let composer = DockerComposer::new(DockerTemplateManager::new(
             Arc::new(EmbeddedAssetManager),
             xdg_directories,
-            None,
         ));
         let docker_image_manager = Arc::new(DockerImageManager::new(
             docker_client,

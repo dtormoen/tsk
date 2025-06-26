@@ -31,7 +31,12 @@ pub trait AssetManager: Send + Sync {
     fn list_dockerfiles(&self) -> Vec<String>;
 
     /// Get a Docker layer file
-    fn get_docker_layer(&self, layer_type: &str, layer_name: &str) -> Result<Vec<u8>> {
+    fn get_docker_layer(
+        &self,
+        layer_type: &str,
+        layer_name: &str,
+        _project_root: Option<&std::path::Path>,
+    ) -> Result<Vec<u8>> {
         // Default implementation for backward compatibility
         // Uses the existing dockerfile methods
         let dockerfile_name = if layer_type == "base" {
@@ -43,7 +48,11 @@ pub trait AssetManager: Send + Sync {
     }
 
     /// List available Docker layers of a specific type
-    fn list_docker_layers(&self, layer_type: &str) -> Vec<String> {
+    fn list_docker_layers(
+        &self,
+        layer_type: &str,
+        _project_root: Option<&std::path::Path>,
+    ) -> Vec<String> {
         // Default implementation for backward compatibility
         let prefix = if layer_type == "base" {
             "base".to_string()

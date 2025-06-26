@@ -1,6 +1,10 @@
 use super::Command;
 use crate::agent::AgentProvider;
+use crate::assets::layered::LayeredAssetManager;
 use crate::context::AppContext;
+use crate::docker::composer::DockerComposer;
+use crate::docker::image_manager::DockerImageManager;
+use crate::docker::template_manager::DockerTemplateManager;
 use crate::docker::DockerManager;
 use crate::git::RepoManager;
 use crate::repo_utils::find_repository_root;
@@ -9,6 +13,7 @@ use crate::task_runner::TaskRunner;
 use async_trait::async_trait;
 use std::error::Error;
 use std::path::Path;
+use std::sync::Arc;
 
 pub struct DebugCommand {
     pub name: String,
@@ -121,10 +126,28 @@ impl Command for DebugCommand {
             ctx.git_operations(),
         );
         let docker_manager = DockerManager::new(ctx.docker_client(), ctx.file_system());
+
+        // Create image manager on-demand for the task's repository
+        let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
+            Some(&repo_root),
+            &ctx.xdg_directories(),
+        ));
+        let template_manager =
+            DockerTemplateManager::new(asset_manager.clone(), ctx.xdg_directories());
+        let composer = DockerComposer::new(DockerTemplateManager::new(
+            asset_manager,
+            ctx.xdg_directories(),
+        ));
+        let image_manager = Arc::new(DockerImageManager::new(
+            ctx.docker_client(),
+            template_manager,
+            composer,
+        ));
+
         let task_runner = TaskRunner::new(
             repo_manager,
             docker_manager,
-            ctx.docker_image_manager(),
+            image_manager,
             ctx.file_system(),
             ctx.notification_client(),
         );

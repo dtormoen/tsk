@@ -22,16 +22,23 @@ impl DockerComposer {
     }
 
     /// Compose a complete Dockerfile and associated files from the given configuration
-    pub fn compose(&self, config: &DockerImageConfig) -> Result<ComposedDockerfile> {
+    pub fn compose(
+        &self,
+        config: &DockerImageConfig,
+        project_root: Option<&Path>,
+    ) -> Result<ComposedDockerfile> {
         // Get the composed Dockerfile content
-        let dockerfile_content = self.template_manager.compose_dockerfile(config)?;
+        let dockerfile_content = self
+            .template_manager
+            .compose_dockerfile(config, project_root)?;
 
         // Collect all additional files from layers
         let mut additional_files = HashMap::new();
         let layers = config.get_layers();
 
         for layer in &layers {
-            if let Ok(layer_content) = self.template_manager.get_layer_content(layer) {
+            if let Ok(layer_content) = self.template_manager.get_layer_content(layer, project_root)
+            {
                 for (filename, content) in layer_content.additional_files {
                     // Later layers override earlier ones for the same filename
                     additional_files.insert(filename, content);
@@ -178,7 +185,7 @@ mod tests {
         );
 
         let template_manager =
-            DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), Arc::new(xdg_dirs), None);
+            DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), Arc::new(xdg_dirs));
 
         DockerComposer::new(template_manager)
     }

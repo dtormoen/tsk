@@ -1,4 +1,5 @@
 use super::Command;
+use crate::assets::{layered::LayeredAssetManager, AssetManager};
 use crate::context::AppContext;
 use crate::repo_utils::find_repository_root;
 use async_trait::async_trait;
@@ -22,8 +23,14 @@ impl Command for TemplatesCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         let project_root = find_repository_root(Path::new(".")).ok();
 
+        // Create asset manager on-demand
+        let asset_manager = LayeredAssetManager::new_with_standard_layers(
+            project_root.as_deref(),
+            &ctx.xdg_directories(),
+        );
+
         // List all available templates
-        let templates = ctx.asset_manager().list_templates();
+        let templates = asset_manager.list_templates();
 
         if templates.is_empty() {
             println!("No templates available");
@@ -35,7 +42,7 @@ impl Command for TemplatesCommand {
         for template in &templates {
             let source = determine_template_source(template, project_root.as_deref(), ctx)?;
             rows.push(TemplateRow {
-                name: template.clone(),
+                name: template.to_string(),
                 source,
             });
         }

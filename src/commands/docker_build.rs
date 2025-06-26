@@ -1,7 +1,14 @@
 use super::Command;
+use crate::assets::layered::LayeredAssetManager;
 use crate::context::AppContext;
+use crate::docker::composer::DockerComposer;
+use crate::docker::image_manager::DockerImageManager;
+use crate::docker::layers::DockerImageConfig;
+use crate::docker::template_manager::DockerTemplateManager;
+use crate::repo_utils::find_repository_root;
 use async_trait::async_trait;
 use std::error::Error;
+use std::sync::Arc;
 
 /// Command to build TSK Docker images using the templating system
 pub struct DockerBuildCommand {
@@ -20,8 +27,6 @@ pub struct DockerBuildCommand {
 #[async_trait]
 impl Command for DockerBuildCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
-        let image_manager = ctx.docker_image_manager();
-
         // Auto-detect tech_stack if not provided
         let tech_stack = match &self.tech_stack {
             Some(ts) => {
@@ -82,19 +87,16 @@ impl Command for DockerBuildCommand {
             }
         };
 
+        // Get project root for Docker operations
+        let project_root = find_repository_root(std::path::Path::new(".")).ok();
+
         if self.dry_run {
             // Dry run mode: just print the composed Dockerfile
-            use crate::docker::composer::DockerComposer;
-            use crate::docker::layers::DockerImageConfig;
-            use crate::docker::template_manager::DockerTemplateManager;
-            use crate::repo_utils::find_repository_root;
-
-            let project_root = find_repository_root(std::path::Path::new(".")).ok();
-            let template_manager = DockerTemplateManager::new(
-                ctx.asset_manager(),
-                ctx.xdg_directories(),
-                project_root,
-            );
+            let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
+                project_root.as_deref(),
+                &ctx.xdg_directories(),
+            ));
+            let template_manager = DockerTemplateManager::new(asset_manager, ctx.xdg_directories());
             let composer = DockerComposer::new(template_manager);
 
             let config = DockerImageConfig::new(
@@ -103,7 +105,7 @@ impl Command for DockerBuildCommand {
                 project.as_deref().unwrap_or("default").to_string(),
             );
 
-            let composed = composer.compose(&config)?;
+            let composed = composer.compose(&config, project_root.as_deref())?;
             composer.validate_dockerfile(&composed.dockerfile_content)?;
 
             println!("# Resolved Dockerfile for image: {}", composed.image_tag);
@@ -130,9 +132,29 @@ impl Command for DockerBuildCommand {
                 }
             }
         } else {
+            // Create image manager on-demand
+            let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
+                project_root.as_deref(),
+                &ctx.xdg_directories(),
+            ));
+            let template_manager =
+                DockerTemplateManager::new(asset_manager.clone(), ctx.xdg_directories());
+            let composer = DockerComposer::new(DockerTemplateManager::new(
+                asset_manager,
+                ctx.xdg_directories(),
+            ));
+            let image_manager =
+                DockerImageManager::new(ctx.docker_client(), template_manager, composer);
+
             // Build the main image
             let image = image_manager
-                .build_image(&tech_stack, agent, project.as_deref(), self.no_cache)
+                .build_image(
+                    &tech_stack,
+                    agent,
+                    project.as_deref(),
+                    project_root.as_deref(),
+                    self.no_cache,
+                )
                 .await?;
             println!("Successfully built Docker image: {}", image.tag);
 

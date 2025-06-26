@@ -1,6 +1,11 @@
+use crate::assets::layered::LayeredAssetManager;
 use crate::context::{file_system::FileSystemOperations, AppContext};
+use crate::docker::composer::DockerComposer;
+use crate::docker::image_manager::DockerImageManager;
+use crate::docker::template_manager::DockerTemplateManager;
 use crate::docker::DockerManager;
 use crate::git::RepoManager;
+use crate::repo_utils::find_repository_root;
 use crate::storage::XdgDirectories;
 use crate::task::{Task, TaskBuilder, TaskStatus};
 use crate::task_runner::{TaskExecutionError, TaskExecutionResult, TaskRunner};
@@ -22,10 +27,30 @@ impl TaskManager {
             ctx.git_operations(),
         );
         let docker_manager = DockerManager::new(ctx.docker_client(), ctx.file_system());
+
+        // Create image manager with a default configuration
+        // Individual tasks will create their own image managers with task-specific repos
+        let project_root = find_repository_root(std::path::Path::new(".")).ok();
+        let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
+            project_root.as_deref(),
+            &ctx.xdg_directories(),
+        ));
+        let template_manager =
+            DockerTemplateManager::new(asset_manager.clone(), ctx.xdg_directories());
+        let composer = DockerComposer::new(DockerTemplateManager::new(
+            asset_manager,
+            ctx.xdg_directories(),
+        ));
+        let image_manager = Arc::new(DockerImageManager::new(
+            ctx.docker_client(),
+            template_manager,
+            composer,
+        ));
+
         let task_runner = TaskRunner::new(
             repo_manager,
             docker_manager,
-            ctx.docker_image_manager(),
+            image_manager,
             ctx.file_system(),
             ctx.notification_client(),
         );
@@ -45,10 +70,30 @@ impl TaskManager {
             ctx.git_operations(),
         );
         let docker_manager = DockerManager::new(ctx.docker_client(), ctx.file_system());
+
+        // Create image manager with a default configuration
+        // Individual tasks will create their own image managers with task-specific repos
+        let project_root = find_repository_root(std::path::Path::new(".")).ok();
+        let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
+            project_root.as_deref(),
+            &ctx.xdg_directories(),
+        ));
+        let template_manager =
+            DockerTemplateManager::new(asset_manager.clone(), ctx.xdg_directories());
+        let composer = DockerComposer::new(DockerTemplateManager::new(
+            asset_manager,
+            ctx.xdg_directories(),
+        ));
+        let image_manager = Arc::new(DockerImageManager::new(
+            ctx.docker_client(),
+            template_manager,
+            composer,
+        ));
+
         let task_runner = TaskRunner::new(
             repo_manager,
             docker_manager,
-            ctx.docker_image_manager(),
+            image_manager,
             ctx.file_system(),
             ctx.notification_client(),
         );
