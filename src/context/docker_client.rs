@@ -40,19 +40,19 @@ pub trait DockerClient: Send + Sync {
 
     async fn network_exists(&self, name: &str) -> Result<bool, String>;
 
-    /// Build a Docker image from a tar archive containing a Dockerfile and associated files
+    /// Build a Docker image from a tar archive containing a Dockerfile and associated files with streaming output
     ///
     /// # Arguments
     /// * `options` - Build options including image tag, build args, and cache settings
     /// * `tar_archive` - Tar archive containing Dockerfile and any additional files
     ///
     /// # Returns
-    /// A vector of build output messages on success, or an error message on failure
+    /// A stream of build output messages, or an error if the build fails to start
     async fn build_image(
         &self,
         options: BuildImageOptions<String>,
         tar_archive: Vec<u8>,
-    ) -> Result<Vec<String>, String>;
+    ) -> Result<Box<dyn futures_util::Stream<Item = Result<String, String>> + Send + Unpin>, String>;
 
     /// Check if a Docker image exists locally
     ///
@@ -208,28 +208,41 @@ impl DockerClient for DefaultDockerClient {
         &self,
         options: BuildImageOptions<String>,
         tar_archive: Vec<u8>,
-    ) -> Result<Vec<String>, String> {
-        let mut output = Vec::new();
+    ) -> Result<Box<dyn futures_util::Stream<Item = Result<String, String>> + Send + Unpin>, String>
+    {
+        use futures_util::StreamExt;
+        use tokio::sync::mpsc;
 
-        let mut stream = self
-            .docker
-            .build_image(options, None, Some(tar_archive.into()));
+        let (tx, rx) = mpsc::unbounded_channel();
+        let docker = self.docker.clone();
 
-        while let Some(build_info) = stream.next().await {
-            match build_info {
-                Ok(info) => {
-                    if let Some(stream) = info.stream {
-                        output.push(stream);
+        // Spawn a task to handle the streaming
+        tokio::spawn(async move {
+            let mut stream = docker.build_image(options, None, Some(tar_archive.into()));
+
+            while let Some(build_info) = stream.next().await {
+                match build_info {
+                    Ok(info) => {
+                        if let Some(error) = info.error {
+                            let _ = tx.send(Err(format!("Docker build error: {}", error)));
+                            break;
+                        } else if let Some(stream_msg) = info.stream {
+                            if !stream_msg.is_empty() && tx.send(Ok(stream_msg)).is_err() {
+                                break; // Receiver dropped
+                            }
+                        }
                     }
-                    if let Some(error) = info.error {
-                        return Err(format!("Docker build error: {}", error));
+                    Err(e) => {
+                        let _ = tx.send(Err(format!("Failed to build image: {}", e)));
+                        break;
                     }
                 }
-                Err(e) => return Err(format!("Failed to build image: {}", e)),
             }
-        }
+        });
 
-        Ok(output)
+        // Convert receiver to stream
+        let receiver_stream = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
+        Ok(Box::new(Box::pin(receiver_stream)))
     }
 
     async fn image_exists(&self, tag: &str) -> Result<bool, String> {

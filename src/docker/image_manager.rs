@@ -168,7 +168,7 @@ impl DockerImageManager {
             project.unwrap_or("default")
         };
 
-        self.build_image(tech_stack, agent, Some(actual_project), true)
+        self.build_image(tech_stack, agent, Some(actual_project), false)
             .await?;
 
         Ok(image)
@@ -269,16 +269,27 @@ impl DockerImageManager {
             ..Default::default()
         };
 
-        // Build the image using the DockerClient
-        let build_output = self
+        // Build the image using the DockerClient with streaming output
+        let mut build_stream = self
             .docker_client
             .build_image(options, tar_archive)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to build proxy image: {}", e))?;
 
-        // Print build output for visibility
-        for line in build_output {
-            println!("{}", line);
+        // Stream build output for real-time visibility
+        use futures_util::StreamExt;
+        while let Some(result) = build_stream.next().await {
+            match result {
+                Ok(line) => {
+                    print!("{}", line);
+                    // Ensure output is flushed immediately
+                    use std::io::Write;
+                    std::io::stdout().flush().unwrap_or(());
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!("Failed to build proxy image: {}", e));
+                }
+            }
         }
 
         Ok(())
@@ -347,16 +358,27 @@ impl DockerImageManager {
             ..Default::default()
         };
 
-        // Build the image using the DockerClient
-        let build_output = self
+        // Build the image using the DockerClient with streaming output
+        let mut build_stream = self
             .docker_client
             .build_image(options, tar_archive)
             .await
             .map_err(|e| anyhow::anyhow!("Docker build failed: {}", e))?;
 
-        // Print build output for visibility
-        for line in build_output {
-            println!("{}", line);
+        // Stream build output for real-time visibility
+        use futures_util::StreamExt;
+        while let Some(result) = build_stream.next().await {
+            match result {
+                Ok(line) => {
+                    print!("{}", line);
+                    // Ensure output is flushed immediately
+                    use std::io::Write;
+                    std::io::stdout().flush().unwrap_or(());
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!("Docker build failed: {}", e));
+                }
+            }
         }
 
         Ok(())

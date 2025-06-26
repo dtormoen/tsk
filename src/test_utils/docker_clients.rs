@@ -69,8 +69,10 @@ impl DockerClient for NoOpDockerClient {
         &self,
         _options: BuildImageOptions<String>,
         _tar_archive: Vec<u8>,
-    ) -> Result<Vec<String>, String> {
-        Ok(vec!["Building image...".to_string()])
+    ) -> Result<Box<dyn Stream<Item = Result<String, String>> + Send + Unpin>, String> {
+        use futures_util::stream;
+        let stream = stream::once(async { Ok("Building image...".to_string()) });
+        Ok(Box::new(Box::pin(stream)))
     }
 
     async fn image_exists(&self, _tag: &str) -> Result<bool, String> {
@@ -171,8 +173,11 @@ impl DockerClient for FixedResponseDockerClient {
         &self,
         _options: BuildImageOptions<String>,
         _tar_archive: Vec<u8>,
-    ) -> Result<Vec<String>, String> {
-        Ok(vec!["Building image...".to_string()])
+    ) -> Result<Box<dyn Stream<Item = Result<String, String>> + Send + Unpin>, String> {
+        use futures_util::stream::StreamExt;
+        let stream =
+            futures_util::stream::once(async { Ok("Building image...".to_string()) }).boxed();
+        Ok(Box::new(stream))
     }
 
     async fn image_exists(&self, _tag: &str) -> Result<bool, String> {
@@ -319,8 +324,11 @@ impl DockerClient for TrackedDockerClient {
         &self,
         _options: BuildImageOptions<String>,
         _tar_archive: Vec<u8>,
-    ) -> Result<Vec<String>, String> {
-        Ok(vec!["Building image...".to_string()])
+    ) -> Result<Box<dyn Stream<Item = Result<String, String>> + Send + Unpin>, String> {
+        use futures_util::stream::StreamExt;
+        let stream =
+            futures_util::stream::once(async { Ok("Building image...".to_string()) }).boxed();
+        Ok(Box::new(stream))
     }
 
     async fn image_exists(&self, _tag: &str) -> Result<bool, String> {
