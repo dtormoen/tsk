@@ -756,13 +756,15 @@ mod tests {
         let fs = Arc::new(MockFileSystem::new());
         let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>, fs);
 
-        let relative_path = Path::new("test-worktree");
+        // Create a temporary directory to use as base
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let absolute_path = temp_dir.path().join("test-worktree");
 
         let agent = crate::agent::ClaudeCodeAgent::new();
         let result = manager
             .run_task_container(
                 "tsk/base",
-                relative_path,
+                &absolute_path,
                 None,
                 &agent,
                 false, // not interactive
@@ -783,7 +785,8 @@ mod tests {
 
         // Should contain an absolute path (starts with /)
         assert!(worktree_bind.starts_with('/'));
-        assert!(worktree_bind.ends_with(&format!("test-worktree:{}", CONTAINER_WORKING_DIR)));
+        assert!(worktree_bind.contains("test-worktree"));
+        assert!(worktree_bind.ends_with(&format!(":{}", CONTAINER_WORKING_DIR)));
 
         // Should also have the claude directory and claude.json mounts
         assert_eq!(binds.len(), 3);

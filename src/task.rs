@@ -622,7 +622,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_builder_validation_no_input() {
-        let current_dir = std::env::current_dir().unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        let current_dir = temp_dir.path().to_path_buf();
         let fs = Arc::new(
             MockFileSystem::new()
                 .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string()),
@@ -698,7 +699,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_builder_write_instructions_content() {
-        let current_dir = std::env::current_dir().unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        let current_dir = temp_dir.path().to_path_buf();
 
         // Test 1: Basic write without template
         {
@@ -812,7 +814,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_builder_from_existing() {
-        let current_dir = std::env::current_dir().unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        let current_dir = temp_dir.path().to_path_buf();
 
         // Test 1: Successful build from existing task
         {
@@ -920,7 +923,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_builder_handles_source_commit_error() {
-        let current_dir = std::env::current_dir().unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        let current_dir = temp_dir.path().to_path_buf();
         let fs = Arc::new(
             MockFileSystem::new()
                 .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string()),
@@ -975,7 +979,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_builder_from_existing_preserves_docker_config() {
-        let current_dir = std::env::current_dir().unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        let current_dir = temp_dir.path().to_path_buf();
 
         // Create an existing task with Docker config
         let mut existing_task = create_test_task(

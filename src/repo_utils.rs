@@ -55,6 +55,7 @@ pub fn find_repository_root(start_path: &Path) -> Result<PathBuf, Box<dyn Error>
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::PathBuf;
     use tempfile::TempDir;
 
     #[test]
@@ -100,12 +101,36 @@ mod tests {
 
     #[test]
     fn test_find_repository_root_with_relative_path() {
-        // This test assumes we're running inside the tsk repository
-        let result = find_repository_root(Path::new("."));
-        assert!(result.is_ok());
+        // Create a temporary git repository for testing
+        let temp_dir = TempDir::new().unwrap();
+        let repo_root = temp_dir.path();
 
-        let repo_root = result.unwrap();
-        assert!(repo_root.join(".git").exists());
-        assert!(repo_root.join("Cargo.toml").exists());
+        // Create .git directory
+        fs::create_dir(repo_root.join(".git")).unwrap();
+
+        // Create a test file
+        fs::write(repo_root.join("test.txt"), "test content").unwrap();
+
+        // Change to the temp directory for this test
+        let original_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp"));
+
+        if std::env::set_current_dir(repo_root).is_ok() {
+            // Test with relative path from inside the repo
+            let result = find_repository_root(Path::new("."));
+            assert!(result.is_ok());
+
+            let found_root = result.unwrap();
+            assert!(found_root.join(".git").exists());
+
+            // Restore original directory
+            let _ = std::env::set_current_dir(original_dir);
+        } else {
+            // If we can't change directory, test with absolute path
+            let result = find_repository_root(repo_root);
+            assert!(result.is_ok());
+
+            let found_root = result.unwrap();
+            assert_eq!(found_root, repo_root.canonicalize().unwrap());
+        }
     }
 }

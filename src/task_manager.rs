@@ -306,8 +306,20 @@ impl TaskManager {
 mod tests {
     use super::*;
     use crate::test_utils::FixedResponseDockerClient;
-    use std::path::Path;
+    use std::path::PathBuf;
     use std::sync::Arc;
+    use tempfile::TempDir;
+
+    /// Helper function to create a temporary git repository
+    fn create_temp_git_repo() -> (TempDir, PathBuf) {
+        let temp_dir = TempDir::new().unwrap();
+        let repo_root = temp_dir.path().to_path_buf();
+
+        // Create .git directory to make it a valid git repo
+        std::fs::create_dir(repo_root.join(".git")).unwrap();
+
+        (temp_dir, repo_root)
+    }
 
     #[tokio::test]
     async fn test_delete_task() {
@@ -329,7 +341,7 @@ mod tests {
         let xdg = Arc::new(XdgDirectories::new().unwrap());
 
         // Create a task to test with
-        let repo_root = crate::repo_utils::find_repository_root(Path::new(".")).unwrap();
+        let (_temp_repo, repo_root) = create_temp_git_repo();
         let task_id = "test-task-123".to_string();
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
 
@@ -349,7 +361,7 @@ mod tests {
                 .with_dir(&tasks_dir.to_string_lossy().to_string())
                 .with_dir(&task_dir_path.to_string_lossy().to_string())
                 .with_file(&format!("{}/test.txt", task_dir_path.to_string_lossy()), "test content")
-                .with_file(&tasks_json_path.to_string_lossy().to_string(), &format!(r#"[{{"id":"{}","repo_root":"{}","name":"test-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","tech_stack":"default","project":"default"}}]"#, task_id, repo_root.to_string_lossy(), task_id))
+                .with_file(&tasks_json_path.to_string_lossy().to_string(), &format!(r#"[{{"id":"{}","repo_root":"{}","name":"test-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","tech_stack":"default","project":"default","copied_repo_path":"{}"}}]"#, task_id, repo_root.to_string_lossy(), task_id, task_dir_path.to_string_lossy()))
         );
 
         let docker_client = Arc::new(FixedResponseDockerClient::default());
@@ -393,7 +405,7 @@ mod tests {
         let xdg = Arc::new(XdgDirectories::new().unwrap());
 
         // Create tasks with different statuses
-        let repo_root = crate::repo_utils::find_repository_root(Path::new(".")).unwrap();
+        let (_temp_repo, repo_root) = create_temp_git_repo();
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
         let queued_task_id = "queued-task-123".to_string();
         let completed_task_id = "completed-task-456".to_string();
@@ -440,13 +452,15 @@ mod tests {
 
         // Create initial tasks.json with both tasks
         let tasks_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","tech_stack":"default","project":"default"}},{{"id":"{}","repo_root":"{}","name":"completed-task","task_type":"fix","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"COMPLETE","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":"2024-01-01T01:00:00Z","branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","tech_stack":"default","project":"default"}}]"#,
+            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","tech_stack":"default","project":"default","copied_repo_path":"{}"}},{{"id":"{}","repo_root":"{}","name":"completed-task","task_type":"fix","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"COMPLETE","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":"2024-01-01T01:00:00Z","branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","tech_stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
             queued_task_id,
             repo_root.to_string_lossy(),
             queued_task_id,
+            queued_dir_path.to_string_lossy(),
             completed_task_id,
             repo_root.to_string_lossy(),
-            completed_task_id
+            completed_task_id,
+            completed_dir_path.to_string_lossy()
         );
 
         // Create mock file system with necessary structure
@@ -510,7 +524,7 @@ mod tests {
         let xdg = Arc::new(XdgDirectories::new().unwrap());
 
         // Create a completed task to retry
-        let repo_root = crate::repo_utils::find_repository_root(Path::new(".")).unwrap();
+        let (_temp_repo, repo_root) = create_temp_git_repo();
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
         let task_id = "2024-01-01-1200-generic-original-task".to_string();
         let mut completed_task = Task::new(
@@ -544,11 +558,12 @@ mod tests {
 
         // Create tasks.json with the completed task
         let tasks_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"original-task","task_type":"generic","instructions_file":"{}","agent":"claude-code","timeout":45,"status":"COMPLETE","created_at":"2024-01-01T12:00:00Z","started_at":"2024-01-01T12:30:00Z","completed_at":"2024-01-01T13:00:00Z","branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","tech_stack":"default","project":"default"}}]"#,
+            r#"[{{"id":"{}","repo_root":"{}","name":"original-task","task_type":"generic","instructions_file":"{}","agent":"claude-code","timeout":45,"status":"COMPLETE","created_at":"2024-01-01T12:00:00Z","started_at":"2024-01-01T12:30:00Z","completed_at":"2024-01-01T13:00:00Z","branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","tech_stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
             task_id,
             repo_root.to_string_lossy(),
             instructions_path.to_string_lossy(),
-            task_id
+            task_id,
+            task_dir_path.to_string_lossy()
         );
 
         // Create mock file system with necessary structure
@@ -630,7 +645,7 @@ mod tests {
         let xdg = Arc::new(XdgDirectories::new().unwrap());
 
         // Get XDG paths
-        let repo_root = crate::repo_utils::find_repository_root(Path::new(".")).unwrap();
+        let (_temp_repo, repo_root) = create_temp_git_repo();
         let tasks_json_path = xdg.tasks_file();
         let data_dir = xdg.data_dir().to_path_buf();
         let tasks_dir = data_dir.join("tasks");
@@ -691,7 +706,7 @@ mod tests {
         let xdg = Arc::new(XdgDirectories::new().unwrap());
 
         // Create a queued task (should not be retryable)
-        let repo_root = crate::repo_utils::find_repository_root(Path::new(".")).unwrap();
+        let (_temp_repo, repo_root) = create_temp_git_repo();
         let task_id = "2024-01-01-1200-feat-queued-task".to_string();
 
         // Get XDG paths
@@ -701,10 +716,11 @@ mod tests {
 
         // Create tasks.json with the queued task
         let tasks_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"QUEUED","created_at":"2024-01-01T12:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","tech_stack":"default","project":"default"}}]"#,
+            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"QUEUED","created_at":"2024-01-01T12:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","tech_stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
             task_id,
             repo_root.to_string_lossy(),
-            task_id
+            task_id,
+            repo_root.to_string_lossy()
         );
 
         // Create mock file system with necessary structure
@@ -758,7 +774,7 @@ mod tests {
         let xdg = Arc::new(XdgDirectories::new().unwrap());
 
         // Create a task with a specific ID using new_with_id
-        let repo_root = crate::repo_utils::find_repository_root(Path::new(".")).unwrap();
+        let (_temp_repo, repo_root) = create_temp_git_repo();
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
         let task_id = "2024-01-15-1430-feat-test-feature".to_string();
         let mut completed_task = Task::new(
@@ -786,10 +802,11 @@ mod tests {
 
         // Create tasks.json with the completed task
         let tasks_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"test-feature","task_type":"feat","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"COMPLETE","created_at":"2024-01-15T14:30:00Z","started_at":null,"completed_at":"2024-01-15T15:00:00Z","branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","tech_stack":"default","project":"default"}}]"#,
+            r#"[{{"id":"{}","repo_root":"{}","name":"test-feature","task_type":"feat","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"COMPLETE","created_at":"2024-01-15T14:30:00Z","started_at":null,"completed_at":"2024-01-15T15:00:00Z","branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","tech_stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
             task_id,
             repo_root.to_string_lossy(),
-            task_id
+            task_id,
+            task_dir_path.to_string_lossy()
         );
 
         // Create mock file system with necessary structure

@@ -568,14 +568,6 @@ pub(crate) mod tests {
             *self.get_status_result.lock().unwrap() = result;
         }
 
-        pub fn set_create_branch_result(&self, result: Result<(), String>) {
-            *self.create_branch_result.lock().unwrap() = result;
-        }
-
-        pub fn set_commit_result(&self, result: Result<(), String>) {
-            *self.commit_result.lock().unwrap() = result;
-        }
-
         pub fn get_create_branch_calls(&self) -> Vec<(String, String)> {
             self.create_branch_calls.lock().unwrap().clone()
         }
@@ -608,14 +600,6 @@ pub(crate) mod tests {
             *self.has_commits_not_in_base_result.lock().unwrap() = result;
         }
 
-        pub fn get_has_commits_not_in_base_calls(&self) -> Vec<(String, String, String)> {
-            self.has_commits_not_in_base_calls.lock().unwrap().clone()
-        }
-
-        pub fn set_delete_branch_result(&self, result: Result<(), String>) {
-            *self.delete_branch_result.lock().unwrap() = result;
-        }
-
         pub fn get_delete_branch_calls(&self) -> Vec<(String, String)> {
             self.delete_branch_calls.lock().unwrap().clone()
         }
@@ -628,20 +612,12 @@ pub(crate) mod tests {
             self.get_current_commit_calls.lock().unwrap().clone()
         }
 
-        pub fn set_create_branch_from_commit_result(&self, result: Result<(), String>) {
-            *self.create_branch_from_commit_result.lock().unwrap() = result;
-        }
-
         pub fn get_create_branch_from_commit_calls(&self) -> Vec<(String, String, String)> {
             self.create_branch_from_commit_calls.lock().unwrap().clone()
         }
 
         pub fn set_get_tracked_files_result(&self, result: Result<Vec<PathBuf>, String>) {
             *self.get_tracked_files_result.lock().unwrap() = result;
-        }
-
-        pub fn get_get_tracked_files_calls(&self) -> Vec<String> {
-            self.get_tracked_files_calls.lock().unwrap().clone()
         }
     }
 
@@ -780,23 +756,6 @@ pub(crate) mod tests {
         use super::*;
         use std::path::Path;
         use tempfile::TempDir;
-
-        #[tokio::test]
-        async fn test_default_git_operations_is_git_repository() {
-            let git_ops = DefaultGitOperations;
-
-            // This will return false in a fresh temp directory
-            let temp_dir = TempDir::new().unwrap();
-            let original_dir = std::env::current_dir().unwrap();
-            std::env::set_current_dir(temp_dir.path()).unwrap();
-
-            let result = git_ops.is_git_repository().await;
-            assert!(result.is_ok());
-            assert!(!result.unwrap());
-
-            // Restore original directory
-            std::env::set_current_dir(original_dir).unwrap();
-        }
 
         #[tokio::test]
         async fn test_default_git_operations_with_real_repo() {

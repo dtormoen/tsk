@@ -192,6 +192,8 @@ mod tests {
             "abc123".to_string(),
             "default".to_string(),
             "default".to_string(),
+            chrono::Local::now(),
+            temp_dir.path().to_path_buf(),
         );
 
         storage.add_task(task.clone()).await.unwrap();
