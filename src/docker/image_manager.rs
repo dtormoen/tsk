@@ -152,11 +152,11 @@ impl DockerImageManager {
         tech_stack: &str,
         agent: &str,
         project: Option<&str>,
-        project_root: Option<&std::path::Path>,
+        build_root: Option<&std::path::Path>,
         force_rebuild: bool,
     ) -> Result<DockerImage> {
         // Get the image configuration (with fallback if needed)
-        let image = self.get_image(tech_stack, agent, project, project_root)?;
+        let image = self.get_image(tech_stack, agent, project, build_root)?;
 
         // Check if image exists unless force rebuild
         if !force_rebuild && self.image_exists(&image.tag).await? {
@@ -174,7 +174,7 @@ impl DockerImageManager {
             project.unwrap_or("default")
         };
 
-        self.build_image(tech_stack, agent, Some(actual_project), project_root, false)
+        self.build_image(tech_stack, agent, Some(actual_project), build_root, false)
             .await?;
 
         Ok(image)
@@ -186,17 +186,14 @@ impl DockerImageManager {
         tech_stack: &str,
         agent: &str,
         project: Option<&str>,
-        project_root: Option<&std::path::Path>,
+        build_root: Option<&std::path::Path>,
         no_cache: bool,
     ) -> Result<DockerImage> {
         let project = project.unwrap_or("default");
 
         // Log which repository context is being used
-        match project_root {
-            Some(root) => println!(
-                "Building Docker image using project root: {}",
-                root.display()
-            ),
+        match build_root {
+            Some(root) => println!("Building Docker image using build root: {}", root.display()),
             None => println!("Building Docker image without project-specific context"),
         }
 
@@ -213,7 +210,7 @@ impl DockerImageManager {
         // Compose the Dockerfile
         let composed = self
             .composer
-            .compose(&config, project_root)
+            .compose(&config, build_root)
             .with_context(|| format!("Failed to compose Dockerfile for {}", config.image_tag()))?;
 
         // Validate the composed Dockerfile
@@ -235,7 +232,7 @@ impl DockerImageManager {
             &git_user_name,
             &git_user_email,
             no_cache,
-            project_root,
+            build_root,
         )
         .await?;
 
@@ -245,7 +242,7 @@ impl DockerImageManager {
                 .template_manager
                 .get_layer_content(
                     &crate::docker::layers::DockerLayer::project(project),
-                    project_root,
+                    build_root,
                 )
                 .is_err();
 
@@ -357,11 +354,11 @@ impl DockerImageManager {
         git_user_name: &str,
         git_user_email: &str,
         no_cache: bool,
-        project_root: Option<&std::path::Path>,
+        build_root: Option<&std::path::Path>,
     ) -> Result<()> {
         // Create tar archive from the composed content
         let tar_archive = self
-            .create_tar_archive(composed, project_root)
+            .create_tar_archive(composed, build_root)
             .context("Failed to create tar archive for Docker build")?;
 
         // Prepare build options
@@ -414,7 +411,7 @@ impl DockerImageManager {
     fn create_tar_archive(
         &self,
         composed: &ComposedDockerfile,
-        _project_root: Option<&std::path::Path>,
+        build_root: Option<&std::path::Path>,
     ) -> Result<Vec<u8>> {
         use tar::Builder;
 
@@ -439,6 +436,11 @@ impl DockerImageManager {
                 header.set_mode(0o644);
                 header.set_cksum();
                 builder.append(&header, content.as_slice())?;
+            }
+
+            // Add build_root files if provided
+            if let Some(build_root) = build_root {
+                builder.append_dir_all(".", build_root)?;
             }
 
             builder.finish()?;

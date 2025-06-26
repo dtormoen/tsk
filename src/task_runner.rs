@@ -98,7 +98,7 @@ impl TaskRunner {
                     &task.tech_stack,
                     &task.agent,
                     Some(&task.project),
-                    Some(&task.repo_root),
+                    Some(&repo_path),
                     true,
                 )
                 .await

@@ -28,6 +28,7 @@ RUN groupadd -g 1000 agent && \
 
 # Set up working directory
 WORKDIR /workspace
+RUN chown -R agent:agent /workspace
 
 # Build arguments for git configuration
 ARG GIT_USER_NAME
