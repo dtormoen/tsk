@@ -158,6 +158,7 @@ pub(crate) mod tests {
             let from_str = from.to_string_lossy().to_string();
             let to_str = to.to_string_lossy().to_string();
 
+            // Copy all files
             let files = self.files.lock().unwrap();
             let mut new_files = HashMap::new();
 
@@ -171,6 +172,21 @@ pub(crate) mod tests {
 
             drop(files);
             self.files.lock().unwrap().extend(new_files);
+
+            // Copy all directories
+            let dirs = self.dirs.lock().unwrap();
+            let mut new_dirs = Vec::new();
+
+            for dir in dirs.iter() {
+                if dir.starts_with(&from_str) {
+                    let relative = dir.strip_prefix(&from_str).unwrap();
+                    let new_dir = format!("{to_str}{relative}");
+                    new_dirs.push(new_dir);
+                }
+            }
+
+            drop(dirs);
+            self.dirs.lock().unwrap().extend(new_dirs);
             self.dirs.lock().unwrap().push(to_str);
             Ok(())
         }
@@ -244,6 +260,11 @@ pub(crate) mod tests {
             let path_str = path.to_string_lossy().to_string();
             let files = self.files.lock().unwrap();
             let dirs = self.dirs.lock().unwrap();
+
+            // Check if the directory exists
+            if !dirs.contains(&path_str) {
+                return Err(anyhow::anyhow!("Directory not found: {}", path_str));
+            }
 
             let mut entries = Vec::new();
 

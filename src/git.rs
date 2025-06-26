@@ -25,7 +25,8 @@ impl RepoManager {
     }
 
     /// Copy repository for a task using the task ID and repository root
-    /// Copies git-tracked files, the .git directory, and the .tsk directory
+    /// Copies git-tracked files, untracked files (not ignored), the .git directory, and the .tsk directory
+    /// This captures the complete state of the repository as shown by `git status`
     /// Returns the path to the copied repository and the branch name
     pub async fn copy_repo(
         &self,
@@ -59,6 +60,12 @@ impl RepoManager {
         // Get list of tracked files from git
         let tracked_files = self.git_operations.get_tracked_files(&current_dir).await?;
 
+        // Get list of untracked files that are not ignored
+        let untracked_files = self
+            .git_operations
+            .get_untracked_files(&current_dir)
+            .await?;
+
         // Copy .git directory first
         let git_src = current_dir.join(".git");
         let git_dst = repo_path.join(".git");
@@ -91,6 +98,51 @@ impl RepoManager {
                 .map_err(|e| {
                     format!("Failed to copy tracked file {}: {}", file_path.display(), e)
                 })?;
+        }
+
+        // Copy all untracked files (not ignored)
+        for file_path in untracked_files {
+            // Remove trailing slash if present (git adds it for directories)
+            let file_path_str = file_path.to_string_lossy();
+            let file_path_clean = if let Some(stripped) = file_path_str.strip_suffix('/') {
+                PathBuf::from(stripped)
+            } else {
+                file_path.clone()
+            };
+
+            let src_path = current_dir.join(&file_path_clean);
+            let dst_path = repo_path.join(&file_path_clean);
+
+            // Check if this is a directory
+            if self.file_system.read_dir(&src_path).await.is_ok() {
+                // It's a directory, copy it recursively
+                self.copy_directory(&src_path, &dst_path).await?;
+            } else {
+                // It's a file
+                // Create parent directory if it doesn't exist
+                if let Some(parent) = dst_path.parent() {
+                    self.file_system
+                        .create_dir(parent)
+                        .await
+                        .map_err(|e| format!("Failed to create parent directory: {e}"))?;
+                }
+
+                // Copy the file
+                match self.file_system.copy_file(&src_path, &dst_path).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        // If the file doesn't exist in src, it might be because git reported
+                        // a directory with a trailing slash. Skip it.
+                        if !e.to_string().contains("Source file not found") {
+                            return Err(format!(
+                                "Failed to copy untracked file {}: {}",
+                                file_path.display(),
+                                e
+                            ));
+                        }
+                    }
+                }
+            }
         }
 
         // Copy .tsk directory if it exists (for project-specific Docker configurations)
@@ -492,18 +544,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_copy_repo_only_copies_tracked_files() {
+    async fn test_copy_repo_separates_tracked_and_untracked_files() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let xdg_directories = create_test_xdg_directories(&temp_dir);
 
         // Create mock git operations
         let mock_git_ops = Arc::new(MockGitOperations::new());
         mock_git_ops.set_is_repo_result(Ok(true));
-        // Only track specific files, not the build artifacts
+        // Only track specific files
         mock_git_ops.set_get_tracked_files_result(Ok(vec![
             PathBuf::from("src/main.rs"),
             PathBuf::from("Cargo.toml"),
         ]));
+        // Return untracked files, but not ignored ones (like target/)
+        mock_git_ops.set_get_untracked_files_result(Ok(vec![PathBuf::from("build.log")]));
 
         use crate::context::file_system::tests::MockFileSystem;
         let fs = Arc::new(MockFileSystem::new());
@@ -518,7 +572,7 @@ mod tests {
         files.insert(
             temp_dir.path().join("target/debug/app"),
             "binary".to_string(),
-        ); // untracked
+        ); // ignored
         files.insert(temp_dir.path().join("build.log"), "log content".to_string()); // untracked
         fs.set_files(files);
 
@@ -532,7 +586,7 @@ mod tests {
         assert!(result.is_ok(), "Error: {result:?}");
         let (repo_path, _) = result.unwrap();
 
-        // Verify only tracked files were copied
+        // Verify tracked and untracked (non-ignored) files were copied
         let copied_files = fs.get_files();
         let repo_path_str = repo_path.to_string_lossy();
 
@@ -540,15 +594,90 @@ mod tests {
         assert!(copied_files.contains_key(&format!("{repo_path_str}/src/main.rs")));
         assert!(copied_files.contains_key(&format!("{repo_path_str}/Cargo.toml")));
 
-        // Check that untracked files were NOT copied
+        // Check that untracked non-ignored file was copied
+        assert!(copied_files.contains_key(&format!("{repo_path_str}/build.log")));
+
+        // Check that ignored file was NOT copied
         assert!(!copied_files.contains_key(&format!("{repo_path_str}/target/debug/app")));
-        assert!(!copied_files.contains_key(&format!("{repo_path_str}/build.log")));
 
         // Check that .git directory was copied
         let copied_dirs = fs.get_dirs();
         assert!(copied_dirs
             .iter()
             .any(|d| d == &format!("{repo_path_str}/.git")));
+    }
+
+    #[tokio::test]
+    async fn test_copy_repo_includes_untracked_files() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let xdg_directories = create_test_xdg_directories(&temp_dir);
+
+        // Create mock git operations
+        let mock_git_ops = Arc::new(MockGitOperations::new());
+        mock_git_ops.set_is_repo_result(Ok(true));
+        mock_git_ops.set_get_tracked_files_result(Ok(vec![
+            PathBuf::from("src/main.rs"),
+            PathBuf::from("Cargo.toml"),
+        ]));
+        mock_git_ops.set_get_untracked_files_result(Ok(vec![
+            PathBuf::from("notes.txt"),
+            PathBuf::from("test_output.log"),
+            PathBuf::from("debug/"), // Git reports directories with trailing slash
+        ]));
+
+        use crate::context::file_system::tests::MockFileSystem;
+        let fs = Arc::new(MockFileSystem::new());
+        // Add mock files including both tracked and untracked files
+        let mut files = HashMap::new();
+        files.insert(temp_dir.path().join(".git"), "dir".to_string());
+        files.insert(temp_dir.path().join("src"), "dir".to_string());
+        files.insert(temp_dir.path().join("debug"), "dir".to_string());
+        files.insert(
+            temp_dir.path().join("src/main.rs"),
+            "fn main() {}".to_string(),
+        );
+        files.insert(temp_dir.path().join("Cargo.toml"), "[package]".to_string());
+        files.insert(temp_dir.path().join("notes.txt"), "Some notes".to_string());
+        files.insert(
+            temp_dir.path().join("test_output.log"),
+            "test output".to_string(),
+        );
+        files.insert(
+            temp_dir.path().join("debug/temp.txt"),
+            "temporary debug file".to_string(),
+        );
+        // This file is ignored and should not be returned by get_untracked_files
+        files.insert(
+            temp_dir.path().join("target/debug/app"),
+            "binary".to_string(),
+        );
+        fs.set_files(files);
+
+        let manager = RepoManager::new(xdg_directories.clone(), fs.clone(), mock_git_ops.clone());
+
+        let repo_root = temp_dir.path();
+        let result = manager
+            .copy_repo("2024-01-01-1200-generic-test-task", repo_root, None)
+            .await;
+
+        assert!(result.is_ok(), "Error: {result:?}");
+        let (repo_path, _) = result.unwrap();
+
+        // Verify both tracked and untracked files were copied
+        let copied_files = fs.get_files();
+        let repo_path_str = repo_path.to_string_lossy();
+
+        // Check that tracked files exist in destination
+        assert!(copied_files.contains_key(&format!("{repo_path_str}/src/main.rs")));
+        assert!(copied_files.contains_key(&format!("{repo_path_str}/Cargo.toml")));
+
+        // Check that untracked files were also copied
+        assert!(copied_files.contains_key(&format!("{repo_path_str}/notes.txt")));
+        assert!(copied_files.contains_key(&format!("{repo_path_str}/test_output.log")));
+        assert!(copied_files.contains_key(&format!("{repo_path_str}/debug/temp.txt")));
+
+        // Check that ignored file was NOT copied (it wasn't in the untracked files list)
+        assert!(!copied_files.contains_key(&format!("{repo_path_str}/target/debug/app")));
     }
 
     #[tokio::test]
