@@ -106,7 +106,7 @@ impl Command for DebugCommand {
             .clone()
             .unwrap_or_else(|| AgentProvider::default_agent().to_string());
 
-        let mut task = Task::new_with_id(
+        let mut task = Task::new(
             task_id.clone(),
             repo_root.clone(),
             self.name.clone(),

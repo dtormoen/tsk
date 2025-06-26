@@ -181,6 +181,7 @@ mod tests {
 
         // Test adding a task
         let task = Task::new(
+            "2025-06-26-0900-feature-test-task".to_string(),
             temp_dir.path().to_path_buf(),
             "test-task".to_string(),
             "feature".to_string(),
@@ -191,7 +192,6 @@ mod tests {
             "abc123".to_string(),
             "default".to_string(),
             "default".to_string(),
-            None,
         );
 
         storage.add_task(task.clone()).await.unwrap();
@@ -220,6 +220,7 @@ mod tests {
 
         // Test deleting tasks by status
         let task1 = Task::new(
+            "2025-06-26-0901-feature-task1".to_string(),
             temp_dir.path().to_path_buf(),
             "task1".to_string(),
             "feature".to_string(),
@@ -230,9 +231,9 @@ mod tests {
             "abc123".to_string(),
             "default".to_string(),
             "default".to_string(),
-            None,
         );
         let mut task2 = Task::new(
+            "2025-06-26-0902-bug-fix-task2".to_string(),
             temp_dir.path().to_path_buf(),
             "task2".to_string(),
             "bug-fix".to_string(),
@@ -243,10 +244,10 @@ mod tests {
             "abc123".to_string(),
             "default".to_string(),
             "default".to_string(),
-            None,
         );
         task2.status = TaskStatus::Complete;
         let mut task3 = Task::new(
+            "2025-06-26-0903-refactor-task3".to_string(),
             temp_dir.path().to_path_buf(),
             "task3".to_string(),
             "refactor".to_string(),
@@ -257,7 +258,6 @@ mod tests {
             "abc123".to_string(),
             "default".to_string(),
             "default".to_string(),
-            None,
         );
         task3.status = TaskStatus::Failed;
 

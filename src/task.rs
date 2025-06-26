@@ -63,52 +63,9 @@ pub struct Task {
 }
 
 impl Task {
-    #[allow(dead_code)] // Used in tests
+    /// Creates a new Task with all required fields
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        repo_root: PathBuf,
-        name: String,
-        task_type: String,
-        instructions_file: String,
-        agent: String,
-        timeout: u32,
-        branch_name: String,
-        source_commit: String,
-        tech_stack: String,
-        project: String,
-        copied_repo_path: Option<PathBuf>,
-    ) -> Self {
-        let timestamp = Local::now();
-        let id = format!(
-            "{}-{}-{}",
-            timestamp.format("%Y-%m-%d-%H%M"),
-            task_type,
-            name
-        );
-
-        Self {
-            id,
-            repo_root,
-            name,
-            task_type,
-            instructions_file,
-            agent,
-            timeout,
-            status: TaskStatus::Queued,
-            created_at: Utc::now(),
-            started_at: None,
-            completed_at: None,
-            branch_name,
-            error_message: None,
-            source_commit,
-            tech_stack,
-            project,
-            copied_repo_path,
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_with_id(
         id: String,
         repo_root: PathBuf,
         name: String,
@@ -140,6 +97,12 @@ impl Task {
             project,
             copied_repo_path: None,
         }
+    }
+
+    /// Sets the copied repository path and returns self
+    pub fn with_copied_repo_path(mut self, path: Option<PathBuf>) -> Self {
+        self.copied_repo_path = path;
+        self
     }
 }
 
@@ -403,8 +366,18 @@ impl TaskBuilder {
             .await
             .map_err(|e| format!("Failed to copy repository: {}", e))?;
 
+        // Generate task ID
+        let timestamp = Local::now();
+        let id = format!(
+            "{}-{}-{}",
+            timestamp.format("%Y-%m-%d-%H%M"),
+            task_type,
+            name
+        );
+
         // Create and return the task
         let task = Task::new(
+            id,
             repo_root,
             name,
             task_type,
@@ -415,10 +388,9 @@ impl TaskBuilder {
             source_commit,
             tech_stack,
             project,
-            Some(copied_repo_path),
         );
 
-        Ok(task)
+        Ok(task.with_copied_repo_path(Some(copied_repo_path)))
     }
 
     async fn write_instructions_content(
@@ -525,14 +497,13 @@ impl Default for TaskBuilder {
 mod tests {
     use super::*;
     use crate::context::file_system::{tests::MockFileSystem, FileSystemOperations};
+    use crate::context::git_operations::tests::MockGitOperations;
     use crate::context::AppContext;
     use std::sync::Arc;
+    use tempfile::TempDir;
 
-    #[tokio::test]
-    async fn test_task_builder_basic() {
-        use crate::context::git_operations::tests::MockGitOperations;
-        use tempfile::TempDir;
-
+    /// Helper to create a standard test context with mocked file system and git operations
+    fn create_test_context() -> (TempDir, PathBuf, AppContext) {
         let temp_dir = TempDir::new().unwrap();
         let current_dir = temp_dir.path().to_path_buf();
         let xdg = crate::storage::XdgDirectories::new_with_paths(
@@ -550,12 +521,38 @@ mod tests {
 
         let git_ops = Arc::new(MockGitOperations::new());
         git_ops.set_get_current_commit_result(Ok("abc123".to_string()));
+        git_ops.set_is_repo_result(Ok(true));
+        git_ops.set_get_tracked_files_result(Ok(vec![]));
 
         let ctx = AppContext::builder()
-            .with_file_system(fs.clone())
+            .with_file_system(fs)
             .with_git_operations(git_ops)
             .with_xdg_directories(Arc::new(xdg))
             .build();
+
+        (temp_dir, current_dir, ctx)
+    }
+
+    /// Helper to create a test task with default values
+    fn create_test_task(id: &str, name: &str, task_type: &str) -> Task {
+        Task::new(
+            id.to_string(),
+            PathBuf::from("/test"),
+            name.to_string(),
+            task_type.to_string(),
+            "instructions.md".to_string(),
+            "claude-code".to_string(),
+            30,
+            format!("tsk/{}", id),
+            "abc123".to_string(),
+            "default".to_string(),
+            "default".to_string(),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_basic() {
+        let (_temp_dir, current_dir, ctx) = create_test_context();
 
         let task = TaskBuilder::new()
             .repo_root(current_dir.clone())
@@ -576,11 +573,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_builder_with_template() {
-        use crate::context::git_operations::tests::MockGitOperations;
-        use tempfile::TempDir;
+        let (temp_dir, current_dir, _) = create_test_context();
+        let template_content = "# Feature Template\n\n{{DESCRIPTION}}";
+        let template_dir = current_dir.join(".tsk/templates");
 
-        let temp_dir = TempDir::new().unwrap();
-        let current_dir = temp_dir.path().to_path_buf();
+        // Create a new context with template files
         let xdg = crate::storage::XdgDirectories::new_with_paths(
             temp_dir.path().join("data"),
             temp_dir.path().join("runtime"),
@@ -588,8 +585,6 @@ mod tests {
             temp_dir.path().join("cache"),
         );
 
-        let template_content = "# Feature Template\n\n{{DESCRIPTION}}";
-        let template_dir = current_dir.join(".tsk/templates");
         let fs = Arc::new(
             MockFileSystem::new()
                 .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string())
@@ -604,7 +599,7 @@ mod tests {
         let git_ops = Arc::new(MockGitOperations::new());
         git_ops.set_get_current_commit_result(Ok("abc123".to_string()));
         git_ops.set_is_repo_result(Ok(true));
-        git_ops.set_get_tracked_files_result(Ok(vec![])); // No tracked files in test
+        git_ops.set_get_tracked_files_result(Ok(vec![]));
 
         let ctx = AppContext::builder()
             .with_file_system(fs.clone())
@@ -657,11 +652,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_builder_with_instructions_file() {
-        use crate::context::git_operations::tests::MockGitOperations;
-        use tempfile::TempDir;
+        let (temp_dir, current_dir, _) = create_test_context();
+        let instructions_content = "# Instructions for task";
+        let instructions_path = current_dir.join("test-instructions.md");
 
-        let temp_dir = TempDir::new().unwrap();
-        let current_dir = temp_dir.path().to_path_buf();
+        // Create a new context with instructions file
         let xdg = crate::storage::XdgDirectories::new_with_paths(
             temp_dir.path().join("data"),
             temp_dir.path().join("runtime"),
@@ -669,8 +664,6 @@ mod tests {
             temp_dir.path().join("cache"),
         );
 
-        let instructions_content = "# Instructions for task";
-        let instructions_path = current_dir.join("test-instructions.md");
         let fs = Arc::new(
             MockFileSystem::new()
                 .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string())
@@ -712,75 +705,72 @@ mod tests {
     #[tokio::test]
     async fn test_task_builder_write_instructions_content() {
         let current_dir = std::env::current_dir().unwrap();
-        let fs = Arc::new(
-            MockFileSystem::new()
-                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string()),
-        );
 
-        let ctx = AppContext::builder().with_file_system(fs.clone()).build();
+        // Test 1: Basic write without template
+        {
+            let fs = Arc::new(
+                MockFileSystem::new()
+                    .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string()),
+            );
 
-        let task_builder = TaskBuilder::new()
-            .name("test-task".to_string())
-            .task_type("generic".to_string())
-            .description(Some("Test description".to_string()));
+            let ctx = AppContext::builder().with_file_system(fs.clone()).build();
 
-        // Test the unified write method
-        let temp_path = Path::new(".tsk-edit-2024-01-01-1200-test-task-instructions.md");
-        let result_path = task_builder
-            .write_instructions_content(temp_path, "generic", &ctx)
-            .await
-            .unwrap();
+            let task_builder = TaskBuilder::new()
+                .name("test-task".to_string())
+                .task_type("generic".to_string())
+                .description(Some("Test description".to_string()));
 
-        assert_eq!(result_path, temp_path.to_string_lossy().to_string());
+            let temp_path = Path::new(".tsk-edit-2024-01-01-1200-test-task-instructions.md");
+            let result_path = task_builder
+                .write_instructions_content(temp_path, "generic", &ctx)
+                .await
+                .unwrap();
 
-        // Verify the content was written
-        let content = fs.read_file(temp_path).await.unwrap();
-        assert!(content.contains("Test description"));
-    }
+            assert_eq!(result_path, temp_path.to_string_lossy().to_string());
+            let content = fs.read_file(temp_path).await.unwrap();
+            assert!(content.contains("Test description"));
+        }
 
-    #[tokio::test]
-    async fn test_task_builder_write_instructions_content_with_template() {
-        let current_dir = std::env::current_dir().unwrap();
-        let template_content = "# Feature Template\n\n{{DESCRIPTION}}";
-        let template_dir = current_dir.join(".tsk/templates");
+        // Test 2: Write with template
+        {
+            let template_content = "# Feature Template\n\n{{DESCRIPTION}}";
+            let template_dir = current_dir.join(".tsk/templates");
 
-        let fs = Arc::new(
-            MockFileSystem::new()
-                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string())
-                .with_dir(&template_dir.to_string_lossy().to_string())
-                .with_file(
-                    &template_dir.join("feat.md").to_string_lossy().to_string(),
-                    template_content,
-                ),
-        );
+            let fs = Arc::new(
+                MockFileSystem::new()
+                    .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string())
+                    .with_dir(&template_dir.to_string_lossy().to_string())
+                    .with_file(
+                        &template_dir.join("feat.md").to_string_lossy().to_string(),
+                        template_content,
+                    ),
+            );
 
-        let ctx = AppContext::builder().with_file_system(fs.clone()).build();
+            let ctx = AppContext::builder().with_file_system(fs.clone()).build();
 
-        let task_builder = TaskBuilder::new()
-            .name("test-feature".to_string())
-            .task_type("feat".to_string())
-            .description(Some("My new feature".to_string()));
+            let task_builder = TaskBuilder::new()
+                .name("test-feature".to_string())
+                .task_type("feat".to_string())
+                .description(Some("My new feature".to_string()));
 
-        let temp_path = Path::new(".tsk-edit-2024-01-01-1200-test-feature-instructions.md");
-        task_builder
-            .write_instructions_content(temp_path, "feat", &ctx)
-            .await
-            .unwrap();
+            let temp_path = Path::new(".tsk-edit-2024-01-01-1200-test-feature-instructions.md");
+            task_builder
+                .write_instructions_content(temp_path, "feat", &ctx)
+                .await
+                .unwrap();
 
-        let content = fs.read_file(temp_path).await.unwrap();
-        // Check that the template was applied and description was replaced
-        assert!(content.contains("My new feature"));
-        assert!(content.contains("Feature"));
-        assert!(!content.contains("{{DESCRIPTION}}"));
+            let content = fs.read_file(temp_path).await.unwrap();
+            assert!(content.contains("My new feature"));
+            assert!(content.contains("Feature"));
+            assert!(!content.contains("{{DESCRIPTION}}"));
+        }
     }
 
     #[tokio::test]
     async fn test_task_builder_captures_source_commit() {
-        use crate::context::git_operations::tests::MockGitOperations;
-        use tempfile::TempDir;
+        let (temp_dir, current_dir, _) = create_test_context();
 
-        let temp_dir = TempDir::new().unwrap();
-        let current_dir = temp_dir.path().to_path_buf();
+        // Create context with specific commit SHA
         let xdg = crate::storage::XdgDirectories::new_with_paths(
             temp_dir.path().join("data"),
             temp_dir.path().join("runtime"),
@@ -828,121 +818,113 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_builder_from_existing() {
-        use crate::context::git_operations::tests::MockGitOperations;
-
         let current_dir = std::env::current_dir().unwrap();
-        let instructions_content = "# Task Instructions\n\nOriginal instructions content";
-        let instructions_path = current_dir.join("test-instructions.md");
 
-        let fs = Arc::new(
-            MockFileSystem::new()
-                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string())
-                .with_file(
-                    &instructions_path.to_string_lossy().to_string(),
-                    instructions_content,
-                ),
-        );
+        // Test 1: Successful build from existing task
+        {
+            let instructions_content = "# Task Instructions\n\nOriginal instructions content";
+            let instructions_path = current_dir.join("test-instructions.md");
 
-        let git_ops = Arc::new(MockGitOperations::new());
-        git_ops.set_get_current_commit_result(Ok("abc123".to_string()));
+            let fs = Arc::new(
+                MockFileSystem::new()
+                    .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string())
+                    .with_file(
+                        &instructions_path.to_string_lossy().to_string(),
+                        instructions_content,
+                    ),
+            );
 
-        let ctx = AppContext::builder()
-            .with_file_system(fs.clone())
-            .with_git_operations(git_ops.clone())
-            .build();
+            let git_ops = Arc::new(MockGitOperations::new());
+            git_ops.set_get_current_commit_result(Ok("abc123".to_string()));
 
-        // Create an existing task
-        let existing_task = Task::new_with_id(
-            "2024-01-01-1200-generic-existing-task".to_string(),
-            current_dir.clone(),
-            "existing-task".to_string(),
-            "generic".to_string(),
-            instructions_path.to_string_lossy().to_string(),
-            "claude-code".to_string(),
-            45,
-            "tsk/2024-01-01-1200-generic-existing-task".to_string(),
-            "abc123".to_string(),
-            "default".to_string(),
-            "default".to_string(),
-        );
+            let ctx = AppContext::builder()
+                .with_file_system(fs.clone())
+                .with_git_operations(git_ops.clone())
+                .build();
 
-        // Create a builder from the existing task
-        let builder = TaskBuilder::from_existing(&existing_task);
+            // Create an existing task
+            let existing_task = Task::new(
+                "2024-01-01-1200-generic-existing-task".to_string(),
+                current_dir.clone(),
+                "existing-task".to_string(),
+                "generic".to_string(),
+                instructions_path.to_string_lossy().to_string(),
+                "claude-code".to_string(),
+                45,
+                "tsk/2024-01-01-1200-generic-existing-task".to_string(),
+                "abc123".to_string(),
+                "default".to_string(),
+                "default".to_string(),
+            );
 
-        // Build a new task from it
-        let new_task = builder
-            .name("retry-task".to_string())
-            .build(&ctx)
-            .await
-            .unwrap();
+            // Create a builder from the existing task
+            let builder = TaskBuilder::from_existing(&existing_task);
 
-        // Verify the new task has the same properties
-        assert_eq!(new_task.name, "retry-task");
-        assert_eq!(new_task.task_type, "generic");
-        assert_eq!(new_task.agent, "claude-code".to_string());
-        assert_eq!(new_task.timeout, 45);
-        assert!(!new_task.instructions_file.is_empty());
+            // Build a new task from it
+            let new_task = builder
+                .name("retry-task".to_string())
+                .build(&ctx)
+                .await
+                .unwrap();
 
-        // Verify the instructions file path was preserved and content was copied
-        let copied_content = fs
-            .read_file(Path::new(&new_task.instructions_file))
-            .await
-            .unwrap();
-        // The new task should have the content from the original instructions file
-        assert_eq!(copied_content, instructions_content);
-    }
+            // Verify the new task has the same properties
+            assert_eq!(new_task.name, "retry-task");
+            assert_eq!(new_task.task_type, "generic");
+            assert_eq!(new_task.agent, "claude-code".to_string());
+            assert_eq!(new_task.timeout, 45);
+            assert!(!new_task.instructions_file.is_empty());
 
-    #[tokio::test]
-    async fn test_task_builder_from_existing_missing_instructions() {
-        use crate::context::git_operations::tests::MockGitOperations;
+            // Verify the instructions file path was preserved and content was copied
+            let copied_content = fs
+                .read_file(Path::new(&new_task.instructions_file))
+                .await
+                .unwrap();
+            assert_eq!(copied_content, instructions_content);
+        }
 
-        let current_dir = std::env::current_dir().unwrap();
-        let instructions_path = current_dir.join("missing-instructions.md");
+        // Test 2: Fail when instructions file is missing
+        {
+            let instructions_path = current_dir.join("missing-instructions.md");
 
-        let fs = Arc::new(
-            MockFileSystem::new()
-                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string()),
-        );
+            let fs = Arc::new(
+                MockFileSystem::new()
+                    .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string()),
+            );
 
-        let git_ops = Arc::new(MockGitOperations::new());
-        git_ops.set_get_current_commit_result(Ok("abc123".to_string()));
+            let git_ops = Arc::new(MockGitOperations::new());
+            git_ops.set_get_current_commit_result(Ok("abc123".to_string()));
 
-        let ctx = AppContext::builder()
-            .with_file_system(fs.clone())
-            .with_git_operations(git_ops.clone())
-            .build();
+            let ctx = AppContext::builder()
+                .with_file_system(fs.clone())
+                .with_git_operations(git_ops.clone())
+                .build();
 
-        // Create an existing task with missing instructions file
-        let existing_task = Task::new_with_id(
-            "2024-01-01-1200-generic-existing-task".to_string(),
-            current_dir.clone(),
-            "existing-task".to_string(),
-            "generic".to_string(),
-            instructions_path.to_string_lossy().to_string(),
-            "claude-code".to_string(),
-            30,
-            "tsk/2024-01-01-1200-generic-existing-task".to_string(),
-            "abc123".to_string(),
-            "default".to_string(),
-            "default".to_string(),
-        );
+            // Create an existing task with missing instructions file
+            let existing_task = create_test_task(
+                "2024-01-01-1200-generic-existing-task",
+                "existing-task",
+                "generic",
+            )
+            .with_copied_repo_path(Some(current_dir.clone()));
+            let mut existing_task = existing_task;
+            existing_task.instructions_file = instructions_path.to_string_lossy().to_string();
+            existing_task.repo_root = current_dir.clone();
 
-        // Create a builder from the existing task
-        let builder = TaskBuilder::from_existing(&existing_task);
+            // Create a builder from the existing task
+            let builder = TaskBuilder::from_existing(&existing_task);
 
-        // Build a new task from it - should fail because instructions file doesn't exist
-        let result = builder.name("retry-task".to_string()).build(&ctx).await;
+            // Build a new task from it - should fail because instructions file doesn't exist
+            let result = builder.name("retry-task".to_string()).build(&ctx).await;
 
-        // Verify it fails with appropriate error
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("missing-instructions.md"));
+            // Verify it fails with appropriate error
+            assert!(result.is_err());
+            let err = result.unwrap_err().to_string();
+            assert!(err.contains("missing-instructions.md"));
+        }
     }
 
     #[tokio::test]
     async fn test_task_builder_handles_source_commit_error() {
-        use crate::context::git_operations::tests::MockGitOperations;
-
         let current_dir = std::env::current_dir().unwrap();
         let fs = Arc::new(
             MockFileSystem::new()
@@ -977,34 +959,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_builder_with_docker_config() {
-        use crate::context::git_operations::tests::MockGitOperations;
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().unwrap();
-        let current_dir = temp_dir.path().to_path_buf();
-        let xdg = crate::storage::XdgDirectories::new_with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-            temp_dir.path().join("cache"),
-        );
-
-        let fs = Arc::new(
-            MockFileSystem::new()
-                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string())
-                .with_dir(&current_dir.join(".git").to_string_lossy().to_string()),
-        );
-
-        let git_ops = Arc::new(MockGitOperations::new());
-        git_ops.set_get_current_commit_result(Ok("abc123".to_string()));
-        git_ops.set_is_repo_result(Ok(true));
-        git_ops.set_get_tracked_files_result(Ok(vec![]));
-
-        let ctx = AppContext::builder()
-            .with_file_system(fs.clone())
-            .with_git_operations(git_ops)
-            .with_xdg_directories(Arc::new(xdg))
-            .build();
+        let (_temp_dir, current_dir, ctx) = create_test_context();
 
         let task = TaskBuilder::new()
             .repo_root(current_dir.clone())
@@ -1028,19 +983,14 @@ mod tests {
         let current_dir = std::env::current_dir().unwrap();
 
         // Create an existing task with Docker config
-        let existing_task = Task::new_with_id(
-            "2024-01-01-1200-generic-existing-task".to_string(),
-            current_dir.clone(),
-            "existing-task".to_string(),
-            "generic".to_string(),
-            "instructions.md".to_string(),
-            "claude-code".to_string(),
-            30,
-            "tsk/2024-01-01-1200-generic-existing-task".to_string(),
-            "abc123".to_string(),
-            "python".to_string(),
-            "ml-service".to_string(),
+        let mut existing_task = create_test_task(
+            "2024-01-01-1200-generic-existing-task",
+            "existing-task",
+            "generic",
         );
+        existing_task.repo_root = current_dir.clone();
+        existing_task.tech_stack = "python".to_string();
+        existing_task.project = "ml-service".to_string();
 
         // Create a builder from the existing task
         let builder = TaskBuilder::from_existing(&existing_task);
@@ -1052,34 +1002,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_id_generation_with_task_type() {
-        use crate::context::git_operations::tests::MockGitOperations;
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().unwrap();
-        let current_dir = temp_dir.path().to_path_buf();
-        let xdg = crate::storage::XdgDirectories::new_with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-            temp_dir.path().join("cache"),
-        );
-
-        let fs = Arc::new(
-            MockFileSystem::new()
-                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string())
-                .with_dir(&current_dir.join(".git").to_string_lossy().to_string()),
-        );
-
-        let git_ops = Arc::new(MockGitOperations::new());
-        git_ops.set_get_current_commit_result(Ok("abc123".to_string()));
-        git_ops.set_is_repo_result(Ok(true));
-        git_ops.set_get_tracked_files_result(Ok(vec![]));
-
-        let ctx = AppContext::builder()
-            .with_file_system(fs.clone())
-            .with_git_operations(git_ops.clone())
-            .with_xdg_directories(Arc::new(xdg))
-            .build();
+        let (_temp_dir, current_dir, ctx) = create_test_context();
 
         // Test with "feat" task type
         let task = TaskBuilder::new()
@@ -1115,39 +1038,20 @@ mod tests {
     }
 
     #[test]
-    fn test_task_new_with_local_time() {
-        let task = Task::new(
-            PathBuf::from("/test"),
-            "test-task".to_string(),
-            "feat".to_string(),
-            "instructions.md".to_string(),
-            "claude-code".to_string(),
-            30,
-            "tsk/test-task".to_string(),
-            "abc123".to_string(),
-            "default".to_string(),
-            "default".to_string(),
-            None,
-        );
+    fn test_task_new_with_id() {
+        let task = create_test_task("2024-01-01-1200-feat-test-task", "test-task", "feat");
 
-        // Verify task ID includes task type
-        assert!(task.id.contains("-feat-test-task"));
-
-        // Verify the ID has the expected format
-        let parts: Vec<&str> = task.id.split('-').collect();
-        assert!(parts.len() >= 6); // YYYY-MM-DD-HHMM-feat-test-task
-        assert_eq!(parts[4], "feat");
-        assert_eq!(parts[5], "test");
-        assert_eq!(parts[6], "task");
+        // Verify task ID is set correctly
+        assert_eq!(task.id, "2024-01-01-1200-feat-test-task");
+        assert_eq!(task.task_type, "feat");
+        assert_eq!(task.name, "test-task");
     }
 
     #[tokio::test]
     async fn test_task_builder_copies_repository() {
-        use crate::context::git_operations::tests::MockGitOperations;
-        use tempfile::TempDir;
+        let (temp_dir, current_dir, _) = create_test_context();
 
-        let temp_dir = TempDir::new().unwrap();
-        let current_dir = temp_dir.path().to_path_buf();
+        // Create context with tracked files
         let xdg = crate::storage::XdgDirectories::new_with_paths(
             temp_dir.path().join("data"),
             temp_dir.path().join("runtime"),

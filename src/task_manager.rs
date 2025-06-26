@@ -332,19 +332,6 @@ mod tests {
         let repo_root = crate::repo_utils::find_repository_root(Path::new(".")).unwrap();
         let task_id = "test-task-123".to_string();
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
-        let _task = Task::new_with_id(
-            task_id.clone(),
-            repo_root.clone(),
-            "test-task".to_string(),
-            "feat".to_string(),
-            "instructions.md".to_string(),
-            "claude-code".to_string(),
-            30,
-            format!("tsk/{}", task_id),
-            "abc123".to_string(),
-            "default".to_string(),
-            "default".to_string(),
-        );
 
         // Get XDG paths
         let task_dir_path = xdg.task_dir(&task_id, &repo_hash);
@@ -411,7 +398,7 @@ mod tests {
         let queued_task_id = "queued-task-123".to_string();
         let completed_task_id = "completed-task-456".to_string();
 
-        let _queued_task = Task::new_with_id(
+        let _queued_task = Task::new(
             queued_task_id.clone(),
             repo_root.clone(),
             "queued-task".to_string(),
@@ -425,7 +412,7 @@ mod tests {
             "default".to_string(),
         );
 
-        let mut completed_task = Task::new_with_id(
+        let mut completed_task = Task::new(
             completed_task_id.clone(),
             repo_root.clone(),
             "completed-task".to_string(),
@@ -522,7 +509,7 @@ mod tests {
         let repo_root = crate::repo_utils::find_repository_root(Path::new(".")).unwrap();
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
         let task_id = "2024-01-01-1200-generic-original-task".to_string();
-        let mut completed_task = Task::new_with_id(
+        let mut completed_task = Task::new(
             task_id.clone(),
             repo_root.clone(),
             "original-task".to_string(),
@@ -700,19 +687,6 @@ mod tests {
         // Create a queued task (should not be retryable)
         let repo_root = crate::repo_utils::find_repository_root(Path::new(".")).unwrap();
         let task_id = "2024-01-01-1200-feat-queued-task".to_string();
-        let _queued_task = Task::new_with_id(
-            task_id.clone(),
-            repo_root.clone(),
-            "queued-task".to_string(),
-            "feat".to_string(),
-            "instructions.md".to_string(),
-            "claude-code".to_string(),
-            30,
-            format!("tsk/{}", task_id),
-            "abc123".to_string(),
-            "default".to_string(),
-            "default".to_string(),
-        );
 
         // Get XDG paths
         let tasks_json_path = xdg.tasks_file();
@@ -781,7 +755,7 @@ mod tests {
         let repo_root = crate::repo_utils::find_repository_root(Path::new(".")).unwrap();
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
         let task_id = "2024-01-15-1430-feat-test-feature".to_string();
-        let mut completed_task = Task::new_with_id(
+        let mut completed_task = Task::new(
             task_id.clone(),
             repo_root.clone(),
             "test-feature".to_string(),
