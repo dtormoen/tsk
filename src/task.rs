@@ -43,7 +43,7 @@ pub struct Task {
     /// Current status of the task
     pub status: TaskStatus,
     /// When the task was created
-    pub created_at: DateTime<Utc>,
+    pub created_at: DateTime<Local>,
     /// When the task started execution (if started)
     pub started_at: Option<DateTime<Utc>>,
     /// When the task completed (if completed)
@@ -59,7 +59,7 @@ pub struct Task {
     /// Project name for Docker image selection (defaults to "default")
     pub project: String,
     /// Path to the copied repository for this task
-    pub copied_repo_path: Option<PathBuf>,
+    pub copied_repo_path: PathBuf,
 }
 
 impl Task {
@@ -77,6 +77,8 @@ impl Task {
         source_commit: String,
         tech_stack: String,
         project: String,
+        created_at: DateTime<Local>,
+        copied_repo_path: PathBuf,
     ) -> Self {
         Self {
             id,
@@ -87,7 +89,7 @@ impl Task {
             agent,
             timeout,
             status: TaskStatus::Queued,
-            created_at: Utc::now(),
+            created_at,
             started_at: None,
             completed_at: None,
             branch_name,
@@ -95,14 +97,8 @@ impl Task {
             source_commit,
             tech_stack,
             project,
-            copied_repo_path: None,
+            copied_repo_path,
         }
-    }
-
-    /// Sets the copied repository path and returns self
-    pub fn with_copied_repo_path(mut self, path: Option<PathBuf>) -> Self {
-        self.copied_repo_path = path;
-        self
     }
 }
 
@@ -149,7 +145,7 @@ impl TaskBuilder {
         builder.timeout = Some(task.timeout);
         builder.tech_stack = Some(task.tech_stack.clone());
         builder.project = Some(task.project.clone());
-        builder.copied_repo_path = task.copied_repo_path.clone();
+        builder.copied_repo_path = Some(task.copied_repo_path.clone());
 
         // Copy the instructions file path
         builder.instructions_file_path = Some(PathBuf::from(&task.instructions_file));
@@ -262,8 +258,11 @@ impl TaskBuilder {
         }
 
         // Create task directory in centralized location
-        let timestamp = chrono::Local::now().format("%Y-%m-%d-%H%M");
-        let task_dir_name = format!("{}-{}-{}", timestamp, task_type, name);
+        let now = chrono::Local::now();
+        let timestamp = now.format("%Y-%m-%d-%H%M");
+        let created_at = now;
+        let id = format!("{timestamp}-{task_type}-{name}");
+        let task_dir_name = id.clone();
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
         let task_dir = ctx.xdg_directories().task_dir(&task_dir_name, &repo_hash);
         ctx.file_system().create_dir(&task_dir).await?;
@@ -366,15 +365,6 @@ impl TaskBuilder {
             .await
             .map_err(|e| format!("Failed to copy repository: {}", e))?;
 
-        // Generate task ID
-        let timestamp = Local::now();
-        let id = format!(
-            "{}-{}-{}",
-            timestamp.format("%Y-%m-%d-%H%M"),
-            task_type,
-            name
-        );
-
         // Create and return the task
         let task = Task::new(
             id,
@@ -388,9 +378,11 @@ impl TaskBuilder {
             source_commit,
             tech_stack,
             project,
+            created_at,
+            copied_repo_path,
         );
 
-        Ok(task.with_copied_repo_path(Some(copied_repo_path)))
+        Ok(task)
     }
 
     async fn write_instructions_content(
@@ -547,6 +539,8 @@ mod tests {
             "abc123".to_string(),
             "default".to_string(),
             "default".to_string(),
+            chrono::Local::now(),
+            PathBuf::from("/test/copied"),
         )
     }
 
@@ -855,6 +849,8 @@ mod tests {
                 "abc123".to_string(),
                 "default".to_string(),
                 "default".to_string(),
+                chrono::Local::now(),
+                current_dir.clone(),
             );
 
             // Create a builder from the existing task
@@ -900,15 +896,14 @@ mod tests {
                 .build();
 
             // Create an existing task with missing instructions file
-            let existing_task = create_test_task(
+            let mut existing_task = create_test_task(
                 "2024-01-01-1200-generic-existing-task",
                 "existing-task",
                 "generic",
-            )
-            .with_copied_repo_path(Some(current_dir.clone()));
-            let mut existing_task = existing_task;
+            );
             existing_task.instructions_file = instructions_path.to_string_lossy().to_string();
             existing_task.repo_root = current_dir.clone();
+            existing_task.copied_repo_path = current_dir.clone();
 
             // Create a builder from the existing task
             let builder = TaskBuilder::from_existing(&existing_task);
@@ -1089,8 +1084,7 @@ mod tests {
             .unwrap();
 
         // Verify the task has a copied_repo_path
-        assert!(task.copied_repo_path.is_some());
-        let copied_path = task.copied_repo_path.unwrap();
+        let copied_path = &task.copied_repo_path;
 
         // Verify the copied path contains the task directory structure
         assert!(copied_path.to_string_lossy().contains(&task.id));

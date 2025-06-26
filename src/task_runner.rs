@@ -73,11 +73,7 @@ impl TaskRunner {
             .map_err(|e| format!("Agent warmup failed: {}", e))?;
 
         // Use the pre-copied repository path
-        let repo_path = task
-            .copied_repo_path
-            .as_ref()
-            .ok_or_else(|| "Task does not have a copied repository path".to_string())?
-            .clone();
+        let repo_path = task.copied_repo_path.clone();
 
         let branch_name = task.branch_name.clone();
 

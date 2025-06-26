@@ -410,6 +410,8 @@ mod tests {
             "abc123".to_string(),
             "default".to_string(),
             "default".to_string(),
+            chrono::Local::now(),
+            repo_root.clone(),
         );
 
         let mut completed_task = Task::new(
@@ -424,6 +426,8 @@ mod tests {
             "abc123".to_string(),
             "default".to_string(),
             "default".to_string(),
+            chrono::Local::now(),
+            repo_root.clone(),
         );
         completed_task.status = TaskStatus::Complete;
 
@@ -526,6 +530,8 @@ mod tests {
             "abc123".to_string(),
             "default".to_string(),
             "default".to_string(),
+            chrono::Local::now(),
+            repo_root.clone(),
         );
         completed_task.status = TaskStatus::Complete;
 
@@ -767,6 +773,8 @@ mod tests {
             "abc123".to_string(),
             "default".to_string(),
             "default".to_string(),
+            chrono::Local::now(),
+            repo_root.clone(),
         );
         completed_task.status = TaskStatus::Complete;
 

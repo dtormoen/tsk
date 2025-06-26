@@ -118,6 +118,8 @@ impl Command for DebugCommand {
             source_commit,
             tech_stack,
             project.unwrap_or_else(|| "default".to_string()),
+            chrono::Local::now(),
+            repo_root.clone(), // temporary, will be updated after repo copy
         );
 
         let repo_manager = RepoManager::new(
@@ -133,7 +135,7 @@ impl Command for DebugCommand {
             .map_err(|e| format!("Failed to copy repository: {}", e))?;
 
         // Update the task with the copied repository path
-        task.copied_repo_path = Some(copied_repo_path);
+        task.copied_repo_path = copied_repo_path;
         let docker_manager = DockerManager::new(ctx.docker_client(), ctx.file_system());
 
         // Create image manager on-demand for the task's repository
