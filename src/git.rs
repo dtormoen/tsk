@@ -25,7 +25,7 @@ impl RepoManager {
     }
 
     /// Copy repository for a task using the task ID and repository root
-    /// Only copies git-tracked files and the .git directory, excluding build artifacts
+    /// Copies git-tracked files, the .git directory, and the .tsk directory
     /// Returns the path to the copied repository and the branch name
     pub async fn copy_repo(
         &self,
@@ -93,6 +93,18 @@ impl RepoManager {
                 })?;
         }
 
+        // Copy .tsk directory if it exists (for project-specific Docker configurations)
+        let tsk_src = current_dir.join(".tsk");
+        let tsk_dst = repo_path.join(".tsk");
+        if self
+            .file_system
+            .exists(&tsk_src)
+            .await
+            .map_err(|e| format!("Failed to check if .tsk exists: {}", e))?
+        {
+            self.copy_directory(&tsk_src, &tsk_dst).await?;
+        }
+
         // Create a new branch in the copied repository
         match source_commit {
             Some(commit_sha) => {
@@ -115,8 +127,7 @@ impl RepoManager {
         Ok((repo_path, branch_name))
     }
 
-    /// Copy directory recursively, excluding .tsk directory
-    /// Note: Only used for copying the .git directory
+    /// Copy directory recursively
     #[allow(clippy::only_used_in_recursion)]
     async fn copy_directory(&self, src: &Path, dst: &Path) -> Result<(), String> {
         self.file_system
@@ -134,11 +145,6 @@ impl RepoManager {
             let file_name = path
                 .file_name()
                 .ok_or_else(|| "Invalid file name".to_string())?;
-
-            // Skip .tsk directory
-            if file_name == ".tsk" {
-                continue;
-            }
 
             let dst_path = dst.join(file_name);
 
@@ -543,5 +549,73 @@ mod tests {
         assert!(copied_dirs
             .iter()
             .any(|d| d == &format!("{}/.git", repo_path_str)));
+    }
+
+    #[tokio::test]
+    async fn test_copy_repo_includes_tsk_directory() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let xdg_directories = create_test_xdg_directories(&temp_dir);
+
+        // Create mock git operations
+        let mock_git_ops = Arc::new(MockGitOperations::new());
+        mock_git_ops.set_is_repo_result(Ok(true));
+        mock_git_ops.set_get_tracked_files_result(Ok(vec![
+            PathBuf::from("src/main.rs"),
+            PathBuf::from("Cargo.toml"),
+        ]));
+
+        use crate::context::file_system::tests::MockFileSystem;
+        let fs = Arc::new(MockFileSystem::new());
+        // Add mock files including .tsk directory
+        let mut files = HashMap::new();
+        files.insert(temp_dir.path().join(".git"), "dir".to_string());
+        files.insert(temp_dir.path().join(".tsk"), "dir".to_string());
+        files.insert(
+            temp_dir
+                .path()
+                .join(".tsk/dockerfiles/project/test-project/Dockerfile"),
+            "FROM ubuntu:22.04".to_string(),
+        );
+        files.insert(
+            temp_dir.path().join("src/main.rs"),
+            "fn main() {}".to_string(),
+        );
+        files.insert(temp_dir.path().join("Cargo.toml"), "[package]".to_string());
+        fs.set_files(files);
+
+        let manager = RepoManager::new(xdg_directories.clone(), fs.clone(), mock_git_ops.clone());
+
+        let repo_root = temp_dir.path();
+        let result = manager
+            .copy_repo("2024-01-01-1200-generic-test-task", repo_root, None)
+            .await;
+
+        assert!(result.is_ok(), "Error: {:?}", result);
+        let (repo_path, _) = result.unwrap();
+
+        // Verify .tsk directory and its contents were copied
+        let copied_files = fs.get_files();
+        let copied_dirs = fs.get_dirs();
+        let repo_path_str = repo_path.to_string_lossy();
+
+        // Check that .tsk directory was copied
+        assert!(copied_dirs
+            .iter()
+            .any(|d| d == &format!("{}/.tsk", repo_path_str)));
+
+        // Check that .tsk contents were copied (directories and files)
+        assert!(
+            copied_dirs.iter().any(|d| d.contains(".tsk"))
+                || copied_files.keys().any(|f| f.contains(".tsk/dockerfiles"))
+        );
+
+        // Check that the copy operation was called for .tsk directory
+        // (The actual file copying might not show up in our mock due to the recursive copy)
+        let copy_directory_exists = copied_dirs.iter().any(|d| d.contains(".tsk"))
+            || fs.get_files().keys().any(|k| k.contains(".tsk"));
+        assert!(
+            copy_directory_exists,
+            "Expected .tsk directory or its contents to be copied"
+        );
     }
 }

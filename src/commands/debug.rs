@@ -106,8 +106,8 @@ impl Command for DebugCommand {
             .clone()
             .unwrap_or_else(|| AgentProvider::default_agent().to_string());
 
-        let task = Task::new_with_id(
-            task_id,
+        let mut task = Task::new_with_id(
+            task_id.clone(),
             repo_root.clone(),
             self.name.clone(),
             "debug".to_string(),
@@ -125,6 +125,15 @@ impl Command for DebugCommand {
             ctx.file_system(),
             ctx.git_operations(),
         );
+
+        // Copy the repository for the debug task
+        let (copied_repo_path, _) = repo_manager
+            .copy_repo(&task_id, &repo_root, Some(&task.source_commit))
+            .await
+            .map_err(|e| format!("Failed to copy repository: {}", e))?;
+
+        // Update the task with the copied repository path
+        task.copied_repo_path = Some(copied_repo_path);
         let docker_manager = DockerManager::new(ctx.docker_client(), ctx.file_system());
 
         // Create image manager on-demand for the task's repository

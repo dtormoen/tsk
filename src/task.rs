@@ -1,5 +1,6 @@
 use crate::assets::{layered::LayeredAssetManager, AssetManager};
 use crate::context::AppContext;
+use crate::git::RepoManager;
 use chrono::{DateTime, Local, Utc};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -57,6 +58,8 @@ pub struct Task {
     pub tech_stack: String,
     /// Project name for Docker image selection (defaults to "default")
     pub project: String,
+    /// Path to the copied repository for this task
+    pub copied_repo_path: Option<PathBuf>,
 }
 
 impl Task {
@@ -73,6 +76,7 @@ impl Task {
         source_commit: String,
         tech_stack: String,
         project: String,
+        copied_repo_path: Option<PathBuf>,
     ) -> Self {
         let timestamp = Local::now();
         let id = format!(
@@ -99,6 +103,7 @@ impl Task {
             source_commit,
             tech_stack,
             project,
+            copied_repo_path,
         }
     }
 
@@ -133,6 +138,7 @@ impl Task {
             source_commit,
             tech_stack,
             project,
+            copied_repo_path: None,
         }
     }
 }
@@ -150,6 +156,7 @@ pub struct TaskBuilder {
     timeout: Option<u32>,
     tech_stack: Option<String>,
     project: Option<String>,
+    copied_repo_path: Option<PathBuf>,
 }
 
 impl TaskBuilder {
@@ -165,6 +172,7 @@ impl TaskBuilder {
             timeout: None,
             tech_stack: None,
             project: None,
+            copied_repo_path: None,
         }
     }
 
@@ -178,6 +186,7 @@ impl TaskBuilder {
         builder.timeout = Some(task.timeout);
         builder.tech_stack = Some(task.tech_stack.clone());
         builder.project = Some(task.project.clone());
+        builder.copied_repo_path = task.copied_repo_path.clone();
 
         // Copy the instructions file path
         builder.instructions_file_path = Some(PathBuf::from(&task.instructions_file));
@@ -382,9 +391,20 @@ impl TaskBuilder {
         // Generate branch name from task ID
         let branch_name = format!("tsk/{}", task_dir_name);
 
+        // Copy the repository for the task
+        let repo_manager = RepoManager::new(
+            ctx.xdg_directories(),
+            ctx.file_system(),
+            ctx.git_operations(),
+        );
+
+        let (copied_repo_path, _) = repo_manager
+            .copy_repo(&task_dir_name, &repo_root, Some(&source_commit))
+            .await
+            .map_err(|e| format!("Failed to copy repository: {}", e))?;
+
         // Create and return the task
-        let task = Task::new_with_id(
-            task_dir_name.clone(),
+        let task = Task::new(
             repo_root,
             name,
             task_type,
@@ -395,6 +415,7 @@ impl TaskBuilder {
             source_commit,
             tech_stack,
             project,
+            Some(copied_repo_path),
         );
 
         Ok(task)
@@ -555,7 +576,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_builder_with_template() {
-        let current_dir = std::env::current_dir().unwrap();
+        use crate::context::git_operations::tests::MockGitOperations;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let current_dir = temp_dir.path().to_path_buf();
+        let xdg = crate::storage::XdgDirectories::new_with_paths(
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            temp_dir.path().join("config"),
+            temp_dir.path().join("cache"),
+        );
+
         let template_content = "# Feature Template\n\n{{DESCRIPTION}}";
         let template_dir = current_dir.join(".tsk/templates");
         let fs = Arc::new(
@@ -565,10 +597,20 @@ mod tests {
                 .with_file(
                     &template_dir.join("feat.md").to_string_lossy().to_string(),
                     template_content,
-                ),
+                )
+                .with_dir(&current_dir.join(".git").to_string_lossy().to_string()),
         );
 
-        let ctx = AppContext::builder().with_file_system(fs.clone()).build();
+        let git_ops = Arc::new(MockGitOperations::new());
+        git_ops.set_get_current_commit_result(Ok("abc123".to_string()));
+        git_ops.set_is_repo_result(Ok(true));
+        git_ops.set_get_tracked_files_result(Ok(vec![])); // No tracked files in test
+
+        let ctx = AppContext::builder()
+            .with_file_system(fs.clone())
+            .with_git_operations(git_ops)
+            .with_xdg_directories(Arc::new(xdg))
+            .build();
 
         let task = TaskBuilder::new()
             .repo_root(current_dir.clone())
@@ -615,7 +657,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_builder_with_instructions_file() {
-        let current_dir = std::env::current_dir().unwrap();
+        use crate::context::git_operations::tests::MockGitOperations;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let current_dir = temp_dir.path().to_path_buf();
+        let xdg = crate::storage::XdgDirectories::new_with_paths(
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            temp_dir.path().join("config"),
+            temp_dir.path().join("cache"),
+        );
+
         let instructions_content = "# Instructions for task";
         let instructions_path = current_dir.join("test-instructions.md");
         let fs = Arc::new(
@@ -624,10 +677,20 @@ mod tests {
                 .with_file(
                     &instructions_path.to_string_lossy().to_string(),
                     instructions_content,
-                ),
+                )
+                .with_dir(&current_dir.join(".git").to_string_lossy().to_string()),
         );
 
-        let ctx = AppContext::builder().with_file_system(fs.clone()).build();
+        let git_ops = Arc::new(MockGitOperations::new());
+        git_ops.set_get_current_commit_result(Ok("abc123".to_string()));
+        git_ops.set_is_repo_result(Ok(true));
+        git_ops.set_get_tracked_files_result(Ok(vec![]));
+
+        let ctx = AppContext::builder()
+            .with_file_system(fs.clone())
+            .with_git_operations(git_ops)
+            .with_xdg_directories(Arc::new(xdg))
+            .build();
 
         let task = TaskBuilder::new()
             .repo_root(current_dir.clone())
@@ -914,13 +977,34 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_builder_with_docker_config() {
-        let current_dir = std::env::current_dir().unwrap();
-        let fs = Arc::new(
-            MockFileSystem::new()
-                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string()),
+        use crate::context::git_operations::tests::MockGitOperations;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let current_dir = temp_dir.path().to_path_buf();
+        let xdg = crate::storage::XdgDirectories::new_with_paths(
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            temp_dir.path().join("config"),
+            temp_dir.path().join("cache"),
         );
 
-        let ctx = AppContext::builder().with_file_system(fs.clone()).build();
+        let fs = Arc::new(
+            MockFileSystem::new()
+                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string())
+                .with_dir(&current_dir.join(".git").to_string_lossy().to_string()),
+        );
+
+        let git_ops = Arc::new(MockGitOperations::new());
+        git_ops.set_get_current_commit_result(Ok("abc123".to_string()));
+        git_ops.set_is_repo_result(Ok(true));
+        git_ops.set_get_tracked_files_result(Ok(vec![]));
+
+        let ctx = AppContext::builder()
+            .with_file_system(fs.clone())
+            .with_git_operations(git_ops)
+            .with_xdg_directories(Arc::new(xdg))
+            .build();
 
         let task = TaskBuilder::new()
             .repo_root(current_dir.clone())
@@ -968,13 +1052,34 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_id_generation_with_task_type() {
-        let current_dir = std::env::current_dir().unwrap();
-        let fs = Arc::new(
-            MockFileSystem::new()
-                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string()),
+        use crate::context::git_operations::tests::MockGitOperations;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let current_dir = temp_dir.path().to_path_buf();
+        let xdg = crate::storage::XdgDirectories::new_with_paths(
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            temp_dir.path().join("config"),
+            temp_dir.path().join("cache"),
         );
 
-        let ctx = AppContext::builder().with_file_system(fs.clone()).build();
+        let fs = Arc::new(
+            MockFileSystem::new()
+                .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string())
+                .with_dir(&current_dir.join(".git").to_string_lossy().to_string()),
+        );
+
+        let git_ops = Arc::new(MockGitOperations::new());
+        git_ops.set_get_current_commit_result(Ok("abc123".to_string()));
+        git_ops.set_is_repo_result(Ok(true));
+        git_ops.set_get_tracked_files_result(Ok(vec![]));
+
+        let ctx = AppContext::builder()
+            .with_file_system(fs.clone())
+            .with_git_operations(git_ops.clone())
+            .with_xdg_directories(Arc::new(xdg))
+            .build();
 
         // Test with "feat" task type
         let task = TaskBuilder::new()
@@ -1022,6 +1127,7 @@ mod tests {
             "abc123".to_string(),
             "default".to_string(),
             "default".to_string(),
+            None,
         );
 
         // Verify task ID includes task type
@@ -1033,5 +1139,57 @@ mod tests {
         assert_eq!(parts[4], "feat");
         assert_eq!(parts[5], "test");
         assert_eq!(parts[6], "task");
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_copies_repository() {
+        use crate::context::git_operations::tests::MockGitOperations;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let current_dir = temp_dir.path().to_path_buf();
+        let xdg = crate::storage::XdgDirectories::new_with_paths(
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            temp_dir.path().join("config"),
+            temp_dir.path().join("cache"),
+        );
+
+        let fs = Arc::new(
+            MockFileSystem::new()
+                .with_dir(&current_dir.join(".git").to_string_lossy().to_string())
+                .with_file(
+                    &current_dir.join("test.txt").to_string_lossy().to_string(),
+                    "content",
+                ),
+        );
+
+        let git_ops = Arc::new(MockGitOperations::new());
+        git_ops.set_get_current_commit_result(Ok("abc123".to_string()));
+        git_ops.set_is_repo_result(Ok(true));
+        git_ops.set_get_tracked_files_result(Ok(vec![PathBuf::from("test.txt")]));
+
+        let ctx = AppContext::builder()
+            .with_file_system(fs.clone())
+            .with_git_operations(git_ops)
+            .with_xdg_directories(Arc::new(xdg))
+            .build();
+
+        let task = TaskBuilder::new()
+            .repo_root(current_dir.clone())
+            .name("test-task".to_string())
+            .task_type("generic".to_string())
+            .description(Some("Test description".to_string()))
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        // Verify the task has a copied_repo_path
+        assert!(task.copied_repo_path.is_some());
+        let copied_path = task.copied_repo_path.unwrap();
+
+        // Verify the copied path contains the task directory structure
+        assert!(copied_path.to_string_lossy().contains(&task.id));
+        assert!(copied_path.to_string_lossy().contains("repo"));
     }
 }

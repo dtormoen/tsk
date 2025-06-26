@@ -191,6 +191,7 @@ mod tests {
             "abc123".to_string(),
             "default".to_string(),
             "default".to_string(),
+            None,
         );
 
         storage.add_task(task.clone()).await.unwrap();
@@ -229,6 +230,7 @@ mod tests {
             "abc123".to_string(),
             "default".to_string(),
             "default".to_string(),
+            None,
         );
         let mut task2 = Task::new(
             temp_dir.path().to_path_buf(),
@@ -241,6 +243,7 @@ mod tests {
             "abc123".to_string(),
             "default".to_string(),
             "default".to_string(),
+            None,
         );
         task2.status = TaskStatus::Complete;
         let mut task3 = Task::new(
@@ -254,6 +257,7 @@ mod tests {
             "abc123".to_string(),
             "default".to_string(),
             "default".to_string(),
+            None,
         );
         task3.status = TaskStatus::Failed;
 

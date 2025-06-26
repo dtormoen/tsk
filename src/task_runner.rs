@@ -72,14 +72,16 @@ impl TaskRunner {
             .await
             .map_err(|e| format!("Agent warmup failed: {}", e))?;
 
-        // Copy repository for the task
-        let (repo_path, branch_name) = self
-            .repo_manager
-            .copy_repo(&task.id, &task.repo_root, Some(&task.source_commit))
-            .await
-            .map_err(|e| format!("Error copying repository: {}", e))?;
+        // Use the pre-copied repository path
+        let repo_path = task
+            .copied_repo_path
+            .as_ref()
+            .ok_or_else(|| "Task does not have a copied repository path".to_string())?
+            .clone();
 
-        println!("Created repository copy at: {}", repo_path.display());
+        let branch_name = task.branch_name.clone();
+
+        println!("Using repository copy at: {}", repo_path.display());
 
         // Get the instructions file path
         let instructions_file_path = PathBuf::from(&task.instructions_file);
@@ -279,6 +281,7 @@ mod tests {
             source_commit: "abc123".to_string(),
             tech_stack: "default".to_string(),
             project: "default".to_string(),
+            copied_repo_path: Some(std::env::current_dir().unwrap()),
         };
 
         let result = task_runner.execute_task(&task, false).await;
@@ -287,5 +290,79 @@ mod tests {
         let execution_result = result.unwrap();
         assert_eq!(execution_result.output, "Test output");
         assert!(execution_result.branch_name.contains("test-task"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_task_requires_copied_repo_path() {
+        use crate::context::file_system::tests::MockFileSystem;
+        use crate::git::RepoManager;
+
+        let fs = Arc::new(MockFileSystem::new());
+        let git_ops = Arc::new(crate::context::git_operations::tests::MockGitOperations::new());
+        let docker_client = Arc::new(FixedResponseDockerClient::default());
+        let xdg_directories = Arc::new(crate::storage::XdgDirectories::new().unwrap());
+
+        let repo_manager = RepoManager::new(xdg_directories.clone(), fs.clone(), git_ops);
+        let docker_manager = crate::docker::DockerManager::new(docker_client.clone(), fs.clone());
+
+        // Create a mock docker image manager
+        use crate::assets::embedded::EmbeddedAssetManager;
+        use crate::docker::composer::DockerComposer;
+        use crate::docker::template_manager::DockerTemplateManager;
+
+        let template_manager =
+            DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), xdg_directories.clone());
+        let composer = DockerComposer::new(DockerTemplateManager::new(
+            Arc::new(EmbeddedAssetManager),
+            xdg_directories,
+        ));
+        let docker_image_manager = Arc::new(DockerImageManager::new(
+            docker_client,
+            template_manager,
+            composer,
+        ));
+
+        let notification_client = Arc::new(crate::notifications::NoOpNotificationClient);
+        let task_runner = TaskRunner::new(
+            repo_manager,
+            docker_manager,
+            docker_image_manager,
+            fs,
+            notification_client,
+        );
+
+        // Create a task without copied_repo_path
+        let task = Task {
+            id: "test-task-123".to_string(),
+            repo_root: std::env::current_dir().unwrap(),
+            name: "test-task".to_string(),
+            task_type: "feature".to_string(),
+            instructions_file: "instructions.md".to_string(),
+            agent: "no-op".to_string(), // Use no-op agent to avoid validation issues
+            timeout: 30,
+            status: TaskStatus::Queued,
+            created_at: chrono::Utc::now(),
+            started_at: None,
+            completed_at: None,
+            branch_name: "tsk/test-task-123".to_string(),
+            error_message: None,
+            source_commit: "abc123".to_string(),
+            tech_stack: "default".to_string(),
+            project: "default".to_string(),
+            copied_repo_path: None, // No copied repo path
+        };
+
+        let result = task_runner.execute_task(&task, false).await;
+
+        // Should fail because copied_repo_path is None
+        assert!(result.is_err());
+        if let Err(err) = result {
+            assert!(
+                err.message
+                    .contains("Task does not have a copied repository path"),
+                "Expected error message to contain 'Task does not have a copied repository path', but got: {}",
+                err.message
+            );
+        }
     }
 }

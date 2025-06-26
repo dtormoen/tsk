@@ -47,6 +47,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 
 **Task Management** (`src/task.rs`, `src/task_storage.rs`, `src/task_manager.rs`)
 - `TaskBuilder` provides consistent task creation with builder pattern
+- Repository is copied at task creation time, ensuring all tasks have a valid repository copy
 - `TaskStorage` trait abstracts storage with JSON-based implementation
 - Centralized JSON persistence in XDG data directory (`$XDG_DATA_HOME/tsk/tasks.json`)
 - Task status: Queued → Running → Complete/Failed
@@ -72,7 +73,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Sequential task execution (one at a time)
 
 **Git Operations** (`src/git.rs`)
-- Repository copying to centralized task directories
+- Repository copying to centralized task directories (includes .tsk directory for Docker configurations)
 - Isolated branch creation and result integration
 - Automatic commit and fetch operations
 
