@@ -25,26 +25,23 @@ impl Command for TasksCommand {
 
         // Handle delete option
         if let Some(ref task_id) = self.delete {
-            println!("Deleting task: {}", task_id);
+            println!("Deleting task: {task_id}");
             task_manager.delete_task(task_id).await?;
-            println!("Task '{}' deleted successfully", task_id);
+            println!("Task '{task_id}' deleted successfully");
         }
 
         // Handle clean option
         if self.clean {
             println!("Cleaning completed tasks...");
             let completed_count = task_manager.clean_tasks().await?;
-            println!(
-                "Cleanup complete: {} completed task(s) deleted",
-                completed_count
-            );
+            println!("Cleanup complete: {completed_count} completed task(s) deleted");
         }
 
         // Handle retry option
         if let Some(ref task_id) = self.retry {
-            println!("Retrying task: {}", task_id);
+            println!("Retrying task: {task_id}");
             let new_task_id = task_manager.retry_task(task_id, self.edit, ctx).await?;
-            println!("Task retried successfully. New task ID: {}", new_task_id);
+            println!("Task retried successfully. New task ID: {new_task_id}");
         }
 
         Ok(())

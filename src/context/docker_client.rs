@@ -74,15 +74,14 @@ impl DefaultDockerClient {
         match Docker::connect_with_local_defaults() {
             Ok(docker) => Self { docker },
             Err(e) => panic!(
-                "Failed to connect to Docker: {}\n\n\
+                "Failed to connect to Docker: {e}\n\n\
                 Please ensure Docker is installed and running:\n\
                   - On macOS: Open Docker Desktop application\n\
                   - On Linux: Run 'sudo systemctl start docker' or 'sudo service docker start'\n\
                   - Check Docker status with: 'docker ps'\n\n\
                 If Docker is running, check permissions:\n\
                   - On Linux: Ensure your user is in the docker group: 'sudo usermod -aG docker $USER'\n\
-                  - Then log out and back in for group changes to take effect",
-                e
+                    - Then log out and back in for group changes to take effect"
             ),
         }
     }
@@ -109,7 +108,7 @@ impl DockerClient for DefaultDockerClient {
             .docker
             .create_container(options, config)
             .await
-            .map_err(|e| format!("Failed to create container: {}", e))?;
+            .map_err(|e| format!("Failed to create container: {e}"))?;
         Ok(response.id)
     }
 
@@ -117,7 +116,7 @@ impl DockerClient for DefaultDockerClient {
         self.docker
             .start_container::<String>(id, None)
             .await
-            .map_err(|e| format!("Failed to start container: {}", e))
+            .map_err(|e| format!("Failed to start container: {e}"))
     }
 
     async fn wait_container(&self, id: &str) -> Result<i64, String> {
@@ -129,7 +128,7 @@ impl DockerClient for DefaultDockerClient {
         if let Some(result) = stream.next().await {
             match result {
                 Ok(wait_response) => Ok(wait_response.status_code),
-                Err(e) => Err(format!("Failed to wait for container: {}", e)),
+                Err(e) => Err(format!("Failed to wait for container: {e}")),
             }
         } else {
             Err("Container wait stream ended unexpectedly".to_string())
@@ -143,7 +142,7 @@ impl DockerClient for DefaultDockerClient {
         while let Some(result) = stream.next().await {
             match result {
                 Ok(log) => output.push_str(&log.to_string()),
-                Err(e) => return Err(format!("Failed to get logs: {}", e)),
+                Err(e) => return Err(format!("Failed to get logs: {e}")),
             }
         }
 
@@ -158,7 +157,7 @@ impl DockerClient for DefaultDockerClient {
         let stream = self.docker.logs(id, options);
         let mapped_stream = stream.map(|result| match result {
             Ok(log) => Ok(log.to_string()),
-            Err(e) => Err(format!("Failed to get logs: {}", e)),
+            Err(e) => Err(format!("Failed to get logs: {e}")),
         });
         Ok(Box::new(Box::pin(mapped_stream)))
     }
@@ -171,7 +170,7 @@ impl DockerClient for DefaultDockerClient {
         self.docker
             .remove_container(id, options)
             .await
-            .map_err(|e| format!("Failed to remove container: {}", e))
+            .map_err(|e| format!("Failed to remove container: {e}"))
     }
 
     async fn create_network(&self, name: &str) -> Result<String, String> {
@@ -184,7 +183,7 @@ impl DockerClient for DefaultDockerClient {
             .docker
             .create_network(options)
             .await
-            .map_err(|e| format!("Failed to create network: {}", e))?;
+            .map_err(|e| format!("Failed to create network: {e}"))?;
 
         Ok(response.id.unwrap_or_else(|| name.to_string()))
     }
@@ -199,7 +198,7 @@ impl DockerClient for DefaultDockerClient {
             .docker
             .list_networks(Some(options))
             .await
-            .map_err(|e| format!("Failed to list networks: {}", e))?;
+            .map_err(|e| format!("Failed to list networks: {e}"))?;
 
         Ok(!networks.is_empty())
     }
@@ -224,7 +223,7 @@ impl DockerClient for DefaultDockerClient {
                 match build_info {
                     Ok(info) => {
                         if let Some(error) = info.error {
-                            let _ = tx.send(Err(format!("Docker build error: {}", error)));
+                            let _ = tx.send(Err(format!("Docker build error: {error}")));
                             break;
                         } else if let Some(stream_msg) = info.stream {
                             if !stream_msg.is_empty() && tx.send(Ok(stream_msg)).is_err() {
@@ -233,7 +232,7 @@ impl DockerClient for DefaultDockerClient {
                         }
                     }
                     Err(e) => {
-                        let _ = tx.send(Err(format!("Failed to build image: {}", e)));
+                        let _ = tx.send(Err(format!("Failed to build image: {e}")));
                         break;
                     }
                 }
@@ -258,7 +257,7 @@ impl DockerClient for DefaultDockerClient {
             .docker
             .list_images(Some(options))
             .await
-            .map_err(|e| format!("Failed to list images: {}", e))?;
+            .map_err(|e| format!("Failed to list images: {e}"))?;
 
         Ok(!images.is_empty())
     }

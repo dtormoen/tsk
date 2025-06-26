@@ -55,7 +55,7 @@ impl DefaultTerminalOperations {
         // Use OSC (Operating System Command) sequences
         // OSC 0 sets both window and icon title
         // Format: ESC]0;title BEL
-        let _ = write!(io::stdout(), "\x1b]0;{}\x07", title);
+        let _ = write!(io::stdout(), "\x1b]0;{title}\x07");
         let _ = io::stdout().flush();
     }
 }
@@ -159,7 +159,7 @@ mod tests {
         for i in 0..5 {
             let ops = Arc::clone(&terminal_ops);
             let handle = thread::spawn(move || {
-                ops.set_title(&format!("Thread {}", i));
+                ops.set_title(&format!("Thread {i}"));
                 ops.restore_title();
             });
             handles.push(handle);

@@ -164,7 +164,7 @@ pub(crate) mod tests {
             for (path, content) in files.iter() {
                 if path.starts_with(&from_str) {
                     let relative = path.strip_prefix(&from_str).unwrap();
-                    let new_path = format!("{}{}", to_str, relative);
+                    let new_path = format!("{to_str}{relative}");
                     new_files.insert(new_path, content.clone());
                 }
             }

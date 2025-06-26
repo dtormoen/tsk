@@ -45,7 +45,7 @@ pub fn extract_dockerfile_to_temp(
             Ok(content) => {
                 let file_path = temp_path.join(file_name);
                 fs::write(&file_path, content)
-                    .with_context(|| format!("Failed to write {}", file_name))?;
+                    .with_context(|| format!("Failed to write {file_name}"))?;
             }
             Err(_) => {
                 // File doesn't exist, which is fine

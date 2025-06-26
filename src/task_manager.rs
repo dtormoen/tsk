@@ -118,7 +118,7 @@ impl TaskManager {
             running_task.started_at = Some(chrono::Utc::now());
 
             if let Err(e) = storage.update_task(running_task.clone()).await {
-                eprintln!("Error updating task status: {}", e);
+                eprintln!("Error updating task status: {e}");
             }
         }
 
@@ -147,7 +147,7 @@ impl TaskManager {
                     }
 
                     if let Err(e) = storage.update_task(updated_task).await {
-                        eprintln!("Error updating task status: {}", e);
+                        eprintln!("Error updating task status: {e}");
                     }
                 }
                 Ok(result)
@@ -161,7 +161,7 @@ impl TaskManager {
                     failed_task.completed_at = Some(chrono::Utc::now());
 
                     if let Err(storage_err) = storage.update_task(failed_task).await {
-                        eprintln!("Error updating task status: {}", storage_err);
+                        eprintln!("Error updating task status: {storage_err}");
                     }
                 }
                 Err(e)
@@ -181,17 +181,17 @@ impl TaskManager {
         let task = storage
             .get_task(task_id)
             .await
-            .map_err(|e| format!("Error getting task: {}", e))?;
+            .map_err(|e| format!("Error getting task: {e}"))?;
 
         if task.is_none() {
-            return Err(format!("Task with ID '{}' not found", task_id));
+            return Err(format!("Task with ID '{task_id}' not found"));
         }
 
         // Delete from storage first
         storage
             .delete_task(task_id)
             .await
-            .map_err(|e| format!("Error deleting task from storage: {}", e))?;
+            .map_err(|e| format!("Error deleting task from storage: {e}"))?;
 
         // Delete the task directory
         let task = task.unwrap();
@@ -201,7 +201,7 @@ impl TaskManager {
             self.file_system
                 .remove_dir(&task_dir)
                 .await
-                .map_err(|e| format!("Error deleting task directory: {}", e))?;
+                .map_err(|e| format!("Error deleting task directory: {e}"))?;
         }
 
         Ok(())
@@ -219,7 +219,7 @@ impl TaskManager {
         let all_tasks = storage
             .list_tasks()
             .await
-            .map_err(|e| format!("Error listing tasks: {}", e))?;
+            .map_err(|e| format!("Error listing tasks: {e}"))?;
 
         // Filter completed tasks
         let completed_tasks: Vec<&Task> = all_tasks
@@ -245,7 +245,7 @@ impl TaskManager {
         let deleted_count = storage
             .delete_tasks_by_status(vec![TaskStatus::Complete])
             .await
-            .map_err(|e| format!("Error deleting completed tasks: {}", e))?;
+            .map_err(|e| format!("Error deleting completed tasks: {e}"))?;
 
         Ok(deleted_count)
     }
@@ -267,11 +267,11 @@ impl TaskManager {
         let original_task = storage
             .get_task(task_id)
             .await
-            .map_err(|e| format!("Error getting task: {}", e))?;
+            .map_err(|e| format!("Error getting task: {e}"))?;
 
         let original_task = match original_task {
             Some(task) => task,
-            None => return Err(format!("Task with ID '{}' not found", task_id)),
+            None => return Err(format!("Task with ID '{task_id}' not found")),
         };
 
         // Validate that the task has been executed (not Queued)
@@ -290,13 +290,13 @@ impl TaskManager {
         let new_task = builder
             .build(ctx)
             .await
-            .map_err(|e| format!("Failed to build retry task: {}", e))?;
+            .map_err(|e| format!("Failed to build retry task: {e}"))?;
 
         // Store the new task
         storage
             .add_task(new_task.clone())
             .await
-            .map_err(|e| format!("Error adding retry task to storage: {}", e))?;
+            .map_err(|e| format!("Error adding retry task to storage: {e}"))?;
 
         Ok(new_task.id)
     }
@@ -418,7 +418,7 @@ mod tests {
             "instructions.md".to_string(),
             "claude-code".to_string(),
             30,
-            format!("tsk/{}", queued_task_id),
+            format!("tsk/{queued_task_id}"),
             "abc123".to_string(),
             "default".to_string(),
             "default".to_string(),
@@ -434,7 +434,7 @@ mod tests {
             "instructions.md".to_string(),
             "claude-code".to_string(),
             30,
-            format!("tsk/{}", completed_task_id),
+            format!("tsk/{completed_task_id}"),
             "abc123".to_string(),
             "default".to_string(),
             "default".to_string(),
@@ -540,7 +540,7 @@ mod tests {
             ),
             "claude-code".to_string(),
             45,
-            format!("tsk/{}", task_id),
+            format!("tsk/{task_id}"),
             "abc123".to_string(),
             "default".to_string(),
             "default".to_string(),
@@ -785,7 +785,7 @@ mod tests {
             "instructions.md".to_string(),
             "claude-code".to_string(),
             30,
-            format!("tsk/{}", task_id),
+            format!("tsk/{task_id}"),
             "abc123".to_string(),
             "default".to_string(),
             "default".to_string(),

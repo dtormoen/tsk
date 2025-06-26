@@ -79,7 +79,7 @@ impl Command for ListCommand {
                 .collect();
 
             let table = Table::new(rows).with(Style::modern()).to_string();
-            println!("{}", table);
+            println!("{table}");
 
             // Print summary
             let queued = tasks
@@ -100,8 +100,7 @@ impl Command for ListCommand {
                 .count();
 
             println!(
-                "\nSummary: {} queued, {} running, {} complete, {} failed",
-                queued, running, complete, failed
+                "\nSummary: {queued} queued, {running} running, {complete} complete, {failed} failed"
             );
         }
 

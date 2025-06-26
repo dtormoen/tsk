@@ -238,13 +238,13 @@ impl DockerClient for TrackedDockerClient {
                 if cmd.contains(&"false".to_string()) {
                     Ok("test-container-id-fail".to_string())
                 } else {
-                    Ok(format!("test-container-id-{}", call_count))
+                    Ok(format!("test-container-id-{call_count}"))
                 }
             } else {
-                Ok(format!("test-container-id-{}", call_count))
+                Ok(format!("test-container-id-{call_count}"))
             }
         } else {
-            Ok(format!("test-container-id-{}", call_count))
+            Ok(format!("test-container-id-{call_count}"))
         };
 
         // Now we can move config into the vector

@@ -62,7 +62,7 @@ impl DefaultTskClient {
         )
         .await
         .map_err(|_| "Connection timeout")?
-        .map_err(|e| format!("Failed to connect to server: {}", e))?;
+        .map_err(|e| format!("Failed to connect to server: {e}"))?;
 
         let (reader, mut writer) = stream.into_split();
         let mut reader = BufReader::new(reader);
@@ -81,7 +81,7 @@ impl DefaultTskClient {
         )
         .await
         .map_err(|_| "Response timeout")?
-        .map_err(|e| format!("Failed to read response: {}", e))?;
+        .map_err(|e| format!("Failed to read response: {e}"))?;
 
         // Check if we received any data
         if bytes_read == 0 || response_line.trim().is_empty() {
@@ -120,7 +120,7 @@ impl TskClient for DefaultTskClient {
 
         match response {
             Response::Success { message } => {
-                println!("{}", message);
+                println!("{message}");
                 Ok(())
             }
             Response::Error { message } => Err(message.into()),
@@ -159,7 +159,7 @@ impl TskClient for DefaultTskClient {
 
         match response {
             Response::Success { message } => {
-                println!("{}", message);
+                println!("{message}");
                 Ok(())
             }
             Response::Error { message } => Err(message.into()),

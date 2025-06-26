@@ -14,5 +14,5 @@ pub fn get_repo_hash(repo_path: &Path) -> String {
     let hash = hasher.finish();
 
     // Convert to hex string, take first 8 characters for brevity
-    format!("{:x}", hash).chars().take(8).collect()
+    format!("{hash:x}").chars().take(8).collect()
 }

@@ -232,11 +232,9 @@ impl TaskBuilder {
         // Validate agent
         if !crate::agent::AgentProvider::is_valid_agent(&agent) {
             let available_agents = crate::agent::AgentProvider::list_agents().join(", ");
-            return Err(format!(
-                "Unknown agent '{}'. Available agents: {}",
-                agent, available_agents
-            )
-            .into());
+            return Err(
+                format!("Unknown agent '{agent}'. Available agents: {available_agents}").into(),
+            );
         }
 
         // Validate task type
@@ -270,7 +268,7 @@ impl TaskBuilder {
         // Create instructions file
         let instructions_path = if self.edit {
             // Create temporary file in repository root for editing
-            let temp_filename = format!(".tsk-edit-{}-instructions.md", task_dir_name);
+            let temp_filename = format!(".tsk-edit-{task_dir_name}-instructions.md");
             let temp_path = repo_root.join(&temp_filename);
             self.write_instructions_content(&temp_path, &task_type, ctx)
                 .await?;
@@ -297,28 +295,23 @@ impl TaskBuilder {
         let source_commit = match ctx.git_operations().get_current_commit(&repo_root).await {
             Ok(commit) => commit,
             Err(e) => {
-                return Err(
-                    format!("Failed to get current commit for task '{}': {}", name, e).into(),
-                );
+                return Err(format!("Failed to get current commit for task '{name}': {e}").into());
             }
         };
 
         // Auto-detect tech_stack and project if not provided
         let tech_stack = match self.tech_stack {
             Some(ts) => {
-                println!("Using tech stack: {}", ts);
+                println!("Using tech stack: {ts}");
                 ts
             }
             None => match ctx.repository_context().detect_tech_stack(&repo_root).await {
                 Ok(detected) => {
-                    println!("Auto-detected tech stack: {}", detected);
+                    println!("Auto-detected tech stack: {detected}");
                     detected
                 }
                 Err(e) => {
-                    eprintln!(
-                        "Warning: Failed to detect tech stack: {}. Using default.",
-                        e
-                    );
+                    eprintln!("Warning: Failed to detect tech stack: {e}. Using default.");
                     "default".to_string()
                 }
             },
@@ -326,7 +319,7 @@ impl TaskBuilder {
 
         let project = match self.project {
             Some(p) => {
-                println!("Using project: {}", p);
+                println!("Using project: {p}");
                 p
             }
             None => {
@@ -336,14 +329,11 @@ impl TaskBuilder {
                     .await
                 {
                     Ok(detected) => {
-                        println!("Auto-detected project name: {}", detected);
+                        println!("Auto-detected project name: {detected}");
                         detected
                     }
                     Err(e) => {
-                        eprintln!(
-                            "Warning: Failed to detect project name: {}. Using default.",
-                            e
-                        );
+                        eprintln!("Warning: Failed to detect project name: {e}. Using default.");
                         "default".to_string()
                     }
                 }
@@ -351,7 +341,7 @@ impl TaskBuilder {
         };
 
         // Generate branch name from task ID
-        let branch_name = format!("tsk/{}", task_dir_name);
+        let branch_name = format!("tsk/{task_dir_name}");
 
         // Copy the repository for the task
         let repo_manager = RepoManager::new(
@@ -363,7 +353,7 @@ impl TaskBuilder {
         let (copied_repo_path, _) = repo_manager
             .copy_repo(&task_dir_name, &repo_root, Some(&source_commit))
             .await
-            .map_err(|e| format!("Failed to copy repository: {}", e))?;
+            .map_err(|e| format!("Failed to copy repository: {e}"))?;
 
         // Create and return the task
         let task = Task::new(
@@ -408,7 +398,7 @@ impl TaskBuilder {
                 match asset_manager.get_template(task_type) {
                     Ok(template_content) => template_content.replace("{{DESCRIPTION}}", desc),
                     Err(e) => {
-                        eprintln!("Warning: Failed to read template: {}", e);
+                        eprintln!("Warning: Failed to read template: {e}");
                         desc.clone()
                     }
                 }
@@ -452,7 +442,7 @@ impl TaskBuilder {
             }
         });
 
-        println!("Opening instructions file in editor: {}", editor);
+        println!("Opening instructions file in editor: {editor}");
 
         let status = std::process::Command::new(&editor)
             .arg(instructions_path)
@@ -535,7 +525,7 @@ mod tests {
             "instructions.md".to_string(),
             "claude-code".to_string(),
             30,
-            format!("tsk/{}", id),
+            format!("tsk/{id}"),
             "abc123".to_string(),
             "default".to_string(),
             "default".to_string(),

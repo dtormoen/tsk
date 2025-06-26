@@ -35,7 +35,7 @@ impl RepoManager {
     ) -> Result<(PathBuf, String), String> {
         // Use the task ID directly for the directory name
         let task_dir_name = task_id;
-        let branch_name = format!("tsk/{}", task_id);
+        let branch_name = format!("tsk/{task_id}");
 
         // Create the task directory structure in centralized location
         let repo_hash = crate::storage::get_repo_hash(repo_root);
@@ -46,7 +46,7 @@ impl RepoManager {
         self.file_system
             .create_dir(&task_dir)
             .await
-            .map_err(|e| format!("Failed to create task directory: {}", e))?;
+            .map_err(|e| format!("Failed to create task directory: {e}"))?;
 
         // Check if we're in a git repository
         if !self.git_operations.is_git_repository().await? {
@@ -66,7 +66,7 @@ impl RepoManager {
             .file_system
             .exists(&git_src)
             .await
-            .map_err(|e| format!("Failed to check if .git exists: {}", e))?
+            .map_err(|e| format!("Failed to check if .git exists: {e}"))?
         {
             self.copy_directory(&git_src, &git_dst).await?;
         }
@@ -81,7 +81,7 @@ impl RepoManager {
                 self.file_system
                     .create_dir(parent)
                     .await
-                    .map_err(|e| format!("Failed to create parent directory: {}", e))?;
+                    .map_err(|e| format!("Failed to create parent directory: {e}"))?;
             }
 
             // Copy the file
@@ -100,7 +100,7 @@ impl RepoManager {
             .file_system
             .exists(&tsk_src)
             .await
-            .map_err(|e| format!("Failed to check if .tsk exists: {}", e))?
+            .map_err(|e| format!("Failed to check if .tsk exists: {e}"))?
         {
             self.copy_directory(&tsk_src, &tsk_dst).await?;
         }
@@ -112,7 +112,7 @@ impl RepoManager {
                 self.git_operations
                     .create_branch_from_commit(&repo_path, &branch_name, commit_sha)
                     .await?;
-                println!("Created branch from commit: {}", commit_sha);
+                println!("Created branch from commit: {commit_sha}");
             }
             None => {
                 // Create branch from HEAD (existing behavior)
@@ -123,7 +123,7 @@ impl RepoManager {
         }
 
         println!("Created repository copy at: {}", repo_path.display());
-        println!("Branch: {}", branch_name);
+        println!("Branch: {branch_name}");
         Ok((repo_path, branch_name))
     }
 
@@ -133,13 +133,13 @@ impl RepoManager {
         self.file_system
             .create_dir(dst)
             .await
-            .map_err(|e| format!("Failed to create destination directory: {}", e))?;
+            .map_err(|e| format!("Failed to create destination directory: {e}"))?;
 
         let entries = self
             .file_system
             .read_dir(src)
             .await
-            .map_err(|e| format!("Failed to read directory: {}", e))?;
+            .map_err(|e| format!("Failed to read directory: {e}"))?;
 
         for path in entries {
             let file_name = path
@@ -178,7 +178,7 @@ impl RepoManager {
         // Commit changes
         self.git_operations.commit(repo_path, message).await?;
 
-        println!("Committed changes: {}", message);
+        println!("Committed changes: {message}");
         Ok(())
     }
 
@@ -234,14 +234,14 @@ impl RepoManager {
             .await?;
 
         if !has_commits {
-            println!("No new commits in branch {} - deleting branch", branch_name);
+            println!("No new commits in branch {branch_name} - deleting branch");
             // Delete the branch from the main repository since it has no new commits
             if let Err(e) = self
                 .git_operations
                 .delete_branch(&main_repo, branch_name)
                 .await
             {
-                eprintln!("Warning: Failed to delete branch {}: {}", branch_name, e);
+                eprintln!("Warning: Failed to delete branch {branch_name}: {e}");
             }
             return Ok(false);
         }
@@ -306,7 +306,7 @@ mod tests {
 
         let result = manager.commit_changes(repo_path, "Test commit").await;
 
-        assert!(result.is_ok(), "Error: {:?}", result);
+        assert!(result.is_ok(), "Error: {result:?}");
     }
 
     #[tokio::test]
@@ -326,7 +326,7 @@ mod tests {
 
         let result = manager.commit_changes(repo_path, "Test commit").await;
 
-        assert!(result.is_ok(), "Error: {:?}", result);
+        assert!(result.is_ok(), "Error: {result:?}");
     }
 
     #[tokio::test]
@@ -353,7 +353,7 @@ mod tests {
             .fetch_changes(repo_path, "tsk/test-branch", repo_root)
             .await;
 
-        assert!(result.is_ok(), "Error: {:?}", result);
+        assert!(result.is_ok(), "Error: {result:?}");
         assert_eq!(result.unwrap(), false);
 
         // Verify that delete_branch was called
@@ -386,7 +386,7 @@ mod tests {
             .fetch_changes(repo_path, "tsk/test-branch", repo_root)
             .await;
 
-        assert!(result.is_ok(), "Error: {:?}", result);
+        assert!(result.is_ok(), "Error: {result:?}");
         assert_eq!(result.unwrap(), true);
 
         // Verify that delete_branch was NOT called
@@ -431,7 +431,7 @@ mod tests {
             )
             .await;
 
-        assert!(result.is_ok(), "Error: {:?}", result);
+        assert!(result.is_ok(), "Error: {result:?}");
         let (_, branch_name) = result.unwrap();
         assert_eq!(branch_name, "tsk/2024-01-01-1200-generic-test-task");
 
@@ -474,7 +474,7 @@ mod tests {
             .copy_repo("2024-01-01-1200-generic-test-task", repo_root, None)
             .await;
 
-        assert!(result.is_ok(), "Error: {:?}", result);
+        assert!(result.is_ok(), "Error: {result:?}");
         let (_, branch_name) = result.unwrap();
         assert_eq!(branch_name, "tsk/2024-01-01-1200-generic-test-task");
 
@@ -529,7 +529,7 @@ mod tests {
             .copy_repo("2024-01-01-1200-generic-test-task", repo_root, None)
             .await;
 
-        assert!(result.is_ok(), "Error: {:?}", result);
+        assert!(result.is_ok(), "Error: {result:?}");
         let (repo_path, _) = result.unwrap();
 
         // Verify only tracked files were copied
@@ -537,18 +537,18 @@ mod tests {
         let repo_path_str = repo_path.to_string_lossy();
 
         // Check that tracked files exist in destination
-        assert!(copied_files.contains_key(&format!("{}/src/main.rs", repo_path_str)));
-        assert!(copied_files.contains_key(&format!("{}/Cargo.toml", repo_path_str)));
+        assert!(copied_files.contains_key(&format!("{repo_path_str}/src/main.rs")));
+        assert!(copied_files.contains_key(&format!("{repo_path_str}/Cargo.toml")));
 
         // Check that untracked files were NOT copied
-        assert!(!copied_files.contains_key(&format!("{}/target/debug/app", repo_path_str)));
-        assert!(!copied_files.contains_key(&format!("{}/build.log", repo_path_str)));
+        assert!(!copied_files.contains_key(&format!("{repo_path_str}/target/debug/app")));
+        assert!(!copied_files.contains_key(&format!("{repo_path_str}/build.log")));
 
         // Check that .git directory was copied
         let copied_dirs = fs.get_dirs();
         assert!(copied_dirs
             .iter()
-            .any(|d| d == &format!("{}/.git", repo_path_str)));
+            .any(|d| d == &format!("{repo_path_str}/.git")));
     }
 
     #[tokio::test]
@@ -590,7 +590,7 @@ mod tests {
             .copy_repo("2024-01-01-1200-generic-test-task", repo_root, None)
             .await;
 
-        assert!(result.is_ok(), "Error: {:?}", result);
+        assert!(result.is_ok(), "Error: {result:?}");
         let (repo_path, _) = result.unwrap();
 
         // Verify .tsk directory and its contents were copied

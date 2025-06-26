@@ -67,7 +67,7 @@ impl TskServer {
         let executor = self.executor.clone();
         let executor_handle = tokio::spawn(async move {
             if let Err(e) = executor.start().await {
-                eprintln!("Executor error: {}", e);
+                eprintln!("Executor error: {e}");
             }
         });
 
@@ -90,12 +90,12 @@ impl TskServer {
                         if let Err(e) =
                             handle_client(stream, app_context, storage, shutdown_signal).await
                         {
-                            eprintln!("Error handling client: {}", e);
+                            eprintln!("Error handling client: {e}");
                         }
                     });
                 }
                 Err(e) => {
-                    eprintln!("Error accepting connection: {}", e);
+                    eprintln!("Error accepting connection: {e}");
                 }
             }
         }

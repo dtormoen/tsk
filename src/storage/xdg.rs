@@ -79,7 +79,7 @@ impl XdgDirectories {
     pub fn task_dir(&self, task_id: &str, repo_hash: &str) -> PathBuf {
         self.data_dir
             .join("tasks")
-            .join(format!("{}-{}", repo_hash, task_id))
+            .join(format!("{repo_hash}-{task_id}"))
     }
 
     /// Get the server socket path
@@ -134,7 +134,7 @@ impl XdgDirectories {
             }
         });
 
-        Ok(PathBuf::from("/tmp").join(format!("tsk-{}", uid)))
+        Ok(PathBuf::from("/tmp").join(format!("tsk-{uid}")))
     }
 
     fn resolve_config_dir() -> Result<PathBuf, XdgError> {

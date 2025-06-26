@@ -50,7 +50,7 @@ impl DockerManager {
         {
             Ok(_) => Ok(()),
             Err(e) if e.contains("No such container") => Ok(()),
-            Err(e) => Err(format!("Failed to stop proxy container: {}", e)),
+            Err(e) => Err(format!("Failed to stop proxy container: {e}")),
         }
     }
 
@@ -118,7 +118,7 @@ impl DockerManager {
         // Convert to absolute path to ensure Docker can find the volume
         let absolute_path = if worktree_path.is_relative() {
             std::env::current_dir()
-                .map_err(|e| format!("Failed to get current directory: {}", e))?
+                .map_err(|e| format!("Failed to get current directory: {e}"))?
                 .join(worktree_path)
         } else {
             worktree_path.to_path_buf()
@@ -135,15 +135,15 @@ impl DockerManager {
         agent: Option<&dyn Agent>,
     ) -> Config<String> {
         // Build binds vector starting with workspace
-        let mut binds = vec![format!("{}:{}", worktree_path_str, CONTAINER_WORKING_DIR)];
+        let mut binds = vec![format!("{worktree_path_str}:{CONTAINER_WORKING_DIR}")];
 
         // Add agent-specific volumes if provided
         if let Some(agent) = agent {
             for (host_path, container_path, options) in agent.volumes() {
                 let bind = if options.is_empty() {
-                    format!("{}:{}", host_path, container_path)
+                    format!("{host_path}:{container_path}")
                 } else {
-                    format!("{}:{}{}", host_path, container_path, options)
+                    format!("{host_path}:{container_path}:{options}")
                 };
                 binds.push(bind);
             }
@@ -175,12 +175,12 @@ impl DockerManager {
         // Add agent-specific environment variables if provided
         if let Some(agent) = agent {
             for (key, value) in agent.environment() {
-                env_vars.push(format!("{}={}", key, value));
+                env_vars.push(format!("{key}={value}"));
             }
         } else {
             // Default environment if no agent specified
-            env_vars.push(format!("HOME=/home/{}", CONTAINER_USER));
-            env_vars.push(format!("USER={}", CONTAINER_USER));
+            env_vars.push(format!("HOME=/home/{CONTAINER_USER}"));
+            env_vars.push(format!("USER={CONTAINER_USER}"));
         }
 
         Config {
@@ -340,7 +340,7 @@ impl DockerManager {
             // Save logs if requested
             if let Some(log_path) = log_file_path {
                 if let Err(e) = log_processor.save_full_log(log_path).await {
-                    eprintln!("Warning: Failed to save full log file: {}", e);
+                    eprintln!("Warning: Failed to save full log file: {e}");
                 } else {
                     println!("Full log saved to: {}", log_path.display());
                 }
@@ -372,7 +372,7 @@ impl DockerManager {
         container_name: &str,
     ) -> Result<(), String> {
         println!("\nDocker container started successfully!");
-        println!("Container name: {}", container_name);
+        println!("Container name: {container_name}");
         println!("\nStarting interactive session...");
 
         println!("\nAgent command is running, you'll be dropped into a shell when it completes...");
@@ -382,7 +382,7 @@ impl DockerManager {
         let status = std::process::Command::new("docker")
             .args(["attach", container_name])
             .status()
-            .map_err(|e| format!("Failed to execute docker attach: {}", e))?;
+            .map_err(|e| format!("Failed to execute docker attach: {e}"))?;
 
         if !status.success() {
             eprintln!("Interactive session exited with non-zero status");
@@ -425,14 +425,14 @@ impl DockerManager {
                                 }
                             }
                             Err(e) => {
-                                eprintln!("Error streaming logs: {}", e);
+                                eprintln!("Error streaming logs: {e}");
                                 break;
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to start log streaming: {}", e);
+                    eprintln!("Failed to start log streaming: {e}");
                 }
             }
         });
@@ -447,7 +447,7 @@ impl DockerManager {
                     all_logs.push_str(&log_line);
                     // Process each line through the log processor
                     if let Some(formatted) = log_processor.process_line(&log_line) {
-                        println!("{}", formatted);
+                        println!("{formatted}");
                     }
                 }
                 exit_code = self.client.wait_container(container_id) => {
@@ -460,7 +460,7 @@ impl DockerManager {
                     while let Ok(log_line) = rx.try_recv() {
                         all_logs.push_str(&log_line);
                         if let Some(formatted) = log_processor.process_line(&log_line) {
-                            println!("{}", formatted);
+                            println!("{formatted}");
                         }
                     }
 
@@ -471,8 +471,7 @@ impl DockerManager {
                         return Ok(all_logs);
                     } else {
                         return Err(format!(
-                            "Container exited with non-zero status: {}. Output:\n{}",
-                            exit_code, all_logs
+                            "Container exited with non-zero status: {exit_code}. Output:\n{all_logs}"
                         ));
                     }
                 }
@@ -705,7 +704,7 @@ mod tests {
 
         let binds = host_config.binds.as_ref().unwrap();
         assert_eq!(binds.len(), 3);
-        assert!(binds[0].contains(&format!("/tmp/test-worktree:{}", CONTAINER_WORKING_DIR)));
+        assert!(binds[0].contains(&format!("/tmp/test-worktree:{CONTAINER_WORKING_DIR}")));
         assert!(binds[1].ends_with("/.claude:/home/agent/.claude"));
         assert!(binds[2].ends_with("/.claude.json:/home/agent/.claude.json"));
 
@@ -786,7 +785,7 @@ mod tests {
         // Should contain an absolute path (starts with /)
         assert!(worktree_bind.starts_with('/'));
         assert!(worktree_bind.contains("test-worktree"));
-        assert!(worktree_bind.ends_with(&format!(":{}", CONTAINER_WORKING_DIR)));
+        assert!(worktree_bind.ends_with(&format!(":{CONTAINER_WORKING_DIR}")));
 
         // Should also have the claude directory and claude.json mounts
         assert_eq!(binds.len(), 3);

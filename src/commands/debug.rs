@@ -32,19 +32,16 @@ impl Command for DebugCommand {
         // Auto-detect tech_stack if not provided
         let tech_stack = match &self.tech_stack {
             Some(ts) => {
-                println!("Using tech stack: {}", ts);
+                println!("Using tech stack: {ts}");
                 ts.clone()
             }
             None => match ctx.repository_context().detect_tech_stack(&repo_root).await {
                 Ok(detected) => {
-                    println!("Auto-detected tech stack: {}", detected);
+                    println!("Auto-detected tech stack: {detected}");
                     detected
                 }
                 Err(e) => {
-                    eprintln!(
-                        "Warning: Failed to detect tech stack: {}. Using default.",
-                        e
-                    );
+                    eprintln!("Warning: Failed to detect tech stack: {e}. Using default.");
                     "default".to_string()
                 }
             },
@@ -53,7 +50,7 @@ impl Command for DebugCommand {
         // Auto-detect project if not provided
         let project = match &self.project {
             Some(p) => {
-                println!("Using project: {}", p);
+                println!("Using project: {p}");
                 Some(p.clone())
             }
             None => {
@@ -63,14 +60,11 @@ impl Command for DebugCommand {
                     .await
                 {
                     Ok(detected) => {
-                        println!("Auto-detected project name: {}", detected);
+                        println!("Auto-detected project name: {detected}");
                         Some(detected)
                     }
                     Err(e) => {
-                        eprintln!(
-                            "Warning: Failed to detect project name: {}. Using default.",
-                            e
-                        );
+                        eprintln!("Warning: Failed to detect project name: {e}. Using default.");
                         Some("default".to_string())
                     }
                 }
@@ -99,7 +93,7 @@ impl Command for DebugCommand {
         // Create a minimal task for debug session
         let timestamp = chrono::Local::now();
         let task_id = format!("{}-debug-{}", timestamp.format("%Y-%m-%d-%H%M"), self.name);
-        let branch_name = format!("tsk/{}", task_id);
+        let branch_name = format!("tsk/{task_id}");
 
         let agent = self
             .agent
@@ -132,7 +126,7 @@ impl Command for DebugCommand {
         let (copied_repo_path, _) = repo_manager
             .copy_repo(&task_id, &repo_root, Some(&task.source_commit))
             .await
-            .map_err(|e| format!("Failed to copy repository: {}", e))?;
+            .map_err(|e| format!("Failed to copy repository: {e}"))?;
 
         // Update the task with the copied repository path
         task.copied_repo_path = copied_repo_path;

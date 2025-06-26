@@ -96,7 +96,7 @@ impl DockerImageManager {
             );
 
             return Ok(DockerImage {
-                tag: format!("tsk/{}/{}/default", tech_stack, agent),
+                tag: format!("tsk/{tech_stack}/{agent}/default"),
                 used_fallback: true,
             });
         }
@@ -111,16 +111,14 @@ impl DockerImageManager {
                 }
                 DockerLayerType::TechStack => {
                     return Err(anyhow::anyhow!(
-                        "Technology stack '{}' not found. Available tech stacks: {:?}",
-                        tech_stack,
+                        "Technology stack '{tech_stack}' not found. Available tech stacks: {:?}",
                         self.template_manager
                             .list_available_layers(DockerLayerType::TechStack, project_root)
                     ));
                 }
                 DockerLayerType::Agent => {
                     return Err(anyhow::anyhow!(
-                        "Agent '{}' not found. Available agents: {:?}",
-                        agent,
+                        "Agent '{agent}' not found. Available agents: {:?}",
                         self.template_manager
                             .list_available_layers(DockerLayerType::Agent, project_root)
                     ));
@@ -128,15 +126,14 @@ impl DockerImageManager {
                 DockerLayerType::Project => {
                     // This should have been handled by fallback above
                     return Err(anyhow::anyhow!(
-                        "Project layer '{}' not found and default fallback failed",
-                        project
+                        "Project layer '{project}' not found and default fallback failed"
                     ));
                 }
             }
         }
 
         Ok(DockerImage {
-            tag: format!("tsk/{}/{}/{}", tech_stack, agent, project),
+            tag: format!("tsk/{tech_stack}/{agent}/{project}"),
             used_fallback: false,
         })
     }
@@ -247,7 +244,7 @@ impl DockerImageManager {
                 .is_err();
 
         Ok(DockerImage {
-            tag: format!("tsk/{}/{}/{}", tech_stack, agent, project),
+            tag: format!("tsk/{tech_stack}/{agent}/{project}"),
             used_fallback,
         })
     }
@@ -296,20 +293,20 @@ impl DockerImageManager {
             .docker_client
             .build_image(options, tar_archive)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to build proxy image: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to build proxy image: {e}"))?;
 
         // Stream build output for real-time visibility
         use futures_util::StreamExt;
         while let Some(result) = build_stream.next().await {
             match result {
                 Ok(line) => {
-                    print!("{}", line);
+                    print!("{line}");
                     // Ensure output is flushed immediately
                     use std::io::Write;
                     std::io::stdout().flush().unwrap_or(());
                 }
                 Err(e) => {
-                    return Err(anyhow::anyhow!("Failed to build proxy image: {}", e));
+                    return Err(anyhow::anyhow!("Failed to build proxy image: {e}"));
                 }
             }
         }
@@ -386,20 +383,20 @@ impl DockerImageManager {
             .docker_client
             .build_image(options, tar_archive)
             .await
-            .map_err(|e| anyhow::anyhow!("Docker build failed: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Docker build failed: {e}"))?;
 
         // Stream build output for real-time visibility
         use futures_util::StreamExt;
         while let Some(result) = build_stream.next().await {
             match result {
                 Ok(line) => {
-                    print!("{}", line);
+                    print!("{line}");
                     // Ensure output is flushed immediately
                     use std::io::Write;
                     std::io::stdout().flush().unwrap_or(());
                 }
                 Err(e) => {
-                    return Err(anyhow::anyhow!("Docker build failed: {}", e));
+                    return Err(anyhow::anyhow!("Docker build failed: {e}"));
                 }
             }
         }
@@ -456,14 +453,13 @@ async fn get_git_config(key: &str) -> Result<String> {
         .args(["config", "--global", key])
         .output()
         .await
-        .with_context(|| format!("Failed to execute git config for {}", key))?;
+        .with_context(|| format!("Failed to execute git config for {key}"))?;
 
     if !output.status.success() {
         return Err(anyhow::anyhow!(
-            "Git config '{}' not set. Please configure git with your name and email:\n\
+            "Git config '{key}' not set. Please configure git with your name and email:\n\
              git config --global user.name \"Your Name\"\n\
-             git config --global user.email \"your.email@example.com\"",
-            key
+             git config --global user.email \"your.email@example.com\""
         ));
     }
 
@@ -474,8 +470,7 @@ async fn get_git_config(key: &str) -> Result<String> {
 
     if value.is_empty() {
         return Err(anyhow::anyhow!(
-            "Git config '{}' is empty. Please configure git with your name and email.",
-            key
+            "Git config '{key}' is empty. Please configure git with your name and email."
         ));
     }
 

@@ -31,7 +31,7 @@ impl Command for StopServerCommand {
                 }
             }
             Err(e) => {
-                eprintln!("Failed to stop server: {}", e);
+                eprintln!("Failed to stop server: {e}");
                 return Err(Box::new(std::io::Error::other(e.to_string())));
             }
         }

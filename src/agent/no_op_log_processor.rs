@@ -41,6 +41,6 @@ impl LogProcessor for NoOpLogProcessor {
     async fn save_full_log(&self, path: &Path) -> Result<(), String> {
         tokio::fs::write(path, self.get_full_log())
             .await
-            .map_err(|e| format!("Failed to save log: {}", e))
+            .map_err(|e| format!("Failed to save log: {e}"))
     }
 }

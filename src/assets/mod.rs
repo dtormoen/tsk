@@ -42,7 +42,7 @@ pub trait AssetManager: Send + Sync {
         let dockerfile_name = if layer_type == "base" {
             "base".to_string()
         } else {
-            format!("{}/{}", layer_type, layer_name)
+            format!("{layer_type}/{layer_name}")
         };
         self.get_dockerfile(&dockerfile_name)
     }
@@ -57,7 +57,7 @@ pub trait AssetManager: Send + Sync {
         let prefix = if layer_type == "base" {
             "base".to_string()
         } else {
-            format!("{}/", layer_type)
+            format!("{layer_type}/")
         };
 
         self.list_dockerfiles()

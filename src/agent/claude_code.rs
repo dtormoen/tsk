@@ -48,13 +48,13 @@ impl Agent for ClaudeCodeAgent {
         vec![
             // Claude config directory
             (
-                format!("{}/.claude", home_dir),
+                format!("{home_dir}/.claude"),
                 "/home/agent/.claude".to_string(),
                 "".to_string(),
             ),
             // Claude config file
             (
-                format!("{}/.claude.json", home_dir),
+                format!("{home_dir}/.claude.json"),
                 "/home/agent/.claude.json".to_string(),
                 "".to_string(),
             ),
@@ -106,7 +106,7 @@ impl Agent for ClaudeCodeAgent {
         let output = Command::new("claude")
             .args(["-p", "--model", "sonnet", "say hi and nothing else"])
             .output()
-            .map_err(|e| format!("Failed to run Claude CLI: {}", e))?;
+            .map_err(|e| format!("Failed to run Claude CLI: {e}"))?;
 
         if !output.status.success() {
             return Err(format!(
@@ -122,11 +122,10 @@ impl Agent for ClaudeCodeAgent {
             let output = Command::new("sh")
                 .arg("-c")
                 .arg(format!(
-                    "security find-generic-password -a {} -w -s 'Claude Code-credentials' > ~/.claude/.credentials.json",
-                    user
+                    "security find-generic-password -a {user} -w -s 'Claude Code-credentials' > ~/.claude/.credentials.json"
                 ))
                 .output()
-                .map_err(|e| format!("Failed to export OAuth token: {}", e))?;
+                .map_err(|e| format!("Failed to export OAuth token: {e}"))?;
 
             if !output.status.success() {
                 // This might fail if the keychain item doesn't exist yet
@@ -214,7 +213,7 @@ impl ClaudeCodeLogProcessor {
             "result" => self.format_result_message(msg),
             other_type => {
                 // For other message types, just show a brief indicator
-                Some(format!("📋 [{}]", other_type))
+                Some(format!("📋 [{other_type}]"))
             }
         }
     }
@@ -267,13 +266,13 @@ impl ClaudeCodeLogProcessor {
                             if has_todo_update {
                                 Some(output)
                             } else {
-                                Some(format!("🤖 Assistant:\n{}", output))
+                                Some(format!("🤖 Assistant:\n{output}"))
                             }
                         } else {
                             None
                         }
                     }
-                    Value::String(text) => Some(format!("🤖 Assistant:\n{}", text)),
+                    Value::String(text) => Some(format!("🤖 Assistant:\n{text}")),
                     _ => None,
                 }
             } else {
@@ -319,8 +318,7 @@ impl ClaudeCodeLogProcessor {
         let pending = todos.iter().filter(|t| t.status == "pending").count();
 
         output.push_str(&format!(
-            "Summary: {} total | {} completed | {} in progress | {} pending\n",
-            total, completed, in_progress, pending
+            "Summary: {total} total | {completed} completed | {in_progress} in progress | {pending} pending\n"
         ));
         output.push_str(&"─".repeat(60));
 
@@ -405,10 +403,10 @@ impl ClaudeCodeLogProcessor {
             output.push('\n');
 
             let status_emoji = if success { "✅" } else { "❌" };
-            output.push_str(&format!("{} Task Result: {}\n", status_emoji, subtype));
+            output.push_str(&format!("{status_emoji} Task Result: {subtype}\n"));
 
             if let Some(cost) = msg.cost_usd {
-                output.push_str(&format!("💰 Cost: ${:.2}\n", cost));
+                output.push_str(&format!("💰 Cost: ${cost:.2}\n"));
             }
 
             if let Some(duration) = msg.duration_ms {
@@ -419,7 +417,7 @@ impl ClaudeCodeLogProcessor {
             }
 
             if let Some(turns) = msg.num_turns {
-                output.push_str(&format!("🔄 Turns: {}\n", turns));
+                output.push_str(&format!("🔄 Turns: {turns}\n"));
             }
 
             output.push_str(&"─".repeat(60));
@@ -461,7 +459,7 @@ impl LogProcessor for ClaudeCodeLogProcessor {
         self.file_system
             .write_file(path, &content)
             .await
-            .map_err(|e| format!("Failed to save log file: {}", e))
+            .map_err(|e| format!("Failed to save log file: {e}"))
     }
 
     fn get_final_result(&self) -> Option<&TaskResult> {

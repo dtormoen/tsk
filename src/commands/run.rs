@@ -39,7 +39,7 @@ impl Command for RunCommand {
                         Ok(_) => {},
                         Err(e) => {
                             let error_msg = e.to_string();
-                            eprintln!("Server error: {}", error_msg);
+                            eprintln!("Server error: {error_msg}");
                             return Err(Box::new(std::io::Error::other(error_msg)));
                         }
                     }

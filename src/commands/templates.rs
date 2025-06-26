@@ -49,7 +49,7 @@ impl Command for TemplatesCommand {
 
         let table = Table::new(rows).with(Style::modern()).to_string();
         println!("Available Templates:");
-        println!("{}", table);
+        println!("{table}");
 
         // Print additional information
         println!("\nTemplate locations (in priority order):");
@@ -76,7 +76,7 @@ fn determine_template_source(
         let project_template = root
             .join(".tsk")
             .join("templates")
-            .join(format!("{}.md", template_name));
+            .join(format!("{template_name}.md"));
         if project_template.exists() {
             return Ok("Project".to_string());
         }
@@ -87,7 +87,7 @@ fn determine_template_source(
         .xdg_directories()
         .config_dir()
         .join("templates")
-        .join(format!("{}.md", template_name));
+        .join(format!("{template_name}.md"));
     if user_template.exists() {
         return Ok("User".to_string());
     }

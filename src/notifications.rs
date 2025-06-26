@@ -48,7 +48,7 @@ impl NotificationClient for DesktopNotificationClient {
         if let Err(e) = notification.show() {
             // Fall back to terminal output
             eprintln!("TSK: {} - {}", summary, body.replace('\n', " "));
-            eprintln!("(Desktop notification failed: {})", e);
+            eprintln!("(Desktop notification failed: {e})");
         }
     }
 
@@ -59,10 +59,7 @@ impl NotificationClient for DesktopNotificationClient {
             "Tasks Completed with Failures"
         };
 
-        let body = format!(
-            "Total: {}\nSucceeded: {}\nFailed: {}",
-            total, succeeded, failed
-        );
+        let body = format!("Total: {total}\nSucceeded: {succeeded}\nFailed: {failed}");
 
         let mut notification = Notification::new();
         notification.summary(summary);
@@ -72,7 +69,7 @@ impl NotificationClient for DesktopNotificationClient {
         if let Err(e) = notification.show() {
             // Fall back to terminal output
             eprintln!("TSK: {} - {}", summary, body.replace('\n', " "));
-            eprintln!("(Desktop notification failed: {})", e);
+            eprintln!("(Desktop notification failed: {e})");
         }
     }
 }

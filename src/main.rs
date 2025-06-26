@@ -259,7 +259,7 @@ async fn main() {
     };
 
     if let Err(e) = command.execute(&app_context).await {
-        eprintln!("Error: {}", e);
+        eprintln!("Error: {e}");
         std::process::exit(1);
     }
 }

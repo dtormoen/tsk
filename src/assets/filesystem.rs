@@ -20,11 +20,11 @@ impl FileSystemAssetManager {
 impl AssetManager for FileSystemAssetManager {
     fn get_template(&self, template_type: &str) -> Result<String> {
         // Try both direct path and templates subdirectory
-        let direct_path = self.base_path.join(format!("{}.md", template_type));
+        let direct_path = self.base_path.join(format!("{template_type}.md"));
         let templates_path = self
             .base_path
             .join("templates")
-            .join(format!("{}.md", template_type));
+            .join(format!("{template_type}.md"));
 
         let template_path = if direct_path.exists() {
             direct_path
@@ -142,10 +142,8 @@ impl AssetManager for FileSystemAssetManager {
                                                 let dockerfile_path =
                                                     layer_dir.join(layer_name).join("Dockerfile");
                                                 if dockerfile_path.exists() {
-                                                    dockerfiles.push(format!(
-                                                        "{}/{}",
-                                                        dir_name, layer_name
-                                                    ));
+                                                    dockerfiles
+                                                        .push(format!("{dir_name}/{layer_name}"));
                                                 }
                                             }
                                         }

@@ -55,21 +55,21 @@ impl DockerTemplateManager {
                     })?
                 } else {
                     // Fall back to asset manager
-                    let dockerfile_path = format!("{}/Dockerfile", layer_path);
+                    let dockerfile_path = format!("{layer_path}/Dockerfile");
                     self.get_docker_file_content(&dockerfile_path)
-                        .with_context(|| format!("Failed to get Dockerfile for layer {}", layer))?
+                        .with_context(|| format!("Failed to get Dockerfile for layer {layer}"))?
                 }
             } else {
                 // No project root, use asset manager
-                let dockerfile_path = format!("{}/Dockerfile", layer_path);
+                let dockerfile_path = format!("{layer_path}/Dockerfile");
                 self.get_docker_file_content(&dockerfile_path)
-                    .with_context(|| format!("Failed to get Dockerfile for layer {}", layer))?
+                    .with_context(|| format!("Failed to get Dockerfile for layer {layer}"))?
             }
         } else {
             // Non-project layers always use asset manager
-            let dockerfile_path = format!("{}/Dockerfile", layer_path);
+            let dockerfile_path = format!("{layer_path}/Dockerfile");
             self.get_docker_file_content(&dockerfile_path)
-                .with_context(|| format!("Failed to get Dockerfile for layer {}", layer))?
+                .with_context(|| format!("Failed to get Dockerfile for layer {layer}"))?
         };
 
         // Try to get additional files if they exist
@@ -106,7 +106,7 @@ impl DockerTemplateManager {
         // If no files found on filesystem (or for non-project layers), check asset manager
         if additional_files.is_empty() {
             for file_name in potential_files {
-                let file_path = format!("{}/{}", layer_path, file_name);
+                let file_path = format!("{layer_path}/{file_name}");
                 if let Ok(content) = self.get_docker_file_content(&file_path) {
                     additional_files.push((file_name.to_string(), content));
                 }
@@ -213,7 +213,7 @@ impl DockerTemplateManager {
 
         let layer_dir = match layer_type {
             DockerLayerType::Base => "dockerfiles/base".to_string(),
-            _ => format!("dockerfiles/{}", layer_type),
+            _ => format!("dockerfiles/{layer_type}"),
         };
 
         // Check embedded assets

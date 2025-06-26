@@ -30,7 +30,7 @@ impl Command for DockerBuildCommand {
         // Auto-detect tech_stack if not provided
         let tech_stack = match &self.tech_stack {
             Some(ts) => {
-                println!("Using tech stack: {}", ts);
+                println!("Using tech stack: {ts}");
                 ts.clone()
             }
             None => {
@@ -40,14 +40,11 @@ impl Command for DockerBuildCommand {
 
                 match ctx.repository_context().detect_tech_stack(&repo_root).await {
                     Ok(detected) => {
-                        println!("Auto-detected tech stack: {}", detected);
+                        println!("Auto-detected tech stack: {detected}");
                         detected
                     }
                     Err(e) => {
-                        eprintln!(
-                            "Warning: Failed to detect tech stack: {}. Using default.",
-                            e
-                        );
+                        eprintln!("Warning: Failed to detect tech stack: {e}. Using default.");
                         "default".to_string()
                     }
                 }
@@ -59,7 +56,7 @@ impl Command for DockerBuildCommand {
         // Auto-detect project if not provided
         let project = match &self.project {
             Some(p) => {
-                println!("Using project: {}", p);
+                println!("Using project: {p}");
                 Some(p.clone())
             }
             None => {
@@ -73,14 +70,11 @@ impl Command for DockerBuildCommand {
                     .await
                 {
                     Ok(detected) => {
-                        println!("Auto-detected project name: {}", detected);
+                        println!("Auto-detected project name: {detected}");
                         Some(detected)
                     }
                     Err(e) => {
-                        eprintln!(
-                            "Warning: Failed to detect project name: {}. Using default.",
-                            e
-                        );
+                        eprintln!("Warning: Failed to detect project name: {e}. Using default.");
                         Some("default".to_string())
                     }
                 }
@@ -121,14 +115,14 @@ impl Command for DockerBuildCommand {
             if !composed.additional_files.is_empty() {
                 println!("\n# Additional files that would be created:");
                 for filename in composed.additional_files.keys() {
-                    println!("#   - {}", filename);
+                    println!("#   - {filename}");
                 }
             }
 
             if !composed.build_args.is_empty() {
                 println!("\n# Build arguments:");
                 for arg in &composed.build_args {
-                    println!("#   - {}", arg);
+                    println!("#   - {arg}");
                 }
             }
         } else {

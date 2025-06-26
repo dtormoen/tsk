@@ -76,13 +76,13 @@ impl Command for AddCommand {
         println!("Task ID: {}", task.id);
         println!("Type: {}", self.r#type);
         if let Some(ref desc) = self.description {
-            println!("Description: {}", desc);
+            println!("Description: {desc}");
         }
         if self.instructions.is_some() {
             println!("Instructions: Copied to task directory");
         }
         if let Some(ref agent) = self.agent {
-            println!("Agent: {}", agent);
+            println!("Agent: {agent}");
         }
         println!("Timeout: {} minutes", self.timeout);
         println!("\nUse 'tsk list' to view all queued tasks");
@@ -122,10 +122,9 @@ mod tests {
         let ctx = create_test_context();
         let result = cmd.execute(&ctx).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Either description or instructions file must be provided"));
+        assert!(result.unwrap_err().to_string().contains(
+            "Either description or instructions file must be provided, or use edit mode"
+        ));
     }
 
     #[tokio::test]
@@ -148,6 +147,6 @@ mod tests {
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("No template found for task type"));
+            .contains("No template found for task type 'nonexistent'"));
     }
 }

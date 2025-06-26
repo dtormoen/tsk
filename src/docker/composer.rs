@@ -129,12 +129,12 @@ impl DockerComposer {
     ) -> Result<()> {
         // Ensure directory exists
         std::fs::create_dir_all(output_dir)
-            .with_context(|| format!("Failed to create output directory: {:?}", output_dir))?;
+            .with_context(|| format!("Failed to create output directory: {output_dir:?}"))?;
 
         // Write Dockerfile
         let dockerfile_path = output_dir.join("Dockerfile");
         std::fs::write(&dockerfile_path, &composed.dockerfile_content)
-            .with_context(|| format!("Failed to write Dockerfile to {:?}", dockerfile_path))?;
+            .with_context(|| format!("Failed to write Dockerfile to {dockerfile_path:?}"))?;
 
         // Write additional files
         for (filename, content) in &composed.additional_files {
@@ -143,11 +143,11 @@ impl DockerComposer {
             // Create parent directories if needed
             if let Some(parent) = file_path.parent() {
                 std::fs::create_dir_all(parent)
-                    .with_context(|| format!("Failed to create directory for {:?}", file_path))?;
+                    .with_context(|| format!("Failed to create directory for {file_path:?}"))?;
             }
 
             std::fs::write(&file_path, content)
-                .with_context(|| format!("Failed to write file {:?}", file_path))?;
+                .with_context(|| format!("Failed to write file {file_path:?}"))?;
         }
 
         Ok(())

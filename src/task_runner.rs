@@ -58,19 +58,19 @@ impl TaskRunner {
     ) -> Result<TaskExecutionResult, TaskExecutionError> {
         // Get the agent for this task
         let agent = AgentProvider::get_agent(&task.agent)
-            .map_err(|e| format!("Error getting agent: {}", e))?;
+            .map_err(|e| format!("Error getting agent: {e}"))?;
 
         // Validate the agent
         agent
             .validate()
             .await
-            .map_err(|e| format!("Agent validation failed: {}", e))?;
+            .map_err(|e| format!("Agent validation failed: {e}"))?;
 
         // Run agent warmup
         agent
             .warmup()
             .await
-            .map_err(|e| format!("Agent warmup failed: {}", e))?;
+            .map_err(|e| format!("Agent warmup failed: {e}"))?;
 
         // Use the pre-copied repository path
         let repo_path = task.copied_repo_path.clone();
@@ -98,7 +98,7 @@ impl TaskRunner {
                     true,
                 )
                 .await
-                .map_err(|e| format!("Error ensuring Docker image: {}", e))?;
+                .map_err(|e| format!("Error ensuring Docker image: {e}"))?;
 
             if docker_image.used_fallback {
                 println!(
@@ -126,7 +126,7 @@ impl TaskRunner {
                     log_file_path.as_deref(),
                 )
                 .await
-                .map_err(|e| format!("Error running container: {}", e))?
+                .map_err(|e| format!("Error running container: {e}"))?
         };
 
         println!("\n{}", "=".repeat(60));
@@ -139,7 +139,7 @@ impl TaskRunner {
             .commit_changes(&repo_path, &commit_message)
             .await
         {
-            eprintln!("Error committing changes: {}", e);
+            eprintln!("Error committing changes: {e}");
         }
 
         // Fetch changes back to main repository
@@ -149,16 +149,13 @@ impl TaskRunner {
             .await
         {
             Ok(true) => {
-                println!(
-                    "Branch {} is now available in the main repository",
-                    branch_name
-                );
+                println!("Branch {branch_name} is now available in the main repository");
             }
             Ok(false) => {
                 println!("No changes to merge - branch was not created");
             }
             Err(e) => {
-                eprintln!("Error fetching changes: {}", e);
+                eprintln!("Error fetching changes: {e}");
             }
         }
 

@@ -38,34 +38,30 @@ impl Default for EmbeddedAssetManager {
 #[async_trait]
 impl AssetManager for EmbeddedAssetManager {
     fn get_template(&self, template_type: &str) -> Result<String> {
-        let filename = format!("templates/{}.md", template_type);
+        let filename = format!("templates/{template_type}.md");
 
         Templates::get(&filename)
-            .ok_or_else(|| anyhow!("Template '{}' not found", template_type))
+            .ok_or_else(|| anyhow!("Template '{template_type}' not found"))
             .and_then(|file| {
                 String::from_utf8(file.data.to_vec())
-                    .map_err(|e| anyhow!("Failed to decode template '{}': {}", template_type, e))
+                    .map_err(|e| anyhow!("Failed to decode template '{template_type}': {e}"))
             })
     }
 
     fn get_dockerfile(&self, dockerfile_name: &str) -> Result<Vec<u8>> {
-        let path = format!("dockerfiles/{}/Dockerfile", dockerfile_name);
+        let path = format!("dockerfiles/{dockerfile_name}/Dockerfile");
 
         Dockerfiles::get(&path)
-            .ok_or_else(|| anyhow!("Dockerfile '{}' not found", dockerfile_name))
+            .ok_or_else(|| anyhow!("Dockerfile '{dockerfile_name}' not found"))
             .map(|file| file.data.to_vec())
     }
 
     fn get_dockerfile_file(&self, dockerfile_name: &str, file_path: &str) -> Result<Vec<u8>> {
-        let path = format!("dockerfiles/{}/{}", dockerfile_name, file_path);
+        let path = format!("dockerfiles/{dockerfile_name}/{file_path}");
 
         Dockerfiles::get(&path)
             .ok_or_else(|| {
-                anyhow!(
-                    "File '{}' not found in dockerfile '{}'",
-                    file_path,
-                    dockerfile_name
-                )
+                anyhow!("File '{file_path}' not found in dockerfile '{dockerfile_name}'")
             })
             .map(|file| file.data.to_vec())
     }
