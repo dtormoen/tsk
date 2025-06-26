@@ -21,7 +21,7 @@ impl TaskManager {
             ctx.file_system(),
             ctx.git_operations(),
         );
-        let docker_manager = DockerManager::new(ctx.docker_client());
+        let docker_manager = DockerManager::new(ctx.docker_client(), ctx.file_system());
         let task_runner = TaskRunner::new(
             repo_manager,
             docker_manager,
@@ -44,7 +44,7 @@ impl TaskManager {
             ctx.file_system(),
             ctx.git_operations(),
         );
-        let docker_manager = DockerManager::new(ctx.docker_client());
+        let docker_manager = DockerManager::new(ctx.docker_client(), ctx.file_system());
         let task_runner = TaskRunner::new(
             repo_manager,
             docker_manager,

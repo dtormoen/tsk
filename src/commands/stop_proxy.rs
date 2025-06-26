@@ -11,7 +11,7 @@ impl Command for StopProxyCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         println!("Stopping TSK proxy container...");
 
-        let docker_manager = DockerManager::new(ctx.docker_client());
+        let docker_manager = DockerManager::new(ctx.docker_client(), ctx.file_system());
         docker_manager.stop_proxy().await?;
 
         println!("Proxy container stopped successfully");

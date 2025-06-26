@@ -31,7 +31,6 @@ pub struct TaskRunner {
     repo_manager: RepoManager,
     docker_manager: DockerManager,
     docker_image_manager: Arc<DockerImageManager>,
-    file_system: Arc<dyn FileSystemOperations>,
     notification_client: Arc<dyn NotificationClient>,
 }
 
@@ -40,14 +39,13 @@ impl TaskRunner {
         repo_manager: RepoManager,
         docker_manager: DockerManager,
         docker_image_manager: Arc<DockerImageManager>,
-        file_system: Arc<dyn FileSystemOperations>,
+        _file_system: Arc<dyn FileSystemOperations>, // Keep for compatibility
         notification_client: Arc<dyn NotificationClient>,
     ) -> Self {
         Self {
             repo_manager,
             docker_manager,
             docker_image_manager,
-            file_system,
             notification_client,
         }
     }
@@ -86,18 +84,11 @@ impl TaskRunner {
         // Get the instructions file path
         let instructions_file_path = PathBuf::from(&task.instructions_file);
 
-        // Build the command using the agent
-        let command =
-            agent.build_command(instructions_file_path.to_str().unwrap_or("instructions.md"));
-
-        // Create a log processor for this agent
-        let mut log_processor = agent.create_log_processor(self.file_system.clone());
-
-        // Launch Docker container with streaming
+        // Launch Docker container
         println!("Launching Docker container with {} agent...", agent.name());
         println!("\n{}", "=".repeat(60));
 
-        let output = {
+        let (output, task_result_from_container) = {
             // Ensure the Docker image exists - always rebuild to pick up any changes
             let docker_image = self
                 .docker_image_manager
@@ -111,75 +102,31 @@ impl TaskRunner {
                 );
             }
 
-            if is_interactive {
-                // Create interactive container
-                let container_name = self
-                    .docker_manager
-                    .create_task_container_interactive(
-                        &docker_image.tag,
-                        &repo_path,
-                        Some(&instructions_file_path),
-                        agent.as_ref(),
-                    )
-                    .await
-                    .map_err(|e| format!("Error creating interactive container: {}", e))?;
-
-                println!("\nDocker container started successfully!");
-                println!("Container name: {}", container_name);
-                println!("\nStarting interactive session...");
-
-                // Start interactive docker exec session
-                let status = std::process::Command::new("docker")
-                    .args(["exec", "-it", &container_name, "/bin/bash"])
-                    .status()
-                    .map_err(|e| format!("Failed to execute docker exec: {}", e))?;
-
-                if !status.success() {
-                    eprintln!("Interactive session exited with non-zero status");
-                }
-
-                println!("\nStopping container...");
-                self.docker_manager
-                    .stop_and_remove_container(&container_name)
-                    .await
-                    .map_err(|e| format!("Error stopping container: {}", e))?;
-
-                println!("Container stopped and removed successfully");
-
-                // Return empty output for interactive sessions
-                String::new()
+            // Prepare log file path for non-interactive sessions
+            let log_file_path = if !is_interactive {
+                let task_dir = repo_path.parent().unwrap_or(&repo_path);
+                Some(task_dir.join(format!("{}-full.log", task.name)))
             } else {
-                // Use streaming version for non-interactive
-                self.docker_manager
-                    .run_task_container(
-                        &docker_image.tag,
-                        &repo_path,
-                        command.clone(),
-                        Some(&instructions_file_path),
-                        agent.as_ref(),
-                        |log_line| {
-                            // Process each line of output
-                            if let Some(formatted) = log_processor.process_line(log_line) {
-                                println!("{}", formatted);
-                            }
-                        },
-                    )
-                    .await
-                    .map_err(|e| format!("Error running container: {}", e))?
-            }
+                None
+            };
+
+            // Run the container using the unified method
+            self.docker_manager
+                .run_task_container(
+                    &docker_image.tag,
+                    &repo_path,
+                    Some(&instructions_file_path),
+                    agent.as_ref(),
+                    is_interactive,
+                    &task.name,
+                    log_file_path.as_deref(),
+                )
+                .await
+                .map_err(|e| format!("Error running container: {}", e))?
         };
 
         println!("\n{}", "=".repeat(60));
         println!("Container execution completed successfully");
-
-        // Save the full log file
-        let task_dir = repo_path.parent().unwrap_or(&repo_path);
-        let log_file_path = task_dir.join(format!("{}-full.log", task.name));
-        if let Err(e) = log_processor.save_full_log(&log_file_path).await {
-            eprintln!("Warning: Failed to save full log file: {}", e);
-        } else {
-            println!("Full log saved to: {}", log_file_path.display());
-        }
 
         // Commit any changes made by the container
         let commit_message = format!("TSK automated changes for task: {}", task.name);
@@ -211,8 +158,8 @@ impl TaskRunner {
             }
         }
 
-        // Get the final result from the log processor
-        let task_result = log_processor.get_final_result().cloned();
+        // Use the task result from the container execution
+        let task_result = task_result_from_container;
 
         // Send notification about task completion
         let success = task_result.as_ref().map(|r| r.success).unwrap_or(false);
@@ -281,7 +228,7 @@ mod tests {
         let xdg_directories = Arc::new(crate::storage::XdgDirectories::new().unwrap());
 
         let repo_manager = RepoManager::new(xdg_directories.clone(), fs.clone(), git_ops);
-        let docker_manager = crate::docker::DockerManager::new(docker_client.clone());
+        let docker_manager = crate::docker::DockerManager::new(docker_client.clone(), fs.clone());
 
         // Create a mock docker image manager
         use crate::assets::embedded::EmbeddedAssetManager;
