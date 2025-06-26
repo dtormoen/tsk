@@ -123,6 +123,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Tech-stack layer: Language-specific toolchains (default, rust, python, etc.)
   - Agent layer: AI agent installations (claude, etc.)
   - Project layer: Project-specific dependencies (optional, falls back to default)
+- **Custom Project Dockerfiles**: Place project-specific Dockerfiles in `.tsk/dockerfiles/project/{project-name}/Dockerfile`
 - **Proxy Image** (`dockerfiles/tsk-proxy/`): Squid proxy for controlled network access
 - Git configuration inherited via Docker build args from host user
 - Automatic image rebuilding when missing during task execution

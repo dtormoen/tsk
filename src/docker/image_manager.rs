@@ -230,8 +230,14 @@ impl DockerImageManager {
             .context("Failed to get git user.email")?;
 
         // Build the image
-        self.build_docker_image(&composed, &git_user_name, &git_user_email, no_cache)
-            .await?;
+        self.build_docker_image(
+            &composed,
+            &git_user_name,
+            &git_user_email,
+            no_cache,
+            project_root,
+        )
+        .await?;
 
         // Check if we used fallback
         let used_fallback = project != "default"
@@ -351,10 +357,11 @@ impl DockerImageManager {
         git_user_name: &str,
         git_user_email: &str,
         no_cache: bool,
+        project_root: Option<&std::path::Path>,
     ) -> Result<()> {
         // Create tar archive from the composed content
         let tar_archive = self
-            .create_tar_archive(composed)
+            .create_tar_archive(composed, project_root)
             .context("Failed to create tar archive for Docker build")?;
 
         // Prepare build options
@@ -404,7 +411,11 @@ impl DockerImageManager {
     }
 
     /// Create a tar archive from composed Dockerfile content
-    fn create_tar_archive(&self, composed: &ComposedDockerfile) -> Result<Vec<u8>> {
+    fn create_tar_archive(
+        &self,
+        composed: &ComposedDockerfile,
+        _project_root: Option<&std::path::Path>,
+    ) -> Result<Vec<u8>> {
         use tar::Builder;
 
         let mut tar_data = Vec::new();

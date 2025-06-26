@@ -31,15 +31,46 @@ impl DockerTemplateManager {
     pub fn get_layer_content(
         &self,
         layer: &DockerLayer,
-        _project_root: Option<&Path>,
+        project_root: Option<&Path>,
     ) -> Result<DockerLayerContent> {
         let layer_path = format!("dockerfiles/{}", layer.asset_path());
 
-        // Try to get the Dockerfile for this layer
-        let dockerfile_path = format!("{}/Dockerfile", layer_path);
-        let dockerfile_content = self
-            .get_docker_file_content(&dockerfile_path)
-            .with_context(|| format!("Failed to get Dockerfile for layer {}", layer))?;
+        // For project layers, check filesystem first if project_root is provided
+        let dockerfile_content = if layer.layer_type == DockerLayerType::Project {
+            if let Some(root) = project_root {
+                let project_dockerfile = root
+                    .join(".tsk")
+                    .join("dockerfiles")
+                    .join("project")
+                    .join(&layer.name)
+                    .join("Dockerfile");
+
+                if project_dockerfile.exists() {
+                    // Read directly from filesystem for project dockerfiles
+                    std::fs::read(&project_dockerfile).with_context(|| {
+                        format!(
+                            "Failed to read project Dockerfile: {}",
+                            project_dockerfile.display()
+                        )
+                    })?
+                } else {
+                    // Fall back to asset manager
+                    let dockerfile_path = format!("{}/Dockerfile", layer_path);
+                    self.get_docker_file_content(&dockerfile_path)
+                        .with_context(|| format!("Failed to get Dockerfile for layer {}", layer))?
+                }
+            } else {
+                // No project root, use asset manager
+                let dockerfile_path = format!("{}/Dockerfile", layer_path);
+                self.get_docker_file_content(&dockerfile_path)
+                    .with_context(|| format!("Failed to get Dockerfile for layer {}", layer))?
+            }
+        } else {
+            // Non-project layers always use asset manager
+            let dockerfile_path = format!("{}/Dockerfile", layer_path);
+            self.get_docker_file_content(&dockerfile_path)
+                .with_context(|| format!("Failed to get Dockerfile for layer {}", layer))?
+        };
 
         // Try to get additional files if they exist
         let mut additional_files = Vec::new();
@@ -52,10 +83,33 @@ impl DockerTemplateManager {
             "config.json",
         ];
 
-        for file_name in potential_files {
-            let file_path = format!("{}/{}", layer_path, file_name);
-            if let Ok(content) = self.get_docker_file_content(&file_path) {
-                additional_files.push((file_name.to_string(), content));
+        // For project layers with filesystem access, check filesystem first
+        if layer.layer_type == DockerLayerType::Project {
+            if let Some(root) = project_root {
+                let project_layer_dir = root
+                    .join(".tsk")
+                    .join("dockerfiles")
+                    .join("project")
+                    .join(&layer.name);
+
+                for file_name in &potential_files {
+                    let file_path = project_layer_dir.join(file_name);
+                    if file_path.exists() {
+                        if let Ok(content) = std::fs::read(&file_path) {
+                            additional_files.push((file_name.to_string(), content));
+                        }
+                    }
+                }
+            }
+        }
+
+        // If no files found on filesystem (or for non-project layers), check asset manager
+        if additional_files.is_empty() {
+            for file_name in potential_files {
+                let file_path = format!("{}/{}", layer_path, file_name);
+                if let Ok(content) = self.get_docker_file_content(&file_path) {
+                    additional_files.push((file_name.to_string(), content));
+                }
             }
         }
 

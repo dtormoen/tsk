@@ -19,31 +19,70 @@ impl FileSystemAssetManager {
 #[async_trait]
 impl AssetManager for FileSystemAssetManager {
     fn get_template(&self, template_type: &str) -> Result<String> {
-        let template_path = self.base_path.join(format!("{}.md", template_type));
+        // Try both direct path and templates subdirectory
+        let direct_path = self.base_path.join(format!("{}.md", template_type));
+        let templates_path = self
+            .base_path
+            .join("templates")
+            .join(format!("{}.md", template_type));
 
-        if !template_path.exists() {
+        let template_path = if direct_path.exists() {
+            direct_path
+        } else if templates_path.exists() {
+            templates_path
+        } else {
             return Err(anyhow::anyhow!("Template '{}' not found", template_type));
-        }
+        };
 
         std::fs::read_to_string(&template_path)
             .with_context(|| format!("Failed to read template file: {}", template_path.display()))
     }
 
-    fn get_dockerfile(&self, _dockerfile_name: &str) -> Result<Vec<u8>> {
-        Err(anyhow::anyhow!(
-            "Dockerfile support not implemented for FileSystemAssetManager"
-        ))
+    fn get_dockerfile(&self, dockerfile_name: &str) -> Result<Vec<u8>> {
+        let dockerfile_path = self
+            .base_path
+            .join("dockerfiles")
+            .join(dockerfile_name)
+            .join("Dockerfile");
+
+        if !dockerfile_path.exists() {
+            return Err(anyhow::anyhow!(
+                "Dockerfile '{}' not found",
+                dockerfile_name
+            ));
+        }
+
+        std::fs::read(&dockerfile_path)
+            .with_context(|| format!("Failed to read dockerfile: {}", dockerfile_path.display()))
     }
 
-    fn get_dockerfile_file(&self, _dockerfile_name: &str, _file_path: &str) -> Result<Vec<u8>> {
-        Err(anyhow::anyhow!(
-            "Dockerfile support not implemented for FileSystemAssetManager"
-        ))
+    fn get_dockerfile_file(&self, dockerfile_name: &str, file_path: &str) -> Result<Vec<u8>> {
+        let file_full_path = self
+            .base_path
+            .join("dockerfiles")
+            .join(dockerfile_name)
+            .join(file_path);
+
+        if !file_full_path.exists() {
+            return Err(anyhow::anyhow!(
+                "Dockerfile file '{}/{}' not found",
+                dockerfile_name,
+                file_path
+            ));
+        }
+
+        std::fs::read(&file_full_path).with_context(|| {
+            format!(
+                "Failed to read dockerfile file: {}",
+                file_full_path.display()
+            )
+        })
     }
 
     fn list_templates(&self) -> Vec<String> {
         let mut templates = Vec::new();
 
+        // Check direct path
         if let Ok(entries) = std::fs::read_dir(&self.base_path) {
             for entry in entries.flatten() {
                 if let Ok(file_type) = entry.file_type() {
@@ -59,13 +98,68 @@ impl AssetManager for FileSystemAssetManager {
             }
         }
 
+        // Check templates subdirectory
+        let templates_dir = self.base_path.join("templates");
+        if let Ok(entries) = std::fs::read_dir(&templates_dir) {
+            for entry in entries.flatten() {
+                if let Ok(file_type) = entry.file_type() {
+                    if file_type.is_file() {
+                        if let Some(file_name) = entry.file_name().to_str() {
+                            if file_name.ends_with(".md") {
+                                let template_name = file_name.trim_end_matches(".md");
+                                if !templates.contains(&template_name.to_string()) {
+                                    templates.push(template_name.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         templates.sort();
         templates
     }
 
     fn list_dockerfiles(&self) -> Vec<String> {
-        // Not supported for filesystem-based asset manager
-        Vec::new()
+        let mut dockerfiles = Vec::new();
+        let dockerfiles_dir = self.base_path.join("dockerfiles");
+
+        if let Ok(entries) = std::fs::read_dir(&dockerfiles_dir) {
+            for entry in entries.flatten() {
+                if let Ok(file_type) = entry.file_type() {
+                    if file_type.is_dir() {
+                        if let Some(dir_name) = entry.file_name().to_str() {
+                            // Check if this directory contains subdirectories with Dockerfiles
+                            let layer_dir = dockerfiles_dir.join(dir_name);
+                            if let Ok(layer_entries) = std::fs::read_dir(&layer_dir) {
+                                for layer_entry in layer_entries.flatten() {
+                                    if let Ok(layer_file_type) = layer_entry.file_type() {
+                                        if layer_file_type.is_dir() {
+                                            if let Some(layer_name) =
+                                                layer_entry.file_name().to_str()
+                                            {
+                                                let dockerfile_path =
+                                                    layer_dir.join(layer_name).join("Dockerfile");
+                                                if dockerfile_path.exists() {
+                                                    dockerfiles.push(format!(
+                                                        "{}/{}",
+                                                        dir_name, layer_name
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        dockerfiles.sort();
+        dockerfiles
     }
 }
 

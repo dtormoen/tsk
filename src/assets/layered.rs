@@ -32,9 +32,9 @@ impl LayeredAssetManager {
 
         // Project layer (highest priority)
         if let Some(root) = project_root {
-            let project_templates_dir = root.join(".tsk").join("templates");
-            if project_templates_dir.exists() {
-                layers.push(Arc::new(FileSystemAssetManager::new(project_templates_dir)));
+            let project_tsk_dir = root.join(".tsk");
+            if project_tsk_dir.exists() {
+                layers.push(Arc::new(FileSystemAssetManager::new(project_tsk_dir)));
             }
         }
 
@@ -68,7 +68,6 @@ impl AssetManager for LayeredAssetManager {
     }
 
     fn get_dockerfile(&self, dockerfile_name: &str) -> Result<Vec<u8>> {
-        // Dockerfiles are only supported by the embedded layer
         for layer in &self.layers {
             match layer.get_dockerfile(dockerfile_name) {
                 Ok(content) => return Ok(content),
@@ -83,7 +82,6 @@ impl AssetManager for LayeredAssetManager {
     }
 
     fn get_dockerfile_file(&self, dockerfile_name: &str, file_path: &str) -> Result<Vec<u8>> {
-        // Dockerfile files are only supported by the embedded layer
         for layer in &self.layers {
             match layer.get_dockerfile_file(dockerfile_name, file_path) {
                 Ok(content) => return Ok(content),
