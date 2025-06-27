@@ -28,12 +28,8 @@ Think of it as having a team of engineers who work independently and submit pull
 ### Install TSK
 
 ```bash
-# Clone and build
-git clone https://github.com/dtormoen/tsk.git
-cd tsk
-
-# Install to system
-cargo install --path .
+# Install using cargo
+cargo install tsk-ai
 
 # Build Docker images (required)
 tsk docker-build
