@@ -2122,8 +2122,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
-name = "tsk"
-version = "0.1.0"
+name = "tsk-ai"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
