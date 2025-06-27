@@ -176,8 +176,12 @@ mod tests {
     #[tokio::test]
     async fn test_client_creation() {
         let temp_dir = TempDir::new().unwrap();
-        std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
-        std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
+        unsafe {
+            std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
+        }
+        unsafe {
+            std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
+        }
 
         let xdg = Arc::new(XdgDirectories::new().unwrap());
         xdg.ensure_directories().unwrap();
@@ -195,8 +199,12 @@ mod tests {
         // The actual EOF scenario is tested implicitly when the server closes
         // connections without sending data, which was the original bug.
         let temp_dir = TempDir::new().unwrap();
-        std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
-        std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
+        unsafe {
+            std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
+        }
+        unsafe {
+            std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
+        }
 
         let xdg = Arc::new(XdgDirectories::new().unwrap());
         xdg.ensure_directories().unwrap();

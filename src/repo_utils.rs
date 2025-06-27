@@ -45,7 +45,7 @@ pub fn find_repository_root(start_path: &Path) -> Result<PathBuf, Box<dyn Error>
                     "Not in a git repository (or any of the parent directories): {}",
                     start_path.display()
                 )
-                .into())
+                .into());
             }
         }
     }
@@ -93,10 +93,12 @@ mod tests {
         let result = find_repository_root(temp_dir.path());
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Not in a git repository"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Not in a git repository")
+        );
     }
 
     #[test]

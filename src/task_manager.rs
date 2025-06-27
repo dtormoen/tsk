@@ -1,15 +1,15 @@
 use crate::assets::layered::LayeredAssetManager;
-use crate::context::{file_system::FileSystemOperations, AppContext};
+use crate::context::{AppContext, file_system::FileSystemOperations};
+use crate::docker::DockerManager;
 use crate::docker::composer::DockerComposer;
 use crate::docker::image_manager::DockerImageManager;
 use crate::docker::template_manager::DockerTemplateManager;
-use crate::docker::DockerManager;
 use crate::git::RepoManager;
 use crate::repo_utils::find_repository_root;
 use crate::storage::XdgDirectories;
 use crate::task::{Task, TaskBuilder, TaskStatus};
 use crate::task_runner::{TaskExecutionError, TaskExecutionResult, TaskRunner};
-use crate::task_storage::{get_task_storage, TaskStorage};
+use crate::task_storage::{TaskStorage, get_task_storage};
 use std::sync::Arc;
 
 pub struct TaskManager {
@@ -331,11 +331,15 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let test_data_dir = temp_dir.join("tsk-test-data");
         let test_runtime_dir = temp_dir.join("tsk-test-runtime");
-        env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
-        env::set_var(
-            "XDG_RUNTIME_DIR",
-            test_runtime_dir.to_string_lossy().to_string(),
-        );
+        unsafe {
+            env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
+        }
+        unsafe {
+            env::set_var(
+                "XDG_RUNTIME_DIR",
+                test_runtime_dir.to_string_lossy().to_string(),
+            );
+        }
 
         // Create XdgDirectories instance
         let xdg = Arc::new(XdgDirectories::new().unwrap());
@@ -395,11 +399,15 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let test_data_dir = temp_dir.join("tsk-test-data2");
         let test_runtime_dir = temp_dir.join("tsk-test-runtime2");
-        env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
-        env::set_var(
-            "XDG_RUNTIME_DIR",
-            test_runtime_dir.to_string_lossy().to_string(),
-        );
+        unsafe {
+            env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
+        }
+        unsafe {
+            env::set_var(
+                "XDG_RUNTIME_DIR",
+                test_runtime_dir.to_string_lossy().to_string(),
+            );
+        }
 
         // Create XdgDirectories instance
         let xdg = Arc::new(XdgDirectories::new().unwrap());
@@ -514,11 +522,15 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let test_data_dir = temp_dir.join("tsk-test-data-retry");
         let test_runtime_dir = temp_dir.join("tsk-test-runtime-retry");
-        env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
-        env::set_var(
-            "XDG_RUNTIME_DIR",
-            test_runtime_dir.to_string_lossy().to_string(),
-        );
+        unsafe {
+            env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
+        }
+        unsafe {
+            env::set_var(
+                "XDG_RUNTIME_DIR",
+                test_runtime_dir.to_string_lossy().to_string(),
+            );
+        }
 
         // Create XdgDirectories instance
         let xdg = Arc::new(XdgDirectories::new().unwrap());
@@ -635,11 +647,15 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let test_data_dir = temp_dir.join("tsk-test-data-retry-notfound");
         let test_runtime_dir = temp_dir.join("tsk-test-runtime-retry-notfound");
-        env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
-        env::set_var(
-            "XDG_RUNTIME_DIR",
-            test_runtime_dir.to_string_lossy().to_string(),
-        );
+        unsafe {
+            env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
+        }
+        unsafe {
+            env::set_var(
+                "XDG_RUNTIME_DIR",
+                test_runtime_dir.to_string_lossy().to_string(),
+            );
+        }
 
         // Create XdgDirectories instance
         let xdg = Arc::new(XdgDirectories::new().unwrap());
@@ -681,9 +697,11 @@ mod tests {
             .retry_task("non-existent-task", false, &ctx)
             .await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("Task with ID 'non-existent-task' not found"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Task with ID 'non-existent-task' not found")
+        );
     }
 
     #[tokio::test]
@@ -696,11 +714,15 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let test_data_dir = temp_dir.join("tsk-test-data-retry-queued");
         let test_runtime_dir = temp_dir.join("tsk-test-runtime-retry-queued");
-        env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
-        env::set_var(
-            "XDG_RUNTIME_DIR",
-            test_runtime_dir.to_string_lossy().to_string(),
-        );
+        unsafe {
+            env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
+        }
+        unsafe {
+            env::set_var(
+                "XDG_RUNTIME_DIR",
+                test_runtime_dir.to_string_lossy().to_string(),
+            );
+        }
 
         // Create XdgDirectories instance
         let xdg = Arc::new(XdgDirectories::new().unwrap());
@@ -749,9 +771,11 @@ mod tests {
         // Try to retry a queued task
         let result = task_manager.retry_task(&task_id, false, &ctx).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("Cannot retry a task that hasn't been executed yet"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Cannot retry a task that hasn't been executed yet")
+        );
     }
 
     #[tokio::test]
@@ -764,11 +788,15 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let test_data_dir = temp_dir.join("tsk-test-data3");
         let test_runtime_dir = temp_dir.join("tsk-test-runtime3");
-        env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
-        env::set_var(
-            "XDG_RUNTIME_DIR",
-            test_runtime_dir.to_string_lossy().to_string(),
-        );
+        unsafe {
+            env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
+        }
+        unsafe {
+            env::set_var(
+                "XDG_RUNTIME_DIR",
+                test_runtime_dir.to_string_lossy().to_string(),
+            );
+        }
 
         // Create XdgDirectories instance
         let xdg = Arc::new(XdgDirectories::new().unwrap());
@@ -858,11 +886,15 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let test_data_dir = temp_dir.join("tsk-test-data-no-git");
         let test_runtime_dir = temp_dir.join("tsk-test-runtime-no-git");
-        env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
-        env::set_var(
-            "XDG_RUNTIME_DIR",
-            test_runtime_dir.to_string_lossy().to_string(),
-        );
+        unsafe {
+            env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
+        }
+        unsafe {
+            env::set_var(
+                "XDG_RUNTIME_DIR",
+                test_runtime_dir.to_string_lossy().to_string(),
+            );
+        }
 
         // Create XdgDirectories instance
         let xdg = Arc::new(XdgDirectories::new().unwrap());

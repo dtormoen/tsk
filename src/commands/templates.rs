@@ -1,5 +1,5 @@
 use super::Command;
-use crate::assets::{layered::LayeredAssetManager, AssetManager};
+use crate::assets::{AssetManager, layered::LayeredAssetManager};
 use crate::context::AppContext;
 use crate::repo_utils::find_repository_root;
 use async_trait::async_trait;

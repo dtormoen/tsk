@@ -1,7 +1,7 @@
 [package]
 name = "tsk"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 authors = ["Danny Tormoen <dtormoen@gmail.com>"]
 description = "AI-powered development task delegation tool"
 repository = "https://github.com/dtormoen/tsk"

@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::assets::{
-    embedded::EmbeddedAssetManager, filesystem::FileSystemAssetManager, AssetManager,
+    AssetManager, embedded::EmbeddedAssetManager, filesystem::FileSystemAssetManager,
 };
 use crate::storage::xdg::XdgDirectories;
 
@@ -129,7 +129,7 @@ impl AssetManager for LayeredAssetManager {
 mod tests {
     use super::*;
     use crate::assets::{
-        filesystem::FileSystemAssetManager, layered::LayeredAssetManager, AssetManager,
+        AssetManager, filesystem::FileSystemAssetManager, layered::LayeredAssetManager,
     };
     use crate::context::AppContext;
     use crate::storage::XdgDirectories;
@@ -283,10 +283,12 @@ mod tests {
         assert_eq!(manager.get_template("doc").unwrap(), "User doc template");
 
         // Test built-in fallback (refactor template should be built-in only)
-        assert!(manager
-            .get_template("refactor")
-            .unwrap()
-            .contains("{{DESCRIPTION}}"));
+        assert!(
+            manager
+                .get_template("refactor")
+                .unwrap()
+                .contains("{{DESCRIPTION}}")
+        );
 
         // Test listing all templates
         let all_templates = manager.list_templates();

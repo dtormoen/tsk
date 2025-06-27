@@ -3,7 +3,7 @@ pub mod lifecycle;
 pub mod protocol;
 
 use crate::context::AppContext;
-use crate::task_storage::{get_task_storage, TaskStorage};
+use crate::task_storage::{TaskStorage, get_task_storage};
 use executor::TaskExecutor;
 use lifecycle::ServerLifecycle;
 use protocol::{Request, Response};
@@ -207,8 +207,12 @@ mod tests {
     /// Helper to create a test AppContext
     fn create_test_context() -> (Arc<AppContext>, TempDir) {
         let temp_dir = TempDir::new().unwrap();
-        std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
-        std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
+        unsafe {
+            std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
+        }
+        unsafe {
+            std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
+        }
 
         let context = AppContext::builder()
             .with_docker_client(Arc::new(NoOpDockerClient))

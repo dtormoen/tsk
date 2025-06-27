@@ -163,9 +163,15 @@ mod tests {
         let original_runtime = env::var("XDG_RUNTIME_DIR").ok();
         let original_config = env::var("XDG_CONFIG_HOME").ok();
 
-        env::set_var("XDG_DATA_HOME", "/custom/data");
-        env::set_var("XDG_RUNTIME_DIR", "/custom/runtime");
-        env::set_var("XDG_CONFIG_HOME", "/custom/config");
+        unsafe {
+            env::set_var("XDG_DATA_HOME", "/custom/data");
+        }
+        unsafe {
+            env::set_var("XDG_RUNTIME_DIR", "/custom/runtime");
+        }
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", "/custom/config");
+        }
 
         let dirs = XdgDirectories::new().expect("Failed to create XDG directories");
 
@@ -185,16 +191,16 @@ mod tests {
 
         // Restore original environment
         match original_data {
-            Some(val) => env::set_var("XDG_DATA_HOME", val),
-            None => env::remove_var("XDG_DATA_HOME"),
+            Some(val) => unsafe { env::set_var("XDG_DATA_HOME", val) },
+            None => unsafe { env::remove_var("XDG_DATA_HOME") },
         }
         match original_runtime {
-            Some(val) => env::set_var("XDG_RUNTIME_DIR", val),
-            None => env::remove_var("XDG_RUNTIME_DIR"),
+            Some(val) => unsafe { env::set_var("XDG_RUNTIME_DIR", val) },
+            None => unsafe { env::remove_var("XDG_RUNTIME_DIR") },
         }
         match original_config {
-            Some(val) => env::set_var("XDG_CONFIG_HOME", val),
-            None => env::remove_var("XDG_CONFIG_HOME"),
+            Some(val) => unsafe { env::set_var("XDG_CONFIG_HOME", val) },
+            None => unsafe { env::remove_var("XDG_CONFIG_HOME") },
         }
     }
 
@@ -204,9 +210,15 @@ mod tests {
         let original_runtime = env::var("XDG_RUNTIME_DIR").ok();
         let original_config = env::var("XDG_CONFIG_HOME").ok();
 
-        env::remove_var("XDG_DATA_HOME");
-        env::remove_var("XDG_RUNTIME_DIR");
-        env::remove_var("XDG_CONFIG_HOME");
+        unsafe {
+            env::remove_var("XDG_DATA_HOME");
+        }
+        unsafe {
+            env::remove_var("XDG_RUNTIME_DIR");
+        }
+        unsafe {
+            env::remove_var("XDG_CONFIG_HOME");
+        }
 
         let dirs = XdgDirectories::new().expect("Failed to create XDG directories");
 
@@ -224,16 +236,16 @@ mod tests {
 
         // Restore original environment
         match original_data {
-            Some(val) => env::set_var("XDG_DATA_HOME", val),
-            None => env::remove_var("XDG_DATA_HOME"),
+            Some(val) => unsafe { env::set_var("XDG_DATA_HOME", val) },
+            None => unsafe { env::remove_var("XDG_DATA_HOME") },
         }
         match original_runtime {
-            Some(val) => env::set_var("XDG_RUNTIME_DIR", val),
-            None => env::remove_var("XDG_RUNTIME_DIR"),
+            Some(val) => unsafe { env::set_var("XDG_RUNTIME_DIR", val) },
+            None => unsafe { env::remove_var("XDG_RUNTIME_DIR") },
         }
         match original_config {
-            Some(val) => env::set_var("XDG_CONFIG_HOME", val),
-            None => env::remove_var("XDG_CONFIG_HOME"),
+            Some(val) => unsafe { env::set_var("XDG_CONFIG_HOME", val) },
+            None => unsafe { env::remove_var("XDG_CONFIG_HOME") },
         }
     }
 
@@ -242,12 +254,16 @@ mod tests {
         let original_config = env::var("XDG_CONFIG_HOME").ok();
 
         // Test with XDG_CONFIG_HOME set
-        env::set_var("XDG_CONFIG_HOME", "/test/config");
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", "/test/config");
+        }
         let config_dir = XdgDirectories::resolve_config_dir().unwrap();
         assert_eq!(config_dir, PathBuf::from("/test/config/tsk"));
 
         // Test fallback
-        env::remove_var("XDG_CONFIG_HOME");
+        unsafe {
+            env::remove_var("XDG_CONFIG_HOME");
+        }
         let config_dir = XdgDirectories::resolve_config_dir().unwrap();
         let home = env::var("HOME")
             .or_else(|_| env::var("USERPROFILE"))
@@ -256,8 +272,8 @@ mod tests {
 
         // Restore original environment
         match original_config {
-            Some(val) => env::set_var("XDG_CONFIG_HOME", val),
-            None => env::remove_var("XDG_CONFIG_HOME"),
+            Some(val) => unsafe { env::set_var("XDG_CONFIG_HOME", val) },
+            None => unsafe { env::remove_var("XDG_CONFIG_HOME") },
         }
     }
 

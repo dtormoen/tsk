@@ -542,9 +542,10 @@ mod tests {
         assert!(result.is_err());
 
         let err = result.unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("Technology stack 'non-existent-stack' not found"));
+        assert!(
+            err.to_string()
+                .contains("Technology stack 'non-existent-stack' not found")
+        );
     }
 
     #[test]
@@ -556,9 +557,10 @@ mod tests {
         assert!(result.is_err());
 
         let err = result.unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("Agent 'non-existent-agent' not found"));
+        assert!(
+            err.to_string()
+                .contains("Agent 'non-existent-agent' not found")
+        );
     }
 
     #[test]

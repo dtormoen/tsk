@@ -384,10 +384,11 @@ pub(crate) mod tests {
             assert!(fs.exists(&dest_dir).await.unwrap());
             assert!(fs.exists(&dest_dir.join("file1.txt")).await.unwrap());
             assert!(fs.exists(&dest_dir.join("subdir")).await.unwrap());
-            assert!(fs
-                .exists(&dest_dir.join("subdir").join("file2.txt"))
-                .await
-                .unwrap());
+            assert!(
+                fs.exists(&dest_dir.join("subdir").join("file2.txt"))
+                    .await
+                    .unwrap()
+            );
 
             // Verify content
             let content1 = fs.read_file(&dest_dir.join("file1.txt")).await.unwrap();

@@ -16,7 +16,7 @@ pub trait TaskStorage: Send + Sync {
     ) -> Result<Option<Task>, Box<dyn std::error::Error + Send + Sync>>;
     async fn list_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error + Send + Sync>>;
     async fn update_task(&self, task: Task)
-        -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
     async fn delete_task(&self, id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
     async fn delete_tasks_by_status(
         &self,
@@ -165,8 +165,12 @@ mod tests {
     use tempfile::TempDir;
 
     fn create_test_xdg_directories(temp_dir: &TempDir) -> Arc<XdgDirectories> {
-        std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
-        std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
+        unsafe {
+            std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
+        }
+        unsafe {
+            std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
+        }
         let xdg = XdgDirectories::new().unwrap();
         xdg.ensure_directories().unwrap();
         Arc::new(xdg)

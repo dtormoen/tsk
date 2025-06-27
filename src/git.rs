@@ -311,8 +311,12 @@ mod tests {
     use tempfile::TempDir;
 
     fn create_test_xdg_directories(temp_dir: &TempDir) -> Arc<XdgDirectories> {
-        std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
-        std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
+        unsafe {
+            std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
+        }
+        unsafe {
+            std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
+        }
         let xdg = XdgDirectories::new().unwrap();
         xdg.ensure_directories().unwrap();
         Arc::new(xdg)
@@ -394,8 +398,12 @@ mod tests {
         let fs = Arc::new(MockFileSystem::new());
 
         // Create XDG directories for test
-        std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
-        std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
+        unsafe {
+            std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
+        }
+        unsafe {
+            std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
+        }
         let xdg = Arc::new(crate::storage::XdgDirectories::new().unwrap());
 
         let manager = RepoManager::new(xdg, fs, mock_git_ops.clone());
@@ -427,8 +435,12 @@ mod tests {
         let fs = Arc::new(MockFileSystem::new());
 
         // Create XDG directories for test
-        std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
-        std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
+        unsafe {
+            std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
+        }
+        unsafe {
+            std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
+        }
         let xdg = Arc::new(crate::storage::XdgDirectories::new().unwrap());
 
         let manager = RepoManager::new(xdg, fs, mock_git_ops.clone());
@@ -602,9 +614,11 @@ mod tests {
 
         // Check that .git directory was copied
         let copied_dirs = fs.get_dirs();
-        assert!(copied_dirs
-            .iter()
-            .any(|d| d == &format!("{repo_path_str}/.git")));
+        assert!(
+            copied_dirs
+                .iter()
+                .any(|d| d == &format!("{repo_path_str}/.git"))
+        );
     }
 
     #[tokio::test]
@@ -728,9 +742,11 @@ mod tests {
         let repo_path_str = repo_path.to_string_lossy();
 
         // Check that .tsk directory was copied
-        assert!(copied_dirs
-            .iter()
-            .any(|d| d == &format!("{}/.tsk", repo_path_str)));
+        assert!(
+            copied_dirs
+                .iter()
+                .any(|d| d == &format!("{}/.tsk", repo_path_str))
+        );
 
         // Check that .tsk contents were copied (directories and files)
         assert!(

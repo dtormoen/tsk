@@ -4,7 +4,7 @@ use crate::task_manager::TaskManager;
 use crate::task_storage::TaskStorage;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 /// Task executor that runs tasks sequentially
 pub struct TaskExecutor {
@@ -151,8 +151,12 @@ mod tests {
     #[tokio::test]
     async fn test_executor_lifecycle() {
         let temp_dir = TempDir::new().unwrap();
-        std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
-        std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
+        unsafe {
+            std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
+        }
+        unsafe {
+            std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
+        }
 
         let xdg = Arc::new(XdgDirectories::new().unwrap());
         xdg.ensure_directories().unwrap();

@@ -138,13 +138,19 @@ mod tests {
     #[test]
     fn test_terminal_support_detection() {
         // Test with TERM environment variable
-        std::env::set_var("TERM", "xterm-256color");
+        unsafe {
+            std::env::set_var("TERM", "xterm-256color");
+        }
         assert!(DefaultTerminalOperations::is_supported() || !atty::is(atty::Stream::Stdout));
 
-        std::env::set_var("TERM", "dumb");
+        unsafe {
+            std::env::set_var("TERM", "dumb");
+        }
         assert!(!DefaultTerminalOperations::is_supported());
 
-        std::env::remove_var("TERM");
+        unsafe {
+            std::env::remove_var("TERM");
+        }
         assert!(!DefaultTerminalOperations::is_supported());
     }
 

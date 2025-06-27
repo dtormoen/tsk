@@ -1243,15 +1243,19 @@ mod tests {
     async fn test_claude_code_agent_validate_without_config() {
         // Create a temporary HOME directory without .claude.json
         let temp_dir = tempfile::tempdir().unwrap();
-        std::env::set_var("HOME", temp_dir.path());
+        unsafe {
+            std::env::set_var("HOME", temp_dir.path());
+        }
 
         let agent = ClaudeCodeAgent::new();
         let result = agent.validate().await;
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("Claude configuration not found"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Claude configuration not found")
+        );
     }
 
     #[test]

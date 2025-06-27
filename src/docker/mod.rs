@@ -610,9 +610,11 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("Container exited with non-zero status: 1"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Container exited with non-zero status: 1")
+        );
 
         let remove_calls = mock_client.remove_container_calls.lock().unwrap();
         assert_eq!(remove_calls.len(), 1);

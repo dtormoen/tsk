@@ -1,4 +1,4 @@
-use crate::assets::{layered::LayeredAssetManager, AssetManager};
+use crate::assets::{AssetManager, layered::LayeredAssetManager};
 use crate::context::AppContext;
 use crate::git::RepoManager;
 use chrono::{DateTime, Local, Utc};
@@ -478,9 +478,9 @@ impl Default for TaskBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::file_system::{tests::MockFileSystem, FileSystemOperations};
-    use crate::context::git_operations::tests::MockGitOperations;
     use crate::context::AppContext;
+    use crate::context::file_system::{FileSystemOperations, tests::MockFileSystem};
+    use crate::context::git_operations::tests::MockGitOperations;
     use std::sync::Arc;
     use tempfile::TempDir;
 

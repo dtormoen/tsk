@@ -1,6 +1,6 @@
 use crate::agent::AgentProvider;
 use crate::context::file_system::FileSystemOperations;
-use crate::docker::{image_manager::DockerImageManager, DockerManager};
+use crate::docker::{DockerManager, image_manager::DockerImageManager};
 use crate::git::RepoManager;
 use crate::notifications::NotificationClient;
 use crate::task::Task;
@@ -194,11 +194,17 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let claude_json_path = temp_dir.path().join(".claude.json");
         std::fs::write(&claude_json_path, "{}").unwrap();
-        std::env::set_var("HOME", temp_dir.path());
+        unsafe {
+            std::env::set_var("HOME", temp_dir.path());
+        }
 
         // Set up git configuration for tests
-        std::env::set_var("GIT_CONFIG_GLOBAL", temp_dir.path().join(".gitconfig"));
-        std::env::set_var("GIT_CONFIG_SYSTEM", "/dev/null");
+        unsafe {
+            std::env::set_var("GIT_CONFIG_GLOBAL", temp_dir.path().join(".gitconfig"));
+        }
+        unsafe {
+            std::env::set_var("GIT_CONFIG_SYSTEM", "/dev/null");
+        }
 
         // Configure git for the test
         std::process::Command::new("git")
@@ -224,8 +230,12 @@ mod tests {
         let docker_client = Arc::new(FixedResponseDockerClient::default());
 
         // Create test XDG directories
-        std::env::set_var("XDG_DATA_HOME", "/tmp/test-xdg-data");
-        std::env::set_var("XDG_RUNTIME_DIR", "/tmp/test-xdg-runtime");
+        unsafe {
+            std::env::set_var("XDG_DATA_HOME", "/tmp/test-xdg-data");
+        }
+        unsafe {
+            std::env::set_var("XDG_RUNTIME_DIR", "/tmp/test-xdg-runtime");
+        }
         let xdg_directories = Arc::new(crate::storage::XdgDirectories::new().unwrap());
 
         let repo_manager = RepoManager::new(xdg_directories.clone(), fs.clone(), git_ops);

@@ -234,7 +234,7 @@ impl DockerClient for TrackedDockerClient {
         let result = if let Some(opt) = &options {
             if opt.name == "tsk-proxy" {
                 Ok("test-proxy-container-id".to_string())
-            } else if let Some(ref cmd) = &config.cmd {
+            } else if let Some(cmd) = &config.cmd {
                 if cmd.contains(&"false".to_string()) {
                     Ok("test-container-id-fail".to_string())
                 } else {

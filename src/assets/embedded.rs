@@ -3,7 +3,7 @@
 //! This module provides the default asset manager that embeds dockerfiles
 //! and templates directly into the TSK binary at compile time.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use rust_embed::RustEmbed;
 
@@ -70,11 +70,9 @@ impl AssetManager for EmbeddedAssetManager {
         Templates::iter()
             .filter_map(|path| {
                 if path.starts_with("templates/") && path.ends_with(".md") {
-                    let template_name = path
-                        .strip_prefix("templates/")
+                    path.strip_prefix("templates/")
                         .and_then(|p| p.strip_suffix(".md"))
-                        .map(|s| s.to_string());
-                    template_name
+                        .map(|s| s.to_string())
                 } else {
                     None
                 }

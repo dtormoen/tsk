@@ -1,8 +1,8 @@
 use async_trait::async_trait;
+use bollard::Docker;
 use bollard::container::{Config, CreateContainerOptions, LogsOptions, RemoveContainerOptions};
 use bollard::image::{BuildImageOptions, ListImagesOptions};
 use bollard::network::{CreateNetworkOptions, ListNetworksOptions};
-use bollard::Docker;
 use futures_util::stream::{Stream, StreamExt};
 use std::collections::HashMap;
 
