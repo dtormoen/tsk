@@ -93,6 +93,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Node.js: `package.json` → "node"
   - Go: `go.mod` → "go"
   - Java: `pom.xml`, `build.gradle`, `build.gradle.kts` → "java"
+  - Lua: `rockspec`, `.luacheckrc`, `init.lua` → "lua"
   - Default: "default" (when no specific files found)
 - Automatic project name detection from repository directory name with cleaning for Docker compatibility
 - Used by `TaskBuilder`, `DockerBuildCommand`, and `DebugCommand` when `--tech-stack` and `--project` flags are not provided
@@ -121,7 +122,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 
 - **Layered Images**: Four-layer system for flexible customization
   - Base layer: Ubuntu 22.04 base OS and common tools
-  - Tech-stack layer: Language-specific toolchains (default, rust, python, etc.)
+  - Tech-stack layer: Language-specific toolchains (default, rust, python, node, go, java, lua)
   - Agent layer: AI agent installations (claude, etc.)
   - Project layer: Project-specific dependencies (optional, falls back to default)
 - **Custom Project Dockerfiles**: Place project-specific Dockerfiles in `.tsk/dockerfiles/project/{project-name}/Dockerfile`

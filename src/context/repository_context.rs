@@ -87,6 +87,11 @@ impl RepositoryContext for DefaultRepositoryContext {
             || self.file_exists(repo_path, "build.gradle.kts").await
         {
             "java"
+        } else if self.file_exists(repo_path, "rockspec").await
+            || self.file_exists(repo_path, ".luacheckrc").await
+            || self.file_exists(repo_path, "init.lua").await
+        {
+            "lua"
         } else {
             "default"
         };
@@ -221,6 +226,45 @@ mod tests {
             .unwrap();
 
         assert_eq!(result, "java");
+    }
+
+    #[tokio::test]
+    async fn test_detect_lua_tech_stack_rockspec() {
+        let mock_fs = MockFileSystem::new().with_file("/repo/rockspec", "");
+
+        let repo_context = DefaultRepositoryContext::new(Arc::new(mock_fs));
+        let result = repo_context
+            .detect_tech_stack(Path::new("/repo"))
+            .await
+            .unwrap();
+
+        assert_eq!(result, "lua");
+    }
+
+    #[tokio::test]
+    async fn test_detect_lua_tech_stack_luacheckrc() {
+        let mock_fs = MockFileSystem::new().with_file("/repo/.luacheckrc", "");
+
+        let repo_context = DefaultRepositoryContext::new(Arc::new(mock_fs));
+        let result = repo_context
+            .detect_tech_stack(Path::new("/repo"))
+            .await
+            .unwrap();
+
+        assert_eq!(result, "lua");
+    }
+
+    #[tokio::test]
+    async fn test_detect_lua_tech_stack_init() {
+        let mock_fs = MockFileSystem::new().with_file("/repo/init.lua", "");
+
+        let repo_context = DefaultRepositoryContext::new(Arc::new(mock_fs));
+        let result = repo_context
+            .detect_tech_stack(Path::new("/repo"))
+            .await
+            .unwrap();
+
+        assert_eq!(result, "lua");
     }
 
     #[tokio::test]
