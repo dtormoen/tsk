@@ -213,7 +213,7 @@ pub struct TaskResult {
 }
 
 /// Claude Code specific log processor that parses and formats JSON output
-/// 
+///
 /// This processor provides rich output including:
 /// - Tool usage information (Edit, Bash, Write, etc.)
 /// - Tool result summaries from user messages

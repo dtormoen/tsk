@@ -5,7 +5,7 @@ install:
     cargo install --path .
 
 test:
-    cargo test
+    cargo test -q
 
 format:
     cargo fmt
@@ -14,9 +14,6 @@ format:
 precommit:
     cargo fmt
     cargo clippy -- -D warnings
-    cargo test
+    cargo test -q
     # Check that the command starts
-    cargo run -- --help
-
-docker-build:
-    cargo run -- docker-build --no-cache
+    cargo run -- --help > /dev/null
