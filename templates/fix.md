@@ -11,7 +11,7 @@ While working on the bug fix, keep in mind the following:
 
 ## Final Steps
 After you fix the bug, please do the following steps:
-- Add or update tests to make sure everything is working as expected
-- Run `just precommit` to make sure files are formatted correctly and tests pass
+- Add or update tests to make sure the fix is working as expected
+- Run linter, formatter, and unit tests and make sure they pass
 - Make sure documentation is up to date. Keep it simple, but ensure documentation is accurate with the current state of the code
 - Commit your changes following the Conventional Commits specification with a descriptive summary of the changes
