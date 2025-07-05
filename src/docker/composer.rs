@@ -177,12 +177,12 @@ mod tests {
 
     fn create_test_composer() -> DockerComposer {
         let temp_dir = TempDir::new().unwrap();
-        let xdg_dirs = XdgDirectories::new_with_paths(
-            temp_dir.path().to_path_buf(),
+        let config = crate::storage::XdgConfig::with_paths(
             temp_dir.path().to_path_buf(),
             temp_dir.path().to_path_buf(),
             temp_dir.path().to_path_buf(),
         );
+        let xdg_dirs = XdgDirectories::new(Some(config)).unwrap();
 
         let template_manager =
             DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), Arc::new(xdg_dirs));

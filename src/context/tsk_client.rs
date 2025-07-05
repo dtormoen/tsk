@@ -176,14 +176,13 @@ mod tests {
     #[tokio::test]
     async fn test_client_creation() {
         let temp_dir = TempDir::new().unwrap();
-        unsafe {
-            std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
-        }
-        unsafe {
-            std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
-        }
+        let config = crate::storage::XdgConfig::with_paths(
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            temp_dir.path().join("config"),
+        );
 
-        let xdg = Arc::new(XdgDirectories::new().unwrap());
+        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
         xdg.ensure_directories().unwrap();
 
         let client = DefaultTskClient::new(xdg.clone());
@@ -199,14 +198,13 @@ mod tests {
         // The actual EOF scenario is tested implicitly when the server closes
         // connections without sending data, which was the original bug.
         let temp_dir = TempDir::new().unwrap();
-        unsafe {
-            std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
-        }
-        unsafe {
-            std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
-        }
+        let config = crate::storage::XdgConfig::with_paths(
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            temp_dir.path().join("config"),
+        );
 
-        let xdg = Arc::new(XdgDirectories::new().unwrap());
+        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
         xdg.ensure_directories().unwrap();
 
         let client = DefaultTskClient::new(xdg.clone());

@@ -488,12 +488,13 @@ mod tests {
     fn create_test_context() -> (TempDir, PathBuf, AppContext) {
         let temp_dir = TempDir::new().unwrap();
         let current_dir = temp_dir.path().to_path_buf();
-        let xdg = crate::storage::XdgDirectories::new_with_paths(
+        let config = crate::storage::XdgConfig::with_paths(
             temp_dir.path().join("data"),
             temp_dir.path().join("runtime"),
             temp_dir.path().join("config"),
-            temp_dir.path().join("cache"),
         );
+        let xdg = crate::storage::XdgDirectories::new(Some(config))
+            .expect("Failed to create XDG directories");
 
         let fs = Arc::new(
             MockFileSystem::new()
@@ -562,12 +563,13 @@ mod tests {
         let template_dir = current_dir.join(".tsk/templates");
 
         // Create a new context with template files
-        let xdg = crate::storage::XdgDirectories::new_with_paths(
+        let config = crate::storage::XdgConfig::with_paths(
             temp_dir.path().join("data"),
             temp_dir.path().join("runtime"),
             temp_dir.path().join("config"),
-            temp_dir.path().join("cache"),
         );
+        let xdg = crate::storage::XdgDirectories::new(Some(config))
+            .expect("Failed to create XDG directories");
 
         let fs = Arc::new(
             MockFileSystem::new()
@@ -642,12 +644,13 @@ mod tests {
         let instructions_path = current_dir.join("test-instructions.md");
 
         // Create a new context with instructions file
-        let xdg = crate::storage::XdgDirectories::new_with_paths(
+        let config = crate::storage::XdgConfig::with_paths(
             temp_dir.path().join("data"),
             temp_dir.path().join("runtime"),
             temp_dir.path().join("config"),
-            temp_dir.path().join("cache"),
         );
+        let xdg = crate::storage::XdgDirectories::new(Some(config))
+            .expect("Failed to create XDG directories");
 
         let fs = Arc::new(
             MockFileSystem::new()
@@ -757,12 +760,13 @@ mod tests {
         let (temp_dir, current_dir, _) = create_test_context();
 
         // Create context with specific commit SHA
-        let xdg = crate::storage::XdgDirectories::new_with_paths(
+        let config = crate::storage::XdgConfig::with_paths(
             temp_dir.path().join("data"),
             temp_dir.path().join("runtime"),
             temp_dir.path().join("config"),
-            temp_dir.path().join("cache"),
         );
+        let xdg = crate::storage::XdgDirectories::new(Some(config))
+            .expect("Failed to create XDG directories");
 
         let fs = Arc::new(
             MockFileSystem::new()
@@ -1042,12 +1046,13 @@ mod tests {
         let (temp_dir, current_dir, _) = create_test_context();
 
         // Create context with tracked files
-        let xdg = crate::storage::XdgDirectories::new_with_paths(
+        let config = crate::storage::XdgConfig::with_paths(
             temp_dir.path().join("data"),
             temp_dir.path().join("runtime"),
             temp_dir.path().join("config"),
-            temp_dir.path().join("cache"),
         );
+        let xdg = crate::storage::XdgDirectories::new(Some(config))
+            .expect("Failed to create XDG directories");
 
         let fs = Arc::new(
             MockFileSystem::new()

@@ -325,24 +325,21 @@ mod tests {
     async fn test_delete_task() {
         use crate::context::file_system::tests::MockFileSystem;
         use crate::context::git_operations::tests::MockGitOperations;
-        use std::env;
 
         // Set up XDG environment variables for testing
         let temp_dir = std::env::temp_dir();
         let test_data_dir = temp_dir.join("tsk-test-data");
         let test_runtime_dir = temp_dir.join("tsk-test-runtime");
-        unsafe {
-            env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
-        }
-        unsafe {
-            env::set_var(
-                "XDG_RUNTIME_DIR",
-                test_runtime_dir.to_string_lossy().to_string(),
-            );
-        }
+        let test_config_dir = temp_dir.join("tsk-test-config");
 
-        // Create XdgDirectories instance
-        let xdg = Arc::new(XdgDirectories::new().unwrap());
+        // Create XdgDirectories instance using XdgConfig
+        let config = crate::storage::XdgConfig::with_paths(
+            test_data_dir.clone(),
+            test_runtime_dir,
+            test_config_dir,
+        );
+        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
+        xdg.ensure_directories().unwrap();
 
         // Create a task to test with
         let (_temp_repo, repo_root) = create_temp_git_repo();
@@ -393,24 +390,21 @@ mod tests {
     async fn test_clean_tasks() {
         use crate::context::file_system::tests::MockFileSystem;
         use crate::context::git_operations::tests::MockGitOperations;
-        use std::env;
 
         // Set up XDG environment variables for testing
         let temp_dir = std::env::temp_dir();
         let test_data_dir = temp_dir.join("tsk-test-data2");
         let test_runtime_dir = temp_dir.join("tsk-test-runtime2");
-        unsafe {
-            env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
-        }
-        unsafe {
-            env::set_var(
-                "XDG_RUNTIME_DIR",
-                test_runtime_dir.to_string_lossy().to_string(),
-            );
-        }
+        let test_config_dir = temp_dir.join("tsk-test-config2");
 
-        // Create XdgDirectories instance
-        let xdg = Arc::new(XdgDirectories::new().unwrap());
+        // Create XdgDirectories instance using XdgConfig
+        let config = crate::storage::XdgConfig::with_paths(
+            test_data_dir.clone(),
+            test_runtime_dir,
+            test_config_dir,
+        );
+        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
+        xdg.ensure_directories().unwrap();
 
         // Create tasks with different statuses
         let (_temp_repo, repo_root) = create_temp_git_repo();
@@ -516,24 +510,21 @@ mod tests {
     async fn test_retry_task() {
         use crate::context::file_system::tests::MockFileSystem;
         use crate::context::git_operations::tests::MockGitOperations;
-        use std::env;
 
         // Set up XDG environment variables for testing
         let temp_dir = std::env::temp_dir();
         let test_data_dir = temp_dir.join("tsk-test-data-retry");
         let test_runtime_dir = temp_dir.join("tsk-test-runtime-retry");
-        unsafe {
-            env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
-        }
-        unsafe {
-            env::set_var(
-                "XDG_RUNTIME_DIR",
-                test_runtime_dir.to_string_lossy().to_string(),
-            );
-        }
+        let test_config_dir = temp_dir.join("tsk-test-config-retry");
 
-        // Create XdgDirectories instance
-        let xdg = Arc::new(XdgDirectories::new().unwrap());
+        // Create XdgDirectories instance using XdgConfig
+        let config = crate::storage::XdgConfig::with_paths(
+            test_data_dir.clone(),
+            test_runtime_dir,
+            test_config_dir,
+        );
+        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
+        xdg.ensure_directories().unwrap();
 
         // Create a completed task to retry
         let (_temp_repo, repo_root) = create_temp_git_repo();
@@ -641,24 +632,21 @@ mod tests {
     async fn test_retry_task_not_found() {
         use crate::context::file_system::tests::MockFileSystem;
         use crate::context::git_operations::tests::MockGitOperations;
-        use std::env;
 
         // Set up XDG environment variables for testing
         let temp_dir = std::env::temp_dir();
         let test_data_dir = temp_dir.join("tsk-test-data-retry-notfound");
         let test_runtime_dir = temp_dir.join("tsk-test-runtime-retry-notfound");
-        unsafe {
-            env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
-        }
-        unsafe {
-            env::set_var(
-                "XDG_RUNTIME_DIR",
-                test_runtime_dir.to_string_lossy().to_string(),
-            );
-        }
+        let test_config_dir = temp_dir.join("tsk-test-config-retry-notfound");
 
-        // Create XdgDirectories instance
-        let xdg = Arc::new(XdgDirectories::new().unwrap());
+        // Create XdgDirectories instance using XdgConfig
+        let config = crate::storage::XdgConfig::with_paths(
+            test_data_dir.clone(),
+            test_runtime_dir,
+            test_config_dir,
+        );
+        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
+        xdg.ensure_directories().unwrap();
 
         // Get XDG paths
         let (_temp_repo, repo_root) = create_temp_git_repo();
@@ -708,24 +696,21 @@ mod tests {
     async fn test_retry_task_queued_error() {
         use crate::context::file_system::tests::MockFileSystem;
         use crate::context::git_operations::tests::MockGitOperations;
-        use std::env;
 
         // Set up XDG environment variables for testing
         let temp_dir = std::env::temp_dir();
         let test_data_dir = temp_dir.join("tsk-test-data-retry-queued");
         let test_runtime_dir = temp_dir.join("tsk-test-runtime-retry-queued");
-        unsafe {
-            env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
-        }
-        unsafe {
-            env::set_var(
-                "XDG_RUNTIME_DIR",
-                test_runtime_dir.to_string_lossy().to_string(),
-            );
-        }
+        let test_config_dir = temp_dir.join("tsk-test-config-retry-queued");
 
-        // Create XdgDirectories instance
-        let xdg = Arc::new(XdgDirectories::new().unwrap());
+        // Create XdgDirectories instance using XdgConfig
+        let config = crate::storage::XdgConfig::with_paths(
+            test_data_dir.clone(),
+            test_runtime_dir,
+            test_config_dir,
+        );
+        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
+        xdg.ensure_directories().unwrap();
 
         // Create a queued task (should not be retryable)
         let (_temp_repo, repo_root) = create_temp_git_repo();
@@ -782,24 +767,21 @@ mod tests {
     async fn test_clean_tasks_with_id_matching() {
         use crate::context::file_system::tests::MockFileSystem;
         use crate::context::git_operations::tests::MockGitOperations;
-        use std::env;
 
         // Set up XDG environment variables for testing
         let temp_dir = std::env::temp_dir();
         let test_data_dir = temp_dir.join("tsk-test-data3");
         let test_runtime_dir = temp_dir.join("tsk-test-runtime3");
-        unsafe {
-            env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
-        }
-        unsafe {
-            env::set_var(
-                "XDG_RUNTIME_DIR",
-                test_runtime_dir.to_string_lossy().to_string(),
-            );
-        }
+        let test_config_dir = temp_dir.join("tsk-test-config3");
 
-        // Create XdgDirectories instance
-        let xdg = Arc::new(XdgDirectories::new().unwrap());
+        // Create XdgDirectories instance using XdgConfig
+        let config = crate::storage::XdgConfig::with_paths(
+            test_data_dir.clone(),
+            test_runtime_dir,
+            test_config_dir,
+        );
+        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
+        xdg.ensure_directories().unwrap();
 
         // Create a task with a specific ID using new_with_id
         let (_temp_repo, repo_root) = create_temp_git_repo();
@@ -880,24 +862,21 @@ mod tests {
     async fn test_with_storage_no_git_repo() {
         use crate::context::file_system::tests::MockFileSystem;
         use crate::context::git_operations::tests::MockGitOperations;
-        use std::env;
 
         // Set up XDG environment variables for testing
         let temp_dir = std::env::temp_dir();
         let test_data_dir = temp_dir.join("tsk-test-data-no-git");
         let test_runtime_dir = temp_dir.join("tsk-test-runtime-no-git");
-        unsafe {
-            env::set_var("XDG_DATA_HOME", test_data_dir.to_string_lossy().to_string());
-        }
-        unsafe {
-            env::set_var(
-                "XDG_RUNTIME_DIR",
-                test_runtime_dir.to_string_lossy().to_string(),
-            );
-        }
+        let test_config_dir = temp_dir.join("tsk-test-config-no-git");
 
-        // Create XdgDirectories instance
-        let xdg = Arc::new(XdgDirectories::new().unwrap());
+        // Create XdgDirectories instance using XdgConfig
+        let config = crate::storage::XdgConfig::with_paths(
+            test_data_dir.clone(),
+            test_runtime_dir,
+            test_config_dir,
+        );
+        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
+        xdg.ensure_directories().unwrap();
 
         // Get XDG paths
         let tasks_json_path = xdg.tasks_file();

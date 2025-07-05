@@ -311,13 +311,12 @@ mod tests {
     use tempfile::TempDir;
 
     fn create_test_xdg_directories(temp_dir: &TempDir) -> Arc<XdgDirectories> {
-        unsafe {
-            std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
-        }
-        unsafe {
-            std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
-        }
-        let xdg = XdgDirectories::new().unwrap();
+        let config = crate::storage::XdgConfig::with_paths(
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            temp_dir.path().join("config"),
+        );
+        let xdg = XdgDirectories::new(Some(config)).unwrap();
         xdg.ensure_directories().unwrap();
         Arc::new(xdg)
     }
@@ -398,13 +397,13 @@ mod tests {
         let fs = Arc::new(MockFileSystem::new());
 
         // Create XDG directories for test
-        unsafe {
-            std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
-        }
-        unsafe {
-            std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
-        }
-        let xdg = Arc::new(crate::storage::XdgDirectories::new().unwrap());
+        let config = crate::storage::XdgConfig::with_paths(
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            temp_dir.path().join("config"),
+        );
+        let xdg = Arc::new(crate::storage::XdgDirectories::new(Some(config)).unwrap());
+        xdg.ensure_directories().unwrap();
 
         let manager = RepoManager::new(xdg, fs, mock_git_ops.clone());
 
@@ -435,13 +434,13 @@ mod tests {
         let fs = Arc::new(MockFileSystem::new());
 
         // Create XDG directories for test
-        unsafe {
-            std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
-        }
-        unsafe {
-            std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
-        }
-        let xdg = Arc::new(crate::storage::XdgDirectories::new().unwrap());
+        let config = crate::storage::XdgConfig::with_paths(
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            temp_dir.path().join("config"),
+        );
+        let xdg = Arc::new(crate::storage::XdgDirectories::new(Some(config)).unwrap());
+        xdg.ensure_directories().unwrap();
 
         let manager = RepoManager::new(xdg, fs, mock_git_ops.clone());
 

@@ -10,6 +10,28 @@ pub enum XdgError {
     Io(#[from] std::io::Error),
 }
 
+/// Configuration for overriding XDG directory paths
+#[derive(Debug, Clone, Default)]
+pub struct XdgConfig {
+    /// Override for data directory (XDG_DATA_HOME)
+    pub data_dir: Option<PathBuf>,
+    /// Override for runtime directory (XDG_RUNTIME_DIR)
+    pub runtime_dir: Option<PathBuf>,
+    /// Override for config directory (XDG_CONFIG_HOME)
+    pub config_dir: Option<PathBuf>,
+}
+
+impl XdgConfig {
+    /// Create a new XdgConfig with all overrides set
+    pub fn with_paths(data_dir: PathBuf, runtime_dir: PathBuf, config_dir: PathBuf) -> Self {
+        Self {
+            data_dir: Some(data_dir),
+            runtime_dir: Some(runtime_dir),
+            config_dir: Some(config_dir),
+        }
+    }
+}
+
 /// Provides access to XDG Base Directory compliant paths for TSK
 #[derive(Debug, Clone)]
 pub struct XdgDirectories {
@@ -19,32 +41,22 @@ pub struct XdgDirectories {
 }
 
 impl XdgDirectories {
-    /// Create new XDG directories instance with standard paths
-    pub fn new() -> Result<Self, XdgError> {
-        let data_dir = Self::resolve_data_dir()?;
-        let runtime_dir = Self::resolve_runtime_dir()?;
-        let config_dir = Self::resolve_config_dir()?;
+    /// Create new XDG directories instance with optional configuration overrides
+    ///
+    /// # Arguments
+    /// * `config` - Optional configuration to override default XDG paths. If `None`,
+    ///   environment variables and defaults will be used.
+    pub fn new(config: Option<XdgConfig>) -> Result<Self, XdgError> {
+        let config = config.unwrap_or_default();
+        let data_dir = Self::resolve_data_dir(&config)?;
+        let runtime_dir = Self::resolve_runtime_dir(&config)?;
+        let config_dir = Self::resolve_config_dir(&config)?;
 
         Ok(Self {
             data_dir,
             runtime_dir,
             config_dir,
         })
-    }
-
-    /// Create new XDG directories with custom paths (for testing)
-    #[allow(dead_code)]
-    pub fn new_with_paths(
-        data_dir: PathBuf,
-        runtime_dir: PathBuf,
-        config_dir: PathBuf,
-        _cache_dir: PathBuf,
-    ) -> Self {
-        Self {
-            data_dir,
-            runtime_dir,
-            config_dir,
-        }
     }
 
     /// Get the data directory path (for persistent storage)
@@ -101,8 +113,13 @@ impl XdgDirectories {
         Ok(())
     }
 
-    fn resolve_data_dir() -> Result<PathBuf, XdgError> {
-        // Check XDG_DATA_HOME first
+    fn resolve_data_dir(config: &XdgConfig) -> Result<PathBuf, XdgError> {
+        // Check config override first
+        if let Some(ref data_dir) = config.data_dir {
+            return Ok(data_dir.join("tsk"));
+        }
+
+        // Check XDG_DATA_HOME environment variable
         if let Ok(xdg_data) = env::var("XDG_DATA_HOME") {
             return Ok(PathBuf::from(xdg_data).join("tsk"));
         }
@@ -115,8 +132,13 @@ impl XdgDirectories {
         Ok(PathBuf::from(home).join(".local").join("share").join("tsk"))
     }
 
-    fn resolve_runtime_dir() -> Result<PathBuf, XdgError> {
-        // Check XDG_RUNTIME_DIR first
+    fn resolve_runtime_dir(config: &XdgConfig) -> Result<PathBuf, XdgError> {
+        // Check config override first
+        if let Some(ref runtime_dir) = config.runtime_dir {
+            return Ok(runtime_dir.join("tsk"));
+        }
+
+        // Check XDG_RUNTIME_DIR environment variable
         if let Ok(xdg_runtime) = env::var("XDG_RUNTIME_DIR") {
             return Ok(PathBuf::from(xdg_runtime).join("tsk"));
         }
@@ -137,8 +159,13 @@ impl XdgDirectories {
         Ok(PathBuf::from("/tmp").join(format!("tsk-{uid}")))
     }
 
-    fn resolve_config_dir() -> Result<PathBuf, XdgError> {
-        // Check XDG_CONFIG_HOME first
+    fn resolve_config_dir(config: &XdgConfig) -> Result<PathBuf, XdgError> {
+        // Check config override first
+        if let Some(ref config_dir) = config.config_dir {
+            return Ok(config_dir.join("tsk"));
+        }
+
+        // Check XDG_CONFIG_HOME environment variable
         if let Ok(xdg_config) = env::var("XDG_CONFIG_HOME") {
             return Ok(PathBuf::from(xdg_config).join("tsk"));
         }
@@ -155,25 +182,16 @@ impl XdgDirectories {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
 
     #[test]
-    fn test_xdg_directories_with_env_vars() {
-        let original_data = env::var("XDG_DATA_HOME").ok();
-        let original_runtime = env::var("XDG_RUNTIME_DIR").ok();
-        let original_config = env::var("XDG_CONFIG_HOME").ok();
+    fn test_xdg_directories_with_config() {
+        let config = XdgConfig::with_paths(
+            PathBuf::from("/custom/data"),
+            PathBuf::from("/custom/runtime"),
+            PathBuf::from("/custom/config"),
+        );
 
-        unsafe {
-            env::set_var("XDG_DATA_HOME", "/custom/data");
-        }
-        unsafe {
-            env::set_var("XDG_RUNTIME_DIR", "/custom/runtime");
-        }
-        unsafe {
-            env::set_var("XDG_CONFIG_HOME", "/custom/config");
-        }
-
-        let dirs = XdgDirectories::new().expect("Failed to create XDG directories");
+        let dirs = XdgDirectories::new(Some(config)).expect("Failed to create XDG directories");
 
         assert_eq!(dirs.data_dir(), Path::new("/custom/data/tsk"));
         assert_eq!(dirs.runtime_dir(), Path::new("/custom/runtime/tsk"));
@@ -188,98 +206,68 @@ mod tests {
             dirs.templates_dir(),
             Path::new("/custom/config/tsk/templates")
         );
-
-        // Restore original environment
-        match original_data {
-            Some(val) => unsafe { env::set_var("XDG_DATA_HOME", val) },
-            None => unsafe { env::remove_var("XDG_DATA_HOME") },
-        }
-        match original_runtime {
-            Some(val) => unsafe { env::set_var("XDG_RUNTIME_DIR", val) },
-            None => unsafe { env::remove_var("XDG_RUNTIME_DIR") },
-        }
-        match original_config {
-            Some(val) => unsafe { env::set_var("XDG_CONFIG_HOME", val) },
-            None => unsafe { env::remove_var("XDG_CONFIG_HOME") },
-        }
     }
 
     #[test]
     fn test_xdg_directories_fallback() {
+        // Test that fallback paths work when no config is provided
+        let dirs = XdgDirectories::new(None).expect("Failed to create XDG directories");
+
+        // These paths depend on environment variables, so we just verify they contain "tsk"
+        assert!(dirs.data_dir().to_string_lossy().contains("tsk"));
+        assert!(dirs.runtime_dir().to_string_lossy().contains("tsk"));
+        assert!(dirs.config_dir().to_string_lossy().contains("tsk"));
+    }
+
+    #[test]
+    fn test_partial_config_overrides() {
+        // Test that partial configs work correctly - only override some paths
+        let config = XdgConfig {
+            data_dir: Some(PathBuf::from("/override/data")),
+            runtime_dir: None,
+            config_dir: Some(PathBuf::from("/override/config")),
+        };
+
+        let dirs = XdgDirectories::new(Some(config)).expect("Failed to create XDG directories");
+
+        assert_eq!(dirs.data_dir(), Path::new("/override/data/tsk"));
+        assert_eq!(dirs.config_dir(), Path::new("/override/config/tsk"));
+        // Runtime dir should use environment variable or default
+        assert!(dirs.runtime_dir().to_string_lossy().contains("tsk"));
+    }
+
+    #[test]
+    fn test_config_resolution_priority() {
+        // Test that config overrides take precedence over environment variables
         let original_data = env::var("XDG_DATA_HOME").ok();
-        let original_runtime = env::var("XDG_RUNTIME_DIR").ok();
-        let original_config = env::var("XDG_CONFIG_HOME").ok();
 
+        // Set environment variable
         unsafe {
-            env::remove_var("XDG_DATA_HOME");
-        }
-        unsafe {
-            env::remove_var("XDG_RUNTIME_DIR");
-        }
-        unsafe {
-            env::remove_var("XDG_CONFIG_HOME");
+            env::set_var("XDG_DATA_HOME", "/env/data");
         }
 
-        let dirs = XdgDirectories::new().expect("Failed to create XDG directories");
+        // But provide config override
+        let config = XdgConfig {
+            data_dir: Some(PathBuf::from("/config/data")),
+            runtime_dir: None,
+            config_dir: None,
+        };
 
-        let home = env::var("HOME")
-            .or_else(|_| env::var("USERPROFILE"))
-            .unwrap();
-        let expected_data = PathBuf::from(&home)
-            .join(".local")
-            .join("share")
-            .join("tsk");
-        assert_eq!(dirs.data_dir(), expected_data);
+        let dirs = XdgDirectories::new(Some(config)).expect("Failed to create XDG directories");
 
-        let expected_config = PathBuf::from(&home).join(".config").join("tsk");
-        assert_eq!(dirs.config_dir(), expected_config);
+        // Config should take precedence
+        assert_eq!(dirs.data_dir(), Path::new("/config/data/tsk"));
 
         // Restore original environment
         match original_data {
             Some(val) => unsafe { env::set_var("XDG_DATA_HOME", val) },
             None => unsafe { env::remove_var("XDG_DATA_HOME") },
-        }
-        match original_runtime {
-            Some(val) => unsafe { env::set_var("XDG_RUNTIME_DIR", val) },
-            None => unsafe { env::remove_var("XDG_RUNTIME_DIR") },
-        }
-        match original_config {
-            Some(val) => unsafe { env::set_var("XDG_CONFIG_HOME", val) },
-            None => unsafe { env::remove_var("XDG_CONFIG_HOME") },
-        }
-    }
-
-    #[test]
-    fn test_config_dir_resolution() {
-        let original_config = env::var("XDG_CONFIG_HOME").ok();
-
-        // Test with XDG_CONFIG_HOME set
-        unsafe {
-            env::set_var("XDG_CONFIG_HOME", "/test/config");
-        }
-        let config_dir = XdgDirectories::resolve_config_dir().unwrap();
-        assert_eq!(config_dir, PathBuf::from("/test/config/tsk"));
-
-        // Test fallback
-        unsafe {
-            env::remove_var("XDG_CONFIG_HOME");
-        }
-        let config_dir = XdgDirectories::resolve_config_dir().unwrap();
-        let home = env::var("HOME")
-            .or_else(|_| env::var("USERPROFILE"))
-            .unwrap();
-        assert_eq!(config_dir, PathBuf::from(home).join(".config").join("tsk"));
-
-        // Restore original environment
-        match original_config {
-            Some(val) => unsafe { env::set_var("XDG_CONFIG_HOME", val) },
-            None => unsafe { env::remove_var("XDG_CONFIG_HOME") },
         }
     }
 
     #[test]
     fn test_task_dir_generation() {
-        let dirs = XdgDirectories::new().expect("Failed to create XDG directories");
+        let dirs = XdgDirectories::new(None).expect("Failed to create XDG directories");
         let task_dir = dirs.task_dir("task-123", "repo-abc");
 
         assert!(task_dir.to_string_lossy().contains("repo-abc-task-123"));

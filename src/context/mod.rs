@@ -152,7 +152,7 @@ impl AppContextBuilder {
 
     pub fn build(self) -> AppContext {
         let xdg_directories = self.xdg_directories.unwrap_or_else(|| {
-            let xdg = XdgDirectories::new().expect("Failed to initialize XDG directories");
+            let xdg = XdgDirectories::new(None).expect("Failed to initialize XDG directories");
             // Ensure directories exist
             xdg.ensure_directories()
                 .expect("Failed to create XDG directories");

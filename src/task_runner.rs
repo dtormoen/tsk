@@ -235,14 +235,15 @@ mod tests {
         let git_ops = Arc::new(crate::context::git_operations::tests::MockGitOperations::new());
         let docker_client = Arc::new(FixedResponseDockerClient::default());
 
-        // Create test XDG directories
-        unsafe {
-            std::env::set_var("XDG_DATA_HOME", "/tmp/test-xdg-data");
-        }
-        unsafe {
-            std::env::set_var("XDG_RUNTIME_DIR", "/tmp/test-xdg-runtime");
-        }
-        let xdg_directories = Arc::new(crate::storage::XdgDirectories::new().unwrap());
+        // Create test XDG directories using XdgConfig
+        let xdg_config = crate::storage::XdgConfig::with_paths(
+            temp_dir.path().join("xdg-data"),
+            temp_dir.path().join("xdg-runtime"),
+            temp_dir.path().join("xdg-config"),
+        );
+        let xdg_directories =
+            Arc::new(crate::storage::XdgDirectories::new(Some(xdg_config)).unwrap());
+        xdg_directories.ensure_directories().unwrap();
 
         let repo_manager = RepoManager::new(xdg_directories.clone(), fs.clone(), git_ops);
         let docker_manager = crate::docker::DockerManager::new(docker_client.clone(), fs.clone());

@@ -207,19 +207,18 @@ mod tests {
     /// Helper to create a test AppContext
     fn create_test_context() -> (Arc<AppContext>, TempDir) {
         let temp_dir = TempDir::new().unwrap();
-        unsafe {
-            std::env::set_var("XDG_DATA_HOME", temp_dir.path().join("data"));
-        }
-        unsafe {
-            std::env::set_var("XDG_RUNTIME_DIR", temp_dir.path().join("runtime"));
-        }
+        let config = crate::storage::XdgConfig::with_paths(
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            temp_dir.path().join("config"),
+        );
+        let xdg = Arc::new(crate::storage::XdgDirectories::new(Some(config)).unwrap());
+        xdg.ensure_directories().unwrap();
 
         let context = AppContext::builder()
             .with_docker_client(Arc::new(NoOpDockerClient))
+            .with_xdg_directories(xdg)
             .build();
-
-        // Ensure directories exist
-        context.xdg_directories().ensure_directories().unwrap();
 
         (Arc::new(context), temp_dir)
     }
