@@ -198,6 +198,7 @@ pub struct TrackedDockerClient {
     pub logs_output: String,
     pub network_exists: bool,
     pub create_network_error: Option<String>,
+    pub image_exists_returns: bool,
 }
 
 impl Default for TrackedDockerClient {
@@ -212,6 +213,7 @@ impl Default for TrackedDockerClient {
             logs_output: "Container logs".to_string(),
             network_exists: true,
             create_network_error: None,
+            image_exists_returns: true,
         }
     }
 }
@@ -332,6 +334,6 @@ impl DockerClient for TrackedDockerClient {
     }
 
     async fn image_exists(&self, _tag: &str) -> Result<bool, String> {
-        Ok(true)
+        Ok(self.image_exists_returns)
     }
 }

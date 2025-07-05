@@ -262,6 +262,23 @@ impl DockerImageManager {
         })
     }
 
+    /// Ensure the proxy image exists, building it if necessary
+    pub async fn ensure_proxy_image(&self) -> Result<DockerImage> {
+        let proxy_tag = "tsk/proxy";
+
+        // Check if proxy image exists
+        if self.image_exists(proxy_tag).await? {
+            return Ok(DockerImage {
+                tag: proxy_tag.to_string(),
+                used_fallback: false,
+            });
+        }
+
+        // Image doesn't exist, build it
+        println!("Proxy image not found, building it...");
+        self.build_proxy_image(false).await
+    }
+
     /// Internal method to build the proxy image using DockerClient
     async fn build_proxy_image_internal(&self, no_cache: bool) -> Result<()> {
         use crate::assets::embedded::EmbeddedAssetManager;
@@ -574,5 +591,51 @@ mod tests {
         let image = result.unwrap();
         assert_eq!(image.tag, "tsk/default/claude-code/default");
         assert!(!image.used_fallback);
+    }
+
+    #[tokio::test]
+    async fn test_ensure_proxy_image_exists() {
+        let manager = create_test_manager();
+
+        // In test mode, image_exists always returns true
+        let result = manager.ensure_proxy_image().await;
+        assert!(result.is_ok());
+
+        let image = result.unwrap();
+        assert_eq!(image.tag, "tsk/proxy");
+        assert!(!image.used_fallback);
+    }
+
+    #[tokio::test]
+    async fn test_ensure_proxy_image_builds_when_missing() {
+        let mut docker_client = TrackedDockerClient::default();
+        // Override the test default to simulate missing image
+        docker_client.image_exists_returns = false;
+
+        let docker_client = Arc::new(docker_client);
+        let temp_dir = TempDir::new().unwrap();
+        let xdg_dirs = crate::storage::xdg::XdgDirectories::new_with_paths(
+            temp_dir.path().to_path_buf(),
+            temp_dir.path().to_path_buf(),
+            temp_dir.path().to_path_buf(),
+            temp_dir.path().to_path_buf(),
+        );
+
+        let template_manager =
+            DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), Arc::new(xdg_dirs.clone()));
+        let composer = DockerComposer::new(DockerTemplateManager::new(
+            Arc::new(EmbeddedAssetManager),
+            Arc::new(xdg_dirs),
+        ));
+
+        let manager = DockerImageManager::new(docker_client.clone(), template_manager, composer);
+
+        // Note: This test won't actually build in test mode due to cfg!(test) check
+        // but it validates the logic flow
+        let result = manager.ensure_proxy_image().await;
+        assert!(result.is_ok());
+
+        let image = result.unwrap();
+        assert_eq!(image.tag, "tsk/proxy");
     }
 }

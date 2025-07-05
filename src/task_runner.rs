@@ -87,6 +87,12 @@ impl TaskRunner {
         println!("\n{}", "=".repeat(60));
 
         let (output, task_result_from_container) = {
+            // Ensure the proxy image exists first
+            self.docker_image_manager
+                .ensure_proxy_image()
+                .await
+                .map_err(|e| format!("Error ensuring proxy image: {e}"))?;
+
             // Ensure the Docker image exists - always rebuild to pick up any changes
             let docker_image = self
                 .docker_image_manager
