@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 
 #[async_trait]
 pub trait GitOperations: Send + Sync {
-    async fn is_git_repository(&self) -> Result<bool, String>;
+    /// Check if the given path is within a git repository
+    async fn is_git_repository(&self, repo_path: &Path) -> Result<bool, String>;
 
     async fn create_branch(&self, repo_path: &Path, branch_name: &str) -> Result<(), String>;
 
@@ -65,11 +66,8 @@ impl DefaultGitOperations {}
 
 #[async_trait]
 impl GitOperations for DefaultGitOperations {
-    async fn is_git_repository(&self) -> Result<bool, String> {
-        let current_dir =
-            std::env::current_dir().map_err(|e| format!("Failed to get current directory: {e}"))?;
-
-        match Repository::open_ext(&current_dir, RepositoryOpenFlags::empty(), &[] as &[&Path]) {
+    async fn is_git_repository(&self, repo_path: &Path) -> Result<bool, String> {
+        match Repository::open_ext(repo_path, RepositoryOpenFlags::empty(), &[] as &[&Path]) {
             Ok(_) => Ok(true),
             Err(_) => Ok(false),
         }
@@ -667,7 +665,7 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl GitOperations for MockGitOperations {
-        async fn is_git_repository(&self) -> Result<bool, String> {
+        async fn is_git_repository(&self, _repo_path: &Path) -> Result<bool, String> {
             self.is_repo_result.lock().unwrap().clone()
         }
 
@@ -810,6 +808,31 @@ pub(crate) mod tests {
         use tempfile::TempDir;
 
         #[tokio::test]
+        async fn test_is_git_repository() {
+            let git_ops = DefaultGitOperations;
+
+            // Test with a directory that is not a git repository
+            let non_git_dir = TempDir::new().unwrap();
+            let is_repo = git_ops.is_git_repository(non_git_dir.path()).await.unwrap();
+            assert!(!is_repo, "Non-git directory should return false");
+
+            // Test with a valid git repository
+            let git_dir = TempDir::new().unwrap();
+            git2::Repository::init(git_dir.path()).unwrap();
+            let is_repo = git_ops.is_git_repository(git_dir.path()).await.unwrap();
+            assert!(is_repo, "Git repository should return true");
+
+            // Test with a subdirectory inside a git repository
+            let subdir = git_dir.path().join("subdir");
+            std::fs::create_dir(&subdir).unwrap();
+            let is_repo = git_ops.is_git_repository(&subdir).await.unwrap();
+            assert!(
+                is_repo,
+                "Subdirectory inside git repository should return true"
+            );
+        }
+
+        #[tokio::test]
         async fn test_default_git_operations_with_real_repo() {
             let git_ops = DefaultGitOperations;
             let temp_dir = TempDir::new().unwrap();
@@ -892,10 +915,16 @@ pub(crate) mod tests {
 
             // Test is_git_repository
             mock.set_is_repo_result(Ok(true));
-            assert_eq!(mock.is_git_repository().await.unwrap(), true);
+            assert_eq!(
+                mock.is_git_repository(Path::new("/test")).await.unwrap(),
+                true
+            );
 
             mock.set_is_repo_result(Ok(false));
-            assert_eq!(mock.is_git_repository().await.unwrap(), false);
+            assert_eq!(
+                mock.is_git_repository(Path::new("/test")).await.unwrap(),
+                false
+            );
 
             // Test get_status
             mock.set_get_status_result(Ok("M file.txt\n".to_string()));

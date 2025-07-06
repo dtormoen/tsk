@@ -614,12 +614,12 @@ mod tests {
 
         let docker_client = Arc::new(docker_client);
         let temp_dir = TempDir::new().unwrap();
-        let xdg_dirs = crate::storage::xdg::XdgDirectories::new_with_paths(
-            temp_dir.path().to_path_buf(),
+        let config = crate::storage::xdg::XdgConfig::with_paths(
             temp_dir.path().to_path_buf(),
             temp_dir.path().to_path_buf(),
             temp_dir.path().to_path_buf(),
         );
+        let xdg_dirs = crate::storage::xdg::XdgDirectories::new(Some(config)).unwrap();
 
         let template_manager =
             DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), Arc::new(xdg_dirs.clone()));

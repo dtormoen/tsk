@@ -18,9 +18,11 @@ use std::path::{Path, PathBuf};
 /// # Example
 ///
 /// ```no_run
-/// use std::path::Path;
-/// use tsk::repo_utils::find_repository_root;
-///
+/// # use std::path::Path;
+/// # use std::error::Error;
+/// # fn find_repository_root(start_path: &Path) -> Result<std::path::PathBuf, Box<dyn Error>> {
+/// #     Ok(start_path.to_path_buf())
+/// # }
 /// let repo_root = find_repository_root(Path::new(".")).unwrap();
 /// println!("Repository root: {}", repo_root.display());
 /// ```

@@ -49,8 +49,8 @@ impl RepoManager {
             .await
             .map_err(|e| format!("Failed to create task directory: {e}"))?;
 
-        // Check if we're in a git repository
-        if !self.git_operations.is_git_repository().await? {
+        // Check if the provided path is in a git repository
+        if !self.git_operations.is_git_repository(repo_root).await? {
             return Err("Not in a git repository".to_string());
         }
 
