@@ -30,6 +30,12 @@ Provide a recommendation for the best approach to implement the requested change
 This section should contain everything needed for someone or an agent to implement the plan. Start with a short, high level of the summary of the changes in the first paragraph to give an overview.
 
 After the summary, write out concise, but comprehensive steps for implementing the change. For larger changes, the changes can broken down into phases, but only do this for very complex changes. Reference the specific files, classes, and functions that need to be added, modified, or deleted.
+
+### Success Criteria
+This section should include a checklist of criteria to successfully complete the change.
+
+### Out of Scope
+This section should contain any work items that should be saved for the future.
 ```
 
 Save the completed doc to the docs folder with a short, descriptive title. Commit your doc following the Conventional Commits specification with a brief summary of the doc.
