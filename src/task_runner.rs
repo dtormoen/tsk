@@ -232,7 +232,8 @@ mod tests {
                 .with_file("instructions.md", "Test task instructions"),
         );
 
-        let git_ops = Arc::new(crate::context::git_operations::tests::MockGitOperations::new());
+        // TODO: Replace MockGitOperations with real git operations
+        let git_ops = Arc::new(crate::context::git_operations::DefaultGitOperations);
         let docker_client = Arc::new(FixedResponseDockerClient::default());
 
         // Create test XDG directories using XdgConfig
