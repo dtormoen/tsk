@@ -108,8 +108,9 @@ TSK implements a command pattern with dependency injection for testability. The 
 
 ### Testing Conventions
 
-- Avoid mocks, especially for traits that are not in the `AppContext`
-- Avoid tests with side effects like modifying resources in the `AppContext` or changing directories
+- Prefer integration tests using real implementations over mocks
+- Use `TestGitRepository` from `test_utils::git_test_utils` for tests requiring git repositories
+- Tests should use temporary directories that are automatically cleaned up
 - Make tests thread safe so they can be run in parallel
 - Keep tests simple and concise while still testing core functionality
 - Avoid the use of `#[cfg(test)]` and `#[allow(dead_code)]` directives in code

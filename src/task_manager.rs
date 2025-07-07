@@ -305,20 +305,51 @@ impl TaskManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::FixedResponseDockerClient;
-    use std::path::PathBuf;
+    use crate::test_utils::TestGitRepository;
     use std::sync::Arc;
     use tempfile::TempDir;
 
-    /// Helper function to create a temporary git repository
-    fn create_temp_git_repo() -> (TempDir, PathBuf) {
-        let temp_dir = TempDir::new().unwrap();
-        let repo_root = temp_dir.path().to_path_buf();
+    /// Helper function to set up a test environment with XDG directories, git repository, and AppContext
+    async fn setup_test_environment()
+    -> anyhow::Result<(Arc<XdgDirectories>, TestGitRepository, AppContext)> {
+        // Create temporary directory for XDG
+        let temp_dir = TempDir::new()?;
 
-        // Create .git directory to make it a valid git repo
-        std::fs::create_dir(repo_root.join(".git")).unwrap();
+        // Create XdgDirectories instance using XdgConfig
+        let config = crate::storage::XdgConfig::with_paths(
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            temp_dir.path().join("config"),
+        );
+        let xdg = Arc::new(XdgDirectories::new(Some(config))?);
+        xdg.ensure_directories()?;
 
-        (temp_dir, repo_root)
+        // Create a test git repository
+        let test_repo = TestGitRepository::new()?;
+        test_repo.init_with_commit()?;
+
+        // Create AppContext
+        let ctx = AppContext::builder()
+            .with_xdg_directories(xdg.clone())
+            .build();
+
+        Ok((xdg, test_repo, ctx))
+    }
+
+    /// Helper function to set up task directory structure with files
+    async fn setup_task_directory(
+        xdg: &XdgDirectories,
+        task_id: &str,
+        repo_hash: &str,
+        instructions_content: &str,
+    ) -> anyhow::Result<std::path::PathBuf> {
+        let task_dir_path = xdg.task_dir(task_id, repo_hash);
+        std::fs::create_dir_all(&task_dir_path)?;
+
+        let instructions_path = task_dir_path.join("instructions.md");
+        std::fs::write(&instructions_path, instructions_content)?;
+
+        Ok(task_dir_path)
     }
 
     #[tokio::test]
@@ -386,28 +417,13 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "Needs refactoring to remove MockGitOperations"]
     async fn test_clean_tasks() {
-        use crate::context::file_system::tests::MockFileSystem;
-
-        // Set up XDG environment variables for testing
-        let temp_dir = std::env::temp_dir();
-        let test_data_dir = temp_dir.join("tsk-test-data2");
-        let test_runtime_dir = temp_dir.join("tsk-test-runtime2");
-        let test_config_dir = temp_dir.join("tsk-test-config2");
-
-        // Create XdgDirectories instance using XdgConfig
-        let config = crate::storage::XdgConfig::with_paths(
-            test_data_dir.clone(),
-            test_runtime_dir,
-            test_config_dir,
-        );
-        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
-        xdg.ensure_directories().unwrap();
+        // Set up test environment
+        let (xdg, test_repo, ctx) = setup_test_environment().await.unwrap();
+        let repo_root = test_repo.path().to_path_buf();
+        let repo_hash = crate::storage::get_repo_hash(&repo_root);
 
         // Create tasks with different statuses
-        let (_temp_repo, repo_root) = create_temp_git_repo();
-        let repo_hash = crate::storage::get_repo_hash(&repo_root);
         let queued_task_id = "queued-task-123".to_string();
         let completed_task_id = "completed-task-456".to_string();
 
@@ -444,12 +460,23 @@ mod tests {
         );
         completed_task.status = TaskStatus::Complete;
 
-        // Get XDG paths
-        let queued_dir_path = xdg.task_dir(&queued_task_id, &repo_hash);
-        let completed_dir_path = xdg.task_dir(&completed_task_id, &repo_hash);
-        let tasks_json_path = xdg.tasks_file();
-        let data_dir = xdg.data_dir().to_path_buf();
-        let tasks_dir = data_dir.join("tasks");
+        // Create task directories and files
+        let queued_dir_path = setup_task_directory(
+            &xdg,
+            &queued_task_id,
+            &repo_hash,
+            "Queued task instructions",
+        )
+        .await
+        .unwrap();
+        let completed_dir_path = setup_task_directory(
+            &xdg,
+            &completed_task_id,
+            &repo_hash,
+            "Completed task instructions",
+        )
+        .await
+        .unwrap();
 
         // Create initial tasks.json with both tasks
         let tasks_json = format!(
@@ -464,83 +491,55 @@ mod tests {
             completed_dir_path.to_string_lossy()
         );
 
-        // Create mock file system with necessary structure
-        let git_dir = repo_root.join(".git");
+        let tasks_json_path = xdg.tasks_file();
+        if let Some(parent) = tasks_json_path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&tasks_json_path, tasks_json).unwrap();
 
-        let fs = Arc::new(
-            MockFileSystem::new()
-                .with_dir(&git_dir.to_string_lossy().to_string())
-                .with_dir(&data_dir.to_string_lossy().to_string())
-                .with_dir(&tasks_dir.to_string_lossy().to_string())
-                .with_dir(&queued_dir_path.to_string_lossy().to_string())
-                .with_dir(&completed_dir_path.to_string_lossy().to_string())
-                .with_file(&tasks_json_path.to_string_lossy().to_string(), &tasks_json),
-        );
-
-        let docker_client = Arc::new(FixedResponseDockerClient::default());
-        // TODO: Replace with real git operations
-        let git_ops = Arc::new(crate::context::git_operations::DefaultGitOperations);
-
-        let ctx = AppContext::builder()
-            .with_docker_client(docker_client)
-            .with_file_system(fs.clone())
-            .with_git_operations(git_ops)
-            .with_xdg_directories(xdg)
-            .build();
-
+        // Create TaskManager and clean tasks
         let task_manager = TaskManager::with_storage(&ctx).unwrap();
 
-        // Clean tasks
         let result = task_manager.clean_tasks().await;
         assert!(result.is_ok(), "Failed to clean tasks: {:?}", result);
         let completed_count = result.unwrap();
         assert_eq!(completed_count, 1);
 
         // Verify directories are cleaned up
-        let queued_exists = fs.exists(&queued_dir_path).await.unwrap();
-        let completed_exists = fs.exists(&completed_dir_path).await.unwrap();
-        assert!(queued_exists, "Queued task directory should still exist");
         assert!(
-            !completed_exists,
+            queued_dir_path.exists(),
+            "Queued task directory should still exist"
+        );
+        assert!(
+            !completed_dir_path.exists(),
             "Completed task directory should be deleted"
         );
+
+        // Verify storage was updated
+        let storage = task_manager.task_storage.as_ref().unwrap();
+        let remaining_tasks = storage.list_tasks().await.unwrap();
+        assert_eq!(remaining_tasks.len(), 1);
+        assert_eq!(remaining_tasks[0].id, queued_task_id);
     }
 
     #[tokio::test]
-    #[ignore = "Needs refactoring to remove MockGitOperations"]
     async fn test_retry_task() {
-        use crate::context::file_system::tests::MockFileSystem;
-
-        // Set up XDG environment variables for testing
-        let temp_dir = std::env::temp_dir();
-        let test_data_dir = temp_dir.join("tsk-test-data-retry");
-        let test_runtime_dir = temp_dir.join("tsk-test-runtime-retry");
-        let test_config_dir = temp_dir.join("tsk-test-config-retry");
-
-        // Create XdgDirectories instance using XdgConfig
-        let config = crate::storage::XdgConfig::with_paths(
-            test_data_dir.clone(),
-            test_runtime_dir,
-            test_config_dir,
-        );
-        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
-        xdg.ensure_directories().unwrap();
+        // Set up test environment
+        let (xdg, test_repo, ctx) = setup_test_environment().await.unwrap();
+        let repo_root = test_repo.path().to_path_buf();
+        let repo_hash = crate::storage::get_repo_hash(&repo_root);
 
         // Create a completed task to retry
-        let (_temp_repo, repo_root) = create_temp_git_repo();
-        let repo_hash = crate::storage::get_repo_hash(&repo_root);
         let task_id = "2024-01-01-1200-generic-original-task".to_string();
+        let task_dir_path = xdg.task_dir(&task_id, &repo_hash);
+        let instructions_path = task_dir_path.join("instructions.md");
+
         let mut completed_task = Task::new(
             task_id.clone(),
             repo_root.clone(),
             "original-task".to_string(),
             "generic".to_string(),
-            format!(
-                "{}/tasks/{}/{}/instructions.md",
-                test_data_dir.to_string_lossy(),
-                repo_hash,
-                task_id
-            ),
+            instructions_path.to_string_lossy().to_string(),
             "claude-code".to_string(),
             45,
             format!("tsk/{task_id}"),
@@ -548,16 +547,16 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            repo_root.clone(),
+            task_dir_path.to_path_buf(),
         );
         completed_task.status = TaskStatus::Complete;
 
-        // Get XDG paths
-        let task_dir_path = xdg.task_dir(&task_id, &repo_hash);
-        let instructions_path = task_dir_path.join("instructions.md");
-        let tasks_json_path = xdg.tasks_file();
-        let data_dir = xdg.data_dir().to_path_buf();
-        let tasks_dir = data_dir.join("tasks");
+        // Set up task directory with instructions
+        let instructions_content =
+            "# Original Task Instructions\n\nThis is the original task content.";
+        setup_task_directory(&xdg, &task_id, &repo_hash, instructions_content)
+            .await
+            .unwrap();
 
         // Create tasks.json with the completed task
         let tasks_json = format!(
@@ -569,38 +568,15 @@ mod tests {
             task_dir_path.to_string_lossy()
         );
 
-        // Create mock file system with necessary structure
-        let git_dir = repo_root.join(".git");
-        let instructions_content =
-            "# Original Task Instructions\n\nThis is the original task content.";
+        let tasks_json_path = xdg.tasks_file();
+        if let Some(parent) = tasks_json_path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&tasks_json_path, tasks_json).unwrap();
 
-        let fs = Arc::new(
-            MockFileSystem::new()
-                .with_dir(&git_dir.to_string_lossy().to_string())
-                .with_dir(&data_dir.to_string_lossy().to_string())
-                .with_dir(&tasks_dir.to_string_lossy().to_string())
-                .with_dir(&task_dir_path.to_string_lossy().to_string())
-                .with_file(
-                    &instructions_path.to_string_lossy().to_string(),
-                    instructions_content,
-                )
-                .with_file(&tasks_json_path.to_string_lossy().to_string(), &tasks_json),
-        );
-
-        let docker_client = Arc::new(FixedResponseDockerClient::default());
-        // TODO: Replace with real git operations
-        let git_ops = Arc::new(crate::context::git_operations::DefaultGitOperations);
-
-        let ctx = AppContext::builder()
-            .with_docker_client(docker_client)
-            .with_file_system(fs.clone())
-            .with_git_operations(git_ops)
-            .with_xdg_directories(xdg.clone())
-            .build();
-
+        // Create TaskManager and retry the task
         let task_manager = TaskManager::with_storage(&ctx).unwrap();
 
-        // Retry the task
         let result = task_manager.retry_task(&task_id, false, &ctx).await;
         assert!(result.is_ok(), "Failed to retry task: {:?}", result);
         let new_task_id = result.unwrap();
@@ -609,7 +585,7 @@ mod tests {
         assert!(new_task_id.contains("generic-retry-original-task"));
 
         // Verify task was added to storage
-        let storage = get_task_storage(xdg.clone(), fs.clone());
+        let storage = task_manager.task_storage.as_ref().unwrap();
         let new_task = storage.get_task(&new_task_id).await.unwrap();
         assert!(new_task.is_some());
         let new_task = new_task.unwrap();
@@ -622,67 +598,28 @@ mod tests {
         // Verify instructions file was created
         let new_task_dir = xdg.task_dir(&new_task_id, &repo_hash);
         let new_instructions_path = new_task_dir.join("instructions.md");
-        assert!(fs.exists(&new_instructions_path).await.unwrap());
+        assert!(new_instructions_path.exists());
 
         // Verify instructions content was copied
-        let copied_content = fs.read_file(&new_instructions_path).await.unwrap();
+        let copied_content = std::fs::read_to_string(&new_instructions_path).unwrap();
         assert_eq!(copied_content, instructions_content);
     }
 
     #[tokio::test]
-    #[ignore = "Needs refactoring to remove MockGitOperations"]
     async fn test_retry_task_not_found() {
-        use crate::context::file_system::tests::MockFileSystem;
-
-        // Set up XDG environment variables for testing
-        let temp_dir = std::env::temp_dir();
-        let test_data_dir = temp_dir.join("tsk-test-data-retry-notfound");
-        let test_runtime_dir = temp_dir.join("tsk-test-runtime-retry-notfound");
-        let test_config_dir = temp_dir.join("tsk-test-config-retry-notfound");
-
-        // Create XdgDirectories instance using XdgConfig
-        let config = crate::storage::XdgConfig::with_paths(
-            test_data_dir.clone(),
-            test_runtime_dir,
-            test_config_dir,
-        );
-        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
-        xdg.ensure_directories().unwrap();
-
-        // Get XDG paths
-        let (_temp_repo, repo_root) = create_temp_git_repo();
-        let tasks_json_path = xdg.tasks_file();
-        let data_dir = xdg.data_dir().to_path_buf();
-        let tasks_dir = data_dir.join("tasks");
+        // Set up test environment
+        let (xdg, _test_repo, ctx) = setup_test_environment().await.unwrap();
 
         // Create empty tasks.json
-        let tasks_json = "[]";
+        let tasks_json_path = xdg.tasks_file();
+        if let Some(parent) = tasks_json_path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&tasks_json_path, "[]").unwrap();
 
-        // Create mock file system with necessary structure
-        let git_dir = repo_root.join(".git");
-
-        let fs = Arc::new(
-            MockFileSystem::new()
-                .with_dir(&git_dir.to_string_lossy().to_string())
-                .with_dir(&data_dir.to_string_lossy().to_string())
-                .with_dir(&tasks_dir.to_string_lossy().to_string())
-                .with_file(&tasks_json_path.to_string_lossy().to_string(), tasks_json),
-        );
-
-        let docker_client = Arc::new(FixedResponseDockerClient::default());
-        // TODO: Replace with real git operations
-        let git_ops = Arc::new(crate::context::git_operations::DefaultGitOperations);
-
-        let ctx = AppContext::builder()
-            .with_docker_client(docker_client)
-            .with_file_system(fs.clone())
-            .with_git_operations(git_ops)
-            .with_xdg_directories(xdg)
-            .build();
-
+        // Create TaskManager and try to retry a non-existent task
         let task_manager = TaskManager::with_storage(&ctx).unwrap();
 
-        // Try to retry a non-existent task
         let result = task_manager
             .retry_task("non-existent-task", false, &ctx)
             .await;
@@ -695,33 +632,13 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "Needs refactoring to remove MockGitOperations"]
     async fn test_retry_task_queued_error() {
-        use crate::context::file_system::tests::MockFileSystem;
-
-        // Set up XDG environment variables for testing
-        let temp_dir = std::env::temp_dir();
-        let test_data_dir = temp_dir.join("tsk-test-data-retry-queued");
-        let test_runtime_dir = temp_dir.join("tsk-test-runtime-retry-queued");
-        let test_config_dir = temp_dir.join("tsk-test-config-retry-queued");
-
-        // Create XdgDirectories instance using XdgConfig
-        let config = crate::storage::XdgConfig::with_paths(
-            test_data_dir.clone(),
-            test_runtime_dir,
-            test_config_dir,
-        );
-        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
-        xdg.ensure_directories().unwrap();
+        // Set up test environment
+        let (xdg, test_repo, ctx) = setup_test_environment().await.unwrap();
+        let repo_root = test_repo.path().to_path_buf();
 
         // Create a queued task (should not be retryable)
-        let (_temp_repo, repo_root) = create_temp_git_repo();
         let task_id = "2024-01-01-1200-feat-queued-task".to_string();
-
-        // Get XDG paths
-        let tasks_json_path = xdg.tasks_file();
-        let data_dir = xdg.data_dir().to_path_buf();
-        let tasks_dir = data_dir.join("tasks");
 
         // Create tasks.json with the queued task
         let tasks_json = format!(
@@ -732,31 +649,15 @@ mod tests {
             repo_root.to_string_lossy()
         );
 
-        // Create mock file system with necessary structure
-        let git_dir = repo_root.join(".git");
+        let tasks_json_path = xdg.tasks_file();
+        if let Some(parent) = tasks_json_path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&tasks_json_path, tasks_json).unwrap();
 
-        let fs = Arc::new(
-            MockFileSystem::new()
-                .with_dir(&git_dir.to_string_lossy().to_string())
-                .with_dir(&data_dir.to_string_lossy().to_string())
-                .with_dir(&tasks_dir.to_string_lossy().to_string())
-                .with_file(&tasks_json_path.to_string_lossy().to_string(), &tasks_json),
-        );
-
-        let docker_client = Arc::new(FixedResponseDockerClient::default());
-        // TODO: Replace with real git operations
-        let git_ops = Arc::new(crate::context::git_operations::DefaultGitOperations);
-
-        let ctx = AppContext::builder()
-            .with_docker_client(docker_client)
-            .with_file_system(fs.clone())
-            .with_git_operations(git_ops)
-            .with_xdg_directories(xdg)
-            .build();
-
+        // Create TaskManager and try to retry a queued task
         let task_manager = TaskManager::with_storage(&ctx).unwrap();
 
-        // Try to retry a queued task
         let result = task_manager.retry_task(&task_id, false, &ctx).await;
         assert!(result.is_err());
         assert!(
@@ -767,28 +668,13 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "Needs refactoring to remove MockGitOperations"]
     async fn test_clean_tasks_with_id_matching() {
-        use crate::context::file_system::tests::MockFileSystem;
-
-        // Set up XDG environment variables for testing
-        let temp_dir = std::env::temp_dir();
-        let test_data_dir = temp_dir.join("tsk-test-data3");
-        let test_runtime_dir = temp_dir.join("tsk-test-runtime3");
-        let test_config_dir = temp_dir.join("tsk-test-config3");
-
-        // Create XdgDirectories instance using XdgConfig
-        let config = crate::storage::XdgConfig::with_paths(
-            test_data_dir.clone(),
-            test_runtime_dir,
-            test_config_dir,
-        );
-        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
-        xdg.ensure_directories().unwrap();
-
-        // Create a task with a specific ID using new_with_id
-        let (_temp_repo, repo_root) = create_temp_git_repo();
+        // Set up test environment
+        let (xdg, test_repo, ctx) = setup_test_environment().await.unwrap();
+        let repo_root = test_repo.path().to_path_buf();
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
+
+        // Create a task with a specific ID
         let task_id = "2024-01-15-1430-feat-test-feature".to_string();
         let mut completed_task = Task::new(
             task_id.clone(),
@@ -807,11 +693,10 @@ mod tests {
         );
         completed_task.status = TaskStatus::Complete;
 
-        // Get XDG paths
-        let task_dir_path = xdg.task_dir(&task_id, &repo_hash);
-        let tasks_json_path = xdg.tasks_file();
-        let data_dir = xdg.data_dir().to_path_buf();
-        let tasks_dir = data_dir.join("tasks");
+        // Set up task directory with instructions
+        let task_dir_path = setup_task_directory(&xdg, &task_id, &repo_hash, "Test instructions")
+            .await
+            .unwrap();
 
         // Create tasks.json with the completed task
         let tasks_json = format!(
@@ -822,92 +707,55 @@ mod tests {
             task_dir_path.to_string_lossy()
         );
 
-        // Create mock file system with necessary structure
-        let git_dir = repo_root.join(".git");
+        let tasks_json_path = xdg.tasks_file();
+        if let Some(parent) = tasks_json_path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&tasks_json_path, tasks_json).unwrap();
 
-        let fs = Arc::new(
-            MockFileSystem::new()
-                .with_dir(&git_dir.to_string_lossy().to_string())
-                .with_dir(&data_dir.to_string_lossy().to_string())
-                .with_dir(&tasks_dir.to_string_lossy().to_string())
-                .with_dir(&task_dir_path.to_string_lossy().to_string())
-                .with_file(
-                    &format!("{}/instructions.md", task_dir_path.to_string_lossy()),
-                    "Test instructions",
-                )
-                .with_file(&tasks_json_path.to_string_lossy().to_string(), &tasks_json),
-        );
-
-        let docker_client = Arc::new(FixedResponseDockerClient::default());
-        // TODO: Replace with real git operations
-        let git_ops = Arc::new(crate::context::git_operations::DefaultGitOperations);
-
-        let ctx = AppContext::builder()
-            .with_docker_client(docker_client)
-            .with_file_system(fs.clone())
-            .with_git_operations(git_ops)
-            .with_xdg_directories(xdg)
-            .build();
-
+        // Create TaskManager and clean tasks
         let task_manager = TaskManager::with_storage(&ctx).unwrap();
 
-        // Clean tasks
         let result = task_manager.clean_tasks().await;
         assert!(result.is_ok(), "Failed to clean tasks: {:?}", result);
         let completed_count = result.unwrap();
         assert_eq!(completed_count, 1);
 
         // Verify directory was deleted
-        let task_dir_exists = fs.exists(&task_dir_path).await.unwrap();
-        assert!(!task_dir_exists, "Task directory should have been deleted");
+        assert!(
+            !task_dir_path.exists(),
+            "Task directory should have been deleted"
+        );
+
+        // Verify storage was updated
+        let storage = task_manager.task_storage.as_ref().unwrap();
+        let remaining_tasks = storage.list_tasks().await.unwrap();
+        assert_eq!(remaining_tasks.len(), 0);
     }
 
     #[tokio::test]
-    #[ignore = "Needs refactoring to remove MockGitOperations"]
     async fn test_with_storage_no_git_repo() {
-        use crate::context::file_system::tests::MockFileSystem;
-
-        // Set up XDG environment variables for testing
-        let temp_dir = std::env::temp_dir();
-        let test_data_dir = temp_dir.join("tsk-test-data-no-git");
-        let test_runtime_dir = temp_dir.join("tsk-test-runtime-no-git");
-        let test_config_dir = temp_dir.join("tsk-test-config-no-git");
+        // Create temporary directory for XDG (not a git repo)
+        let temp_dir = TempDir::new().unwrap();
 
         // Create XdgDirectories instance using XdgConfig
         let config = crate::storage::XdgConfig::with_paths(
-            test_data_dir.clone(),
-            test_runtime_dir,
-            test_config_dir,
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            temp_dir.path().join("config"),
         );
         let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
         xdg.ensure_directories().unwrap();
 
-        // Get XDG paths
-        let tasks_json_path = xdg.tasks_file();
-        let data_dir = xdg.data_dir().to_path_buf();
-        let tasks_dir = data_dir.join("tasks");
-
         // Create empty tasks.json
-        let tasks_json = "[]";
+        let tasks_json_path = xdg.tasks_file();
+        if let Some(parent) = tasks_json_path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&tasks_json_path, "[]").unwrap();
 
-        // Create mock file system WITHOUT a .git directory
-        let fs = Arc::new(
-            MockFileSystem::new()
-                .with_dir(&data_dir.to_string_lossy().to_string())
-                .with_dir(&tasks_dir.to_string_lossy().to_string())
-                .with_file(&tasks_json_path.to_string_lossy().to_string(), tasks_json),
-        );
-
-        let docker_client = Arc::new(FixedResponseDockerClient::default());
-        // TODO: Replace with real git operations
-        let git_ops = Arc::new(crate::context::git_operations::DefaultGitOperations);
-
-        let ctx = AppContext::builder()
-            .with_docker_client(docker_client)
-            .with_file_system(fs.clone())
-            .with_git_operations(git_ops)
-            .with_xdg_directories(xdg)
-            .build();
+        // Create AppContext without a git repository
+        let ctx = AppContext::builder().with_xdg_directories(xdg).build();
 
         // This should succeed even without being in a git repository
         let result = TaskManager::with_storage(&ctx);
