@@ -401,38 +401,391 @@ mod tests {
         assert!(result.is_ok(), "Error: {result:?}");
     }
 
-    // TODO: Rewrite test_fetch_changes_no_commits to use TestGitRepository instead of MockGitOperations
     #[tokio::test]
-    #[ignore = "Needs refactoring to remove MockGitOperations"]
-    async fn test_fetch_changes_no_commits() {}
+    async fn test_fetch_changes_no_commits() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let xdg_directories = create_test_xdg_directories(&temp_dir);
 
-    // TODO: Rewrite test_fetch_changes_with_commits to use TestGitRepository instead of MockGitOperations
-    #[tokio::test]
-    #[ignore = "Needs refactoring to remove MockGitOperations"]
-    async fn test_fetch_changes_with_commits() {}
+        // Create main repository
+        let main_repo = TestGitRepository::new().unwrap();
+        main_repo.init().unwrap();
+        // Configure git to use main as default branch
+        main_repo
+            .run_git_command(&["config", "init.defaultBranch", "main"])
+            .unwrap();
+        main_repo
+            .run_git_command(&["checkout", "-b", "main"])
+            .unwrap();
+        // Create initial commit
+        main_repo
+            .create_file("README.md", "# Test Repository\n")
+            .unwrap();
+        main_repo.stage_all().unwrap();
+        main_repo.commit("Initial commit").unwrap();
 
-    // TODO: Rewrite test_copy_repo_with_source_commit to use TestGitRepository instead of MockGitOperations
-    #[tokio::test]
-    #[ignore = "Needs refactoring to remove MockGitOperations"]
-    async fn test_copy_repo_with_source_commit() {}
+        // Create task repository (simulating a copied repository)
+        let task_repo = TestGitRepository::new().unwrap();
+        task_repo.init().unwrap();
 
-    // TODO: Rewrite test_copy_repo_without_source_commit to use TestGitRepository instead of MockGitOperations
-    #[tokio::test]
-    #[ignore = "Needs refactoring to remove MockGitOperations"]
-    async fn test_copy_repo_without_source_commit() {}
+        // Set up task repo to have main repo as origin
+        task_repo
+            .run_git_command(&[
+                "remote",
+                "add",
+                "origin",
+                main_repo.path().to_str().unwrap(),
+            ])
+            .unwrap();
 
-    // TODO: Rewrite test_copy_repo_separates_tracked_and_untracked_files to use TestGitRepository instead of MockGitOperations
-    #[tokio::test]
-    #[ignore = "Needs refactoring to remove MockGitOperations"]
-    async fn test_copy_repo_separates_tracked_and_untracked_files() {}
+        // Fetch main branch to task repo
+        task_repo.run_git_command(&["fetch", "origin"]).unwrap();
+        let main_branch = main_repo.current_branch().unwrap();
+        task_repo
+            .run_git_command(&[
+                "checkout",
+                "-b",
+                &main_branch,
+                &format!("origin/{}", main_branch),
+            ])
+            .unwrap();
 
-    // TODO: Rewrite test_copy_repo_includes_untracked_files to use TestGitRepository instead of MockGitOperations
-    #[tokio::test]
-    #[ignore = "Needs refactoring to remove MockGitOperations"]
-    async fn test_copy_repo_includes_untracked_files() {}
+        // Create a branch in task repo with no new commits
+        let branch_name = "tsk/test-task";
+        task_repo.checkout_new_branch(branch_name).unwrap();
 
-    // TODO: Rewrite test_copy_repo_includes_tsk_directory to use TestGitRepository instead of MockGitOperations
+        // Don't add any new commits - just the branch
+
+        let git_ops = Arc::new(DefaultGitOperations);
+        let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
+
+        let manager = RepoManager::new(xdg_directories, fs, git_ops);
+
+        // Fetch changes from task repo to main repo (should return false as there are no new commits)
+        let result = manager
+            .fetch_changes(task_repo.path(), branch_name, main_repo.path())
+            .await;
+
+        assert!(result.is_ok(), "Error: {:?}", result);
+        assert!(!result.unwrap(), "Should return false when no new commits");
+
+        // Verify the branch was cleaned up in main repo
+        let main_branches = main_repo.branches().unwrap();
+        assert!(
+            !main_branches.contains(&branch_name.to_string()),
+            "Branch should be cleaned up when no commits"
+        );
+    }
+
     #[tokio::test]
-    #[ignore = "Needs refactoring to remove MockGitOperations"]
-    async fn test_copy_repo_includes_tsk_directory() {}
+    async fn test_fetch_changes_with_commits() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let xdg_directories = create_test_xdg_directories(&temp_dir);
+
+        // Create main repository
+        let main_repo = TestGitRepository::new().unwrap();
+        main_repo.init().unwrap();
+        // Configure git to use main as default branch
+        main_repo
+            .run_git_command(&["config", "init.defaultBranch", "main"])
+            .unwrap();
+        main_repo
+            .run_git_command(&["checkout", "-b", "main"])
+            .unwrap();
+        // Create initial commit
+        main_repo
+            .create_file("README.md", "# Test Repository\n")
+            .unwrap();
+        main_repo.stage_all().unwrap();
+        main_repo.commit("Initial commit").unwrap();
+
+        // Create task repository (simulating a copied repository)
+        let task_repo = TestGitRepository::new().unwrap();
+        task_repo.init().unwrap();
+
+        // Set up task repo to have main repo as origin
+        task_repo
+            .run_git_command(&[
+                "remote",
+                "add",
+                "origin",
+                main_repo.path().to_str().unwrap(),
+            ])
+            .unwrap();
+
+        // Fetch main branch to task repo
+        task_repo.run_git_command(&["fetch", "origin"]).unwrap();
+        let main_branch = main_repo.current_branch().unwrap();
+        task_repo
+            .run_git_command(&[
+                "checkout",
+                "-b",
+                &main_branch,
+                &format!("origin/{}", main_branch),
+            ])
+            .unwrap();
+
+        // Create a branch in task repo with new commits
+        let branch_name = "tsk/test-task";
+        task_repo.checkout_new_branch(branch_name).unwrap();
+
+        // Add a new commit
+        task_repo
+            .create_file("new_feature.rs", "fn new_feature() {}")
+            .unwrap();
+        task_repo.stage_all().unwrap();
+        task_repo.commit("Add new feature").unwrap();
+
+        let git_ops = Arc::new(DefaultGitOperations);
+        let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
+
+        let manager = RepoManager::new(xdg_directories, fs, git_ops);
+
+        // Fetch changes from task repo to main repo (should return true as there are new commits)
+        let result = manager
+            .fetch_changes(task_repo.path(), branch_name, main_repo.path())
+            .await;
+
+        assert!(result.is_ok(), "Error: {:?}", result);
+        assert!(result.unwrap(), "Should return true when new commits exist");
+
+        // Verify the branch exists in main repo
+        let main_branches = main_repo.branches().unwrap();
+        assert!(
+            main_branches.contains(&branch_name.to_string()),
+            "Branch should exist after fetch"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_copy_repo_with_source_commit() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let xdg_directories = create_test_xdg_directories(&temp_dir);
+
+        // Create a repository with multiple commits
+        let test_repo = TestGitRepository::new().unwrap();
+        let first_commit = test_repo.init_with_commit().unwrap();
+
+        // Add more commits
+        test_repo
+            .create_file("feature1.rs", "fn feature1() {}")
+            .unwrap();
+        test_repo.stage_all().unwrap();
+        test_repo.commit("Add feature1").unwrap();
+
+        test_repo
+            .create_file("feature2.rs", "fn feature2() {}")
+            .unwrap();
+        test_repo.stage_all().unwrap();
+        let _latest_commit = test_repo.commit("Add feature2").unwrap();
+
+        let git_ops = Arc::new(DefaultGitOperations);
+        let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
+
+        let manager = RepoManager::new(xdg_directories, fs, git_ops);
+
+        // Copy repo from the first commit
+        let task_id = "2024-01-01-1200-generic-test-task";
+        let result = manager
+            .copy_repo(task_id, test_repo.path(), Some(&first_commit))
+            .await;
+
+        assert!(result.is_ok());
+        let (copied_path, branch_name) = result.unwrap();
+
+        assert_eq!(branch_name, format!("tsk/{}", task_id));
+        assert!(copied_path.exists());
+
+        // Verify the copied repo is at the first commit (should not have feature1 or feature2)
+        let copied_repo = TestGitRepository::new().unwrap();
+        let _ = std::fs::remove_dir_all(copied_repo.path());
+        std::fs::rename(&copied_path, copied_repo.path()).unwrap();
+
+        assert!(!copied_repo.path().join("feature1.rs").exists());
+        assert!(!copied_repo.path().join("feature2.rs").exists());
+        assert!(copied_repo.path().join("README.md").exists());
+    }
+
+    #[tokio::test]
+    async fn test_copy_repo_without_source_commit() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let xdg_directories = create_test_xdg_directories(&temp_dir);
+
+        // Create a repository with commits
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+
+        // Add more files
+        test_repo
+            .create_file("feature.rs", "fn feature() {}")
+            .unwrap();
+        test_repo.stage_all().unwrap();
+        test_repo.commit("Add feature").unwrap();
+
+        let git_ops = Arc::new(DefaultGitOperations);
+        let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
+
+        let manager = RepoManager::new(xdg_directories, fs, git_ops);
+
+        // Copy repo without specifying source commit (should use HEAD)
+        let task_id = "2024-01-01-1200-generic-test-task";
+        let result = manager.copy_repo(task_id, test_repo.path(), None).await;
+
+        assert!(result.is_ok());
+        let (copied_path, branch_name) = result.unwrap();
+
+        assert_eq!(branch_name, format!("tsk/{}", task_id));
+        assert!(copied_path.exists());
+
+        // Verify the copied repo has all files from HEAD
+        assert!(copied_path.join("README.md").exists());
+        assert!(copied_path.join("feature.rs").exists());
+    }
+
+    #[tokio::test]
+    async fn test_copy_repo_separates_tracked_and_untracked_files() {
+        use crate::test_utils::create_files_with_gitignore;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let xdg_directories = create_test_xdg_directories(&temp_dir);
+
+        // Create a repository with mixed file types
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init().unwrap();
+        create_files_with_gitignore(&test_repo).unwrap();
+
+        let git_ops = Arc::new(DefaultGitOperations);
+        let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
+
+        let manager = RepoManager::new(xdg_directories, fs, git_ops);
+
+        // Copy the repository
+        let task_id = "2024-01-01-1200-generic-test-task";
+        let result = manager.copy_repo(task_id, test_repo.path(), None).await;
+
+        assert!(result.is_ok());
+        let (copied_path, _) = result.unwrap();
+
+        // Verify tracked files are copied
+        assert!(
+            copied_path.join("src/main.rs").exists(),
+            "Tracked files should be copied"
+        );
+        assert!(
+            copied_path.join("Cargo.toml").exists(),
+            "Tracked files should be copied"
+        );
+        assert!(
+            copied_path.join(".gitignore").exists(),
+            "Gitignore should be copied"
+        );
+
+        // Verify untracked files are copied
+        assert!(
+            copied_path.join("src/lib.rs").exists(),
+            "Untracked files should be copied"
+        );
+        assert!(
+            copied_path.join("README.md").exists(),
+            "Untracked files should be copied"
+        );
+
+        // Verify ignored files are NOT copied
+        assert!(
+            !copied_path.join("debug.log").exists(),
+            "Ignored files should not be copied"
+        );
+        assert!(
+            !copied_path.join(".DS_Store").exists(),
+            "Ignored files should not be copied"
+        );
+        assert!(
+            !copied_path.join("target").exists(),
+            "Ignored directories should not be copied"
+        );
+        assert!(
+            !copied_path.join("tmp").exists(),
+            "Ignored directories should not be copied"
+        );
+
+        // Verify .tsk directory IS copied even if it would normally be ignored
+        assert!(
+            copied_path.join(".tsk/config.json").exists(),
+            ".tsk directory should always be copied"
+        );
+        assert!(
+            copied_path
+                .join(".tsk/dockerfiles/project/test/Dockerfile")
+                .exists(),
+            ".tsk directory should always be copied"
+        );
+    }
+
+    // This test is redundant with test_copy_repo_separates_tracked_and_untracked_files
+    // and has been removed as per the implementation plan
+
+    #[tokio::test]
+    async fn test_copy_repo_includes_tsk_directory() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let xdg_directories = create_test_xdg_directories(&temp_dir);
+
+        // Create a repository with .tsk directory
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+
+        // Create .tsk directory with various files
+        test_repo
+            .create_file(".tsk/config.json", r#"{"agent": "claude"}"#)
+            .unwrap();
+        test_repo
+            .create_file(
+                ".tsk/templates/feat.md",
+                "# Feature Template\n{{DESCRIPTION}}",
+            )
+            .unwrap();
+        test_repo
+            .create_file(
+                ".tsk/dockerfiles/project/myproject/Dockerfile",
+                "FROM ubuntu:22.04\nRUN echo test",
+            )
+            .unwrap();
+
+        // Add .tsk to .gitignore to test it's still copied
+        test_repo.create_file(".gitignore", ".tsk/\n").unwrap();
+        test_repo.stage_all().unwrap();
+        test_repo
+            .commit("Add .tsk directory and gitignore")
+            .unwrap();
+
+        let git_ops = Arc::new(DefaultGitOperations);
+        let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
+
+        let manager = RepoManager::new(xdg_directories, fs, git_ops);
+
+        // Copy the repository
+        let task_id = "2024-01-01-1200-generic-test-task";
+        let result = manager.copy_repo(task_id, test_repo.path(), None).await;
+
+        assert!(result.is_ok());
+        let (copied_path, _) = result.unwrap();
+
+        // Verify .tsk directory and all its contents are copied
+        assert!(
+            copied_path.join(".tsk").exists(),
+            ".tsk directory should be copied"
+        );
+        assert!(
+            copied_path.join(".tsk/config.json").exists(),
+            ".tsk/config.json should be copied"
+        );
+        assert!(
+            copied_path.join(".tsk/templates/feat.md").exists(),
+            ".tsk/templates should be copied"
+        );
+        assert!(
+            copied_path
+                .join(".tsk/dockerfiles/project/myproject/Dockerfile")
+                .exists(),
+            ".tsk/dockerfiles should be copied"
+        );
+    }
 }

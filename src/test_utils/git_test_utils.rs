@@ -9,6 +9,7 @@ use tempfile::TempDir;
 /// This struct provides methods for common git operations needed in tests,
 /// automatically cleans up on drop, and ensures tests have isolated git repositories.
 pub struct TestGitRepository {
+    #[allow(dead_code)] // This field keeps the TempDir alive for the lifetime of the repository
     temp_dir: TempDir,
     repo_path: PathBuf,
 }
@@ -188,7 +189,7 @@ impl TestGitRepository {
     }
 
     /// Runs a git command in the repository directory.
-    fn run_git_command(&self, args: &[&str]) -> Result<String> {
+    pub fn run_git_command(&self, args: &[&str]) -> Result<String> {
         let output = Command::new("git")
             .args(args)
             .current_dir(&self.repo_path)

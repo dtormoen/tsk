@@ -322,58 +322,49 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "Needs refactoring to remove MockGitOperations"]
     async fn test_delete_task() {
-        use crate::context::file_system::tests::MockFileSystem;
+        use crate::test_utils::TestGitRepository;
 
-        // Set up XDG environment variables for testing
-        let temp_dir = std::env::temp_dir();
-        let test_data_dir = temp_dir.join("tsk-test-data");
-        let test_runtime_dir = temp_dir.join("tsk-test-runtime");
-        let test_config_dir = temp_dir.join("tsk-test-config");
+        // Create temporary directory for XDG
+        let temp_dir = TempDir::new().unwrap();
 
         // Create XdgDirectories instance using XdgConfig
         let config = crate::storage::XdgConfig::with_paths(
-            test_data_dir.clone(),
-            test_runtime_dir,
-            test_config_dir,
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            temp_dir.path().join("config"),
         );
         let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
         xdg.ensure_directories().unwrap();
 
-        // Create a task to test with
-        let (_temp_repo, repo_root) = create_temp_git_repo();
+        // Create a test git repository
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        let repo_root = test_repo.path().to_path_buf();
+
+        // Create a task
         let task_id = "test-task-123".to_string();
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
-
-        // Get XDG paths
         let task_dir_path = xdg.task_dir(&task_id, &repo_hash);
+
+        // Create the task directory and file
+        std::fs::create_dir_all(&task_dir_path).unwrap();
+        std::fs::write(task_dir_path.join("test.txt"), "test content").unwrap();
+
+        // Create tasks.json with the task
         let tasks_json_path = xdg.tasks_file();
-        let data_dir = xdg.data_dir().to_path_buf();
-        let tasks_dir = data_dir.join("tasks");
-
-        // Create mock file system with necessary structure
-        let git_dir = repo_root.join(".git");
-
-        let fs = Arc::new(
-            MockFileSystem::new()
-                .with_dir(&git_dir.to_string_lossy().to_string())
-                .with_dir(&data_dir.to_string_lossy().to_string())
-                .with_dir(&tasks_dir.to_string_lossy().to_string())
-                .with_dir(&task_dir_path.to_string_lossy().to_string())
-                .with_file(&format!("{}/test.txt", task_dir_path.to_string_lossy()), "test content")
-                .with_file(&tasks_json_path.to_string_lossy().to_string(), &format!(r#"[{{"id":"{}","repo_root":"{}","name":"test-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","tech_stack":"default","project":"default","copied_repo_path":"{}"}}]"#, task_id, repo_root.to_string_lossy(), task_id, task_dir_path.to_string_lossy()))
+        let task_json = format!(
+            r#"[{{"id":"{}","repo_root":"{}","name":"test-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","tech_stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
+            task_id,
+            repo_root.to_string_lossy(),
+            task_id,
+            task_dir_path.to_string_lossy()
         );
+        std::fs::write(&tasks_json_path, task_json).unwrap();
 
-        let docker_client = Arc::new(FixedResponseDockerClient::default());
-        // TODO: Replace with real git operations
-        let git_ops = Arc::new(crate::context::git_operations::DefaultGitOperations);
-
+        // Create AppContext
         let ctx = AppContext::builder()
-            .with_docker_client(docker_client)
-            .with_file_system(fs.clone())
-            .with_git_operations(git_ops)
-            .with_xdg_directories(xdg)
+            .with_xdg_directories(xdg.clone())
             .build();
 
         let task_manager = TaskManager::with_storage(&ctx).unwrap();
@@ -382,9 +373,16 @@ mod tests {
         let result = task_manager.delete_task(&task_id).await;
         assert!(result.is_ok(), "Failed to delete task: {:?}", result);
 
-        // Verify task directory is deleted by checking the mock file system
-        let exists = fs.exists(&task_dir_path).await.unwrap();
-        assert!(!exists, "Task directory should have been deleted");
+        // Verify task directory is deleted
+        assert!(
+            !task_dir_path.exists(),
+            "Task directory should have been deleted"
+        );
+
+        // Verify task is removed from storage
+        let storage = task_manager.task_storage.as_ref().unwrap();
+        let task = storage.get_task(&task_id).await.unwrap();
+        assert!(task.is_none(), "Task should have been deleted from storage");
     }
 
     #[tokio::test]
