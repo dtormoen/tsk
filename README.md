@@ -71,6 +71,20 @@ cd ~/project-b && tsk add --type "feat" --name "task2" --description "..."
 tsk stop-server
 ```
 
+### Parallel Execution
+
+TSK supports parallel task execution for improved throughput:
+
+```bash
+# Run up to 4 tasks in parallel
+tsk run --workers 4
+
+# Server mode also supports parallel execution
+tsk run --server --workers 4
+```
+
+Each task runs in its own isolated Docker container, so parallel execution is safe and efficient.
+
 ## Commands
 
 - `tsk add` - Queue a task

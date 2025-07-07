@@ -120,6 +120,7 @@ impl Command for DebugCommand {
             ctx.xdg_directories(),
             ctx.file_system(),
             ctx.git_operations(),
+            ctx.git_sync_manager(),
         );
 
         // Copy the repository for the debug task

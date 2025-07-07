@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-TSK is a Rust-based CLI tool for delegating development tasks to AI agents running in sandboxed Docker environments. The project enables a "lead engineer + AI team" workflow where tasks are executed autonomously in isolated containers and produce reviewable git branches.
+TSK is a Rust-based CLI tool for delegating development tasks to AI agents running in sandboxed Docker environments. The project enables a "lead engineer + AI team" workflow where tasks are executed autonomously in isolated containers and produce reviewable git branches. TSK supports parallel task execution with configurable worker counts for improved throughput.
 
 ## Development Commands
 
@@ -49,6 +49,8 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `TaskBuilder` provides consistent task creation with builder pattern
 - Repository is copied at task creation time (including all tracked files, untracked non-ignored files, and dirty files), ensuring all tasks have a valid repository copy that matches `git status`
 - `TaskStorage` trait abstracts storage with JSON-based implementation
+  - Thread-safe with mutex locking for file access
+  - Optimized `update_task_status` method for atomic status updates
 - Centralized JSON persistence in XDG data directory (`$XDG_DATA_HOME/tsk/tasks.json`)
 - Task status: Queued → Running → Complete/Failed
 - Branch naming: `tsk/{task-id}` (where task-id is `{timestamp}-{task-type}-{task-name}`)
@@ -70,12 +72,16 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `TskServer`: Continuous task execution daemon
 - `TskClient`: Client for communicating with server
 - Unix socket-based IPC protocol
-- Sequential task execution (one at a time)
+- Parallel task execution with configurable workers (default: 1)
+- `TaskExecutor`: Manages parallel execution with semaphore-based worker pool
 
-**Git Operations** (`src/git.rs`)
+**Git Operations** (`src/git.rs`, `src/git_sync.rs`)
 - Repository copying to centralized task directories (includes .tsk directory for Docker configurations)
 - Isolated branch creation and result integration
 - Automatic commit and fetch operations
+- `GitSyncManager`: Repository-level synchronization for concurrent git operations
+  - Prevents concurrent fetch operations to the same repository
+  - Uses repository path-based locking mechanism
 
 **Dependency Injection** (`src/context/`)
 - `AppContext` provides centralized resource management with builder pattern

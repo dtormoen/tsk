@@ -25,6 +25,7 @@ impl TaskManager {
             ctx.xdg_directories(),
             ctx.file_system(),
             ctx.git_operations(),
+            ctx.git_sync_manager(),
         );
         let docker_manager = DockerManager::new(ctx.docker_client(), ctx.file_system());
 
@@ -68,6 +69,7 @@ impl TaskManager {
             ctx.xdg_directories(),
             ctx.file_system(),
             ctx.git_operations(),
+            ctx.git_sync_manager(),
         );
         let docker_manager = DockerManager::new(ctx.docker_client(), ctx.file_system());
 

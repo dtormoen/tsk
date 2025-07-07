@@ -26,12 +26,21 @@ pub struct TskServer {
 impl TskServer {
     /// Create a new TSK server instance
     pub fn new(app_context: Arc<AppContext>) -> Self {
+        Self::with_workers(app_context, 1)
+    }
+
+    /// Create a new TSK server instance with specified number of workers
+    pub fn with_workers(app_context: Arc<AppContext>, workers: u32) -> Self {
         let xdg_directories = app_context.xdg_directories();
         let socket_path = xdg_directories.socket_path();
         let storage = get_task_storage(xdg_directories.clone(), app_context.file_system());
         let storage = Arc::new(Mutex::new(storage));
 
-        let executor = Arc::new(TaskExecutor::new(app_context.clone(), storage.clone()));
+        let executor = Arc::new(TaskExecutor::with_workers(
+            app_context.clone(),
+            storage.clone(),
+            workers,
+        ));
         let lifecycle = ServerLifecycle::new(xdg_directories);
 
         Self {

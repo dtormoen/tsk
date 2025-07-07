@@ -246,7 +246,8 @@ mod tests {
             Arc::new(crate::storage::XdgDirectories::new(Some(xdg_config)).unwrap());
         xdg_directories.ensure_directories().unwrap();
 
-        let repo_manager = RepoManager::new(xdg_directories.clone(), fs.clone(), git_ops);
+        let git_sync = Arc::new(crate::git_sync::GitSyncManager::new());
+        let repo_manager = RepoManager::new(xdg_directories.clone(), fs.clone(), git_ops, git_sync);
         let docker_manager = crate::docker::DockerManager::new(docker_client.clone(), fs.clone());
 
         // Create a mock docker image manager

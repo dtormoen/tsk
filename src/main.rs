@@ -61,6 +61,10 @@ enum Commands {
         /// Run in server mode (start daemon and keep running)
         #[arg(short, long)]
         server: bool,
+
+        /// Number of parallel workers for task execution
+        #[arg(short, long, default_value = "1", value_parser = clap::value_parser!(u32).range(1..=32))]
+        workers: u32,
     },
     /// Immediately execute a task without queuing
     Quick {
@@ -230,7 +234,7 @@ async fn main() {
         Commands::StopProxy => Box::new(StopProxyCommand),
         Commands::StopServer => Box::new(StopServerCommand),
         Commands::List => Box::new(ListCommand),
-        Commands::Run { server } => Box::new(RunCommand { server }),
+        Commands::Run { server, workers } => Box::new(RunCommand { server, workers }),
         Commands::Tasks {
             delete,
             clean,

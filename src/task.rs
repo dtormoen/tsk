@@ -348,6 +348,7 @@ impl TaskBuilder {
             ctx.xdg_directories(),
             ctx.file_system(),
             ctx.git_operations(),
+            ctx.git_sync_manager(),
         );
 
         let (copied_repo_path, _) = repo_manager

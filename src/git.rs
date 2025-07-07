@@ -1,5 +1,6 @@
 use crate::context::file_system::FileSystemOperations;
 use crate::context::git_operations::GitOperations;
+use crate::git_sync::GitSyncManager;
 use crate::storage::XdgDirectories;
 use chrono::{DateTime, Local};
 use std::path::{Path, PathBuf};
@@ -9,6 +10,7 @@ pub struct RepoManager {
     xdg_directories: Arc<XdgDirectories>,
     file_system: Arc<dyn FileSystemOperations>,
     git_operations: Arc<dyn GitOperations>,
+    git_sync_manager: Arc<GitSyncManager>,
 }
 
 impl RepoManager {
@@ -16,11 +18,13 @@ impl RepoManager {
         xdg_directories: Arc<XdgDirectories>,
         file_system: Arc<dyn FileSystemOperations>,
         git_operations: Arc<dyn GitOperations>,
+        git_sync_manager: Arc<GitSyncManager>,
     ) -> Self {
         Self {
             xdg_directories,
             file_system,
             git_operations,
+            git_sync_manager,
         }
     }
 
@@ -253,31 +257,37 @@ impl RepoManager {
         let now: DateTime<Local> = Local::now();
         let remote_name = format!("tsk-temp-{}", now.format("%Y-%m-%d-%H%M%S"));
 
-        self.git_operations
-            .add_remote(&main_repo, &remote_name, repo_path_str)
-            .await?;
-
-        // Fetch the specific branch from the remote
-        match self
-            .git_operations
-            .fetch_branch(&main_repo, &remote_name, branch_name)
-            .await
-        {
-            Ok(_) => {
-                // Remove the temporary remote
+        // Synchronize git operations on the main repository
+        self.git_sync_manager
+            .with_repo_lock(&main_repo, || async {
                 self.git_operations
-                    .remove_remote(&main_repo, &remote_name)
+                    .add_remote(&main_repo, &remote_name, repo_path_str)
                     .await?;
-            }
-            Err(e) => {
-                // Remove the temporary remote before returning error
-                let _ = self
+
+                // Fetch the specific branch from the remote
+                match self
                     .git_operations
-                    .remove_remote(&main_repo, &remote_name)
-                    .await;
-                return Err(e);
-            }
-        }
+                    .fetch_branch(&main_repo, &remote_name, branch_name)
+                    .await
+                {
+                    Ok(_) => {
+                        // Remove the temporary remote
+                        self.git_operations
+                            .remove_remote(&main_repo, &remote_name)
+                            .await?;
+                    }
+                    Err(e) => {
+                        // Remove the temporary remote before returning error
+                        let _ = self
+                            .git_operations
+                            .remove_remote(&main_repo, &remote_name)
+                            .await;
+                        return Err(e);
+                    }
+                }
+                Ok::<(), String>(())
+            })
+            .await?;
 
         // Now check if the fetched branch has any commits not in main
         let has_commits = self
@@ -335,7 +345,8 @@ mod tests {
         use crate::context::file_system::tests::MockFileSystem;
         let fs = Arc::new(MockFileSystem::new());
 
-        let manager = RepoManager::new(xdg_directories, fs, git_ops);
+        let git_sync = Arc::new(GitSyncManager::new());
+        let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
 
         let result = manager
             .copy_repo(
@@ -363,7 +374,8 @@ mod tests {
         let fs = Arc::new(MockFileSystem::new());
 
         let xdg_directories = create_test_xdg_directories(&temp_dir);
-        let manager = RepoManager::new(xdg_directories, fs, git_ops);
+        let git_sync = Arc::new(GitSyncManager::new());
+        let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
 
         // Test committing when there are no changes
         let result = manager
@@ -392,7 +404,8 @@ mod tests {
         let fs = Arc::new(MockFileSystem::new());
 
         let xdg_directories = create_test_xdg_directories(&temp_dir);
-        let manager = RepoManager::new(xdg_directories, fs, git_ops);
+        let git_sync = Arc::new(GitSyncManager::new());
+        let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
 
         let result = manager
             .commit_changes(test_repo.path(), "Test commit")
@@ -458,7 +471,8 @@ mod tests {
         let git_ops = Arc::new(DefaultGitOperations);
         let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
 
-        let manager = RepoManager::new(xdg_directories, fs, git_ops);
+        let git_sync = Arc::new(GitSyncManager::new());
+        let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
 
         // Fetch changes from task repo to main repo (should return false as there are no new commits)
         let result = manager
@@ -538,7 +552,8 @@ mod tests {
         let git_ops = Arc::new(DefaultGitOperations);
         let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
 
-        let manager = RepoManager::new(xdg_directories, fs, git_ops);
+        let git_sync = Arc::new(GitSyncManager::new());
+        let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
 
         // Fetch changes from task repo to main repo (should return true as there are new commits)
         let result = manager
@@ -581,7 +596,8 @@ mod tests {
         let git_ops = Arc::new(DefaultGitOperations);
         let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
 
-        let manager = RepoManager::new(xdg_directories, fs, git_ops);
+        let git_sync = Arc::new(GitSyncManager::new());
+        let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
 
         // Copy repo from the first commit
         let task_id = "2024-01-01-1200-generic-test-task";
@@ -624,7 +640,8 @@ mod tests {
         let git_ops = Arc::new(DefaultGitOperations);
         let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
 
-        let manager = RepoManager::new(xdg_directories, fs, git_ops);
+        let git_sync = Arc::new(GitSyncManager::new());
+        let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
 
         // Copy repo without specifying source commit (should use HEAD)
         let task_id = "2024-01-01-1200-generic-test-task";
@@ -656,7 +673,8 @@ mod tests {
         let git_ops = Arc::new(DefaultGitOperations);
         let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
 
-        let manager = RepoManager::new(xdg_directories, fs, git_ops);
+        let git_sync = Arc::new(GitSyncManager::new());
+        let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
 
         // Copy the repository
         let task_id = "2024-01-01-1200-generic-test-task";
@@ -759,7 +777,8 @@ mod tests {
         let git_ops = Arc::new(DefaultGitOperations);
         let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
 
-        let manager = RepoManager::new(xdg_directories, fs, git_ops);
+        let git_sync = Arc::new(GitSyncManager::new());
+        let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
 
         // Copy the repository
         let task_id = "2024-01-01-1200-generic-test-task";

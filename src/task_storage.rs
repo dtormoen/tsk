@@ -17,6 +17,14 @@ pub trait TaskStorage: Send + Sync {
     async fn list_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error + Send + Sync>>;
     async fn update_task(&self, task: Task)
     -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    async fn update_task_status(
+        &self,
+        id: &str,
+        status: TaskStatus,
+        started_at: Option<chrono::DateTime<chrono::Utc>>,
+        completed_at: Option<chrono::DateTime<chrono::Utc>>,
+        error_message: Option<String>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
     async fn delete_task(&self, id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
     async fn delete_tasks_by_status(
         &self,
@@ -96,12 +104,17 @@ impl TaskStorage for JsonTaskStorage {
         &self,
         id: &str,
     ) -> Result<Option<Task>, Box<dyn std::error::Error + Send + Sync>> {
+        let _lock = self.lock.lock().await;
         let tasks = self.read_tasks().await?;
+        drop(_lock); // Release lock after reading
         Ok(tasks.into_iter().find(|t| t.id == id))
     }
 
     async fn list_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error + Send + Sync>> {
-        self.read_tasks().await
+        let _lock = self.lock.lock().await;
+        let tasks = self.read_tasks().await?;
+        drop(_lock); // Release lock after reading
+        Ok(tasks)
     }
 
     async fn update_task(
@@ -113,6 +126,35 @@ impl TaskStorage for JsonTaskStorage {
         let mut tasks = self.read_tasks().await?;
         if let Some(index) = tasks.iter().position(|t| t.id == task.id) {
             tasks[index] = task;
+            self.write_tasks(&tasks).await?;
+            Ok(())
+        } else {
+            Err("Task not found".into())
+        }
+    }
+
+    async fn update_task_status(
+        &self,
+        id: &str,
+        status: TaskStatus,
+        started_at: Option<chrono::DateTime<chrono::Utc>>,
+        completed_at: Option<chrono::DateTime<chrono::Utc>>,
+        error_message: Option<String>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let _lock = self.lock.lock().await;
+
+        let mut tasks = self.read_tasks().await?;
+        if let Some(task) = tasks.iter_mut().find(|t| t.id == id) {
+            task.status = status;
+            if let Some(started) = started_at {
+                task.started_at = Some(started);
+            }
+            if let Some(completed) = completed_at {
+                task.completed_at = Some(completed);
+            }
+            if let Some(error) = error_message {
+                task.error_message = Some(error);
+            }
             self.write_tasks(&tasks).await?;
             Ok(())
         } else {

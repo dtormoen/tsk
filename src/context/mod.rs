@@ -5,6 +5,7 @@ pub mod repository_context;
 pub mod terminal;
 pub mod tsk_client;
 
+use crate::git_sync::GitSyncManager;
 use crate::notifications::NotificationClient;
 use crate::storage::XdgDirectories;
 use docker_client::DockerClient;
@@ -25,6 +26,7 @@ pub struct AppContext {
     docker_client: Arc<dyn DockerClient>,
     file_system: Arc<dyn FileSystemOperations>,
     git_operations: Arc<dyn GitOperations>,
+    git_sync_manager: Arc<GitSyncManager>,
     notification_client: Arc<dyn NotificationClient>,
     repository_context: Arc<dyn RepositoryContext>,
     terminal_operations: Arc<dyn TerminalOperations>,
@@ -47,6 +49,10 @@ impl AppContext {
 
     pub fn git_operations(&self) -> Arc<dyn GitOperations> {
         Arc::clone(&self.git_operations)
+    }
+
+    pub fn git_sync_manager(&self) -> Arc<GitSyncManager> {
+        Arc::clone(&self.git_sync_manager)
     }
 
     pub fn notification_client(&self) -> Arc<dyn NotificationClient> {
@@ -74,6 +80,7 @@ pub struct AppContextBuilder {
     docker_client: Option<Arc<dyn DockerClient>>,
     file_system: Option<Arc<dyn FileSystemOperations>>,
     git_operations: Option<Arc<dyn GitOperations>>,
+    git_sync_manager: Option<Arc<GitSyncManager>>,
     notification_client: Option<Arc<dyn NotificationClient>>,
     repository_context: Option<Arc<dyn RepositoryContext>>,
     terminal_operations: Option<Arc<dyn TerminalOperations>>,
@@ -93,6 +100,7 @@ impl AppContextBuilder {
             docker_client: None,
             file_system: None,
             git_operations: None,
+            git_sync_manager: None,
             notification_client: None,
             repository_context: None,
             terminal_operations: None,
@@ -113,6 +121,11 @@ impl AppContextBuilder {
 
     pub fn with_git_operations(mut self, git_operations: Arc<dyn GitOperations>) -> Self {
         self.git_operations = Some(git_operations);
+        self
+    }
+
+    pub fn with_git_sync_manager(mut self, git_sync_manager: Arc<GitSyncManager>) -> Self {
+        self.git_sync_manager = Some(git_sync_manager);
         self
     }
 
@@ -183,6 +196,9 @@ impl AppContextBuilder {
             git_operations: self
                 .git_operations
                 .unwrap_or_else(|| Arc::new(git_operations::DefaultGitOperations)),
+            git_sync_manager: self
+                .git_sync_manager
+                .unwrap_or_else(|| Arc::new(GitSyncManager::new())),
             notification_client: self
                 .notification_client
                 .unwrap_or_else(|| crate::notifications::create_notification_client()),

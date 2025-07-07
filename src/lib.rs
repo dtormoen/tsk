@@ -4,6 +4,7 @@ pub mod commands;
 pub mod context;
 pub mod docker;
 pub mod git;
+pub mod git_sync;
 pub mod notifications;
 pub mod repo_utils;
 pub mod server;
