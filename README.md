@@ -84,6 +84,10 @@ tsk stop-server
 
 Run `tsk help` or `tsk help <command>` for detailed options.
 
+## Documentation
+
+- [Docker Builds Guide](docs/docker-builds.md) - Comprehensive guide to TSK's Docker infrastructure, customization, and debugging
+
 ## Contributing
 
 This project uses:
