@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/dtormoen/tsk/compare/v0.1.0...v0.2.0) - 2025-07-07
+
+### Added
+
+- plan template includes success criteria and out of scope section
+- ensure proxy image is built before task execution
+
+### Fixed
+
+- release storage mutex lock after task completion to prevent server deadlock
+- remove rust specific language from default templates
+
+### Other
+
+- add comprehensive Docker builds documentation
+- migrate task_manager tests from mocks to real implementations
+- replace git mock implementations with integration tests
+- replace git mock implementations with integration tests
+- add repo_path parameter to is_git_repository method
+- eliminate unsafe blocks in XdgDirectories tests
+- add project specific task templates that mention rust best practices
+- update install instructions in README.md
+
 ## [0.1.0](https://github.com/dtormoen/tsk/releases/tag/v0.1.0) - 2025-06-27
 
 ### Added
