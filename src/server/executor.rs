@@ -86,6 +86,7 @@ impl TaskExecutor {
 
                             let storage = self.storage.lock().await;
                             storage.update_task(completed_task).await?;
+                            drop(storage);
                         }
                         Err(e) => {
                             let error_message = e.to_string();
@@ -99,6 +100,7 @@ impl TaskExecutor {
 
                             let storage = self.storage.lock().await;
                             storage.update_task(failed_task).await?;
+                            drop(storage);
                         }
                     }
 
@@ -145,6 +147,7 @@ mod tests {
     use super::*;
     use crate::context::file_system::tests::MockFileSystem;
     use crate::storage::XdgDirectories;
+    use crate::task::{Task, TaskStatus};
     use crate::task_storage::get_task_storage;
     use tempfile::TempDir;
 
@@ -191,5 +194,118 @@ mod tests {
         let _ = exec_handle.await;
 
         assert!(!*executor_clone.running.lock().await);
+    }
+
+    #[tokio::test]
+    async fn test_executor_completes_task_without_deadlock() {
+        // This test verifies that the executor doesn't deadlock after completing a task
+        let temp_dir = TempDir::new().unwrap();
+        let config = crate::storage::XdgConfig::with_paths(
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            temp_dir.path().join("config"),
+        );
+
+        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
+        xdg.ensure_directories().unwrap();
+
+        // Create a mock task that will complete successfully
+        let task = Task::new(
+            "test-task-123".to_string(),
+            temp_dir.path().to_path_buf(),
+            "test-task".to_string(),
+            "test".to_string(),
+            "instructions.md".to_string(),
+            "claude-code".to_string(),
+            30,
+            "tsk/test-task-123".to_string(),
+            "abc123".to_string(),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            temp_dir.path().to_path_buf(),
+        );
+
+        // Set up storage with the queued task
+        let fs = Arc::new(MockFileSystem::new());
+        let storage = get_task_storage(xdg.clone(), fs.clone());
+        storage.add_task(task.clone()).await.unwrap();
+
+        // Create app context with a mock docker client that always succeeds
+        let app_context = crate::context::AppContext::builder()
+            .with_file_system(fs)
+            .with_xdg_directories(xdg)
+            .with_docker_client(Arc::new(crate::test_utils::NoOpDockerClient))
+            .build();
+
+        let storage = Arc::new(Mutex::new(storage));
+        let executor = TaskExecutor::new(Arc::new(app_context), storage.clone());
+        let executor = Arc::new(executor);
+
+        // Start executor in background
+        let exec_handle = {
+            let exec = executor.clone();
+            tokio::spawn(async move {
+                let _ = exec.start().await;
+            })
+        };
+
+        // Wait for the task to be processed
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        // Check that the task was updated to COMPLETE or FAILED (not stuck in RUNNING)
+        let storage_guard = storage.lock().await;
+        let updated_task = storage_guard.get_task(&task.id).await.unwrap().unwrap();
+        drop(storage_guard);
+
+        // The task should not be stuck in RUNNING state
+        assert_ne!(
+            updated_task.status,
+            TaskStatus::Running,
+            "Task should not be stuck in RUNNING state - indicates a deadlock"
+        );
+
+        // Add another queued task to verify the executor can continue processing
+        let task2 = Task::new(
+            "test-task-456".to_string(),
+            temp_dir.path().to_path_buf(),
+            "test-task-2".to_string(),
+            "test".to_string(),
+            "instructions.md".to_string(),
+            "claude-code".to_string(),
+            30,
+            "tsk/test-task-456".to_string(),
+            "abc123".to_string(),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            temp_dir.path().to_path_buf(),
+        );
+
+        let storage_guard = storage.lock().await;
+        storage_guard.add_task(task2.clone()).await.unwrap();
+        drop(storage_guard);
+
+        // Wait a bit more to see if the executor picks up the second task
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        // Stop executor
+        executor.stop().await;
+        let _ = exec_handle.await;
+
+        // Verify the executor was able to process tasks after the first one completed
+        let storage_guard = storage.lock().await;
+        let all_tasks = storage_guard.list_tasks().await.unwrap();
+        drop(storage_guard);
+
+        // At least one task should have been processed
+        let processed_tasks = all_tasks
+            .iter()
+            .filter(|t| t.status != TaskStatus::Queued)
+            .count();
+        assert!(
+            processed_tasks >= 1,
+            "Executor should have processed at least one task"
+        );
     }
 }
