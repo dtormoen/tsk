@@ -1,12 +1,12 @@
-use super::Command;
+use crate::commands::Command;
 use crate::context::AppContext;
 use async_trait::async_trait;
 use std::error::Error;
 
-pub struct StopServerCommand;
+pub struct ServerStopCommand;
 
 #[async_trait]
-impl Command for StopServerCommand {
+impl Command for ServerStopCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         println!("Stopping TSK server...");
 

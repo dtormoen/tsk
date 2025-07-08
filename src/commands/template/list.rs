@@ -1,5 +1,5 @@
-use super::Command;
 use crate::assets::{AssetManager, layered::LayeredAssetManager};
+use crate::commands::Command;
 use crate::context::AppContext;
 use crate::repo_utils::find_repository_root;
 use async_trait::async_trait;
@@ -8,7 +8,7 @@ use std::path::Path;
 use tabled::settings::Style;
 use tabled::{Table, Tabled};
 
-pub struct TemplatesCommand;
+pub struct TemplateListCommand;
 
 #[derive(Tabled)]
 struct TemplateRow {
@@ -19,7 +19,7 @@ struct TemplateRow {
 }
 
 #[async_trait]
-impl Command for TemplatesCommand {
+impl Command for TemplateListCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         let project_root = find_repository_root(Path::new(".")).ok();
 

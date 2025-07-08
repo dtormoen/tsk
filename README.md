@@ -32,7 +32,7 @@ Think of it as having a team of engineers who work independently and submit pull
 cargo install tsk-ai
 
 # Build Docker images (required)
-tsk docker-build
+tsk docker build
 ```
 
 ## Quick Start
@@ -61,14 +61,14 @@ For continuous task processing across multiple repositories:
 
 ```bash
 # Start server
-tsk run --server
+tsk server run
 
 # Add tasks from any repo
 cd ~/project-a && tsk add --type "fix" --name "task1" --description "..."
 cd ~/project-b && tsk add --type "feat" --name "task2" --description "..."
 
 # Stop server
-tsk stop-server
+tsk server stop
 ```
 
 ### Parallel Execution
@@ -80,21 +80,31 @@ TSK supports parallel task execution for improved throughput:
 tsk run --workers 4
 
 # Server mode also supports parallel execution
-tsk run --server --workers 4
+tsk server run --workers 4
 ```
 
 Each task runs in its own isolated Docker container, so parallel execution is safe and efficient.
 
 ## Commands
 
+### Task Commands
 - `tsk add` - Queue a task
-- `tsk run` - Execute queued tasks (or `--server` for daemon mode)
+- `tsk run` - Execute queued tasks
 - `tsk list` - View task status and branches
-- `tsk templates` - View available task type templates
 - `tsk quick` - Execute a task immediately
 - `tsk debug` - Start an interactive docker container
-- `tsk tasks --clean` - Clean up completed tasks
-- `tsk docker-build` - Build required docker containers
+- `tsk clean` - Clean up completed tasks
+- `tsk delete <task-id>` - Delete a specific task
+- `tsk retry <task-id>` - Retry a previous task
+
+### Server Commands
+- `tsk server run` - Start the TSK server daemon
+- `tsk server stop` - Stop the running TSK server
+
+### Configuration Commands
+- `tsk docker build` - Build required docker images
+- `tsk proxy stop` - Stop the TSK proxy container
+- `tsk template list` - View available task type templates
 
 Run `tsk help` or `tsk help <command>` for detailed options.
 

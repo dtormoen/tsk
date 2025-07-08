@@ -24,7 +24,7 @@ just install                       # Install TSK binary to system
 just test                          # Run tests with proper threading
 just format                        # Format and lint code
 just precommit                     # Full CI checks (fmt, clippy, test, help)
-just docker-build                  # Build Docker images using embedded assets
+just docker-build                  # Build Docker images using embedded assets (wraps 'tsk docker build')
 ```
 
 ## Architecture Overview
@@ -34,16 +34,23 @@ TSK implements a command pattern with dependency injection for testability. The 
 ### Key Components
 
 **CLI Commands** (`src/commands/`)
+
+*Task Commands (implicit "task" noun):*
 - `add`: Queue tasks with descriptions and templates
-- `run`: Execute all queued tasks (or start server with `--server` flag)
+- `run`: Execute all queued tasks
 - `quick`: Immediately execute single tasks
 - `list`: Display task status and results
 - `debug`: Launch interactive containers for troubleshooting (uses unified task execution with no-op agent)
-- `tasks`: Manage task queue (delete/clean operations)
-- `templates`: Manage task type templates
-- `docker-build`: Build required docker images
-- `stop-server`: Stop the running TSK server
-- `stop-proxy`: Stop the running TSK proxy
+- `clean`: Delete all completed tasks
+- `delete <task-id>`: Delete a specific task
+- `retry <task-id>`: Retry a previous task
+
+*Subcommand Groups:*
+- `server run`: Start the TSK server daemon
+- `server stop`: Stop the running TSK server
+- `docker build`: Build required docker images
+- `proxy stop`: Stop the running TSK proxy
+- `template list`: List available task type templates
 
 **Task Management** (`src/task.rs`, `src/task_storage.rs`, `src/task_manager.rs`)
 - `TaskBuilder` provides consistent task creation with builder pattern

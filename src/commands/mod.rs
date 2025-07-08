@@ -3,26 +3,26 @@ use async_trait::async_trait;
 use std::error::Error;
 
 pub mod add;
+pub mod clean;
 pub mod debug;
-pub mod docker_build;
+pub mod delete;
+pub mod docker;
 pub mod list;
+pub mod proxy;
 pub mod quick;
+pub mod retry;
 pub mod run;
-pub mod stop_proxy;
-pub mod stop_server;
-pub mod tasks;
-pub mod templates;
+pub mod server;
+pub mod template;
 
 pub use add::AddCommand;
+pub use clean::CleanCommand;
 pub use debug::DebugCommand;
-pub use docker_build::DockerBuildCommand;
+pub use delete::DeleteCommand;
 pub use list::ListCommand;
 pub use quick::QuickCommand;
+pub use retry::RetryCommand;
 pub use run::RunCommand;
-pub use stop_proxy::StopProxyCommand;
-pub use stop_server::StopServerCommand;
-pub use tasks::TasksCommand;
-pub use templates::TemplatesCommand;
 
 #[async_trait]
 pub trait Command: Send + Sync {
@@ -42,7 +42,7 @@ mod tests {
     #[test]
     fn test_docker_build_command_instantiation() {
         // Test that DockerBuildCommand can be instantiated
-        let _cmd = DockerBuildCommand {
+        let _cmd = docker::DockerBuildCommand {
             no_cache: false,
             tech_stack: None,
             agent: None,

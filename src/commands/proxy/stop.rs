@@ -1,13 +1,13 @@
-use super::Command;
+use crate::commands::Command;
 use crate::context::AppContext;
 use crate::docker::DockerManager;
 use async_trait::async_trait;
 use std::error::Error;
 
-pub struct StopProxyCommand;
+pub struct ProxyStopCommand;
 
 #[async_trait]
-impl Command for StopProxyCommand {
+impl Command for ProxyStopCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         println!("Stopping TSK proxy container...");
 
