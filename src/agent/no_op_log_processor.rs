@@ -1,6 +1,5 @@
 use super::{LogProcessor, TaskResult};
 use async_trait::async_trait;
-use std::path::Path;
 
 /// A simple log processor for the no-op agent that passes through all lines.
 ///
@@ -36,11 +35,5 @@ impl LogProcessor for NoOpLogProcessor {
 
     fn get_full_log(&self) -> String {
         self.full_log.join("\n")
-    }
-
-    async fn save_full_log(&self, path: &Path) -> Result<(), String> {
-        tokio::fs::write(path, self.get_full_log())
-            .await
-            .map_err(|e| format!("Failed to save log: {e}"))
     }
 }

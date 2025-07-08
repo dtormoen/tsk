@@ -1,7 +1,5 @@
 use super::{Agent, LogProcessor};
-use crate::context::file_system::FileSystemOperations;
 use async_trait::async_trait;
-use std::sync::Arc;
 
 /// A no-op agent that simply outputs the instructions file.
 ///
@@ -34,10 +32,7 @@ impl Agent for NoOpAgent {
         vec![]
     }
 
-    fn create_log_processor(
-        &self,
-        _file_system: Arc<dyn FileSystemOperations>,
-    ) -> Box<dyn LogProcessor> {
+    fn create_log_processor(&self) -> Box<dyn LogProcessor> {
         Box::new(super::no_op_log_processor::NoOpLogProcessor::new())
     }
 

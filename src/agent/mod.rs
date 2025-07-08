@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use std::sync::Arc;
 
 mod claude_code;
 mod log_processor;
@@ -26,10 +25,7 @@ pub trait Agent: Send + Sync {
     fn environment(&self) -> Vec<(String, String)>;
 
     /// Creates a log processor for this agent's output
-    fn create_log_processor(
-        &self,
-        file_system: Arc<dyn crate::context::file_system::FileSystemOperations>,
-    ) -> Box<dyn LogProcessor>;
+    fn create_log_processor(&self) -> Box<dyn LogProcessor>;
 
     /// Returns the agent's unique identifier
     fn name(&self) -> &str;
@@ -54,7 +50,6 @@ pub trait Agent: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     /// Test agent for testing purposes
     struct TestAgent {
@@ -83,10 +78,7 @@ mod tests {
             vec![("TEST_VAR".to_string(), "test_value".to_string())]
         }
 
-        fn create_log_processor(
-            &self,
-            _file_system: Arc<dyn crate::context::file_system::FileSystemOperations>,
-        ) -> Box<dyn LogProcessor> {
+        fn create_log_processor(&self) -> Box<dyn LogProcessor> {
             struct TestLogProcessor;
 
             #[async_trait]
@@ -97,10 +89,6 @@ mod tests {
 
                 fn get_full_log(&self) -> String {
                     "test log".to_string()
-                }
-
-                async fn save_full_log(&self, _path: &Path) -> Result<(), String> {
-                    Ok(())
                 }
 
                 fn get_final_result(&self) -> Option<&super::TaskResult> {

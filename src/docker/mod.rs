@@ -5,7 +5,6 @@ pub mod template_manager;
 
 use crate::agent::{Agent, LogProcessor};
 use crate::context::docker_client::DockerClient;
-use crate::context::file_system::FileSystemOperations;
 use bollard::container::{Config, CreateContainerOptions, LogsOptions, RemoveContainerOptions};
 use futures_util::stream::StreamExt;
 use std::collections::HashMap;
@@ -23,15 +22,11 @@ const PROXY_IMAGE: &str = "tsk/proxy";
 
 pub struct DockerManager {
     client: Arc<dyn DockerClient>,
-    file_system: Arc<dyn FileSystemOperations>,
 }
 
 impl DockerManager {
-    pub fn new(client: Arc<dyn DockerClient>, file_system: Arc<dyn FileSystemOperations>) -> Self {
-        Self {
-            client,
-            file_system,
-        }
+    pub fn new(client: Arc<dyn DockerClient>) -> Self {
+        Self { client }
     }
 
     #[allow(dead_code)]
@@ -238,12 +233,10 @@ impl DockerManager {
     /// * `agent` - The agent to use for the task
     /// * `is_interactive` - Whether to run in interactive mode
     /// * `task_name` - Name of the task for logging purposes
-    /// * `log_file_path` - Optional path to save the full log file
     ///
     /// # Returns
     /// * `Ok((output, task_result))` - The container output and optional task result
     /// * `Err(String)` - Error message if container execution fails
-    #[allow(clippy::too_many_arguments)]
     pub async fn run_task_container(
         &self,
         image: &str,
@@ -252,7 +245,6 @@ impl DockerManager {
         agent: &dyn Agent,
         is_interactive: bool,
         _task_name: &str,
-        log_file_path: Option<&Path>,
     ) -> Result<(String, Option<crate::agent::TaskResult>), String> {
         // Ensure network and proxy are running
         self.ensure_network().await?;
@@ -332,19 +324,11 @@ impl DockerManager {
             Ok((String::new(), None))
         } else {
             // For non-interactive mode, stream logs and process them
-            let mut log_processor = agent.create_log_processor(self.file_system.clone());
+            let mut log_processor = agent.create_log_processor();
             let output = self
                 .stream_container_logs(&container_id, &mut *log_processor)
                 .await?;
 
-            // Save logs if requested
-            if let Some(log_path) = log_file_path {
-                if let Err(e) = log_processor.save_full_log(log_path).await {
-                    eprintln!("Warning: Failed to save full log file: {e}");
-                } else {
-                    println!("Full log saved to: {}", log_path.display());
-                }
-            }
 
             // Get the task result
             let task_result = log_processor.get_final_result().cloned();
@@ -483,14 +467,12 @@ impl DockerManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::file_system::tests::MockFileSystem;
     use crate::test_utils::TrackedDockerClient;
 
     #[tokio::test]
     async fn test_run_task_container_success() {
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let fs = Arc::new(MockFileSystem::new());
-        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>, fs);
+        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
 
         let worktree_path = Path::new("/tmp/test-worktree");
 
@@ -503,7 +485,6 @@ mod tests {
                 &agent,
                 false, // not interactive
                 "test-task",
-                None, // no log file path
             )
             .await;
 
@@ -551,8 +532,7 @@ mod tests {
     #[ignore = "Interactive mode requires docker attach which doesn't work in test environment"]
     async fn test_run_task_container_interactive() {
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let fs = Arc::new(MockFileSystem::new());
-        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>, fs);
+        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
 
         let worktree_path = Path::new("/tmp/test-worktree");
 
@@ -565,7 +545,6 @@ mod tests {
                 &agent,
                 true, // interactive
                 "test-task",
-                None, // no log file path
             )
             .await;
 
@@ -591,8 +570,7 @@ mod tests {
     #[ignore = "Test needs to be updated for new behavior where agent commands handle exit codes"]
     async fn test_run_task_container_non_zero_exit() {
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let fs = Arc::new(MockFileSystem::new());
-        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>, fs);
+        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
 
         let worktree_path = Path::new("/tmp/test-worktree");
 
@@ -605,7 +583,6 @@ mod tests {
                 &agent,
                 false, // not interactive
                 "test-task",
-                None, // no log file path
             )
             .await;
 
@@ -626,8 +603,7 @@ mod tests {
         mock_client.network_exists = false;
         mock_client.create_network_error = Some("Docker daemon not running".to_string());
         let mock_client = Arc::new(mock_client);
-        let fs = Arc::new(MockFileSystem::new());
-        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>, fs);
+        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
 
         let worktree_path = Path::new("/tmp/test-worktree");
 
@@ -640,7 +616,6 @@ mod tests {
                 &agent,
                 false, // not interactive
                 "test-task",
-                None, // no log file path
             )
             .await;
 
@@ -654,8 +629,7 @@ mod tests {
     #[tokio::test]
     async fn test_container_configuration() {
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let fs = Arc::new(MockFileSystem::new());
-        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>, fs);
+        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
 
         let worktree_path = Path::new("/tmp/test-worktree");
 
@@ -668,7 +642,6 @@ mod tests {
                 &agent,
                 false, // not interactive
                 "test-task",
-                None, // no log file path
             )
             .await;
 
@@ -719,8 +692,7 @@ mod tests {
     #[tokio::test]
     async fn test_run_task_container_with_instructions_file() {
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let fs = Arc::new(MockFileSystem::new());
-        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>, fs);
+        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
 
         let worktree_path = Path::new("/tmp/test-worktree");
         let instructions_path = PathBuf::from("/tmp/tsk-test/instructions.txt");
@@ -734,7 +706,6 @@ mod tests {
                 &agent,
                 false, // not interactive
                 "test-task",
-                None, // no log file path
             )
             .await;
 
@@ -754,8 +725,7 @@ mod tests {
     #[tokio::test]
     async fn test_relative_path_conversion() {
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let fs = Arc::new(MockFileSystem::new());
-        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>, fs);
+        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
 
         // Create a temporary directory to use as base
         let temp_dir = tempfile::TempDir::new().unwrap();
@@ -770,7 +740,6 @@ mod tests {
                 &agent,
                 false, // not interactive
                 "test-task",
-                None, // no log file path
             )
             .await;
 

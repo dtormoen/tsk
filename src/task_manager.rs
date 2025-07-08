@@ -27,7 +27,7 @@ impl TaskManager {
             ctx.git_operations(),
             ctx.git_sync_manager(),
         );
-        let docker_manager = DockerManager::new(ctx.docker_client(), ctx.file_system());
+        let docker_manager = DockerManager::new(ctx.docker_client());
 
         // Create image manager with a default configuration
         // Individual tasks will create their own image managers with task-specific repos
@@ -52,7 +52,6 @@ impl TaskManager {
             repo_manager,
             docker_manager,
             image_manager,
-            ctx.file_system(),
             ctx.notification_client(),
         );
 
@@ -71,7 +70,7 @@ impl TaskManager {
             ctx.git_operations(),
             ctx.git_sync_manager(),
         );
-        let docker_manager = DockerManager::new(ctx.docker_client(), ctx.file_system());
+        let docker_manager = DockerManager::new(ctx.docker_client());
 
         // Create image manager with a default configuration
         // Individual tasks will create their own image managers with task-specific repos
@@ -96,7 +95,6 @@ impl TaskManager {
             repo_manager,
             docker_manager,
             image_manager,
-            ctx.file_system(),
             ctx.notification_client(),
         );
 

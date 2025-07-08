@@ -1,5 +1,4 @@
 use crate::agent::AgentProvider;
-use crate::context::file_system::FileSystemOperations;
 use crate::docker::{DockerManager, image_manager::DockerImageManager};
 use crate::git::RepoManager;
 use crate::notifications::NotificationClient;
@@ -39,7 +38,6 @@ impl TaskRunner {
         repo_manager: RepoManager,
         docker_manager: DockerManager,
         docker_image_manager: Arc<DockerImageManager>,
-        _file_system: Arc<dyn FileSystemOperations>, // Keep for compatibility
         notification_client: Arc<dyn NotificationClient>,
     ) -> Self {
         Self {
@@ -112,14 +110,6 @@ impl TaskRunner {
                 );
             }
 
-            // Prepare log file path for non-interactive sessions
-            let log_file_path = if !is_interactive {
-                let task_dir = repo_path.parent().unwrap_or(&repo_path);
-                Some(task_dir.join(format!("{}-full.log", task.name)))
-            } else {
-                None
-            };
-
             // Run the container using the unified method
             self.docker_manager
                 .run_task_container(
@@ -129,7 +119,6 @@ impl TaskRunner {
                     agent.as_ref(),
                     is_interactive,
                     &task.name,
-                    log_file_path.as_deref(),
                 )
                 .await
                 .map_err(|e| format!("Error running container: {e}"))?
@@ -248,7 +237,7 @@ mod tests {
 
         let git_sync = Arc::new(crate::git_sync::GitSyncManager::new());
         let repo_manager = RepoManager::new(xdg_directories.clone(), fs.clone(), git_ops, git_sync);
-        let docker_manager = crate::docker::DockerManager::new(docker_client.clone(), fs.clone());
+        let docker_manager = crate::docker::DockerManager::new(docker_client.clone());
 
         // Create a mock docker image manager
         use crate::assets::embedded::EmbeddedAssetManager;
@@ -272,7 +261,6 @@ mod tests {
             repo_manager,
             docker_manager,
             docker_image_manager,
-            fs,
             notification_client,
         );
 

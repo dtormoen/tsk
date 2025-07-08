@@ -1,11 +1,9 @@
 use super::{Agent, LogProcessor};
-use crate::context::file_system::FileSystemOperations;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::Path;
 use std::process::Command;
-use std::sync::Arc;
 
 /// Claude Code AI agent implementation
 pub struct ClaudeCodeAgent;
@@ -68,11 +66,8 @@ impl Agent for ClaudeCodeAgent {
         ]
     }
 
-    fn create_log_processor(
-        &self,
-        file_system: Arc<dyn FileSystemOperations>,
-    ) -> Box<dyn LogProcessor> {
-        Box::new(ClaudeCodeLogProcessor::new(file_system))
+    fn create_log_processor(&self) -> Box<dyn LogProcessor> {
+        Box::new(ClaudeCodeLogProcessor::new())
     }
 
     fn name(&self) -> &str {
@@ -224,16 +219,14 @@ pub struct TaskResult {
 struct ClaudeCodeLogProcessor {
     full_log: Vec<String>,
     final_result: Option<TaskResult>,
-    file_system: Arc<dyn FileSystemOperations>,
 }
 
 impl ClaudeCodeLogProcessor {
-    /// Creates a new ClaudeCodeLogProcessor with the given file system
-    fn new(file_system: Arc<dyn FileSystemOperations>) -> Self {
+    /// Creates a new ClaudeCodeLogProcessor
+    fn new() -> Self {
         Self {
             full_log: Vec::new(),
             final_result: None,
-            file_system,
         }
     }
 
@@ -676,14 +669,6 @@ impl LogProcessor for ClaudeCodeLogProcessor {
         self.full_log.join("\n")
     }
 
-    async fn save_full_log(&self, path: &Path) -> Result<(), String> {
-        let content = self.full_log.join("\n");
-        self.file_system
-            .write_file(path, &content)
-            .await
-            .map_err(|e| format!("Failed to save log file: {e}"))
-    }
-
     fn get_final_result(&self) -> Option<&TaskResult> {
         self.final_result.as_ref()
     }
@@ -692,12 +677,10 @@ impl LogProcessor for ClaudeCodeLogProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::file_system::tests::MockFileSystem;
 
     #[test]
     fn test_process_assistant_message() {
-        let fs = Arc::new(MockFileSystem::new());
-        let mut processor = ClaudeCodeLogProcessor::new(fs);
+        let mut processor = ClaudeCodeLogProcessor::new();
         let json = r#"{
             "type": "assistant",
             "message": {
@@ -711,8 +694,7 @@ mod tests {
 
     #[test]
     fn test_process_result_message() {
-        let fs = Arc::new(MockFileSystem::new());
-        let mut processor = ClaudeCodeLogProcessor::new(fs);
+        let mut processor = ClaudeCodeLogProcessor::new();
         let json = r#"{
             "type": "result",
             "subtype": "success",
@@ -740,8 +722,7 @@ mod tests {
 
     #[test]
     fn test_process_result_message_failure() {
-        let fs = Arc::new(MockFileSystem::new());
-        let mut processor = ClaudeCodeLogProcessor::new(fs);
+        let mut processor = ClaudeCodeLogProcessor::new();
         let json = r#"{
             "type": "result",
             "subtype": "error",
@@ -767,8 +748,7 @@ mod tests {
 
     #[test]
     fn test_process_non_json() {
-        let fs = Arc::new(MockFileSystem::new());
-        let mut processor = ClaudeCodeLogProcessor::new(fs);
+        let mut processor = ClaudeCodeLogProcessor::new();
         let line = "This is not JSON";
 
         let result = processor.process_line(line);
@@ -777,8 +757,7 @@ mod tests {
 
     #[test]
     fn test_process_other_message_types() {
-        let fs = Arc::new(MockFileSystem::new());
-        let mut processor = ClaudeCodeLogProcessor::new(fs);
+        let mut processor = ClaudeCodeLogProcessor::new();
 
         // Test a message with an unknown type - tool_use
         let json = r#"{"type": "tool_use"}"#;
@@ -798,8 +777,7 @@ mod tests {
 
     #[test]
     fn test_process_todo_update() {
-        let fs = Arc::new(MockFileSystem::new());
-        let mut processor = ClaudeCodeLogProcessor::new(fs);
+        let mut processor = ClaudeCodeLogProcessor::new();
         let json = r#"{
             "type": "assistant",
             "message": {
@@ -866,8 +844,7 @@ mod tests {
 
     #[test]
     fn test_process_todo_update_all_completed() {
-        let fs = Arc::new(MockFileSystem::new());
-        let mut processor = ClaudeCodeLogProcessor::new(fs);
+        let mut processor = ClaudeCodeLogProcessor::new();
         let json = r#"{
             "type": "assistant",
             "message": {
@@ -906,8 +883,7 @@ mod tests {
 
     #[test]
     fn test_todo_priority_emojis() {
-        let fs = Arc::new(MockFileSystem::new());
-        let processor = ClaudeCodeLogProcessor::new(fs);
+        let processor = ClaudeCodeLogProcessor::new();
         assert_eq!(processor.get_priority_emoji("high"), "🔴");
         assert_eq!(processor.get_priority_emoji("medium"), "🟡");
         assert_eq!(processor.get_priority_emoji("low"), "🟢");
@@ -916,8 +892,7 @@ mod tests {
 
     #[test]
     fn test_process_result_message_with_long_duration() {
-        let fs = Arc::new(MockFileSystem::new());
-        let mut processor = ClaudeCodeLogProcessor::new(fs);
+        let mut processor = ClaudeCodeLogProcessor::new();
         let json = r#"{
             "type": "result",
             "subtype": "success",
@@ -934,8 +909,7 @@ mod tests {
 
     #[test]
     fn test_format_duration() {
-        let fs = Arc::new(MockFileSystem::new());
-        let processor = ClaudeCodeLogProcessor::new(fs);
+        let processor = ClaudeCodeLogProcessor::new();
 
         // Test seconds only
         assert_eq!(processor.format_duration(0), "0 seconds");
@@ -971,8 +945,7 @@ mod tests {
 
     #[test]
     fn test_todo_order_preservation() {
-        let fs = Arc::new(MockFileSystem::new());
-        let mut processor = ClaudeCodeLogProcessor::new(fs);
+        let mut processor = ClaudeCodeLogProcessor::new();
         let json = r#"{
             "type": "assistant",
             "message": {
@@ -1022,8 +995,7 @@ mod tests {
 
     #[test]
     fn test_user_message() {
-        let fs = Arc::new(MockFileSystem::new());
-        let mut processor = ClaudeCodeLogProcessor::new(fs);
+        let mut processor = ClaudeCodeLogProcessor::new();
         let json = r#"{
             "type": "user",
             "message": {
@@ -1037,8 +1009,7 @@ mod tests {
 
     #[test]
     fn test_user_message_with_tool_result() {
-        let fs = Arc::new(MockFileSystem::new());
-        let mut processor = ClaudeCodeLogProcessor::new(fs);
+        let mut processor = ClaudeCodeLogProcessor::new();
         let json = r#"{
             "type": "user",
             "toolUseResult": {
@@ -1054,8 +1025,7 @@ mod tests {
 
     #[test]
     fn test_user_message_with_file_search_result() {
-        let fs = Arc::new(MockFileSystem::new());
-        let mut processor = ClaudeCodeLogProcessor::new(fs);
+        let mut processor = ClaudeCodeLogProcessor::new();
         let json = r#"{
             "type": "user",
             "toolUseResult": {
@@ -1069,8 +1039,7 @@ mod tests {
 
     #[test]
     fn test_assistant_message_with_tool_use() {
-        let fs = Arc::new(MockFileSystem::new());
-        let mut processor = ClaudeCodeLogProcessor::new(fs);
+        let mut processor = ClaudeCodeLogProcessor::new();
         let json = r#"{
             "type": "assistant",
             "message": {
@@ -1091,8 +1060,7 @@ mod tests {
 
     #[test]
     fn test_assistant_message_with_edit_tool() {
-        let fs = Arc::new(MockFileSystem::new());
-        let mut processor = ClaudeCodeLogProcessor::new(fs);
+        let mut processor = ClaudeCodeLogProcessor::new();
         let json = r#"{
             "type": "assistant",
             "message": {
@@ -1113,8 +1081,7 @@ mod tests {
 
     #[test]
     fn test_cost_calculation_from_usage() {
-        let fs = Arc::new(MockFileSystem::new());
-        let processor = ClaudeCodeLogProcessor::new(fs);
+        let processor = ClaudeCodeLogProcessor::new();
 
         let usage = Usage {
             input_tokens: Some(1000),
@@ -1132,8 +1099,7 @@ mod tests {
 
     #[test]
     fn test_summary_message() {
-        let fs = Arc::new(MockFileSystem::new());
-        let mut processor = ClaudeCodeLogProcessor::new(fs);
+        let mut processor = ClaudeCodeLogProcessor::new();
         let json = r#"{
             "type": "summary",
             "summary": "Test Summary: Running unit tests"
@@ -1148,8 +1114,7 @@ mod tests {
 
     #[test]
     fn test_empty_line_processing() {
-        let fs = Arc::new(MockFileSystem::new());
-        let mut processor = ClaudeCodeLogProcessor::new(fs);
+        let mut processor = ClaudeCodeLogProcessor::new();
 
         let result = processor.process_line("");
         assert!(result.is_none());
@@ -1158,32 +1123,9 @@ mod tests {
         assert!(result.is_none());
     }
 
-    #[tokio::test]
-    async fn test_save_full_log() {
-        let fs = Arc::new(MockFileSystem::new());
-        let mut processor = ClaudeCodeLogProcessor::new(fs.clone());
-
-        // Process some lines
-        processor.process_line(r#"{"type": "user"}"#);
-        processor.process_line("Regular text line");
-        processor.process_line(r#"{"type": "result", "subtype": "success"}"#);
-
-        // Save the log
-        let path = std::path::Path::new("/test/log.txt");
-        let result = processor.save_full_log(path).await;
-        assert!(result.is_ok());
-
-        // Verify the log was saved
-        let content = fs.read_file(path).await.unwrap();
-        assert!(content.contains(r#"{"type": "user"}"#));
-        assert!(content.contains("Regular text line"));
-        assert!(content.contains(r#"{"type": "result", "subtype": "success"}"#));
-    }
-
     #[test]
     fn test_get_full_log() {
-        let fs = Arc::new(MockFileSystem::new());
-        let mut processor = ClaudeCodeLogProcessor::new(fs);
+        let mut processor = ClaudeCodeLogProcessor::new();
 
         // Process some lines
         processor.process_line("Line 1");
@@ -1260,10 +1202,9 @@ mod tests {
 
     #[test]
     fn test_claude_code_agent_create_log_processor() {
-        let fs = Arc::new(MockFileSystem::new());
         let agent = ClaudeCodeAgent::new();
 
-        let log_processor = agent.create_log_processor(fs);
+        let log_processor = agent.create_log_processor();
 
         // Just verify we can create a log processor
         // The actual log processor functionality is tested elsewhere

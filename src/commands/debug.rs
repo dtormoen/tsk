@@ -131,7 +131,7 @@ impl Command for DebugCommand {
 
         // Update the task with the copied repository path
         task.copied_repo_path = copied_repo_path;
-        let docker_manager = DockerManager::new(ctx.docker_client(), ctx.file_system());
+        let docker_manager = DockerManager::new(ctx.docker_client());
 
         // Create image manager on-demand for the task's repository
         let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
@@ -154,7 +154,6 @@ impl Command for DebugCommand {
             repo_manager,
             docker_manager,
             image_manager,
-            ctx.file_system(),
             ctx.notification_client(),
         );
 
