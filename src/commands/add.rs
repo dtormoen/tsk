@@ -151,4 +151,65 @@ mod tests {
                 .contains("No template found for task type 'nonexistent'")
         );
     }
+
+    #[tokio::test]
+    async fn test_add_command_template_without_description() {
+        use crate::test_utils::TestGitRepository;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create a test git repository
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+
+        // Create template file without {{DESCRIPTION}} placeholder
+        let template_content = "Say ack and exit.";
+        test_repo
+            .create_file(".tsk/templates/ack.md", template_content)
+            .unwrap();
+
+        // Change to the test repo directory
+        std::env::set_current_dir(test_repo.path()).unwrap();
+
+        // Create XDG config
+        let config = crate::storage::XdgConfig::with_paths(
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            temp_dir.path().join("config"),
+        );
+        let xdg = crate::storage::XdgDirectories::new(Some(config))
+            .expect("Failed to create XDG directories");
+        xdg.ensure_directories()
+            .expect("Failed to ensure XDG directories");
+
+        // Create AppContext with real implementations
+        let ctx = AppContext::builder()
+            .with_xdg_directories(Arc::new(xdg))
+            .with_git_operations(Arc::new(
+                crate::context::git_operations::DefaultGitOperations,
+            ))
+            .with_tsk_client(Arc::new(NoOpTskClient))
+            .build();
+
+        // Create AddCommand without description (should succeed for templates without placeholder)
+        let cmd = AddCommand {
+            name: "test-ack".to_string(),
+            r#type: "ack".to_string(),
+            description: None,
+            instructions: None,
+            edit: false,
+            agent: None,
+            timeout: 30,
+            tech_stack: None,
+            project: None,
+        };
+
+        // Execute should succeed
+        let result = cmd.execute(&ctx).await;
+        assert!(
+            result.is_ok(),
+            "Command should succeed for template without description placeholder"
+        );
+    }
 }

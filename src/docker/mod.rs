@@ -329,7 +329,6 @@ impl DockerManager {
                 .stream_container_logs(&container_id, &mut *log_processor)
                 .await?;
 
-
             // Get the task result
             let task_result = log_processor.get_final_result().cloned();
 

@@ -216,8 +216,27 @@ impl TaskBuilder {
             .unwrap_or_else(|| "generic".to_string());
         let timeout = self.timeout.unwrap_or(30);
 
+        // Check if template requires description
+        let template_needs_description = if task_type != "generic" {
+            // Create asset manager for template validation
+            let asset_manager = LayeredAssetManager::new_with_standard_layers(
+                Some(&repo_root),
+                &ctx.xdg_directories(),
+            );
+            match asset_manager.get_template(&task_type) {
+                Ok(template_content) => template_content.contains("{{DESCRIPTION}}"),
+                Err(_) => true, // If we can't read the template, assume it needs description
+            }
+        } else {
+            true // Generic tasks always need description
+        };
+
         // Validate input
-        if self.description.is_none() && self.instructions_file_path.is_none() && !self.edit {
+        if template_needs_description
+            && self.description.is_none()
+            && self.instructions_file_path.is_none()
+            && !self.edit
+        {
             return Err(
                 "Either description or instructions file must be provided, or use edit mode".into(),
             );
@@ -409,7 +428,7 @@ impl TaskBuilder {
 
             fs.write_file(dest_path, &content).await?;
         } else {
-            // Create empty instructions file for editing
+            // No description provided - use template as-is or create empty file
             let initial_content = if task_type != "generic" {
                 // Create asset manager for template retrieval
                 let asset_manager = LayeredAssetManager::new_with_standard_layers(
@@ -417,10 +436,18 @@ impl TaskBuilder {
                     &ctx.xdg_directories(),
                 );
                 match asset_manager.get_template(task_type) {
-                    Ok(template_content) => template_content.replace(
-                        "{{DESCRIPTION}}",
-                        "<!-- TODO: Add your task description here -->",
-                    ),
+                    Ok(template_content) => {
+                        // If template has description placeholder and we're in edit mode, add TODO
+                        if self.edit && template_content.contains("{{DESCRIPTION}}") {
+                            template_content.replace(
+                                "{{DESCRIPTION}}",
+                                "<!-- TODO: Add your task description here -->",
+                            )
+                        } else {
+                            // Use template as-is (for templates without description placeholder)
+                            template_content
+                        }
+                    }
                     Err(_) => String::new(),
                 }
             } else {
@@ -645,6 +672,70 @@ mod tests {
             err.contains("Either description or instructions file")
                 || err.contains("Repository root is required")
         );
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_template_without_description_placeholder() {
+        use crate::test_utils::TestGitRepository;
+
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create a test git repository
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        let current_dir = test_repo.path().to_path_buf();
+
+        // Create template file without {{DESCRIPTION}} placeholder
+        let template_content = "Say ack and exit.";
+        test_repo
+            .create_file(".tsk/templates/ack.md", template_content)
+            .unwrap();
+
+        // Create XDG config
+        let config = crate::storage::XdgConfig::with_paths(
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            temp_dir.path().join("config"),
+        );
+        let xdg = crate::storage::XdgDirectories::new(Some(config))
+            .expect("Failed to create XDG directories");
+        xdg.ensure_directories()
+            .expect("Failed to ensure XDG directories");
+
+        // Create AppContext with real implementations
+        let ctx = AppContext::builder()
+            .with_xdg_directories(Arc::new(xdg))
+            .with_git_operations(Arc::new(
+                crate::context::git_operations::DefaultGitOperations,
+            ))
+            .build();
+
+        // Build task without description (should succeed for templates without placeholder)
+        let task = TaskBuilder::new()
+            .repo_root(current_dir.clone())
+            .name("test-ack".to_string())
+            .task_type("ack".to_string())
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        // Verify task was created successfully
+        assert_eq!(task.name, "test-ack");
+        assert_eq!(task.task_type, "ack");
+
+        // Read the instructions file to verify template was used as-is
+        let instructions_path = ctx
+            .xdg_directories()
+            .data_dir()
+            .join("tasks")
+            .join(&task.id)
+            .join(&task.instructions_file);
+        let content = ctx
+            .file_system()
+            .read_file(&instructions_path)
+            .await
+            .unwrap();
+        assert_eq!(content, template_content);
     }
 
     #[tokio::test]
