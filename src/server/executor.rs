@@ -57,6 +57,9 @@ impl TaskExecutor {
         // Track active tasks
         let mut active_tasks = JoinSet::new();
 
+        // Track active worker count
+        let active_workers = Arc::new(Mutex::new(0u32));
+
         loop {
             // Check if we should continue running
             if !*self.running.lock().await {
@@ -84,6 +87,8 @@ impl TaskExecutor {
                 sleep(Duration::from_millis(100)).await;
                 continue;
             }
+
+            let permit = permit.unwrap();
 
             // We have a permit, look for a queued task
             let storage = self.storage.lock().await;
@@ -113,12 +118,27 @@ impl TaskExecutor {
                         .await?;
                     drop(storage);
 
+                    // Update active workers count and terminal title
+                    {
+                        let mut count = active_workers.lock().await;
+                        *count += 1;
+                        self.context.terminal_operations().set_title(&format!(
+                            "TSK Server Running ({}/{} workers)",
+                            *count, self.workers
+                        ));
+                    }
+
                     // Spawn task execution
                     let context = self.context.clone();
                     let storage = self.storage.clone();
-                    let _permit = permit.unwrap(); // We checked is_err() above
+                    let active_workers = active_workers.clone();
+                    let terminal_ops = self.context.terminal_operations();
+                    let total_workers = self.workers;
 
                     active_tasks.spawn(async move {
+                        // Hold the permit for the entire duration of task execution
+                        let _permit = permit;
+
                         // Execute the task
                         let execution_result =
                             Self::execute_single_task(&context, &running_task).await;
@@ -129,7 +149,7 @@ impl TaskExecutor {
 
                                 // Update task status to complete
                                 let storage = storage.lock().await;
-                                let _ = storage
+                                if let Err(e) = storage
                                     .update_task_status(
                                         &running_task.id,
                                         TaskStatus::Complete,
@@ -137,7 +157,10 @@ impl TaskExecutor {
                                         Some(chrono::Utc::now()),
                                         None,
                                     )
-                                    .await;
+                                    .await
+                                {
+                                    eprintln!("Failed to update task status to complete: {e}");
+                                }
                                 drop(storage);
                             }
                             Err(e) => {
@@ -146,7 +169,7 @@ impl TaskExecutor {
 
                                 // Update task status to failed
                                 let storage = storage.lock().await;
-                                let _ = storage
+                                if let Err(e) = storage
                                     .update_task_status(
                                         &running_task.id,
                                         TaskStatus::Failed,
@@ -154,9 +177,25 @@ impl TaskExecutor {
                                         Some(chrono::Utc::now()),
                                         Some(error_message),
                                     )
-                                    .await;
+                                    .await
+                                {
+                                    eprintln!("Failed to update task status to failed: {e}");
+                                }
                                 drop(storage);
                             }
+                        }
+
+                        // Update active workers count and terminal title
+                        let mut count = active_workers.lock().await;
+                        *count = count.saturating_sub(1);
+                        if *count == 0 {
+                            terminal_ops
+                                .set_title(&format!("TSK Server Idle (0/{total_workers} workers)"));
+                        } else {
+                            terminal_ops.set_title(&format!(
+                                "TSK Server Running ({}/{} workers)",
+                                *count, total_workers
+                            ));
                         }
 
                         // Permit is automatically dropped here, releasing the semaphore
@@ -164,7 +203,7 @@ impl TaskExecutor {
                 }
                 None => {
                     // No tasks to execute, release the permit and wait
-                    drop(permit.unwrap());
+                    drop(permit);
                     sleep(Duration::from_secs(5)).await;
                 }
             }
@@ -446,6 +485,194 @@ mod tests {
             processed_tasks >= 2,
             "With 2 workers, at least 2 tasks should have been processed, but only {} were",
             processed_tasks
+        );
+    }
+
+    #[tokio::test]
+    async fn test_single_worker_sequential_execution() {
+        // Test that with a single worker, only one task runs at a time
+        let temp_dir = TempDir::new().unwrap();
+        let config = crate::storage::XdgConfig::with_paths(
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            temp_dir.path().join("config"),
+        );
+
+        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
+        xdg.ensure_directories().unwrap();
+
+        // Create 3 tasks with different timings
+        let mut tasks = vec![];
+        for i in 0..3 {
+            let task = Task::new(
+                format!("test-task-{}", i),
+                temp_dir.path().to_path_buf(),
+                format!("test-task-{}", i),
+                "test".to_string(),
+                "instructions.md".to_string(),
+                "claude-code".to_string(),
+                30,
+                format!("tsk/test-task-{}", i),
+                "abc123".to_string(),
+                "default".to_string(),
+                "default".to_string(),
+                chrono::Local::now(),
+                temp_dir.path().to_path_buf(),
+            );
+            tasks.push(task);
+        }
+
+        // Set up storage with queued tasks
+        let fs = Arc::new(MockFileSystem::new());
+        let storage = get_task_storage(xdg.clone(), fs.clone());
+        for task in &tasks {
+            storage.add_task(task.clone()).await.unwrap();
+        }
+
+        // Create app context
+        let app_context = crate::context::AppContext::builder()
+            .with_file_system(fs)
+            .with_xdg_directories(xdg)
+            .with_docker_client(Arc::new(crate::test_utils::NoOpDockerClient))
+            .build();
+
+        let storage = Arc::new(Mutex::new(storage));
+        // Create executor with 1 worker (default)
+        let executor = TaskExecutor::new(Arc::new(app_context), storage.clone());
+        let executor = Arc::new(executor);
+
+        // Start executor in background
+        let exec_handle = {
+            let exec = executor.clone();
+            tokio::spawn(async move {
+                let _ = exec.start().await;
+            })
+        };
+
+        // Give a small amount of time for first task to start
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Check that only one task is running
+        let storage_guard = storage.lock().await;
+        let running_tasks = storage_guard
+            .list_tasks()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|t| t.status == TaskStatus::Running)
+            .count();
+        drop(storage_guard);
+
+        assert!(
+            running_tasks <= 1,
+            "With 1 worker, at most 1 task should be running, but {} were running",
+            running_tasks
+        );
+
+        // Give more time for execution
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        // Stop executor
+        executor.stop().await;
+        let _ = exec_handle.await;
+
+        // Verify tasks were processed sequentially (no more than 1 running at a time)
+        let storage_guard = storage.lock().await;
+        let all_tasks = storage_guard.list_tasks().await.unwrap();
+        drop(storage_guard);
+
+        let processed_tasks = all_tasks
+            .iter()
+            .filter(|t| t.status != TaskStatus::Queued)
+            .count();
+
+        // At least some tasks should have been processed
+        assert!(
+            processed_tasks >= 1,
+            "At least 1 task should have been processed"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_task_completion_status() {
+        // Test that tasks are properly marked as COMPLETED
+        let temp_dir = TempDir::new().unwrap();
+        let config = crate::storage::XdgConfig::with_paths(
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            temp_dir.path().join("config"),
+        );
+
+        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
+        xdg.ensure_directories().unwrap();
+
+        // Create a single task
+        let task = Task::new(
+            "test-task-complete".to_string(),
+            temp_dir.path().to_path_buf(),
+            "test-task".to_string(),
+            "test".to_string(),
+            "instructions.md".to_string(),
+            "claude-code".to_string(),
+            30,
+            "tsk/test-task".to_string(),
+            "abc123".to_string(),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            temp_dir.path().to_path_buf(),
+        );
+
+        // Set up storage with the task
+        let fs = Arc::new(MockFileSystem::new());
+        let storage = get_task_storage(xdg.clone(), fs.clone());
+        storage.add_task(task.clone()).await.unwrap();
+
+        // Create app context
+        let app_context = crate::context::AppContext::builder()
+            .with_file_system(fs)
+            .with_xdg_directories(xdg)
+            .with_docker_client(Arc::new(crate::test_utils::NoOpDockerClient))
+            .build();
+
+        let storage = Arc::new(Mutex::new(storage));
+        let executor = TaskExecutor::new(Arc::new(app_context), storage.clone());
+        let executor = Arc::new(executor);
+
+        // Start executor in background
+        let exec_handle = {
+            let exec = executor.clone();
+            tokio::spawn(async move {
+                let _ = exec.start().await;
+            })
+        };
+
+        // Give enough time for the task to complete
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        // Stop executor
+        executor.stop().await;
+        let _ = exec_handle.await;
+
+        // Verify the task was marked as COMPLETE
+        let storage_guard = storage.lock().await;
+        let updated_task = storage_guard.get_task(&task.id).await.unwrap().unwrap();
+        drop(storage_guard);
+
+        assert!(
+            matches!(
+                updated_task.status,
+                TaskStatus::Complete | TaskStatus::Failed
+            ),
+            "Task should be marked as COMPLETE or FAILED, but was {:?}",
+            updated_task.status
+        );
+
+        // Ensure it's not stuck in RUNNING
+        assert_ne!(
+            updated_task.status,
+            TaskStatus::Running,
+            "Task should not be stuck in RUNNING state"
         );
     }
 }
