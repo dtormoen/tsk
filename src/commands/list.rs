@@ -23,6 +23,8 @@ struct TaskRow {
     status: String,
     #[tabled(rename = "Agent")]
     agent: String,
+    #[tabled(rename = "Branch")]
+    branch: String,
     #[tabled(rename = "Created")]
     created: String,
 }
@@ -74,6 +76,7 @@ impl Command for ListCommand {
                         TaskStatus::Complete => "COMPLETE".to_string(),
                     },
                     agent: task.agent.clone(),
+                    branch: task.branch_name.clone(),
                     created: task.created_at.format("%Y-%m-%d %H:%M").to_string(),
                 })
                 .collect();

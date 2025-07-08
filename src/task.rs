@@ -276,9 +276,8 @@ impl TaskBuilder {
 
         // Create task directory in centralized location
         let now = chrono::Local::now();
-        let timestamp = now.format("%Y-%m-%d-%H%M");
         let created_at = now;
-        let id = format!("{timestamp}-{task_type}-{name}");
+        let id = nanoid::nanoid!(8);
         let task_dir_name = id.clone();
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
         let task_dir = ctx.xdg_directories().task_dir(&task_dir_name, &repo_hash);
@@ -360,7 +359,7 @@ impl TaskBuilder {
         };
 
         // Generate branch name from task ID
-        let branch_name = format!("tsk/{task_dir_name}");
+        let branch_name = format!("tsk/{id}");
 
         // Copy the repository for the task
         let repo_manager = RepoManager::new(
@@ -582,7 +581,7 @@ mod tests {
         assert_eq!(task.task_type, "generic");
         assert_eq!(task.timeout, 60);
         assert!(!task.instructions_file.is_empty());
-        assert!(task.id.contains("test-task"));
+        assert_eq!(task.id.len(), 8);
     }
 
     #[tokio::test]
@@ -797,7 +796,7 @@ mod tests {
                 .task_type("generic".to_string())
                 .description(Some("Test description".to_string()));
 
-            let temp_path = Path::new(".tsk-edit-2024-01-01-1200-test-task-instructions.md");
+            let temp_path = Path::new(".tsk-edit-abcd1234-instructions.md");
             let result_path = task_builder
                 .write_instructions_content(temp_path, "generic", &ctx)
                 .await
@@ -830,7 +829,7 @@ mod tests {
                 .task_type("feat".to_string())
                 .description(Some("My new feature".to_string()));
 
-            let temp_path = Path::new(".tsk-edit-2024-01-01-1200-test-feature-instructions.md");
+            let temp_path = Path::new(".tsk-edit-efgh5678-instructions.md");
             task_builder
                 .write_instructions_content(temp_path, "feat", &ctx)
                 .await
@@ -905,7 +904,7 @@ mod tests {
         let instructions_content = "# Task Instructions\n\nOriginal instructions content";
 
         // Create existing task
-        let existing_task = create_test_task("2024-01-01-1200-feat-existing", "existing", "feat");
+        let existing_task = create_test_task("ijkl9012", "existing", "feat");
         let mut existing_task = existing_task;
         existing_task.repo_root = current_dir.clone();
         existing_task.instructions_file = "instructions.md".to_string();
@@ -1063,11 +1062,7 @@ mod tests {
         let current_dir = temp_dir.path().to_path_buf();
 
         // Create an existing task with Docker config
-        let mut existing_task = create_test_task(
-            "2024-01-01-1200-generic-existing-task",
-            "existing-task",
-            "generic",
-        );
+        let mut existing_task = create_test_task("mnop3456", "existing-task", "generic");
         existing_task.repo_root = current_dir.clone();
         existing_task.tech_stack = "python".to_string();
         existing_task.project = "ml-service".to_string();
@@ -1095,8 +1090,8 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify task ID format includes task type
-        assert!(task.id.contains("-feat-new-feature"));
+        // Verify task ID format is 8 characters
+        assert_eq!(task.id.len(), 8);
         assert_eq!(task.task_type, "feat");
 
         // Test with "fix" task type
@@ -1109,21 +1104,21 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(task2.id.contains("-fix-bug-fix"));
+        assert_eq!(task2.id.len(), 8);
         assert_eq!(task2.task_type, "fix");
 
         // Test branch name generation follows the same pattern
         let branch_name = format!("tsk/{}", task.id);
-        assert!(branch_name.contains("tsk/"));
-        assert!(branch_name.contains("-feat-new-feature"));
+        assert!(branch_name.starts_with("tsk/"));
+        assert_eq!(branch_name.len(), 12); // "tsk/" + 8 char ID
     }
 
     #[test]
     fn test_task_new_with_id() {
-        let task = create_test_task("2024-01-01-1200-feat-test-task", "test-task", "feat");
+        let task = create_test_task("qrst7890", "test-task", "feat");
 
         // Verify task ID is set correctly
-        assert_eq!(task.id, "2024-01-01-1200-feat-test-task");
+        assert_eq!(task.id, "qrst7890");
         assert_eq!(task.task_type, "feat");
         assert_eq!(task.name, "test-task");
     }

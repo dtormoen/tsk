@@ -279,13 +279,11 @@ impl TaskManager {
             return Err("Cannot retry a task that hasn't been executed yet".to_string());
         }
 
-        // Create a new task name with format: retry-{original_name}
-        let new_task_name = format!("retry-{}", original_task.name);
-
         // Use TaskBuilder to create the new task, leveraging from_existing
         let mut builder = TaskBuilder::from_existing(&original_task);
 
-        builder = builder.name(new_task_name).edit(edit_instructions);
+        // Keep the same name - the new nanoid will ensure uniqueness
+        builder = builder.edit(edit_instructions);
 
         let new_task = builder
             .build(ctx)
@@ -530,7 +528,7 @@ mod tests {
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
 
         // Create a completed task to retry
-        let task_id = "2024-01-01-1200-generic-original-task".to_string();
+        let task_id = "abcd1234".to_string();
         let task_dir_path = xdg.task_dir(&task_id, &repo_hash);
         let instructions_path = task_dir_path.join("instructions.md");
 
@@ -581,15 +579,16 @@ mod tests {
         assert!(result.is_ok(), "Failed to retry task: {:?}", result);
         let new_task_id = result.unwrap();
 
-        // Verify new task ID format
-        assert!(new_task_id.contains("generic-retry-original-task"));
+        // Verify new task ID format (8 characters)
+        assert_eq!(new_task_id.len(), 8);
 
         // Verify task was added to storage
         let storage = task_manager.task_storage.as_ref().unwrap();
         let new_task = storage.get_task(&new_task_id).await.unwrap();
         assert!(new_task.is_some());
         let new_task = new_task.unwrap();
-        assert_eq!(new_task.name, "retry-original-task");
+        // Since we removed the "retry-" prefix, name should be the same as original
+        assert_eq!(new_task.name, "original-task");
         assert_eq!(new_task.task_type, "generic");
         assert_eq!(new_task.agent, "claude-code".to_string());
         assert_eq!(new_task.timeout, 45);
@@ -638,7 +637,7 @@ mod tests {
         let repo_root = test_repo.path().to_path_buf();
 
         // Create a queued task (should not be retryable)
-        let task_id = "2024-01-01-1200-feat-queued-task".to_string();
+        let task_id = "efgh5678".to_string();
 
         // Create tasks.json with the queued task
         let tasks_json = format!(
@@ -675,7 +674,7 @@ mod tests {
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
 
         // Create a task with a specific ID
-        let task_id = "2024-01-15-1430-feat-test-feature".to_string();
+        let task_id = "ijkl9012".to_string();
         let mut completed_task = Task::new(
             task_id.clone(),
             repo_root.clone(),

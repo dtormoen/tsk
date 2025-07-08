@@ -48,11 +48,11 @@ tsk run
 tsk list
 
 # Review the changes
-git checkout tsk/2025-06-23-1430-feat-greeting
+git checkout tsk/a1b2c3d4
 git diff main...HEAD
 
 # Merge if it looks good
-git checkout main && git merge tsk/2025-06-23-1430-feat-greeting
+git checkout main && git merge tsk/a1b2c3d4
 ```
 
 ### Server Mode

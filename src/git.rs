@@ -349,11 +349,7 @@ mod tests {
         let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
 
         let result = manager
-            .copy_repo(
-                "2024-01-01-1200-generic-test-task",
-                non_git_repo.path(),
-                None,
-            )
+            .copy_repo("abcd1234", non_git_repo.path(), None)
             .await;
 
         assert!(result.is_err());
@@ -600,7 +596,7 @@ mod tests {
         let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
 
         // Copy repo from the first commit
-        let task_id = "2024-01-01-1200-generic-test-task";
+        let task_id = "efgh5678";
         let result = manager
             .copy_repo(task_id, test_repo.path(), Some(&first_commit))
             .await;
@@ -644,7 +640,7 @@ mod tests {
         let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
 
         // Copy repo without specifying source commit (should use HEAD)
-        let task_id = "2024-01-01-1200-generic-test-task";
+        let task_id = "ijkl9012";
         let result = manager.copy_repo(task_id, test_repo.path(), None).await;
 
         assert!(result.is_ok());
@@ -677,7 +673,7 @@ mod tests {
         let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
 
         // Copy the repository
-        let task_id = "2024-01-01-1200-generic-test-task";
+        let task_id = "mnop3456";
         let result = manager.copy_repo(task_id, test_repo.path(), None).await;
 
         assert!(result.is_ok());
@@ -781,7 +777,7 @@ mod tests {
         let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
 
         // Copy the repository
-        let task_id = "2024-01-01-1200-generic-test-task";
+        let task_id = "qrst7890";
         let result = manager.copy_repo(task_id, test_repo.path(), None).await;
 
         assert!(result.is_ok());
