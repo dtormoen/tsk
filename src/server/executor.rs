@@ -130,7 +130,6 @@ impl TaskExecutor {
 
                     // Spawn task execution
                     let context = self.context.clone();
-                    let storage = self.storage.clone();
                     let active_workers = active_workers.clone();
                     let terminal_ops = self.context.terminal_operations();
                     let total_workers = self.workers;
@@ -146,42 +145,11 @@ impl TaskExecutor {
                         match execution_result {
                             Ok(_) => {
                                 println!("Task completed successfully: {}", running_task.id);
-
-                                // Update task status to complete
-                                let storage = storage.lock().await;
-                                if let Err(e) = storage
-                                    .update_task_status(
-                                        &running_task.id,
-                                        TaskStatus::Complete,
-                                        None,
-                                        Some(chrono::Utc::now()),
-                                        None,
-                                    )
-                                    .await
-                                {
-                                    eprintln!("Failed to update task status to complete: {e}");
-                                }
-                                drop(storage);
+                                // Task status is already updated by TaskManager.execute_queued_task()
                             }
                             Err(e) => {
-                                let error_message = e.to_string();
-                                eprintln!("Task failed: {} - {}", running_task.id, error_message);
-
-                                // Update task status to failed
-                                let storage = storage.lock().await;
-                                if let Err(e) = storage
-                                    .update_task_status(
-                                        &running_task.id,
-                                        TaskStatus::Failed,
-                                        None,
-                                        Some(chrono::Utc::now()),
-                                        Some(error_message),
-                                    )
-                                    .await
-                                {
-                                    eprintln!("Failed to update task status to failed: {e}");
-                                }
-                                drop(storage);
+                                eprintln!("Task failed: {} - {}", running_task.id, e);
+                                // Task status is already updated by TaskManager.execute_queued_task()
                             }
                         }
 
