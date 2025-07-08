@@ -11,7 +11,7 @@ pub struct AddCommand {
     pub name: String,
     pub r#type: String,
     pub description: Option<String>,
-    pub instructions: Option<String>,
+    pub prompt: Option<String>,
     pub edit: bool,
     pub agent: Option<String>,
     pub timeout: u32,
@@ -33,7 +33,7 @@ impl Command for AddCommand {
             .name(self.name.clone())
             .task_type(self.r#type.clone())
             .description(self.description.clone())
-            .instructions_file(self.instructions.as_ref().map(PathBuf::from))
+            .instructions_file(self.prompt.as_ref().map(PathBuf::from))
             .edit(self.edit)
             .agent(self.agent.clone())
             .timeout(self.timeout)
@@ -78,8 +78,8 @@ impl Command for AddCommand {
         if let Some(ref desc) = self.description {
             println!("Description: {desc}");
         }
-        if self.instructions.is_some() {
-            println!("Instructions: Copied to task directory");
+        if self.prompt.is_some() {
+            println!("Prompt: Copied to task directory");
         }
         if let Some(ref agent) = self.agent {
             println!("Agent: {agent}");
@@ -111,7 +111,7 @@ mod tests {
             name: "test".to_string(),
             r#type: "generic".to_string(),
             description: None,
-            instructions: None,
+            prompt: None,
             edit: false,
             agent: None,
             timeout: 30,
@@ -122,9 +122,12 @@ mod tests {
         let ctx = create_test_context();
         let result = cmd.execute(&ctx).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains(
-            "Either description or instructions file must be provided, or use edit mode"
-        ));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Either description or prompt file must be provided, or use edit mode")
+        );
     }
 
     #[tokio::test]
@@ -133,7 +136,7 @@ mod tests {
             name: "test".to_string(),
             r#type: "nonexistent".to_string(),
             description: Some("test description".to_string()),
-            instructions: None,
+            prompt: None,
             edit: false,
             agent: None,
             timeout: 30,
@@ -197,7 +200,7 @@ mod tests {
             name: "test-ack".to_string(),
             r#type: "ack".to_string(),
             description: None,
-            instructions: None,
+            prompt: None,
             edit: false,
             agent: None,
             timeout: 30,

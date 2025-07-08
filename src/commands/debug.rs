@@ -71,16 +71,16 @@ impl Command for DebugCommand {
             }
         };
 
-        // Create a debug instructions file
-        let debug_instructions = format!(
+        // Create a debug prompt file
+        let debug_prompt = format!(
             "# Debug Session: {}\n\nThis is an interactive debug session for exploring and testing.",
             self.name
         );
         let temp_dir = ctx.xdg_directories().runtime_dir().join("tmp");
         ctx.file_system().create_dir(&temp_dir).await?;
-        let instructions_file = temp_dir.join(format!("{}-debug.md", self.name));
+        let prompt_file = temp_dir.join(format!("{}-debug.md", self.name));
         ctx.file_system()
-            .write_file(&instructions_file, &debug_instructions)
+            .write_file(&prompt_file, &debug_prompt)
             .await?;
 
         // Get current commit for the task
@@ -105,7 +105,7 @@ impl Command for DebugCommand {
             repo_root.clone(),
             self.name.clone(),
             "debug".to_string(),
-            instructions_file.to_string_lossy().to_string(),
+            prompt_file.to_string_lossy().to_string(),
             agent,
             0, // No timeout for debug sessions
             branch_name,
@@ -163,8 +163,8 @@ impl Command for DebugCommand {
             .await
             .map_err(|e| e.message)?;
 
-        // Clean up the temporary instructions file
-        let _ = ctx.file_system().remove_file(&instructions_file).await;
+        // Clean up the temporary prompt file
+        let _ = ctx.file_system().remove_file(&prompt_file).await;
 
         Ok(())
     }

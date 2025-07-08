@@ -238,7 +238,7 @@ impl TaskBuilder {
             && !self.edit
         {
             return Err(
-                "Either description or instructions file must be provided, or use edit mode".into(),
+                "Either description or prompt file must be provided, or use edit mode".into(),
             );
         }
 
@@ -669,7 +669,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
-            err.contains("Either description or instructions file")
+            err.contains("Either description or prompt file")
                 || err.contains("Repository root is required")
         );
     }

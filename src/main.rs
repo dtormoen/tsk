@@ -40,14 +40,14 @@ enum Commands {
         r#type: String,
 
         /// Detailed description of what needs to be accomplished
-        #[arg(short, long, conflicts_with = "instructions")]
+        #[arg(short, long, conflicts_with = "prompt")]
         description: Option<String>,
 
-        /// Path to instructions file to pass to the agent
+        /// Path to prompt file to pass to the agent
         #[arg(short, long, conflicts_with = "description")]
-        instructions: Option<String>,
+        prompt: Option<String>,
 
-        /// Open the instructions file in $EDITOR after creation
+        /// Open the prompt file in $EDITOR after creation
         #[arg(short, long)]
         edit: bool,
 
@@ -86,14 +86,14 @@ enum Commands {
         r#type: String,
 
         /// Detailed description of what needs to be accomplished
-        #[arg(short, long, conflicts_with = "instructions")]
+        #[arg(short, long, conflicts_with = "prompt")]
         description: Option<String>,
 
-        /// Path to instructions file to pass to the agent
+        /// Path to prompt file to pass to the agent
         #[arg(short, long, conflicts_with = "description")]
-        instructions: Option<String>,
+        prompt: Option<String>,
 
-        /// Open the instructions file in $EDITOR after creation
+        /// Open the prompt file in $EDITOR after creation
         #[arg(short, long)]
         edit: bool,
 
@@ -142,7 +142,7 @@ enum Commands {
     Retry {
         /// Task ID to retry
         task_id: String,
-        /// Open the instructions file in $EDITOR after creation
+        /// Open the prompt file in $EDITOR after creation
         #[arg(short, long)]
         edit: bool,
     },
@@ -247,7 +247,7 @@ async fn main() {
             name,
             r#type,
             description,
-            instructions,
+            prompt,
             edit,
             agent,
             timeout,
@@ -257,7 +257,7 @@ async fn main() {
             name,
             r#type,
             description,
-            instructions,
+            prompt,
             edit,
             agent,
             timeout,
@@ -268,7 +268,7 @@ async fn main() {
             name,
             r#type,
             description,
-            instructions,
+            prompt,
             edit,
             agent,
             timeout,
@@ -278,7 +278,7 @@ async fn main() {
             name,
             r#type,
             description,
-            instructions,
+            prompt,
             edit,
             agent,
             timeout,
