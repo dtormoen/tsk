@@ -276,7 +276,7 @@ mod tests {
             created_at: chrono::Local::now(),
             started_at: None,
             completed_at: None,
-            branch_name: "tsk/test-task-123".to_string(),
+            branch_name: "tsk/feature/test-task/test-task-123".to_string(),
             error_message: None,
             source_commit: "abc123".to_string(),
             tech_stack: "default".to_string(),

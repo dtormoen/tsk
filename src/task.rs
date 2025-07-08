@@ -1,6 +1,7 @@
 use crate::assets::{AssetManager, layered::LayeredAssetManager};
 use crate::context::AppContext;
 use crate::git::RepoManager;
+use crate::utils::sanitize_for_branch_name;
 use chrono::{DateTime, Local, Utc};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -358,8 +359,10 @@ impl TaskBuilder {
             }
         };
 
-        // Generate branch name from task ID
-        let branch_name = format!("tsk/{id}");
+        // Generate human-readable branch name with format: tsk/{task-type}/{task-name}/{task-id}
+        let sanitized_task_type = sanitize_for_branch_name(&task_type);
+        let sanitized_name = sanitize_for_branch_name(&name);
+        let branch_name = format!("tsk/{sanitized_task_type}/{sanitized_name}/{id}");
 
         // Copy the repository for the task
         let repo_manager = RepoManager::new(
@@ -370,7 +373,12 @@ impl TaskBuilder {
         );
 
         let (copied_repo_path, _) = repo_manager
-            .copy_repo(&task_dir_name, &repo_root, Some(&source_commit))
+            .copy_repo(
+                &task_dir_name,
+                &repo_root,
+                Some(&source_commit),
+                &branch_name,
+            )
             .await
             .map_err(|e| format!("Failed to copy repository: {e}"))?;
 
@@ -545,6 +553,8 @@ mod tests {
 
     /// Helper to create a test task with default values
     fn create_test_task(id: &str, name: &str, task_type: &str) -> Task {
+        let sanitized_type = crate::utils::sanitize_for_branch_name(task_type);
+        let sanitized_name = crate::utils::sanitize_for_branch_name(name);
         Task::new(
             id.to_string(),
             PathBuf::from("/test"),
@@ -553,7 +563,7 @@ mod tests {
             "instructions.md".to_string(),
             "claude-code".to_string(),
             30,
-            format!("tsk/{id}"),
+            format!("tsk/{sanitized_type}/{sanitized_name}/{id}"),
             "abc123".to_string(),
             "default".to_string(),
             "default".to_string(),
@@ -1107,10 +1117,11 @@ mod tests {
         assert_eq!(task2.id.len(), 8);
         assert_eq!(task2.task_type, "fix");
 
-        // Test branch name generation follows the same pattern
-        let branch_name = format!("tsk/{}", task.id);
-        assert!(branch_name.starts_with("tsk/"));
-        assert_eq!(branch_name.len(), 12); // "tsk/" + 8 char ID
+        // Test branch name generation follows the new pattern
+        assert!(task.branch_name.starts_with("tsk/feat/new-feature/"));
+        assert!(task.branch_name.len() > 20); // Should include type, name, and ID
+        assert!(task2.branch_name.starts_with("tsk/fix/bug-fix/"));
+        assert!(task2.branch_name.len() > 16); // Should include type, name, and ID
     }
 
     #[test]

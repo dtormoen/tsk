@@ -37,10 +37,11 @@ impl RepoManager {
         task_id: &str,
         repo_root: &Path,
         source_commit: Option<&str>,
+        branch_name: &str,
     ) -> Result<(PathBuf, String), String> {
         // Use the task ID directly for the directory name
         let task_dir_name = task_id;
-        let branch_name = format!("tsk/{task_id}");
+        let branch_name = branch_name.to_string();
 
         // Create the task directory structure in centralized location
         let repo_hash = crate::storage::get_repo_hash(repo_root);
@@ -349,7 +350,12 @@ mod tests {
         let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
 
         let result = manager
-            .copy_repo("abcd1234", non_git_repo.path(), None)
+            .copy_repo(
+                "abcd1234",
+                non_git_repo.path(),
+                None,
+                "tsk/test/test-task/abcd1234",
+            )
             .await;
 
         assert!(result.is_err());
@@ -459,7 +465,7 @@ mod tests {
             .unwrap();
 
         // Create a branch in task repo with no new commits
-        let branch_name = "tsk/test-task";
+        let branch_name = "tsk/test/test-task/abcd1234";
         task_repo.checkout_new_branch(branch_name).unwrap();
 
         // Don't add any new commits - just the branch
@@ -535,7 +541,7 @@ mod tests {
             .unwrap();
 
         // Create a branch in task repo with new commits
-        let branch_name = "tsk/test-task";
+        let branch_name = "tsk/test/test-task/efgh5678";
         task_repo.checkout_new_branch(branch_name).unwrap();
 
         // Add a new commit
@@ -597,14 +603,15 @@ mod tests {
 
         // Copy repo from the first commit
         let task_id = "efgh5678";
+        let branch_name = "tsk/test/copy-repo-test/efgh5678";
         let result = manager
-            .copy_repo(task_id, test_repo.path(), Some(&first_commit))
+            .copy_repo(task_id, test_repo.path(), Some(&first_commit), branch_name)
             .await;
 
         assert!(result.is_ok());
-        let (copied_path, branch_name) = result.unwrap();
+        let (copied_path, returned_branch_name) = result.unwrap();
 
-        assert_eq!(branch_name, format!("tsk/{}", task_id));
+        assert_eq!(returned_branch_name, branch_name);
         assert!(copied_path.exists());
 
         // Verify the copied repo is at the first commit (should not have feature1 or feature2)
@@ -641,12 +648,15 @@ mod tests {
 
         // Copy repo without specifying source commit (should use HEAD)
         let task_id = "ijkl9012";
-        let result = manager.copy_repo(task_id, test_repo.path(), None).await;
+        let branch_name = "tsk/test/copy-repo-head/ijkl9012";
+        let result = manager
+            .copy_repo(task_id, test_repo.path(), None, branch_name)
+            .await;
 
         assert!(result.is_ok());
-        let (copied_path, branch_name) = result.unwrap();
+        let (copied_path, returned_branch_name) = result.unwrap();
 
-        assert_eq!(branch_name, format!("tsk/{}", task_id));
+        assert_eq!(returned_branch_name, branch_name);
         assert!(copied_path.exists());
 
         // Verify the copied repo has all files from HEAD
@@ -674,7 +684,10 @@ mod tests {
 
         // Copy the repository
         let task_id = "mnop3456";
-        let result = manager.copy_repo(task_id, test_repo.path(), None).await;
+        let branch_name = "tsk/test/tracked-untracked/mnop3456";
+        let result = manager
+            .copy_repo(task_id, test_repo.path(), None, branch_name)
+            .await;
 
         assert!(result.is_ok());
         let (copied_path, _) = result.unwrap();
@@ -778,7 +791,10 @@ mod tests {
 
         // Copy the repository
         let task_id = "qrst7890";
-        let result = manager.copy_repo(task_id, test_repo.path(), None).await;
+        let branch_name = "tsk/test/tsk-directory/qrst7890";
+        let result = manager
+            .copy_repo(task_id, test_repo.path(), None, branch_name)
+            .await;
 
         assert!(result.is_ok());
         let (copied_path, _) = result.unwrap();

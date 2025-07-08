@@ -13,6 +13,7 @@ pub mod task;
 pub mod task_manager;
 pub mod task_runner;
 pub mod task_storage;
+pub mod utils;
 
 #[cfg(test)]
 pub mod test_utils;

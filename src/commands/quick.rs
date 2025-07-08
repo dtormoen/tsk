@@ -98,11 +98,12 @@ mod tests {
         let ctx = create_test_context();
         let result = cmd.execute(&ctx).await;
         assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Either description or prompt file must be provided, or use edit mode")
+            err_msg
+                .contains("Either description or prompt file must be provided, or use edit mode"),
+            "Expected validation error, but got: {}",
+            err_msg
         );
     }
 

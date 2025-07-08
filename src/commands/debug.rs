@@ -91,9 +91,9 @@ impl Command for DebugCommand {
             .unwrap_or_else(|_| "HEAD".to_string());
 
         // Create a minimal task for debug session
-        let timestamp = chrono::Local::now();
-        let task_id = format!("{}-debug-{}", timestamp.format("%Y-%m-%d-%H%M"), self.name);
-        let branch_name = format!("tsk/{task_id}");
+        let task_id = nanoid::nanoid!(8);
+        let sanitized_name = crate::utils::sanitize_for_branch_name(&self.name);
+        let branch_name = format!("tsk/debug/{sanitized_name}/{task_id}");
 
         let agent = self
             .agent
@@ -108,7 +108,7 @@ impl Command for DebugCommand {
             prompt_file.to_string_lossy().to_string(),
             agent,
             0, // No timeout for debug sessions
-            branch_name,
+            branch_name.clone(),
             source_commit,
             tech_stack,
             project.unwrap_or_else(|| "default".to_string()),
@@ -125,7 +125,12 @@ impl Command for DebugCommand {
 
         // Copy the repository for the debug task
         let (copied_repo_path, _) = repo_manager
-            .copy_repo(&task_id, &repo_root, Some(&task.source_commit))
+            .copy_repo(
+                &task_id,
+                &repo_root,
+                Some(&task.source_commit),
+                &branch_name,
+            )
             .await
             .map_err(|e| format!("Failed to copy repository: {e}"))?;
 
