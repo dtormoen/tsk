@@ -17,6 +17,7 @@ pub struct AddCommand {
     pub timeout: u32,
     pub tech_stack: Option<String>,
     pub project: Option<String>,
+    pub repo: Option<String>,
 }
 
 #[async_trait]
@@ -25,7 +26,8 @@ impl Command for AddCommand {
         println!("Adding task to queue: {}", self.name);
 
         // Find repository root
-        let repo_root = find_repository_root(Path::new("."))?;
+        let start_path = self.repo.as_deref().unwrap_or(".");
+        let repo_root = find_repository_root(Path::new(start_path))?;
 
         // Create task using TaskBuilder
         let task = TaskBuilder::new()
@@ -117,6 +119,7 @@ mod tests {
             timeout: 30,
             tech_stack: None,
             project: None,
+            repo: Some(".".to_string()),
         };
 
         let ctx = create_test_context();
@@ -143,6 +146,7 @@ mod tests {
             timeout: 30,
             tech_stack: None,
             project: None,
+            repo: Some(".".to_string()),
         };
 
         let ctx = create_test_context();
@@ -172,9 +176,6 @@ mod tests {
         test_repo
             .create_file(".tsk/templates/ack.md", template_content)
             .unwrap();
-
-        // Change to the test repo directory
-        std::env::set_current_dir(test_repo.path()).unwrap();
 
         // Create XDG config
         let config = crate::storage::XdgConfig::with_paths(
@@ -207,6 +208,7 @@ mod tests {
             timeout: 30,
             tech_stack: None,
             project: None,
+            repo: Some(test_repo.path().to_string_lossy().to_string()),
         };
 
         // Execute should succeed
@@ -214,6 +216,70 @@ mod tests {
         assert!(
             result.is_ok(),
             "Command should succeed for template without description placeholder"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_add_command_with_repo_path() {
+        use crate::test_utils::TestGitRepository;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create a test git repository
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+
+        // Create a template file
+        let template_content = "# Task: {{TYPE}}\n{{DESCRIPTION}}";
+        test_repo
+            .create_file(".tsk/templates/generic.md", template_content)
+            .unwrap();
+
+        // Create XDG config
+        let config = crate::storage::XdgConfig::with_paths(
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            temp_dir.path().join("config"),
+        );
+        let xdg = crate::storage::XdgDirectories::new(Some(config))
+            .expect("Failed to create XDG directories");
+        xdg.ensure_directories()
+            .expect("Failed to ensure XDG directories");
+
+        // Create AppContext with real implementations
+        let ctx = AppContext::builder()
+            .with_xdg_directories(Arc::new(xdg))
+            .with_git_operations(Arc::new(
+                crate::context::git_operations::DefaultGitOperations,
+            ))
+            .with_tsk_client(Arc::new(NoOpTskClient))
+            .build();
+
+        // Create AddCommand with repo path
+        let cmd = AddCommand {
+            name: "test-repo-path".to_string(),
+            r#type: "generic".to_string(),
+            description: Some("Test with repo path".to_string()),
+            prompt: None,
+            edit: false,
+            agent: None,
+            timeout: 30,
+            tech_stack: None,
+            project: None,
+            repo: Some(test_repo.path().to_string_lossy().to_string()),
+        };
+
+        // Execute should succeed without changing directories
+        let current_dir = std::env::current_dir().unwrap();
+        let result = cmd.execute(&ctx).await;
+        assert!(result.is_ok(), "Command should succeed with repo path");
+
+        // Verify we didn't change directories
+        assert_eq!(
+            std::env::current_dir().unwrap(),
+            current_dir,
+            "Current directory should not have changed"
         );
     }
 }

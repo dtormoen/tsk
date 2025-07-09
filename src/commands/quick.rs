@@ -17,6 +17,7 @@ pub struct QuickCommand {
     pub timeout: u32,
     pub tech_stack: Option<String>,
     pub project: Option<String>,
+    pub repo: Option<String>,
 }
 
 #[async_trait]
@@ -26,7 +27,8 @@ impl Command for QuickCommand {
         println!("Type: {}", self.r#type);
 
         // Find repository root
-        let repo_root = find_repository_root(Path::new("."))?;
+        let start_path = self.repo.as_deref().unwrap_or(".");
+        let repo_root = find_repository_root(Path::new(start_path))?;
 
         // Create task using TaskBuilder
         let task = TaskBuilder::new()
@@ -89,9 +91,6 @@ mod tests {
         let test_repo = TestGitRepository::new().unwrap();
         test_repo.init_with_commit().unwrap();
 
-        // Change to the test repository directory
-        std::env::set_current_dir(test_repo.path()).unwrap();
-
         let cmd = QuickCommand {
             name: "test".to_string(),
             r#type: "generic".to_string(),
@@ -102,6 +101,7 @@ mod tests {
             timeout: 30,
             tech_stack: None,
             project: None,
+            repo: Some(test_repo.path().to_string_lossy().to_string()),
         };
 
         let ctx = create_test_context();
@@ -132,9 +132,6 @@ mod tests {
         test_repo
             .create_file(".tsk/templates/ack.md", template_content)
             .unwrap();
-
-        // Change to the test repo directory
-        std::env::set_current_dir(test_repo.path()).unwrap();
 
         // Create XDG config
         let config = crate::storage::XdgConfig::with_paths(
@@ -168,6 +165,7 @@ mod tests {
             timeout: 30,
             tech_stack: None,
             project: None,
+            repo: Some(test_repo.path().to_string_lossy().to_string()),
         };
 
         // Execute should succeed (will fail at docker execution, but task creation should work)

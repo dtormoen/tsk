@@ -20,6 +20,7 @@ pub struct DebugCommand {
     pub agent: Option<String>,
     pub tech_stack: Option<String>,
     pub project: Option<String>,
+    pub repo: Option<String>,
 }
 
 #[async_trait]
@@ -27,7 +28,8 @@ impl Command for DebugCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         println!("Starting debug session: {}", self.name);
 
-        let repo_root = find_repository_root(Path::new("."))?;
+        let start_path = self.repo.as_deref().unwrap_or(".");
+        let repo_root = find_repository_root(Path::new(start_path))?;
 
         // Auto-detect tech_stack if not provided
         let tech_stack = match &self.tech_stack {
@@ -186,6 +188,7 @@ mod tests {
             agent: Some("claude_code".to_string()),
             tech_stack: None,
             project: None,
+            repo: None,
         };
 
         // Verify the command has the expected fields
@@ -193,5 +196,6 @@ mod tests {
         assert_eq!(cmd.agent, Some("claude_code".to_string()));
         assert_eq!(cmd.tech_stack, None);
         assert_eq!(cmd.project, None);
+        assert_eq!(cmd.repo, None);
     }
 }

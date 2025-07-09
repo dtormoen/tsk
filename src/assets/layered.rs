@@ -354,9 +354,6 @@ mod tests {
         )
         .unwrap();
 
-        // Change to repo directory
-        std::env::set_current_dir(&repo_dir).unwrap();
-
         // Build AppContext
         let app_context = AppContext::builder().build();
 

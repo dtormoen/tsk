@@ -86,6 +86,10 @@ enum Commands {
         /// Project name for Docker image
         #[arg(long)]
         project: Option<String>,
+
+        /// Path to the git repository (defaults to current directory)
+        #[arg(long)]
+        repo: Option<String>,
     },
     /// List all queued tasks
     List,
@@ -132,6 +136,10 @@ enum Commands {
         /// Project name for Docker image
         #[arg(long)]
         project: Option<String>,
+
+        /// Path to the git repository (defaults to current directory)
+        #[arg(long)]
+        repo: Option<String>,
     },
     /// Launch a Docker container for interactive debugging
     Debug {
@@ -150,6 +158,10 @@ enum Commands {
         /// Project name for Docker image
         #[arg(long)]
         project: Option<String>,
+
+        /// Path to the git repository (defaults to current directory)
+        #[arg(long)]
+        repo: Option<String>,
     },
     /// Delete all completed tasks and all quick tasks
     Clean,
@@ -273,6 +285,7 @@ async fn main() {
             timeout,
             tech_stack,
             project,
+            repo,
         } => Box::new(AddCommand {
             name,
             r#type,
@@ -283,6 +296,7 @@ async fn main() {
             timeout,
             tech_stack,
             project,
+            repo,
         }),
         Commands::Quick {
             name,
@@ -294,6 +308,7 @@ async fn main() {
             timeout,
             tech_stack,
             project,
+            repo,
         } => Box::new(QuickCommand {
             name,
             r#type,
@@ -304,17 +319,20 @@ async fn main() {
             timeout,
             tech_stack,
             project,
+            repo,
         }),
         Commands::Debug {
             name,
             agent,
             tech_stack,
             project,
+            repo,
         } => Box::new(DebugCommand {
             name,
             agent,
             tech_stack,
             project,
+            repo,
         }),
         Commands::List => Box::new(ListCommand),
         Commands::Run { workers } => Box::new(RunCommand {
