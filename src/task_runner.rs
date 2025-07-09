@@ -118,7 +118,7 @@ impl TaskRunner {
                     Some(&instructions_file_path),
                     agent.as_ref(),
                     is_interactive,
-                    &task.name,
+                    &task.id,
                 )
                 .await
                 .map_err(|e| format!("Error running container: {e}"))?

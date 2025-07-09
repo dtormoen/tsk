@@ -220,7 +220,7 @@ impl DockerManager {
     /// * `instructions_file_path` - Optional path to instructions file
     /// * `agent` - The agent to use for the task
     /// * `is_interactive` - Whether to run in interactive mode
-    /// * `task_name` - Name of the task for logging purposes
+    /// * `task_id` - Task ID to use for container naming
     ///
     /// # Returns
     /// * `Ok((output, task_result))` - The container output and optional task result
@@ -232,7 +232,7 @@ impl DockerManager {
         instructions_file_path: Option<&PathBuf>,
         agent: &dyn Agent,
         is_interactive: bool,
-        _task_name: &str,
+        task_id: &str,
     ) -> Result<(String, Option<crate::agent::TaskResult>), String> {
         // Ensure network and proxy are running
         self.ensure_network().await?;
@@ -279,9 +279,9 @@ impl DockerManager {
         );
 
         let container_name = if is_interactive {
-            format!("tsk-interactive-{}", chrono::Utc::now().timestamp())
+            format!("tsk-interactive-{task_id}")
         } else {
-            format!("tsk-{}", chrono::Utc::now().timestamp())
+            format!("tsk-{task_id}")
         };
 
         let options = CreateContainerOptions {
@@ -471,7 +471,7 @@ mod tests {
                 None,
                 &agent,
                 false, // not interactive
-                "test-task",
+                "test-task-id",
             )
             .await;
 
@@ -531,7 +531,7 @@ mod tests {
                 None,
                 &agent,
                 true, // interactive
-                "test-task",
+                "test-task-id",
             )
             .await;
 
@@ -543,6 +543,14 @@ mod tests {
         // Verify interactive command includes bash
         let create_calls = mock_client.create_container_calls.lock().unwrap();
         assert_eq!(create_calls.len(), 2); // One for proxy, one for task container
+
+        // Check container name for interactive mode
+        let (options, _) = &create_calls[1];
+        assert_eq!(
+            options.as_ref().unwrap().name,
+            "tsk-interactive-test-task-id"
+        );
+
         let task_container_config = &create_calls[1].1;
         let actual_cmd = task_container_config.cmd.as_ref().unwrap();
         assert_eq!(actual_cmd[0], "sh");
@@ -569,7 +577,7 @@ mod tests {
                 None,
                 &agent,
                 false, // not interactive
-                "test-task",
+                "test-task-id",
             )
             .await;
 
@@ -602,7 +610,7 @@ mod tests {
                 None,
                 &agent,
                 false, // not interactive
-                "test-task",
+                "test-task-id",
             )
             .await;
 
@@ -628,7 +636,7 @@ mod tests {
                 None,
                 &agent,
                 false, // not interactive
-                "test-task",
+                "test-task-id",
             )
             .await;
 
@@ -644,6 +652,7 @@ mod tests {
         let (options, config) = &create_calls[1];
 
         assert!(options.as_ref().unwrap().name.starts_with("tsk-"));
+        assert_eq!(options.as_ref().unwrap().name, "tsk-test-task-id");
         assert_eq!(config.image, Some("tsk/base".to_string()));
         assert_eq!(config.working_dir, Some(CONTAINER_WORKING_DIR.to_string()));
         // User is now set directly
@@ -692,7 +701,7 @@ mod tests {
                 Some(&instructions_path),
                 &agent,
                 false, // not interactive
-                "test-task",
+                "test-task-id",
             )
             .await;
 
@@ -726,7 +735,7 @@ mod tests {
                 None,
                 &agent,
                 false, // not interactive
-                "test-task",
+                "test-task-id",
             )
             .await;
 
