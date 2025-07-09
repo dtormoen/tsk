@@ -36,6 +36,7 @@ pub struct DockerLayer {
     pub name: String,
 }
 
+#[allow(dead_code)]
 impl DockerLayer {
     /// Creates a new DockerLayer
     pub fn new(layer_type: DockerLayerType, name: String) -> Self {
@@ -98,6 +99,7 @@ pub struct DockerLayerContent {
     pub additional_files: Vec<(String, Vec<u8>)>,
 }
 
+#[allow(dead_code)]
 impl DockerLayerContent {
     /// Creates a new DockerLayerContent with just Dockerfile content
     pub fn new(dockerfile_content: String) -> Self {
@@ -130,6 +132,7 @@ pub struct DockerImageConfig {
     pub project: String,
 }
 
+#[allow(dead_code)]
 impl DockerImageConfig {
     /// Creates a new DockerImageConfig
     pub fn new(tech_stack: String, agent: String, project: String) -> Self {

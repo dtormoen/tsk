@@ -94,6 +94,7 @@ impl Default for AppContextBuilder {
     }
 }
 
+#[allow(dead_code)]
 impl AppContextBuilder {
     pub fn new() -> Self {
         Self {
@@ -121,27 +122,6 @@ impl AppContextBuilder {
 
     pub fn with_git_operations(mut self, git_operations: Arc<dyn GitOperations>) -> Self {
         self.git_operations = Some(git_operations);
-        self
-    }
-
-    pub fn with_git_sync_manager(mut self, git_sync_manager: Arc<GitSyncManager>) -> Self {
-        self.git_sync_manager = Some(git_sync_manager);
-        self
-    }
-
-    pub fn with_notification_client(
-        mut self,
-        notification_client: Arc<dyn NotificationClient>,
-    ) -> Self {
-        self.notification_client = Some(notification_client);
-        self
-    }
-
-    pub fn with_repository_context(
-        mut self,
-        repository_context: Arc<dyn RepositoryContext>,
-    ) -> Self {
-        self.repository_context = Some(repository_context);
         self
     }
 

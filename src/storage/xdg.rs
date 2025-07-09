@@ -21,6 +21,7 @@ pub struct XdgConfig {
     pub config_dir: Option<PathBuf>,
 }
 
+#[allow(dead_code)]
 impl XdgConfig {
     /// Create a new XdgConfig with all overrides set
     pub fn with_paths(data_dir: PathBuf, runtime_dir: PathBuf, config_dir: PathBuf) -> Self {

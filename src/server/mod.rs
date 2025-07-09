@@ -23,6 +23,7 @@ pub struct TskServer {
     lifecycle: ServerLifecycle,
 }
 
+#[allow(dead_code)]
 impl TskServer {
     /// Create a new TSK server instance
     pub fn new(app_context: Arc<AppContext>) -> Self {

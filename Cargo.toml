@@ -9,10 +9,6 @@ homepage = "https://github.com/dtormoen/tsk"
 license = "MIT"
 readme = "README.md"
 
-[lib]
-name = "tsk"
-path = "src/lib.rs"
-
 [[bin]]
 name = "tsk"
 path = "src/main.rs"

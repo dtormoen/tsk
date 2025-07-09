@@ -124,6 +124,7 @@ pub struct MockRepositoryContext {
     project_name: String,
 }
 
+#[allow(dead_code)]
 impl MockRepositoryContext {
     /// Creates a new MockRepositoryContext with successful results
     pub fn new(tech_stack: String, project_name: String) -> Self {

@@ -122,6 +122,7 @@ impl DockerComposer {
     }
 
     /// Write composed Dockerfile and associated files to a directory
+    #[allow(dead_code)]
     pub fn write_to_directory(
         &self,
         composed: &ComposedDockerfile,

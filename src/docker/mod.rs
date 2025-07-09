@@ -212,18 +212,6 @@ impl DockerManager {
         }
     }
 
-    pub async fn stop_and_remove_container(&self, container_name: &str) -> Result<(), String> {
-        self.client
-            .remove_container(
-                container_name,
-                Some(RemoveContainerOptions {
-                    force: true,
-                    ..Default::default()
-                }),
-            )
-            .await
-    }
-
     /// Run a task container with unified support for both interactive and non-interactive modes.
     ///
     /// # Arguments

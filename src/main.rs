@@ -1,6 +1,26 @@
 use clap::{Args, Parser, Subcommand};
 
-use tsk::commands::{
+mod agent;
+mod assets;
+mod commands;
+mod context;
+mod docker;
+mod git;
+mod git_sync;
+mod notifications;
+mod repo_utils;
+mod server;
+mod storage;
+mod task;
+mod task_manager;
+mod task_runner;
+mod task_storage;
+mod utils;
+
+#[cfg(test)]
+mod test_utils;
+
+use commands::{
     AddCommand, CleanCommand, Command, DebugCommand, DeleteCommand, ListCommand, QuickCommand,
     RetryCommand, RunCommand,
     docker::DockerBuildCommand,
@@ -8,7 +28,7 @@ use tsk::commands::{
     server::{ServerRunCommand, ServerStopCommand},
     template::TemplateListCommand,
 };
-use tsk::context::AppContext;
+use context::AppContext;
 
 #[derive(Parser)]
 #[command(name = "tsk")]

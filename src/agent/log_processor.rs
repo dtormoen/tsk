@@ -8,6 +8,7 @@ pub trait LogProcessor: Send {
     fn process_line(&mut self, line: &str) -> Option<String>;
 
     /// Get the full log content
+    #[allow(dead_code)]
     fn get_full_log(&self) -> String;
 
     /// Get the final result of the task execution
