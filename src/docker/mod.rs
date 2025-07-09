@@ -289,6 +289,9 @@ impl DockerManager {
         };
 
         let container_id = self.client.create_container(Some(options), config).await?;
+
+        println!("Starting agent sand box container: {container_id}");
+
         self.client.start_container(&container_id).await?;
 
         if is_interactive {
