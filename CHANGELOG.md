@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/dtormoen/tsk/compare/v0.2.0...v0.3.0) - 2025-07-09
+
+### Added
+
+- add logging for when container starts
+- add --repo argument to add, quick, and debug commands
+- make --description optional for templates without {{DESCRIPTION}} placeholder
+- add "ack" task type for debugging
+- implement parallel task execution with configurable workers
+
+### Fixed
+
+- resolve clippy warnings and improve code quality
+- use task ID instead of timestamp for docker container names
+- update dependency that causes server hangs
+- force local installs to use the lock file
+- remove duplicate task status updates causing server shutdown hang
+- resolve TSK server worker management and task completion issues
+
+### Other
+
+- add a demo gif of tsk
+- remove unused code and fix dead code warnings
+- remove unused test utilities and fix dead code warnings
+- remove lib target and consolidate binary-only structure
+- implement human-readable branch naming format
+- [**breaking**] replace timestamp-based task IDs with 8-character nanoid IDs
+- rename -i/--instructions flag to -p/--prompt in CLI commands
+- [**breaking**] remove log file saving feature from agents
+- restructure CLI to follow noun-verb command pattern
+
 ## [0.2.0](https://github.com/dtormoen/tsk/compare/v0.1.0...v0.2.0) - 2025-07-07
 
 ### Added
