@@ -66,10 +66,10 @@ impl TestGitRepository {
         // Create parent directories if needed
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create parent directories for {}", path))?;
+                .with_context(|| format!("Failed to create parent directories for {path}"))?;
         }
 
-        fs::write(&file_path, content).with_context(|| format!("Failed to write file {}", path))?;
+        fs::write(&file_path, content).with_context(|| format!("Failed to write file {path}"))?;
 
         Ok(())
     }
@@ -77,7 +77,7 @@ impl TestGitRepository {
     /// Reads a file from the repository.
     pub fn read_file(&self, path: &str) -> Result<String> {
         let file_path = self.repo_path.join(path);
-        fs::read_to_string(&file_path).with_context(|| format!("Failed to read file {}", path))
+        fs::read_to_string(&file_path).with_context(|| format!("Failed to read file {path}"))
     }
 
     /// Stages all changes in the repository.
@@ -173,12 +173,9 @@ impl TestGitRepository {
 
         for branch in branches {
             self.checkout_new_branch(branch)?;
-            self.create_file(
-                &format!("{}.txt", branch),
-                &format!("Content for {}\n", branch),
-            )?;
+            self.create_file(&format!("{branch}.txt"), &format!("Content for {branch}\n"))?;
             self.stage_all()?;
-            self.commit(&format!("Add {}.txt", branch))?;
+            self.commit(&format!("Add {branch}.txt"))?;
             self.checkout_branch(&main_branch)?;
         }
 

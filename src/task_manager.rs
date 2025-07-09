@@ -400,7 +400,7 @@ mod tests {
 
         // Delete the task
         let result = task_manager.delete_task(&task_id).await;
-        assert!(result.is_ok(), "Failed to delete task: {:?}", result);
+        assert!(result.is_ok(), "Failed to delete task: {result:?}");
 
         // Verify task directory is deleted
         assert!(
@@ -499,7 +499,7 @@ mod tests {
         let task_manager = TaskManager::with_storage(&ctx).unwrap();
 
         let result = task_manager.clean_tasks().await;
-        assert!(result.is_ok(), "Failed to clean tasks: {:?}", result);
+        assert!(result.is_ok(), "Failed to clean tasks: {result:?}");
         let completed_count = result.unwrap();
         assert_eq!(completed_count, 1);
 
@@ -576,7 +576,7 @@ mod tests {
         let task_manager = TaskManager::with_storage(&ctx).unwrap();
 
         let result = task_manager.retry_task(&task_id, false, &ctx).await;
-        assert!(result.is_ok(), "Failed to retry task: {:?}", result);
+        assert!(result.is_ok(), "Failed to retry task: {result:?}");
         let new_task_id = result.unwrap();
 
         // Verify new task ID format (8 characters)
@@ -716,7 +716,7 @@ mod tests {
         let task_manager = TaskManager::with_storage(&ctx).unwrap();
 
         let result = task_manager.clean_tasks().await;
-        assert!(result.is_ok(), "Failed to clean tasks: {:?}", result);
+        assert!(result.is_ok(), "Failed to clean tasks: {result:?}");
         let completed_count = result.unwrap();
         assert_eq!(completed_count, 1);
 

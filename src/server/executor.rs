@@ -388,14 +388,14 @@ mod tests {
         let mut tasks = vec![];
         for i in 0..3 {
             let task = Task::new(
-                format!("test-task-{}", i),
+                format!("test-task-{i}"),
                 temp_dir.path().to_path_buf(),
-                format!("test-task-{}", i),
+                format!("test-task-{i}"),
                 "test".to_string(),
                 "instructions.md".to_string(),
                 "claude-code".to_string(),
                 30,
-                format!("tsk/test-task-{}", i),
+                format!("tsk/test-task-{i}"),
                 "abc123".to_string(),
                 "default".to_string(),
                 "default".to_string(),
@@ -452,8 +452,7 @@ mod tests {
         // With 2 workers and 3 tasks, at least 2 should be processed
         assert!(
             processed_tasks >= 2,
-            "With 2 workers, at least 2 tasks should have been processed, but only {} were",
-            processed_tasks
+            "With 2 workers, at least 2 tasks should have been processed, but only {processed_tasks} were"
         );
     }
 
@@ -474,14 +473,14 @@ mod tests {
         let mut tasks = vec![];
         for i in 0..3 {
             let task = Task::new(
-                format!("test-task-{}", i),
+                format!("test-task-{i}"),
                 temp_dir.path().to_path_buf(),
-                format!("test-task-{}", i),
+                format!("test-task-{i}"),
                 "test".to_string(),
                 "instructions.md".to_string(),
                 "claude-code".to_string(),
                 30,
-                format!("tsk/test-task-{}", i),
+                format!("tsk/test-task-{i}"),
                 "abc123".to_string(),
                 "default".to_string(),
                 "default".to_string(),
@@ -534,8 +533,7 @@ mod tests {
 
         assert!(
             running_tasks <= 1,
-            "With 1 worker, at most 1 task should be running, but {} were running",
-            running_tasks
+            "With 1 worker, at most 1 task should be running, but {running_tasks} were running"
         );
 
         // Give more time for execution

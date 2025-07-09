@@ -220,8 +220,7 @@ mod tests {
         assert!(
             error_msg.contains("Failed to connect to server")
                 || error_msg.contains("Connection refused"),
-            "Expected connection error, got: {}",
-            error_msg
+            "Expected connection error, got: {error_msg}"
         );
     }
 }

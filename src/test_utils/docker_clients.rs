@@ -185,14 +185,17 @@ impl DockerClient for FixedResponseDockerClient {
     }
 }
 
+type CreateContainerCall = (Option<CreateContainerOptions<String>>, Config<String>);
+type LogsCall = (String, Option<LogsOptions<String>>);
+type RemoveContainerCall = (String, Option<RemoveContainerOptions>);
+
 #[derive(Clone)]
 pub struct TrackedDockerClient {
-    pub create_container_calls:
-        Arc<Mutex<Vec<(Option<CreateContainerOptions<String>>, Config<String>)>>>,
+    pub create_container_calls: Arc<Mutex<Vec<CreateContainerCall>>>,
     pub start_container_calls: Arc<Mutex<Vec<String>>>,
     pub wait_container_calls: Arc<Mutex<Vec<String>>>,
-    pub logs_calls: Arc<Mutex<Vec<(String, Option<LogsOptions<String>>)>>>,
-    pub remove_container_calls: Arc<Mutex<Vec<(String, Option<RemoveContainerOptions>)>>>,
+    pub logs_calls: Arc<Mutex<Vec<LogsCall>>>,
+    pub remove_container_calls: Arc<Mutex<Vec<RemoveContainerCall>>>,
 
     pub exit_code: i64,
     pub logs_output: String,

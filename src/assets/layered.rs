@@ -340,7 +340,7 @@ mod tests {
 
         // Initialize git repo
         std::process::Command::new("git")
-            .args(&["init"])
+            .args(["init"])
             .current_dir(&repo_dir)
             .output()
             .expect("Failed to init git repo");

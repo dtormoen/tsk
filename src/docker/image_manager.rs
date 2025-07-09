@@ -608,9 +608,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_ensure_proxy_image_builds_when_missing() {
-        let mut docker_client = TrackedDockerClient::default();
-        // Override the test default to simulate missing image
-        docker_client.image_exists_returns = false;
+        let docker_client = TrackedDockerClient {
+            image_exists_returns: false,
+            ..Default::default()
+        };
 
         let docker_client = Arc::new(docker_client);
         let temp_dir = TempDir::new().unwrap();

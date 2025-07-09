@@ -111,8 +111,7 @@ mod tests {
         assert!(
             err_msg
                 .contains("Either description or prompt file must be provided, or use edit mode"),
-            "Expected validation error, but got: {}",
-            err_msg
+            "Expected validation error, but got: {err_msg}"
         );
     }
 

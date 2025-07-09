@@ -796,7 +796,7 @@ mod tests {
         {
             let fs = Arc::new(
                 MockFileSystem::new()
-                    .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string()),
+                    .with_dir(current_dir.join(".tsk/tasks").to_string_lossy().as_ref()),
             );
 
             let ctx = AppContext::builder().with_file_system(fs.clone()).build();
@@ -824,10 +824,10 @@ mod tests {
 
             let fs = Arc::new(
                 MockFileSystem::new()
-                    .with_dir(&current_dir.join(".tsk/tasks").to_string_lossy().to_string())
-                    .with_dir(&template_dir.to_string_lossy().to_string())
+                    .with_dir(current_dir.join(".tsk/tasks").to_string_lossy().as_ref())
+                    .with_dir(template_dir.to_string_lossy().as_ref())
                     .with_file(
-                        &template_dir.join("feat.md").to_string_lossy().to_string(),
+                        template_dir.join("feat.md").to_string_lossy().as_ref(),
                         template_content,
                     ),
             );

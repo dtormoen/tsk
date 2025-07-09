@@ -9,11 +9,11 @@ test:
 
 format:
     cargo fmt
-    cargo clippy -- -D warnings
+    cargo clippy --all-targets --fix --allow-dirty -- -D warnings
 
 precommit:
     cargo fmt
-    cargo clippy -- -D warnings
+    cargo clippy --all-targets --fix --allow-dirty -- -D warnings
     cargo test -q
     # Check that the command starts
     cargo run -- --help > /dev/null

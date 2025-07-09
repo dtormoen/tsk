@@ -717,7 +717,7 @@ mod tests {
         let final_result = processor.get_final_result();
         assert!(final_result.is_some());
         let task_result = final_result.unwrap();
-        assert_eq!(task_result.success, true);
+        assert!(task_result.success);
         assert_eq!(
             task_result.message,
             "Task completed successfully with all tests passing"
@@ -746,7 +746,7 @@ mod tests {
         let final_result = processor.get_final_result();
         assert!(final_result.is_some());
         let task_result = final_result.unwrap();
-        assert_eq!(task_result.success, false);
+        assert!(!task_result.success);
         assert_eq!(task_result.message, "Task failed due to compilation errors");
         assert_eq!(task_result.duration_ms, Some(5000));
     }

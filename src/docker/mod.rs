@@ -593,9 +593,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_task_container_create_fails() {
-        let mut mock_client = TrackedDockerClient::default();
-        mock_client.network_exists = false;
-        mock_client.create_network_error = Some("Docker daemon not running".to_string());
+        let mock_client = TrackedDockerClient {
+            network_exists: false,
+            create_network_error: Some("Docker daemon not running".to_string()),
+            ..Default::default()
+        };
         let mock_client = Arc::new(mock_client);
         let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
 

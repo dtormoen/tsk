@@ -246,7 +246,7 @@ mod tests {
         let result = handle_client(server, app_context, storage, shutdown_signal).await;
 
         // The function should return Ok(()) without panicking or erroring
-        assert!(result.is_ok(), "Expected Ok(()), got {:?}", result);
+        assert!(result.is_ok(), "Expected Ok(()), got {result:?}");
     }
 
     #[tokio::test]

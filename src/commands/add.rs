@@ -129,8 +129,7 @@ mod tests {
         assert!(
             err_msg
                 .contains("Either description or prompt file must be provided, or use edit mode"),
-            "Expected validation error, but got: {}",
-            err_msg
+            "Expected validation error, but got: {err_msg}"
         );
     }
 
@@ -155,8 +154,7 @@ mod tests {
         let err_msg = result.unwrap_err().to_string();
         assert!(
             err_msg.contains("No template found for task type 'nonexistent'"),
-            "Expected template error, but got: {}",
-            err_msg
+            "Expected template error, but got: {err_msg}"
         );
     }
 

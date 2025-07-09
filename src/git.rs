@@ -460,7 +460,7 @@ mod tests {
                 "checkout",
                 "-b",
                 &main_branch,
-                &format!("origin/{}", main_branch),
+                &format!("origin/{main_branch}"),
             ])
             .unwrap();
 
@@ -481,7 +481,7 @@ mod tests {
             .fetch_changes(task_repo.path(), branch_name, main_repo.path())
             .await;
 
-        assert!(result.is_ok(), "Error: {:?}", result);
+        assert!(result.is_ok(), "Error: {result:?}");
         assert!(!result.unwrap(), "Should return false when no new commits");
 
         // Verify the branch was cleaned up in main repo
@@ -536,7 +536,7 @@ mod tests {
                 "checkout",
                 "-b",
                 &main_branch,
-                &format!("origin/{}", main_branch),
+                &format!("origin/{main_branch}"),
             ])
             .unwrap();
 
@@ -562,7 +562,7 @@ mod tests {
             .fetch_changes(task_repo.path(), branch_name, main_repo.path())
             .await;
 
-        assert!(result.is_ok(), "Error: {:?}", result);
+        assert!(result.is_ok(), "Error: {result:?}");
         assert!(result.unwrap(), "Should return true when new commits exist");
 
         // Verify the branch exists in main repo
