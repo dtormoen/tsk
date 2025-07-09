@@ -118,37 +118,37 @@ impl RepositoryContext for DefaultRepositoryContext {
     }
 }
 
-/// Mock implementation for testing
-pub struct MockRepositoryContext {
-    tech_stack: String,
-    project_name: String,
-}
-
-#[allow(dead_code)]
-impl MockRepositoryContext {
-    /// Creates a new MockRepositoryContext with successful results
-    pub fn new(tech_stack: String, project_name: String) -> Self {
-        Self {
-            tech_stack,
-            project_name,
-        }
-    }
-}
-
-#[async_trait]
-impl RepositoryContext for MockRepositoryContext {
-    async fn detect_tech_stack(&self, _repo_path: &Path) -> Result<String> {
-        Ok(self.tech_stack.clone())
-    }
-
-    async fn detect_project_name(&self, _repo_path: &Path) -> Result<String> {
-        Ok(self.project_name.clone())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Mock implementation for testing
+    pub struct MockRepositoryContext {
+        tech_stack: String,
+        project_name: String,
+    }
+
+    impl MockRepositoryContext {
+        /// Creates a new MockRepositoryContext with successful results
+        pub fn new(tech_stack: String, project_name: String) -> Self {
+            Self {
+                tech_stack,
+                project_name,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl RepositoryContext for MockRepositoryContext {
+        async fn detect_tech_stack(&self, _repo_path: &Path) -> Result<String> {
+            Ok(self.tech_stack.clone())
+        }
+
+        async fn detect_project_name(&self, _repo_path: &Path) -> Result<String> {
+            Ok(self.project_name.clone())
+        }
+    }
+
     use crate::context::file_system::tests::MockFileSystem;
 
     #[tokio::test]

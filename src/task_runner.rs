@@ -6,6 +6,11 @@ use crate::task::Task;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Result of executing a task
+///
+/// Contains information about the executed task including the repository path,
+/// branch name, execution output, and task-specific results. All fields are
+/// public for use by callers, including tests and future functionality.
 pub struct TaskExecutionResult {
     #[allow(dead_code)] // Available for future use by callers
     pub repo_path: PathBuf,

@@ -29,7 +29,6 @@ impl DockerManager {
         Self { client }
     }
 
-    #[allow(dead_code)]
     pub async fn stop_proxy(&self) -> Result<(), String> {
         // Try to stop and remove the proxy container
         match self

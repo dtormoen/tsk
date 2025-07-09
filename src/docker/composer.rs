@@ -122,7 +122,12 @@ impl DockerComposer {
     }
 
     /// Write composed Dockerfile and associated files to a directory
-    #[allow(dead_code)]
+    ///
+    /// This method is useful for debugging, testing, and exporting Dockerfiles.
+    /// It writes the composed Dockerfile and all associated files to the specified directory.
+    ///
+    /// Used in tests and potentially useful for debugging Docker build issues
+    #[allow(dead_code)] // Used in tests
     pub fn write_to_directory(
         &self,
         composed: &ComposedDockerfile,

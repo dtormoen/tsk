@@ -23,13 +23,7 @@ pub struct TskServer {
     lifecycle: ServerLifecycle,
 }
 
-#[allow(dead_code)]
 impl TskServer {
-    /// Create a new TSK server instance
-    pub fn new(app_context: Arc<AppContext>) -> Self {
-        Self::with_workers(app_context, 1)
-    }
-
     /// Create a new TSK server instance with specified number of workers
     pub fn with_workers(app_context: Arc<AppContext>, workers: u32) -> Self {
         let xdg_directories = app_context.xdg_directories();

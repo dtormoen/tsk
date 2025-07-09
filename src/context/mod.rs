@@ -94,7 +94,7 @@ impl Default for AppContextBuilder {
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // Builder methods are used throughout the codebase
 impl AppContextBuilder {
     pub fn new() -> Self {
         Self {
@@ -110,21 +110,33 @@ impl AppContextBuilder {
         }
     }
 
+    /// Configure the Docker client for this context
+    ///
+    /// Used extensively in tests and production code throughout the codebase
     pub fn with_docker_client(mut self, docker_client: Arc<dyn DockerClient>) -> Self {
         self.docker_client = Some(docker_client);
         self
     }
 
+    /// Configure the file system operations for this context
+    ///
+    /// Used extensively in tests and production code throughout the codebase
     pub fn with_file_system(mut self, file_system: Arc<dyn FileSystemOperations>) -> Self {
         self.file_system = Some(file_system);
         self
     }
 
+    /// Configure the git operations for this context
+    ///
+    /// Used extensively in tests and production code throughout the codebase
     pub fn with_git_operations(mut self, git_operations: Arc<dyn GitOperations>) -> Self {
         self.git_operations = Some(git_operations);
         self
     }
 
+    /// Configure the terminal operations for this context
+    ///
+    /// Used extensively in tests and production code throughout the codebase
     pub fn with_terminal_operations(
         mut self,
         terminal_operations: Arc<dyn TerminalOperations>,
@@ -133,11 +145,17 @@ impl AppContextBuilder {
         self
     }
 
+    /// Configure the TSK client for this context
+    ///
+    /// Used extensively in tests and production code throughout the codebase
     pub fn with_tsk_client(mut self, tsk_client: Arc<dyn TskClient>) -> Self {
         self.tsk_client = Some(tsk_client);
         self
     }
 
+    /// Configure the XDG directories for this context
+    ///
+    /// Used extensively in tests and production code throughout the codebase
     pub fn with_xdg_directories(mut self, xdg_directories: Arc<XdgDirectories>) -> Self {
         self.xdg_directories = Some(xdg_directories);
         self

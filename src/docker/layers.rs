@@ -36,13 +36,7 @@ pub struct DockerLayer {
     pub name: String,
 }
 
-#[allow(dead_code)]
 impl DockerLayer {
-    /// Creates a new DockerLayer
-    pub fn new(layer_type: DockerLayerType, name: String) -> Self {
-        Self { layer_type, name }
-    }
-
     /// Creates a base layer
     pub fn base() -> Self {
         Self {
@@ -99,9 +93,11 @@ pub struct DockerLayerContent {
     pub additional_files: Vec<(String, Vec<u8>)>,
 }
 
-#[allow(dead_code)]
 impl DockerLayerContent {
     /// Creates a new DockerLayerContent with just Dockerfile content
+    ///
+    /// Used in tests and potentially useful for creating simple layer content
+    #[allow(dead_code)] // Used in tests
     pub fn new(dockerfile_content: String) -> Self {
         Self {
             dockerfile_content,
@@ -132,7 +128,6 @@ pub struct DockerImageConfig {
     pub project: String,
 }
 
-#[allow(dead_code)]
 impl DockerImageConfig {
     /// Creates a new DockerImageConfig
     pub fn new(tech_stack: String, agent: String, project: String) -> Self {
@@ -140,15 +135,6 @@ impl DockerImageConfig {
             tech_stack,
             agent,
             project,
-        }
-    }
-
-    /// Creates a default configuration
-    pub fn default_config() -> Self {
-        Self {
-            tech_stack: "default".to_string(),
-            agent: "claude-code".to_string(),
-            project: "default".to_string(),
         }
     }
 
@@ -228,7 +214,11 @@ mod tests {
 
     #[test]
     fn test_default_config() {
-        let config = DockerImageConfig::default_config();
+        let config = DockerImageConfig {
+            tech_stack: "default".to_string(),
+            agent: "claude-code".to_string(),
+            project: "default".to_string(),
+        };
         assert_eq!(config.tech_stack, "default");
         assert_eq!(config.agent, "claude-code");
         assert_eq!(config.project, "default");

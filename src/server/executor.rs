@@ -15,9 +15,9 @@ pub struct TaskExecutor {
     workers: u32,
 }
 
-#[allow(dead_code)]
 impl TaskExecutor {
     /// Create a new task executor with default single worker
+    #[cfg(test)]
     pub fn new(context: Arc<AppContext>, storage: Arc<Mutex<Box<dyn TaskStorage>>>) -> Self {
         Self::with_workers(context, storage, 1)
     }

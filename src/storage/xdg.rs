@@ -21,9 +21,11 @@ pub struct XdgConfig {
     pub config_dir: Option<PathBuf>,
 }
 
-#[allow(dead_code)]
 impl XdgConfig {
     /// Create a new XdgConfig with all overrides set
+    ///
+    /// This method is used extensively throughout the codebase for testing with temporary directories
+    #[allow(dead_code)] // Used throughout codebase for testing
     pub fn with_paths(data_dir: PathBuf, runtime_dir: PathBuf, config_dir: PathBuf) -> Self {
         Self {
             data_dir: Some(data_dir),
@@ -61,13 +63,14 @@ impl XdgDirectories {
     }
 
     /// Get the data directory path (for persistent storage)
-    #[allow(dead_code)]
+    ///
+    /// Used by task.rs for accessing task storage directory
+    #[allow(dead_code)] // Used by task.rs
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
     }
 
     /// Get the runtime directory path (for sockets, pid files)
-    #[allow(dead_code)]
     pub fn runtime_dir(&self) -> &Path {
         &self.runtime_dir
     }
@@ -75,12 +78,6 @@ impl XdgDirectories {
     /// Get the config directory path (for configuration files)
     pub fn config_dir(&self) -> &Path {
         &self.config_dir
-    }
-
-    /// Get the templates directory path
-    #[allow(dead_code)]
-    pub fn templates_dir(&self) -> PathBuf {
-        self.config_dir.join("templates")
     }
 
     /// Get the path to the tasks.json file
@@ -203,10 +200,6 @@ mod tests {
             Path::new("/custom/runtime/tsk/tsk.sock")
         );
         assert_eq!(dirs.pid_file(), Path::new("/custom/runtime/tsk/tsk.pid"));
-        assert_eq!(
-            dirs.templates_dir(),
-            Path::new("/custom/config/tsk/templates")
-        );
     }
 
     #[test]

@@ -20,10 +20,12 @@ pub trait DockerClient: Send + Sync {
 
     async fn wait_container(&self, id: &str) -> Result<i64, String>;
 
-    #[allow(dead_code)]
+    /// Get container logs as a single string
+    ///
+    /// Used by test utilities and debugging tools
+    #[allow(dead_code)] // Used by test implementations
     async fn logs(&self, id: &str, options: Option<LogsOptions<String>>) -> Result<String, String>;
 
-    #[allow(dead_code)]
     async fn logs_stream(
         &self,
         id: &str,

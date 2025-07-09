@@ -9,7 +9,6 @@ use tokio::sync::Mutex;
 #[async_trait::async_trait]
 pub trait TaskStorage: Send + Sync {
     async fn add_task(&self, task: Task) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
-    #[allow(dead_code)] // Will be used in future functionality (e.g., task details view)
     async fn get_task(
         &self,
         id: &str,
@@ -37,8 +36,6 @@ pub struct JsonTaskStorage {
     file_path: PathBuf,
     lock: Arc<Mutex<()>>,
     file_system: Arc<dyn FileSystemOperations>,
-    #[allow(dead_code)]
-    xdg_directories: Arc<XdgDirectories>,
 }
 
 impl JsonTaskStorage {
@@ -52,7 +49,6 @@ impl JsonTaskStorage {
             file_path,
             lock: Arc::new(Mutex::new(())),
             file_system,
-            xdg_directories,
         }
     }
 

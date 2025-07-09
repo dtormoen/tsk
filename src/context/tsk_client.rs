@@ -26,7 +26,9 @@ pub trait TskClient: Send + Sync {
     async fn list_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error + Send + Sync>>;
 
     /// Get the status of a specific task
-    #[allow(dead_code)]
+    ///
+    /// Used by test utilities and debugging tools
+    #[allow(dead_code)] // Used by test implementations
     async fn get_task_status(
         &self,
         task_id: String,

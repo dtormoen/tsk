@@ -32,13 +32,19 @@ pub enum Response {
 
 impl Request {
     /// Parse a request from a JSON string
-    #[allow(dead_code)]
+    ///
+    /// This is a convenience method that wraps serde_json::from_str
+    /// for consistent API usage and testing.
+    #[cfg(test)]
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json)
     }
 
     /// Serialize the request to JSON
-    #[allow(dead_code)]
+    ///
+    /// This is a convenience method that wraps serde_json::to_string
+    /// for consistent API usage and testing.
+    #[cfg(test)]
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(self)
     }
@@ -46,13 +52,19 @@ impl Request {
 
 impl Response {
     /// Parse a response from a JSON string
-    #[allow(dead_code)]
+    ///
+    /// This is a convenience method that wraps serde_json::from_str
+    /// for consistent API usage and testing.
+    #[cfg(test)]
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json)
     }
 
     /// Serialize the response to JSON
-    #[allow(dead_code)]
+    ///
+    /// This is a convenience method that wraps serde_json::to_string
+    /// for consistent API usage and testing.
+    #[cfg(test)]
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(self)
     }

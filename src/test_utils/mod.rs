@@ -1,5 +1,5 @@
 //! Test utilities for TSK integration tests.
-//! 
+//!
 //! This module provides mock implementations and test helpers for:
 //! - Docker client mocks (NoOpDockerClient, FixedResponseDockerClient, TrackedDockerClient)
 //! - Git repository test utilities (TestGitRepository, create_files_with_gitignore)

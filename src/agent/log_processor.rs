@@ -8,7 +8,9 @@ pub trait LogProcessor: Send {
     fn process_line(&mut self, line: &str) -> Option<String>;
 
     /// Get the full log content
-    #[allow(dead_code)]
+    ///
+    /// This method is used by test implementations to verify log capture
+    #[allow(dead_code)] // Used in test implementations
     fn get_full_log(&self) -> String;
 
     /// Get the final result of the task execution

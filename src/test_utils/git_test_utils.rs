@@ -9,7 +9,11 @@ use tempfile::TempDir;
 /// This struct provides methods for common git operations needed in tests,
 /// automatically cleans up on drop, and ensures tests have isolated git repositories.
 pub struct TestGitRepository {
-    #[allow(dead_code)] // This field keeps the TempDir alive for the lifetime of the repository
+    /// The temporary directory that contains the repository.
+    /// This field is not accessed directly but must be kept to ensure the
+    /// directory isn't deleted while the TestGitRepository is still in use.
+    /// When this struct is dropped, the TempDir will be dropped and cleaned up.
+    #[allow(dead_code)]
     temp_dir: TempDir,
     repo_path: PathBuf,
 }
