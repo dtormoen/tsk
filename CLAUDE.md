@@ -114,7 +114,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 
 ### Development Conventions
 
-- Avoid the use of `#[cfg(test)]` and `#[allow(dead_code)]` directives in code
+- Avoid `#[allow(dead_code)]` directives
 - Always keep documentation up to date following rustdoc best practices
 - Keep CLAUDE.md file simple, but up to date
 - Avoid `unsafe` blocks
@@ -126,7 +126,8 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Tests should use temporary directories that are automatically cleaned up
 - Make tests thread safe so they can be run in parallel
 - Keep tests simple and concise while still testing core functionality
-- Avoid the use of `#[cfg(test)]` and `#[allow(dead_code)]` directives in code
+- Avoid using `#[allow(dead_code)]`
+- Limit `#[cfg(test)]` to tests and test utilities
 
 ### Branch and Task Conventions
 

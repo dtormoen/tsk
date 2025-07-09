@@ -83,6 +83,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_quick_command_validation_no_input() {
+        use crate::test_utils::TestGitRepository;
+
+        // Create a test git repository
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+
+        // Change to the test repository directory
+        std::env::set_current_dir(test_repo.path()).unwrap();
+
         let cmd = QuickCommand {
             name: "test".to_string(),
             r#type: "generic".to_string(),
