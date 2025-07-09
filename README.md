@@ -1,10 +1,8 @@
 # TSK - AI Agent Task Manager
 
-⚠️⚠️ **EARLY DEVELOPMENT SOFTWARE** ⚠️⚠️
-
-This project is in early development. Breaking changes are expected.
-
 A Rust CLI tool that lets you delegate development tasks to AI agents running in sandboxed Docker environments. Get back git branches for human review.
+
+![TSK Demo](./docs/images/tsk-demo.gif)
 
 ## What it does
 
