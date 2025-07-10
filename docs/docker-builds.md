@@ -193,6 +193,12 @@ TSK implements multiple security layers:
 - Containers use a dedicated Docker network (`tsk-network`)
 - Internet access only through Squid proxy (`tsk-proxy`)
 - Proxy allows API access while blocking general browsing
+- Proxy allows access to package registries for all supported languages:
+  - **Python**: PyPI (pypi.org, files.pythonhosted.org)
+  - **Rust**: crates.io and related domains
+  - **Go**: proxy.golang.org, sum.golang.org, and other Go infrastructure
+  - **Java**: Maven Central, Gradle plugins, and common repositories
+  - **npm**: registry.npmjs.org and Node.js resources
 
 ### Resource Limits
 - Memory limited to 4GB
