@@ -13,6 +13,7 @@ pub struct TaskExecutor {
     storage: Arc<Mutex<Box<dyn TaskStorage>>>,
     running: Arc<Mutex<bool>>,
     workers: u32,
+    shutting_down: Arc<Mutex<bool>>,
 }
 
 impl TaskExecutor {
@@ -33,6 +34,7 @@ impl TaskExecutor {
             storage,
             running: Arc::new(Mutex::new(false)),
             workers,
+            shutting_down: Arc::new(Mutex::new(false)),
         }
     }
 
@@ -61,10 +63,37 @@ impl TaskExecutor {
         // Track active worker count
         let active_workers = Arc::new(Mutex::new(0u32));
 
+        // Track running task IDs
+        let running_task_ids = Arc::new(Mutex::new(Vec::<String>::new()));
+
         loop {
             // Check if we should continue running
             if !*self.running.lock().await {
-                println!("Task executor stopping, waiting for active tasks to complete...");
+                println!("Task executor stopping, marking running tasks as failed...");
+
+                // Set shutting down flag to prevent race conditions
+                *self.shutting_down.lock().await = true;
+
+                // Mark all running tasks as failed
+                let task_ids = running_task_ids.lock().await.clone();
+                if !task_ids.is_empty() {
+                    let storage = self.storage.lock().await;
+                    for task_id in task_ids {
+                        if let Err(e) = storage
+                            .update_task_status(
+                                &task_id,
+                                TaskStatus::Failed,
+                                None,
+                                Some(chrono::Utc::now()),
+                                Some("Server shutdown during task execution".to_string()),
+                            )
+                            .await
+                        {
+                            eprintln!("Failed to update task {task_id} status: {e}");
+                        }
+                    }
+                    drop(storage);
+                }
 
                 // Wait for all active tasks to complete
                 while active_tasks.join_next().await.is_some() {}
@@ -129,11 +158,19 @@ impl TaskExecutor {
                         ));
                     }
 
+                    // Add task ID to running tasks list
+                    {
+                        let mut running_ids = running_task_ids.lock().await;
+                        running_ids.push(running_task.id.clone());
+                    }
+
                     // Spawn task execution
                     let context = self.context.clone();
                     let active_workers = active_workers.clone();
                     let terminal_ops = self.context.terminal_operations();
                     let total_workers = self.workers;
+                    let running_task_ids_clone = running_task_ids.clone();
+                    let task_id = running_task.id.clone();
 
                     active_tasks.spawn(async move {
                         // Hold the permit for the entire duration of task execution
@@ -152,6 +189,12 @@ impl TaskExecutor {
                                 eprintln!("Task failed: {} - {}", running_task.id, e);
                                 // Task status is already updated by TaskManager.execute_queued_task()
                             }
+                        }
+
+                        // Remove task ID from running tasks list
+                        {
+                            let mut running_ids = running_task_ids_clone.lock().await;
+                            running_ids.retain(|id| id != &task_id);
                         }
 
                         // Update active workers count and terminal title
@@ -207,6 +250,7 @@ impl TaskExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    
     use crate::context::file_system::tests::MockFileSystem;
     use crate::storage::XdgDirectories;
     use crate::task::{Task, TaskStatus};
@@ -640,6 +684,78 @@ mod tests {
             updated_task.status,
             TaskStatus::Running,
             "Task should not be stuck in RUNNING state"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_logic_updates_task_status() {
+        // Test that the shutdown logic correctly updates task status when called
+        let temp_dir = TempDir::new().unwrap();
+        let config = crate::storage::XdgConfig::with_paths(
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            temp_dir.path().join("config"),
+        );
+
+        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
+        xdg.ensure_directories().unwrap();
+
+        // Create a task
+        let task = Task::new(
+            "test-shutdown-task".to_string(),
+            temp_dir.path().to_path_buf(),
+            "test-task".to_string(),
+            "test".to_string(),
+            "instructions.md".to_string(),
+            "claude-code".to_string(),
+            30,
+            "tsk/test-task".to_string(),
+            "abc123".to_string(),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            temp_dir.path().to_path_buf(),
+        );
+
+        // Set up storage and mark task as running
+        let fs = Arc::new(MockFileSystem::new());
+        let storage = get_task_storage(xdg.clone(), fs.clone());
+        storage.add_task(task.clone()).await.unwrap();
+        storage
+            .update_task_status(
+                &task.id,
+                TaskStatus::Running,
+                Some(chrono::Utc::now()),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        // Simulate shutdown scenario
+        let task_ids = vec![task.id.clone()];
+        for task_id in task_ids {
+            storage
+                .update_task_status(
+                    &task_id,
+                    TaskStatus::Failed,
+                    None,
+                    Some(chrono::Utc::now()),
+                    Some("Server shutdown during task execution".to_string()),
+                )
+                .await
+                .unwrap();
+        }
+
+        // Verify the task was marked as failed
+        let updated_task = storage.get_task(&task.id).await.unwrap().unwrap();
+        assert_eq!(updated_task.status, TaskStatus::Failed);
+        assert!(updated_task.error_message.is_some());
+        assert!(
+            updated_task
+                .error_message
+                .unwrap()
+                .contains("Server shutdown")
         );
     }
 }
