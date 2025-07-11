@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/dtormoen/tsk/compare/v0.3.0...v0.3.1) - 2025-07-11
+
+### Added
+
+- handle ctrl-c gracefully in tsk server to mark running tasks as failed
+- expand proxy allowed domains for all supported language package managers
+
 ## [0.3.0](https://github.com/dtormoen/tsk/compare/v0.2.0...v0.3.0) - 2025-07-09
 
 ### Added
