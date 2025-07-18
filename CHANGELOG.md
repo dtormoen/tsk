@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.1](https://github.com/dtormoen/tsk/compare/v0.3.0...v0.3.1) - 2025-07-18
 
 This release fixes an issue where Dockerfiles in projects could conflict with tsk's own 
-Docker image generation for projects and improves support for Go projects.
+Docker image generation and improves support for Go projects.
 
 ### Added
 
