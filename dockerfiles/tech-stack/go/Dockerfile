@@ -13,6 +13,7 @@ RUN curl -fsSL https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz | tar -xz -C
 # Add Go to PATH
 ENV PATH="/home/agent/go/bin:/home/agent/gopath/bin:${PATH}"
 ENV GOPATH="/home/agent/gopath"
+ENV CGO_ENABLED=0
 
 # Install common Go tools
 RUN go install golang.org/x/tools/gopls@latest && \

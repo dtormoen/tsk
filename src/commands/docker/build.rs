@@ -3,7 +3,6 @@ use crate::commands::Command;
 use crate::context::AppContext;
 use crate::docker::composer::DockerComposer;
 use crate::docker::image_manager::DockerImageManager;
-use crate::docker::layers::DockerImageConfig;
 use crate::docker::template_manager::DockerTemplateManager;
 use crate::repo_utils::find_repository_root;
 use async_trait::async_trait;
@@ -84,72 +83,33 @@ impl Command for DockerBuildCommand {
         // Get project root for Docker operations
         let project_root = find_repository_root(std::path::Path::new(".")).ok();
 
-        if self.dry_run {
-            // Dry run mode: just print the composed Dockerfile
-            let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
-                project_root.as_deref(),
-                &ctx.xdg_directories(),
-            ));
-            let template_manager = DockerTemplateManager::new(asset_manager, ctx.xdg_directories());
-            let composer = DockerComposer::new(template_manager);
+        // Create image manager
+        let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
+            project_root.as_deref(),
+            &ctx.xdg_directories(),
+        ));
+        let template_manager =
+            DockerTemplateManager::new(asset_manager.clone(), ctx.xdg_directories());
+        let composer = DockerComposer::new(DockerTemplateManager::new(
+            asset_manager,
+            ctx.xdg_directories(),
+        ));
+        let image_manager =
+            DockerImageManager::new(ctx.docker_client(), template_manager, composer);
 
-            let config = DockerImageConfig::new(
-                tech_stack.clone(),
-                agent.to_string(),
-                project.as_deref().unwrap_or("default").to_string(),
-            );
-
-            let composed = composer.compose(&config, project_root.as_deref())?;
-            composer.validate_dockerfile(&composed.dockerfile_content)?;
-
-            println!("# Resolved Dockerfile for image: {}", composed.image_tag);
-            println!(
-                "# Configuration: tech_stack={}, agent={}, project={}",
-                tech_stack,
+        // Build the main image (with dry_run flag)
+        let image = image_manager
+            .build_image(
+                &tech_stack,
                 agent,
-                project.as_deref().unwrap_or("default")
-            );
-            println!();
-            println!("{}", composed.dockerfile_content);
-
-            if !composed.additional_files.is_empty() {
-                println!("\n# Additional files that would be created:");
-                for filename in composed.additional_files.keys() {
-                    println!("#   - {filename}");
-                }
-            }
-
-            if !composed.build_args.is_empty() {
-                println!("\n# Build arguments:");
-                for arg in &composed.build_args {
-                    println!("#   - {arg}");
-                }
-            }
-        } else {
-            // Create image manager on-demand
-            let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
+                project.as_deref(),
                 project_root.as_deref(),
-                &ctx.xdg_directories(),
-            ));
-            let template_manager =
-                DockerTemplateManager::new(asset_manager.clone(), ctx.xdg_directories());
-            let composer = DockerComposer::new(DockerTemplateManager::new(
-                asset_manager,
-                ctx.xdg_directories(),
-            ));
-            let image_manager =
-                DockerImageManager::new(ctx.docker_client(), template_manager, composer);
+                self.no_cache,
+                self.dry_run,
+            )
+            .await?;
 
-            // Build the main image
-            let image = image_manager
-                .build_image(
-                    &tech_stack,
-                    agent,
-                    project.as_deref(),
-                    project_root.as_deref(),
-                    self.no_cache,
-                )
-                .await?;
+        if !self.dry_run {
             println!("Successfully built Docker image: {}", image.tag);
 
             if image.used_fallback {

@@ -28,49 +28,22 @@ impl DockerTemplateManager {
     }
 
     /// Get the content of a specific Docker layer
+    ///
+    /// Note: The `_project_root` parameter is kept for API compatibility but is no longer used.
+    /// The LayeredAssetManager already handles project-specific files correctly through its layering system.
     pub fn get_layer_content(
         &self,
         layer: &DockerLayer,
-        project_root: Option<&Path>,
+        _project_root: Option<&Path>,
     ) -> Result<DockerLayerContent> {
         let layer_path = format!("dockerfiles/{}", layer.asset_path());
 
-        // For project layers, check filesystem first if project_root is provided
-        let dockerfile_content = if layer.layer_type == DockerLayerType::Project {
-            if let Some(root) = project_root {
-                let project_dockerfile = root
-                    .join(".tsk")
-                    .join("dockerfiles")
-                    .join("project")
-                    .join(&layer.name)
-                    .join("Dockerfile");
-
-                if project_dockerfile.exists() {
-                    // Read directly from filesystem for project dockerfiles
-                    std::fs::read(&project_dockerfile).with_context(|| {
-                        format!(
-                            "Failed to read project Dockerfile: {}",
-                            project_dockerfile.display()
-                        )
-                    })?
-                } else {
-                    // Fall back to asset manager
-                    let dockerfile_path = format!("{layer_path}/Dockerfile");
-                    self.get_docker_file_content(&dockerfile_path)
-                        .with_context(|| format!("Failed to get Dockerfile for layer {layer}"))?
-                }
-            } else {
-                // No project root, use asset manager
-                let dockerfile_path = format!("{layer_path}/Dockerfile");
-                self.get_docker_file_content(&dockerfile_path)
-                    .with_context(|| format!("Failed to get Dockerfile for layer {layer}"))?
-            }
-        } else {
-            // Non-project layers always use asset manager
-            let dockerfile_path = format!("{layer_path}/Dockerfile");
-            self.get_docker_file_content(&dockerfile_path)
-                .with_context(|| format!("Failed to get Dockerfile for layer {layer}"))?
-        };
+        // Always use asset manager for consistency
+        // The LayeredAssetManager already handles project-specific files correctly
+        let dockerfile_path = format!("{layer_path}/Dockerfile");
+        let dockerfile_content = self
+            .get_docker_file_content(&dockerfile_path)
+            .with_context(|| format!("Failed to get Dockerfile for layer {layer}"))?;
 
         // Try to get additional files if they exist
         let mut additional_files = Vec::new();
@@ -83,33 +56,11 @@ impl DockerTemplateManager {
             "config.json",
         ];
 
-        // For project layers with filesystem access, check filesystem first
-        if layer.layer_type == DockerLayerType::Project {
-            if let Some(root) = project_root {
-                let project_layer_dir = root
-                    .join(".tsk")
-                    .join("dockerfiles")
-                    .join("project")
-                    .join(&layer.name);
-
-                for file_name in &potential_files {
-                    let file_path = project_layer_dir.join(file_name);
-                    if file_path.exists() {
-                        if let Ok(content) = std::fs::read(&file_path) {
-                            additional_files.push((file_name.to_string(), content));
-                        }
-                    }
-                }
-            }
-        }
-
-        // If no files found on filesystem (or for non-project layers), check asset manager
-        if additional_files.is_empty() {
-            for file_name in potential_files {
-                let file_path = format!("{layer_path}/{file_name}");
-                if let Ok(content) = self.get_docker_file_content(&file_path) {
-                    additional_files.push((file_name.to_string(), content));
-                }
+        // Always use asset manager for consistency
+        for file_name in potential_files {
+            let file_path = format!("{layer_path}/{file_name}");
+            if let Ok(content) = self.get_docker_file_content(&file_path) {
+                additional_files.push((file_name.to_string(), content));
             }
         }
 
@@ -387,6 +338,7 @@ impl DockerTemplateManager {
 mod tests {
     use super::*;
     use crate::assets::embedded::EmbeddedAssetManager;
+    use crate::assets::layered::LayeredAssetManager;
     use std::fs;
     use tempfile::TempDir;
 
@@ -582,5 +534,60 @@ mod tests {
         manager.scan_directory_for_layers(&docker_dir, &DockerLayerType::TechStack, &mut layers);
         assert!(layers.contains("rust"));
         assert!(layers.contains("python"));
+    }
+
+    #[test]
+    fn test_get_layer_content_consistency() {
+        // This test verifies that get_layer_content behaves consistently
+        // regardless of whether project_root is provided or not
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create a project directory with .tsk structure
+        let project_root = temp_dir.path().join("myproject");
+        let tsk_dockerfiles = project_root
+            .join(".tsk")
+            .join("dockerfiles")
+            .join("project")
+            .join("myproject");
+        fs::create_dir_all(&tsk_dockerfiles).unwrap();
+        fs::write(
+            tsk_dockerfiles.join("Dockerfile"),
+            "FROM ubuntu:custom\nRUN echo 'project-specific'",
+        )
+        .unwrap();
+
+        // Create asset manager with the project layer
+        let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
+            Some(&project_root),
+            &XdgDirectories::new(None).unwrap(),
+        ));
+
+        let manager =
+            DockerTemplateManager::new(asset_manager, Arc::new(XdgDirectories::new(None).unwrap()));
+
+        let project_layer = DockerLayer {
+            layer_type: DockerLayerType::Project,
+            name: "myproject".to_string(),
+        };
+
+        // Test with project_root - should use asset manager
+        let content_with_root = manager.get_layer_content(&project_layer, Some(&project_root));
+
+        // Test without project_root - should use asset manager
+        let content_without_root = manager.get_layer_content(&project_layer, None);
+
+        // Both should get the same content from the asset manager
+        assert!(content_with_root.is_ok());
+        assert!(content_without_root.is_ok());
+
+        let with_root = content_with_root.unwrap();
+        let without_root = content_without_root.unwrap();
+
+        // The dockerfile content should be the same in both cases
+        assert_eq!(
+            with_root.dockerfile_content,
+            without_root.dockerfile_content
+        );
+        assert!(with_root.dockerfile_content.contains("project-specific"));
     }
 }

@@ -171,13 +171,28 @@ impl DockerImageManager {
             project.unwrap_or("default")
         };
 
-        self.build_image(tech_stack, agent, Some(actual_project), build_root, false)
-            .await?;
+        self.build_image(
+            tech_stack,
+            agent,
+            Some(actual_project),
+            build_root,
+            false,
+            false,
+        )
+        .await?;
 
         Ok(image)
     }
 
     /// Build a Docker image for the given configuration
+    ///
+    /// # Arguments
+    /// * `tech_stack` - The technology stack layer (e.g., "rust", "python", "default")
+    /// * `agent` - The agent layer (e.g., "claude-code")
+    /// * `project` - Optional project layer (defaults to "default")
+    /// * `build_root` - Optional build root directory for project-specific context
+    /// * `no_cache` - Whether to build without using Docker's cache
+    /// * `dry_run` - If true, only prints the composed Dockerfile without building
     pub async fn build_image(
         &self,
         tech_stack: &str,
@@ -185,6 +200,7 @@ impl DockerImageManager {
         project: Option<&str>,
         build_root: Option<&std::path::Path>,
         no_cache: bool,
+        dry_run: bool,
     ) -> Result<DockerImage> {
         let project = project.unwrap_or("default");
 
@@ -215,23 +231,46 @@ impl DockerImageManager {
             .validate_dockerfile(&composed.dockerfile_content)
             .with_context(|| "Dockerfile validation failed")?;
 
-        // Get git configuration for build arguments
-        let git_user_name = get_git_config("user.name")
-            .await
-            .context("Failed to get git user.name")?;
-        let git_user_email = get_git_config("user.email")
-            .await
-            .context("Failed to get git user.email")?;
+        if dry_run {
+            // Dry run mode: print the composed Dockerfile and exit
+            println!("# Resolved Dockerfile for image: {}", composed.image_tag);
+            println!("# Configuration: tech_stack={tech_stack}, agent={agent}, project={project}");
+            println!();
+            println!("{}", composed.dockerfile_content);
 
-        // Build the image
-        self.build_docker_image(
-            &composed,
-            &git_user_name,
-            &git_user_email,
-            no_cache,
-            build_root,
-        )
-        .await?;
+            if !composed.additional_files.is_empty() {
+                println!("\n# Additional files that would be created:");
+                for filename in composed.additional_files.keys() {
+                    println!("#   - {filename}");
+                }
+            }
+
+            if !composed.build_args.is_empty() {
+                println!("\n# Build arguments:");
+                for arg in &composed.build_args {
+                    println!("#   - {arg}");
+                }
+            }
+        } else {
+            // Normal mode: build the image
+            // Get git configuration for build arguments
+            let git_user_name = get_git_config("user.name")
+                .await
+                .context("Failed to get git user.name")?;
+            let git_user_email = get_git_config("user.email")
+                .await
+                .context("Failed to get git user.email")?;
+
+            // Build the image
+            self.build_docker_image(
+                &composed,
+                &git_user_name,
+                &git_user_email,
+                no_cache,
+                build_root,
+            )
+            .await?;
+        }
 
         // Check if we used fallback
         let used_fallback = project != "default"
@@ -388,7 +427,7 @@ impl DockerImageManager {
         }
 
         let options = BuildImageOptions {
-            dockerfile: "Dockerfile".to_string(),
+            dockerfile: "Dockerfile.tsk".to_string(),
             t: composed.image_tag.clone(),
             nocache: no_cache,
             buildargs: build_args,
@@ -433,10 +472,10 @@ impl DockerImageManager {
         {
             let mut builder = Builder::new(&mut tar_data);
 
-            // Add Dockerfile
+            // Add Dockerfile with TSK-specific name to avoid conflicts
             let dockerfile_bytes = composed.dockerfile_content.as_bytes();
             let mut header = tar::Header::new_gnu();
-            header.set_path("Dockerfile")?;
+            header.set_path("Dockerfile.tsk")?;
             header.set_size(dockerfile_bytes.len() as u64);
             header.set_mode(0o644);
             header.set_cksum();
@@ -638,5 +677,138 @@ mod tests {
 
         let image = result.unwrap();
         assert_eq!(image.tag, "tsk/proxy");
+    }
+
+    #[tokio::test]
+    async fn test_build_image_dry_run() {
+        let manager = create_test_manager();
+
+        // Test build_image with dry_run=true
+        let result = manager
+            .build_image("default", "claude-code", Some("default"), None, false, true)
+            .await;
+
+        assert!(result.is_ok());
+        let image = result.unwrap();
+        assert_eq!(image.tag, "tsk/default/claude-code/default");
+        assert!(!image.used_fallback);
+    }
+
+    #[tokio::test]
+    async fn test_build_image_normal_mode() {
+        let manager = create_test_manager();
+
+        // Test build_image with dry_run=false (normal mode)
+        // In test mode, this won't actually build due to cfg!(test) but validates the flow
+        let result = manager
+            .build_image(
+                "default",
+                "claude-code",
+                Some("default"),
+                None,
+                false,
+                false,
+            )
+            .await;
+
+        // This will fail due to missing git config in tests, which is expected
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("git"));
+    }
+
+    #[test]
+    fn test_create_tar_archive_uses_tsk_dockerfile() {
+        let manager = create_test_manager();
+        let composed = ComposedDockerfile {
+            dockerfile_content: "FROM ubuntu:22.04\nRUN echo 'test'".to_string(),
+            additional_files: std::collections::HashMap::new(),
+            build_args: std::collections::HashSet::new(),
+            image_tag: "tsk/test/test/test".to_string(),
+        };
+
+        let tar_data = manager.create_tar_archive(&composed, None).unwrap();
+
+        // Parse the tar archive to verify the Dockerfile name
+        use tar::Archive;
+        let mut archive = Archive::new(&tar_data[..]);
+        let entries = archive.entries().unwrap();
+
+        let mut found_dockerfile = false;
+        for entry in entries {
+            let entry = entry.unwrap();
+            let path = entry.path().unwrap();
+            if path.to_str().unwrap() == "Dockerfile.tsk" {
+                found_dockerfile = true;
+                break;
+            }
+        }
+
+        assert!(found_dockerfile, "Dockerfile.tsk not found in tar archive");
+    }
+
+    #[test]
+    fn test_create_tar_archive_with_build_root() {
+        let manager = create_test_manager();
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create a project Dockerfile that would conflict
+        std::fs::write(temp_dir.path().join("Dockerfile"), "FROM node:18").unwrap();
+
+        let composed = ComposedDockerfile {
+            dockerfile_content: "FROM ubuntu:22.04\nRUN echo 'tsk'".to_string(),
+            additional_files: std::collections::HashMap::new(),
+            build_args: std::collections::HashSet::new(),
+            image_tag: "tsk/test/test/test".to_string(),
+        };
+
+        let tar_data = manager
+            .create_tar_archive(&composed, Some(temp_dir.path()))
+            .unwrap();
+
+        // Parse the tar archive to verify both Dockerfiles exist
+        use tar::Archive;
+        let mut archive = Archive::new(&tar_data[..]);
+        let entries = archive.entries().unwrap();
+
+        let mut found_tsk_dockerfile = false;
+        let mut found_project_dockerfile = false;
+        let mut tsk_content = String::new();
+        let mut project_content = String::new();
+
+        for entry in entries {
+            let mut entry = entry.unwrap();
+            let path = entry.path().unwrap();
+            match path.to_str().unwrap() {
+                "Dockerfile.tsk" => {
+                    found_tsk_dockerfile = true;
+                    use std::io::Read;
+                    entry.read_to_string(&mut tsk_content).unwrap();
+                }
+                "Dockerfile" => {
+                    found_project_dockerfile = true;
+                    use std::io::Read;
+                    entry.read_to_string(&mut project_content).unwrap();
+                }
+                _ => {}
+            }
+        }
+
+        assert!(
+            found_tsk_dockerfile,
+            "Dockerfile.tsk not found in tar archive"
+        );
+        assert!(
+            found_project_dockerfile,
+            "Project Dockerfile not found in tar archive"
+        );
+        assert!(
+            tsk_content.contains("RUN echo 'tsk'"),
+            "TSK Dockerfile has wrong content"
+        );
+        assert!(
+            project_content.contains("FROM node:18"),
+            "Project Dockerfile has wrong content"
+        );
     }
 }
