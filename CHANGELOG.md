@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/dtormoen/tsk/compare/v0.3.0...v0.3.1) - 2025-07-18
+
+This release fixes an issue where Dockerfiles in projects could conflict with tsk's own 
+Docker image generation and improves support for Go projects.
+
+### Added
+
+- expand proxy allowed domains for all supported language package managers
+
+### Fixed
+
+- prevent project Dockerfiles from overriding TSK images
+
 ## [0.3.0](https://github.com/dtormoen/tsk/compare/v0.2.0...v0.3.0) - 2025-07-09
 
 ### Added
