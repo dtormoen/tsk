@@ -162,6 +162,8 @@ impl Command for DebugCommand {
             docker_manager,
             image_manager,
             ctx.notification_client(),
+            ctx.docker_client(),
+            ctx.xdg_directories(),
         );
 
         // Execute task in interactive mode

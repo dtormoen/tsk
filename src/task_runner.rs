@@ -1,5 +1,9 @@
 use crate::agent::AgentProvider;
-use crate::docker::{DockerManager, image_manager::DockerImageManager};
+use crate::assets::layered::LayeredAssetManager;
+use crate::docker::{
+    DockerManager, composer::DockerComposer, image_manager::DockerImageManager,
+    template_manager::DockerTemplateManager,
+};
 use crate::git::RepoManager;
 use crate::notifications::NotificationClient;
 use crate::task::Task;
@@ -34,22 +38,26 @@ impl From<String> for TaskExecutionError {
 pub struct TaskRunner {
     repo_manager: RepoManager,
     docker_manager: DockerManager,
-    docker_image_manager: Arc<DockerImageManager>,
     notification_client: Arc<dyn NotificationClient>,
+    docker_client: Arc<dyn crate::context::docker_client::DockerClient>,
+    xdg_directories: Arc<crate::storage::XdgDirectories>,
 }
 
 impl TaskRunner {
     pub fn new(
         repo_manager: RepoManager,
         docker_manager: DockerManager,
-        docker_image_manager: Arc<DockerImageManager>,
+        _docker_image_manager: Arc<DockerImageManager>,
         notification_client: Arc<dyn NotificationClient>,
+        docker_client: Arc<dyn crate::context::docker_client::DockerClient>,
+        xdg_directories: Arc<crate::storage::XdgDirectories>,
     ) -> Self {
         Self {
             repo_manager,
             docker_manager,
-            docker_image_manager,
             notification_client,
+            docker_client,
+            xdg_directories,
         }
     }
 
@@ -90,15 +98,29 @@ impl TaskRunner {
         println!("\n{}", "=".repeat(60));
 
         let (output, task_result_from_container) = {
+            // Create a task-specific image manager with the copied repository as the project root
+            // This ensures that project-specific dockerfiles are found in the copied repository
+            let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
+                Some(&repo_path),
+                &self.xdg_directories,
+            ));
+            let template_manager =
+                DockerTemplateManager::new(asset_manager.clone(), self.xdg_directories.clone());
+            let composer = DockerComposer::new(DockerTemplateManager::new(
+                asset_manager,
+                self.xdg_directories.clone(),
+            ));
+            let task_image_manager =
+                DockerImageManager::new(self.docker_client.clone(), template_manager, composer);
+
             // Ensure the proxy image exists first
-            self.docker_image_manager
+            task_image_manager
                 .ensure_proxy_image()
                 .await
                 .map_err(|e| format!("Error ensuring proxy image: {e}"))?;
 
             // Ensure the Docker image exists - always rebuild to pick up any changes
-            let docker_image = self
-                .docker_image_manager
+            let docker_image = task_image_manager
                 .ensure_image(
                     &task.tech_stack,
                     &task.agent,
@@ -253,10 +275,10 @@ mod tests {
             DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), xdg_directories.clone());
         let composer = DockerComposer::new(DockerTemplateManager::new(
             Arc::new(EmbeddedAssetManager),
-            xdg_directories,
+            xdg_directories.clone(),
         ));
         let docker_image_manager = Arc::new(DockerImageManager::new(
-            docker_client,
+            docker_client.clone(),
             template_manager,
             composer,
         ));
@@ -267,6 +289,8 @@ mod tests {
             docker_manager,
             docker_image_manager,
             notification_client,
+            docker_client,
+            xdg_directories,
         );
 
         let task = Task {

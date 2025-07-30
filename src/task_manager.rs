@@ -53,6 +53,8 @@ impl TaskManager {
             docker_manager,
             image_manager,
             ctx.notification_client(),
+            ctx.docker_client(),
+            ctx.xdg_directories(),
         );
 
         Ok(Self {
@@ -96,6 +98,8 @@ impl TaskManager {
             docker_manager,
             image_manager,
             ctx.notification_client(),
+            ctx.docker_client(),
+            ctx.xdg_directories(),
         );
 
         Ok(Self {
