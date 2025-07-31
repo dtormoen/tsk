@@ -721,7 +721,7 @@ mod tests {
     fn test_create_tar_archive_uses_tsk_dockerfile() {
         let manager = create_test_manager();
         let composed = ComposedDockerfile {
-            dockerfile_content: "FROM ubuntu:22.04\nRUN echo 'test'".to_string(),
+            dockerfile_content: "FROM ubuntu:24.04\nRUN echo 'test'".to_string(),
             additional_files: std::collections::HashMap::new(),
             build_args: std::collections::HashSet::new(),
             image_tag: "tsk/test/test/test".to_string(),
@@ -756,7 +756,7 @@ mod tests {
         std::fs::write(temp_dir.path().join("Dockerfile"), "FROM node:18").unwrap();
 
         let composed = ComposedDockerfile {
-            dockerfile_content: "FROM ubuntu:22.04\nRUN echo 'tsk'".to_string(),
+            dockerfile_content: "FROM ubuntu:24.04\nRUN echo 'tsk'".to_string(),
             additional_files: std::collections::HashMap::new(),
             build_args: std::collections::HashSet::new(),
             image_tag: "tsk/test/test/test".to_string(),

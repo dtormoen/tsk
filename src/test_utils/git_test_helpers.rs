@@ -37,7 +37,7 @@ pub fn create_files_with_gitignore(repo: &TestGitRepository) -> Result<()> {
     repo.create_file(".tsk/config.json", "{\"test\": true}\n")?;
     repo.create_file(
         ".tsk/dockerfiles/project/test/Dockerfile",
-        "FROM ubuntu:22.04\n",
+        "FROM ubuntu:24.04\n",
     )?;
 
     Ok(())

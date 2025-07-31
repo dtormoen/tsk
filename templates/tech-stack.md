@@ -5,7 +5,7 @@ You need to create a technology stack Docker layer (Dockerfile) that will be use
 ## Context
 
 TSK uses a layered Docker image system where each task runs in a container built from these layers:
-1. **Base layer**: Ubuntu 22.04 with essential development tools (git, curl, build-essential, etc.)
+1. **Base layer**: Ubuntu 24.04 with essential development tools (git, curl, build-essential, etc.)
 2. **Tech-stack layer**: Language-specific toolchains (what you're creating)
 3. **Agent layer**: AI agent setup
 4. **Project layer**: Project-specific dependencies
@@ -16,7 +16,7 @@ The tech-stack layer installs the core language runtime, package managers, and c
 
 Your Dockerfile should:
 
-1. **Build on the base layer**: Assume Ubuntu 22.04 with basic tools installed
+1. **Build on the base layer**: Assume Ubuntu 24.04 with basic tools installed
 2. **Run as the agent user**: The base layer sets up an `agent` user (UID 1000)
 3. **Install the language runtime**: Install the appropriate version of the language
 4. **Install package managers**: Include the standard package managers for the ecosystem

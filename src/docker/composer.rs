@@ -201,7 +201,7 @@ mod tests {
         let composer = create_test_composer();
 
         let dockerfile = r#"
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 ARG GIT_USER_NAME
 ARG GIT_USER_EMAIL=default@example.com
 ARG BUILD_VERSION
@@ -221,7 +221,7 @@ RUN echo "Building..."
 
         // Valid Dockerfile
         let valid = r#"
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 WORKDIR /workspace
 USER agent
 RUN echo "Hello"
@@ -238,7 +238,7 @@ RUN echo "Hello"
 
         // Missing WORKDIR
         let no_workdir = r#"
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 USER agent
 RUN echo "Hello"
 "#;
@@ -246,7 +246,7 @@ RUN echo "Hello"
 
         // Missing USER
         let no_user = r#"
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 WORKDIR /workspace
 RUN echo "Hello"
 "#;
@@ -259,7 +259,7 @@ RUN echo "Hello"
         let temp_dir = TempDir::new().unwrap();
 
         let composed = ComposedDockerfile {
-            dockerfile_content: "FROM ubuntu:22.04\nRUN echo 'test'".to_string(),
+            dockerfile_content: "FROM ubuntu:24.04\nRUN echo 'test'".to_string(),
             additional_files: {
                 let mut files = HashMap::new();
                 files.insert("requirements.txt".to_string(), b"pytest==7.0.0\n".to_vec());
@@ -278,7 +278,7 @@ RUN echo "Hello"
         let dockerfile_path = temp_dir.path().join("Dockerfile");
         assert!(dockerfile_path.exists());
         let content = std::fs::read_to_string(&dockerfile_path).unwrap();
-        assert!(content.contains("FROM ubuntu:22.04"));
+        assert!(content.contains("FROM ubuntu:24.04"));
 
         // Check additional files were written
         let requirements_path = temp_dir.path().join("requirements.txt");

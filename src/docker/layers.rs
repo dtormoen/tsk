@@ -227,8 +227,8 @@ mod tests {
 
     #[test]
     fn test_layer_content_creation() {
-        let content = DockerLayerContent::new("FROM ubuntu:22.04".to_string());
-        assert_eq!(content.dockerfile_content, "FROM ubuntu:22.04");
+        let content = DockerLayerContent::new("FROM ubuntu:24.04".to_string());
+        assert_eq!(content.dockerfile_content, "FROM ubuntu:24.04");
         assert!(content.additional_files.is_empty());
 
         let with_files = DockerLayerContent::with_files(

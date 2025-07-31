@@ -772,7 +772,7 @@ mod tests {
         test_repo
             .create_file(
                 ".tsk/dockerfiles/project/myproject/Dockerfile",
-                "FROM ubuntu:22.04\nRUN echo test",
+                "FROM ubuntu:24.04\nRUN echo test",
             )
             .unwrap();
 

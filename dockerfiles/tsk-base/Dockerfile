@@ -1,24 +1,26 @@
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
+    build-essential \
+    ca-certificates \
     curl \
+    dnsutils \
     git \
+    gnupg \
+    iputils-ping \
+    jq \
+    just \
     openssh-client \
     python3 \
     python3-pip \
-    build-essential \
-    sudo \
-    vim \
-    jq \
-    ca-certificates \
-    gnupg \
-    iputils-ping \
-    dnsutils \
     ripgrep \
+    sudo \
+    unzip \
+    vim \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 20.x
@@ -27,10 +29,11 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 
 RUN npm install -g @anthropic-ai/claude-code
 
-# Create a non-root user for running the agent with UID/GID 1000
-# This helps with file permissions when mounting volumes
-RUN groupadd -g 1000 agent && \
-    useradd -m -s /bin/bash -u 1000 -g agent agent
+# Ubuntu 24.04 already has a ubuntu user with UID/GID 1000
+# We'll rename it to agent and ensure proper permissions
+RUN usermod -l agent ubuntu && \
+    groupmod -n agent ubuntu && \
+    usermod -d /home/agent -m agent
 
 # Switch to agent user to install Rust and just
 USER agent

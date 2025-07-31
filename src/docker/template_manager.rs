@@ -376,11 +376,11 @@ mod tests {
         let mut has_from = false;
 
         // Test first layer processing
-        let content = "FROM ubuntu:22.04\nRUN apt-get update\nWORKDIR /workspace\nUSER agent\nCMD [\"/bin/bash\"]";
+        let content = "FROM ubuntu:24.04\nRUN apt-get update\nWORKDIR /workspace\nUSER agent\nCMD [\"/bin/bash\"]";
         let (processed, cmd, entrypoint) = manager
             .process_layer_content(content, true, &mut has_from)
             .unwrap();
-        assert!(processed.contains("FROM ubuntu:22.04"));
+        assert!(processed.contains("FROM ubuntu:24.04"));
         assert!(processed.contains("WORKDIR /workspace"));
         assert!(processed.contains("USER agent"));
         assert!(!processed.contains("CMD")); // CMD should be extracted

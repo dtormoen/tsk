@@ -137,7 +137,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 ### Docker Infrastructure
 
 - **Layered Images**: Four-layer system for flexible customization
-  - Base layer: Ubuntu 22.04 base OS and common tools
+  - Base layer: Ubuntu 24.04 base OS and common tools
   - Tech-stack layer: Language-specific toolchains (default, rust, python, node, go, java, lua)
   - Agent layer: AI agent installations (claude, etc.)
   - Project layer: Project-specific dependencies (optional, falls back to default)

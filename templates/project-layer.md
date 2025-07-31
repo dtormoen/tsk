@@ -5,7 +5,7 @@ You need to create a project-specific Docker layer (Dockerfile) that will be use
 ## Context
 
 TSK uses a layered Docker image system where each task runs in a container built from these layers:
-1. **Base layer**: Ubuntu 22.04 with essential development tools
+1. **Base layer**: Ubuntu 24.04 with essential development tools
 2. **Tech-stack layer**: Language-specific toolchains (e.g., Rust/Cargo, Python/pip, Node/npm)
 3. **Agent layer**: AI agent setup (already configured)
 4. **Project layer**: Project-specific dependencies and optimizations (what you're creating)
