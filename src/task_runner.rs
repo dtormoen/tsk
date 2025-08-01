@@ -27,11 +27,15 @@ pub struct TaskExecutionResult {
 #[derive(Debug)]
 pub struct TaskExecutionError {
     pub message: String,
+    pub is_warmup_failure: bool,
 }
 
 impl From<String> for TaskExecutionError {
     fn from(message: String) -> Self {
-        Self { message }
+        Self {
+            message,
+            is_warmup_failure: false,
+        }
     }
 }
 
@@ -78,10 +82,12 @@ impl TaskRunner {
             .map_err(|e| format!("Agent validation failed: {e}"))?;
 
         // Run agent warmup
-        agent
-            .warmup()
-            .await
-            .map_err(|e| format!("Agent warmup failed: {e}"))?;
+        if let Err(e) = agent.warmup().await {
+            return Err(TaskExecutionError {
+                message: format!("Agent warmup failed: {e}"),
+                is_warmup_failure: true,
+            });
+        }
 
         // Use the pre-copied repository path
         let repo_path = task.copied_repo_path.clone();
