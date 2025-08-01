@@ -1,11 +1,12 @@
 use crate::context::AppContext;
 use crate::task::{Task, TaskStatus};
 use crate::task_manager::TaskManager;
+use crate::task_runner::TaskExecutionError;
 use crate::task_storage::TaskStorage;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
-use tokio::time::{Duration, sleep};
+use tokio::time::{Duration, Instant, sleep};
 
 /// Task executor that runs tasks in parallel with configurable workers
 pub struct TaskExecutor {
@@ -13,6 +14,7 @@ pub struct TaskExecutor {
     storage: Arc<Mutex<Box<dyn TaskStorage>>>,
     running: Arc<Mutex<bool>>,
     workers: u32,
+    warmup_failure_wait_until: Arc<Mutex<Option<Instant>>>,
 }
 
 impl TaskExecutor {
@@ -33,6 +35,7 @@ impl TaskExecutor {
             storage,
             running: Arc::new(Mutex::new(false)),
             workers,
+            warmup_failure_wait_until: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -71,6 +74,27 @@ impl TaskExecutor {
 
                 self.context.terminal_operations().restore_title();
                 break;
+            }
+
+            // Check if we're in a warmup failure wait period
+            let wait_until = self.warmup_failure_wait_until.lock().await;
+            if let Some(wait_instant) = *wait_until {
+                if Instant::now() < wait_instant {
+                    let remaining = wait_instant - Instant::now();
+                    drop(wait_until);
+                    println!(
+                        "Waiting {} seconds due to warmup failure before attempting new tasks...",
+                        remaining.as_secs()
+                    );
+                    sleep(Duration::from_secs(60)).await; // Check every minute
+                    continue;
+                }
+                drop(wait_until);
+                // Clear the wait period
+                *self.warmup_failure_wait_until.lock().await = None;
+                println!("Warmup failure wait period has ended, resuming task processing");
+            } else {
+                drop(wait_until);
             }
 
             // Clean up completed tasks
@@ -134,6 +158,8 @@ impl TaskExecutor {
                     let active_workers = active_workers.clone();
                     let terminal_ops = self.context.terminal_operations();
                     let total_workers = self.workers;
+                    let warmup_failure_wait_until = self.warmup_failure_wait_until.clone();
+                    let storage = self.storage.clone();
 
                     active_tasks.spawn(async move {
                         // Hold the permit for the entire duration of task execution
@@ -149,8 +175,31 @@ impl TaskExecutor {
                                 // Task status is already updated by TaskManager.execute_queued_task()
                             }
                             Err(e) => {
-                                eprintln!("Task failed: {} - {}", running_task.id, e);
+                                eprintln!("Task failed: {} - {}", running_task.id, e.message);
                                 // Task status is already updated by TaskManager.execute_queued_task()
+
+                                // Check if this was a warmup failure
+                                if e.is_warmup_failure {
+                                    println!("Task {} failed during warmup. Setting 1-hour wait period...", running_task.id);
+
+                                    // Set the wait period
+                                    let wait_until = Instant::now() + Duration::from_secs(3600); // 1 hour
+                                    *warmup_failure_wait_until.lock().await = Some(wait_until);
+
+                                    // Reset task status to QUEUED so it can be retried
+                                    let storage_lock = storage.lock().await;
+                                    if let Err(e) = storage_lock
+                                        .update_task_status(
+                                            &running_task.id,
+                                            TaskStatus::Queued,
+                                            None,
+                                            None,
+                                            Some("Warmup failed, will retry after wait period".to_string()),
+                                        )
+                                        .await {
+                                        eprintln!("Failed to reset task status to QUEUED: {e}");
+                                    }
+                                }
                             }
                         }
 
@@ -190,16 +239,19 @@ impl TaskExecutor {
     async fn execute_single_task(
         context: &AppContext,
         task: &Task,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<(), TaskExecutionError> {
         // Create a task manager with the current context
-        let task_manager = TaskManager::with_storage(context)?;
+        let task_manager = TaskManager::with_storage(context).map_err(|e| TaskExecutionError {
+            message: e,
+            is_warmup_failure: false,
+        })?;
 
         // Execute the task
         let result = task_manager.execute_queued_task(task).await;
 
         match result {
             Ok(_) => Ok(()),
-            Err(e) => Err(e.message.into()),
+            Err(e) => Err(e),
         }
     }
 }
@@ -558,6 +610,118 @@ mod tests {
             processed_tasks >= 1,
             "At least 1 task should have been processed"
         );
+    }
+
+    #[tokio::test]
+    async fn test_warmup_failure_wait_behavior() {
+        // Test that the executor properly handles warmup failure wait periods
+        let temp_dir = TempDir::new().unwrap();
+        let config = crate::storage::XdgConfig::with_paths(
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            temp_dir.path().join("config"),
+        );
+
+        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
+        xdg.ensure_directories().unwrap();
+
+        let fs = Arc::new(MockFileSystem::new());
+        let storage = Arc::new(Mutex::new(get_task_storage(xdg.clone(), fs.clone())));
+
+        let app_context = Arc::new(
+            crate::context::AppContext::builder()
+                .with_file_system(fs)
+                .with_xdg_directories(xdg)
+                .build(),
+        );
+
+        let executor = TaskExecutor::new(app_context.clone(), storage.clone());
+
+        // Test 1: Verify that wait period prevents new task execution
+        let wait_time = Instant::now() + Duration::from_secs(5);
+        *executor.warmup_failure_wait_until.lock().await = Some(wait_time);
+
+        // Create a queued task
+        let task = Task::new(
+            "test-task".to_string(),
+            temp_dir.path().to_path_buf(),
+            "test".to_string(),
+            "test".to_string(),
+            "instructions.md".to_string(),
+            "no-op".to_string(),
+            30,
+            "tsk/test-task".to_string(),
+            "abc123".to_string(),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            temp_dir.path().to_path_buf(),
+        );
+
+        let storage_guard = storage.lock().await;
+        storage_guard.add_task(task.clone()).await.unwrap();
+        drop(storage_guard);
+
+        // Try to execute - should be blocked by wait period
+        let exec_handle = {
+            let exec = Arc::new(executor);
+            let exec_clone = exec.clone();
+            let handle = tokio::spawn(async move {
+                let _ = exec_clone.start().await;
+            });
+
+            // Give a short time to check wait behavior
+            tokio::time::sleep(Duration::from_millis(500)).await;
+
+            // Task should still be queued
+            let storage_guard = storage.lock().await;
+            let tasks = storage_guard.list_tasks().await.unwrap();
+            assert_eq!(
+                tasks[0].status,
+                TaskStatus::Queued,
+                "Task should remain queued during wait period"
+            );
+            drop(storage_guard);
+
+            exec.stop().await;
+            handle
+        };
+
+        let _ = exec_handle.await;
+
+        // Test 2: Verify wait period clears after expiry
+        let executor2 = TaskExecutor::new(app_context, storage.clone());
+
+        // Set a very short wait period
+        let short_wait = Instant::now() + Duration::from_millis(100);
+        *executor2.warmup_failure_wait_until.lock().await = Some(short_wait);
+
+        // Wait for it to expire
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // Start executor - should clear the wait period
+        let exec2_handle = {
+            let exec = Arc::new(executor2);
+            let exec_clone = exec.clone();
+            let handle = tokio::spawn(async move {
+                let _ = exec_clone.start().await;
+            });
+
+            tokio::time::sleep(Duration::from_millis(500)).await;
+
+            // Wait period should be cleared
+            let wait_until = exec.warmup_failure_wait_until.lock().await;
+            assert!(
+                wait_until.is_none(),
+                "Wait period should be cleared after expiry"
+            );
+            drop(wait_until);
+
+            exec.stop().await;
+            handle
+        };
+
+        let _ = exec2_handle.await;
     }
 
     #[tokio::test]

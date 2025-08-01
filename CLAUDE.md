@@ -81,6 +81,8 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Unix socket-based IPC protocol
 - Parallel task execution with configurable workers (default: 1)
 - `TaskExecutor`: Manages parallel execution with semaphore-based worker pool
+  - Automatic retry for agent warmup failures with 1-hour wait period
+  - Tasks that fail during warmup are reset to queued status and retried after wait
 
 **Git Operations** (`src/git.rs`, `src/git_sync.rs`)
 - Repository copying to centralized task directories (includes .tsk directory for Docker configurations)
