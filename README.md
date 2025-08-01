@@ -69,6 +69,11 @@ cd ~/project-b && tsk add --type "feat" --name "task2" --description "..."
 tsk server stop
 ```
 
+The server includes automatic retry logic for agent warmup failures (e.g., API rate limits). When a task fails during the agent warmup phase, the server will:
+- Wait 1 hour before attempting any new tasks
+- Reset the failed task to queued status
+- Retry the task after the wait period
+
 ### Parallel Execution
 
 TSK supports parallel task execution for improved throughput:
