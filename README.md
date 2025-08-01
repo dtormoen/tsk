@@ -92,8 +92,8 @@ Each task runs in its own isolated Docker container, so parallel execution is sa
 - `tsk quick` - Execute a task immediately
 - `tsk debug` - Start an interactive docker container
 - `tsk clean` - Clean up completed tasks
-- `tsk delete <task-id>` - Delete a specific task
-- `tsk retry <task-id>` - Retry a previous task
+- `tsk delete <task-id>...` - Delete one or more tasks
+- `tsk retry <task-id>...` - Retry one or more tasks
 
 ### Server Commands
 - `tsk server run` - Start the TSK server daemon

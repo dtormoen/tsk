@@ -165,15 +165,15 @@ enum Commands {
     },
     /// Delete all completed tasks and all quick tasks
     Clean,
-    /// Delete a specific task by ID
+    /// Delete one or more tasks by ID
     Delete {
-        /// Task ID to delete
-        task_id: String,
+        /// Task IDs to delete
+        task_ids: Vec<String>,
     },
-    /// Retry a task by creating a new task with the same instructions
+    /// Retry one or more tasks by creating new tasks with the same instructions
     Retry {
-        /// Task ID to retry
-        task_id: String,
+        /// Task IDs to retry
+        task_ids: Vec<String>,
         /// Open the prompt file in $EDITOR after creation
         #[arg(short, long)]
         edit: bool,
@@ -340,8 +340,8 @@ async fn main() {
             workers,
         }),
         Commands::Clean => Box::new(CleanCommand),
-        Commands::Delete { task_id } => Box::new(DeleteCommand { task_id }),
-        Commands::Retry { task_id, edit } => Box::new(RetryCommand { task_id, edit }),
+        Commands::Delete { task_ids } => Box::new(DeleteCommand { task_ids }),
+        Commands::Retry { task_ids, edit } => Box::new(RetryCommand { task_ids, edit }),
         Commands::Server(server_args) => match server_args.command {
             ServerCommands::Run { workers } => Box::new(ServerRunCommand { workers }),
             ServerCommands::Stop => Box::new(ServerStopCommand),
