@@ -86,7 +86,9 @@ impl TaskExecutor {
                         "Waiting {} seconds due to warmup failure before attempting new tasks...",
                         remaining.as_secs()
                     );
-                    sleep(Duration::from_secs(60)).await; // Check every minute
+                    // Sleep for the minimum of remaining time or 60 seconds
+                    let sleep_duration = std::cmp::min(remaining, Duration::from_secs(60));
+                    sleep(sleep_duration).await;
                     continue;
                 }
                 drop(wait_until);
@@ -638,7 +640,7 @@ mod tests {
         let executor = TaskExecutor::new(app_context.clone(), storage.clone());
 
         // Test 1: Verify that wait period prevents new task execution
-        let wait_time = Instant::now() + Duration::from_secs(5);
+        let wait_time = Instant::now() + Duration::from_millis(50);
         *executor.warmup_failure_wait_until.lock().await = Some(wait_time);
 
         // Create a queued task
@@ -671,7 +673,7 @@ mod tests {
             });
 
             // Give a short time to check wait behavior
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
 
             // Task should still be queued
             let storage_guard = storage.lock().await;
@@ -693,11 +695,11 @@ mod tests {
         let executor2 = TaskExecutor::new(app_context, storage.clone());
 
         // Set a very short wait period
-        let short_wait = Instant::now() + Duration::from_millis(100);
+        let short_wait = Instant::now() + Duration::from_millis(10);
         *executor2.warmup_failure_wait_until.lock().await = Some(short_wait);
 
         // Wait for it to expire
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
 
         // Start executor - should clear the wait period
         let exec2_handle = {
@@ -707,7 +709,7 @@ mod tests {
                 let _ = exec_clone.start().await;
             });
 
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            tokio::time::sleep(Duration::from_millis(20)).await;
 
             // Wait period should be cleared
             let wait_until = exec.warmup_failure_wait_until.lock().await;
