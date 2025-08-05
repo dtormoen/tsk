@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2](https://github.com/dtormoen/tsk/compare/v0.3.1...v0.3.2) - 2025-08-05
+
+### Added
+
+- expand project Dockerfile search to include user-level config
+- add bulk operations for retry and delete commands
+- upgrade Docker images to Ubuntu 24.04 and resolve GID conflict
+
+### Fixed
+
+- ensure project layer detection uses copied repository in server mode
+
 ## [0.3.1](https://github.com/dtormoen/tsk/compare/v0.3.0...v0.3.1) - 2025-07-18
 
 This release fixes an issue where Dockerfiles in projects could conflict with tsk's own 
