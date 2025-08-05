@@ -21,9 +21,9 @@ impl LayeredAssetManager {
     }
 
     /// Creates a LayeredAssetManager with standard layers:
-    /// 1. Project-level templates (.tsk/templates)
-    /// 2. User-level templates (~/.config/tsk/templates)
-    /// 3. Built-in templates (embedded)
+    /// 1. Project-level assets (.tsk/)
+    /// 2. User-level assets (~/.config/tsk/)
+    /// 3. Built-in assets (embedded)
     pub fn new_with_standard_layers(
         project_root: Option<&Path>,
         xdg_dirs: &XdgDirectories,
@@ -38,10 +38,12 @@ impl LayeredAssetManager {
             }
         }
 
-        // User layer
-        let user_templates_dir = xdg_dirs.config_dir().join("templates");
-        if user_templates_dir.exists() {
-            layers.push(Arc::new(FileSystemAssetManager::new(user_templates_dir)));
+        // User layer - use the entire config directory to support both templates and dockerfiles
+        let user_config_dir = xdg_dirs.config_dir();
+        if user_config_dir.exists() {
+            layers.push(Arc::new(FileSystemAssetManager::new(
+                user_config_dir.to_path_buf(),
+            )));
         }
 
         // Built-in layer (lowest priority)
@@ -258,12 +260,13 @@ mod tests {
 
         // Create user config directory
         let config_dir = temp_dir.path().join("config");
-        let user_templates = config_dir.join("tsk").join("templates");
+        let user_tsk_dir = config_dir.join("tsk");
+        let user_templates = user_tsk_dir.join("templates");
         fs::create_dir_all(&user_templates).unwrap();
         fs::write(user_templates.join("feat.md"), "User feat template").unwrap();
         fs::write(user_templates.join("doc.md"), "User doc template").unwrap();
 
-        // Create XDG directories
+        // Create XDG directories (XdgDirectories will append "tsk" to the config_dir path)
         let xdg_config = crate::storage::XdgConfig::with_paths(
             temp_dir.path().join("data"),
             temp_dir.path().join("runtime"),
@@ -384,7 +387,8 @@ mod tests {
 
         // Create user config directory
         let config_dir = temp_dir.path().join("config");
-        let user_templates = config_dir.join("tsk").join("templates");
+        let user_tsk_dir = config_dir.join("tsk");
+        let user_templates = user_tsk_dir.join("templates");
         fs::create_dir_all(&user_templates).unwrap();
         fs::write(user_templates.join("feat.md"), "User feat").unwrap();
         fs::write(user_templates.join("custom.md"), "User custom").unwrap();
@@ -406,5 +410,70 @@ mod tests {
 
         // Should have custom template
         assert!(templates.contains(&"custom".to_string()));
+    }
+
+    #[test]
+    fn test_dockerfile_layering() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create project directory with project-specific dockerfiles
+        let project_dir = temp_dir.path().join("project");
+        let project_dockerfiles = project_dir
+            .join(".tsk")
+            .join("dockerfiles")
+            .join("project")
+            .join("myapp");
+        fs::create_dir_all(&project_dockerfiles).unwrap();
+        fs::write(
+            project_dockerfiles.join("Dockerfile"),
+            "FROM ubuntu:project\n",
+        )
+        .unwrap();
+
+        // Create user config directory with project-specific dockerfiles
+        let config_dir = temp_dir.path().join("config");
+        let user_tsk_dir = config_dir.join("tsk");
+        let user_dockerfiles = user_tsk_dir
+            .join("dockerfiles")
+            .join("project")
+            .join("myapp");
+        fs::create_dir_all(&user_dockerfiles).unwrap();
+        fs::write(user_dockerfiles.join("Dockerfile"), "FROM ubuntu:user\n").unwrap();
+
+        // Create another dockerfile in user config that doesn't exist in project
+        let user_only_dockerfiles = user_tsk_dir
+            .join("dockerfiles")
+            .join("project")
+            .join("otherapp");
+        fs::create_dir_all(&user_only_dockerfiles).unwrap();
+        fs::write(
+            user_only_dockerfiles.join("Dockerfile"),
+            "FROM ubuntu:user-only\n",
+        )
+        .unwrap();
+
+        let xdg_config = crate::storage::XdgConfig::with_paths(
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            config_dir,
+        );
+        let xdg_dirs = XdgDirectories::new(Some(xdg_config)).unwrap();
+
+        let manager = LayeredAssetManager::new_with_standard_layers(Some(&project_dir), &xdg_dirs);
+
+        // Test that project dockerfile takes precedence
+        let myapp_dockerfile = manager.get_dockerfile("project/myapp").unwrap();
+        let content = String::from_utf8(myapp_dockerfile).unwrap();
+        assert!(content.contains("FROM ubuntu:project"));
+
+        // Test that user-only dockerfile is accessible
+        let otherapp_dockerfile = manager.get_dockerfile("project/otherapp").unwrap();
+        let content = String::from_utf8(otherapp_dockerfile).unwrap();
+        assert!(content.contains("FROM ubuntu:user-only"));
+
+        // Test listing dockerfiles - should show both
+        let dockerfiles = manager.list_dockerfiles();
+        assert!(dockerfiles.contains(&"project/myapp".to_string()));
+        assert!(dockerfiles.contains(&"project/otherapp".to_string()));
     }
 }
