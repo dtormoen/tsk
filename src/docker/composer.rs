@@ -63,8 +63,8 @@ impl DockerComposer {
 
         for line in dockerfile_content.lines() {
             let trimmed = line.trim();
-            if trimmed.starts_with("ARG ") {
-                if let Some(arg_def) = trimmed.strip_prefix("ARG ") {
+            if trimmed.starts_with("ARG ")
+                && let Some(arg_def) = trimmed.strip_prefix("ARG ") {
                     // Handle ARG NAME or ARG NAME=default_value
                     let arg_name = arg_def
                         .split_once('=')
@@ -76,7 +76,6 @@ impl DockerComposer {
                         build_args.insert(arg_name.to_string());
                     }
                 }
-            }
         }
 
         Ok(build_args)

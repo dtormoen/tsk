@@ -86,13 +86,11 @@ impl AssetManager for EmbeddedAssetManager {
         let mut dockerfiles = HashSet::new();
 
         for path in Dockerfiles::iter() {
-            if path.starts_with("dockerfiles/") {
-                if let Some(remaining) = path.strip_prefix("dockerfiles/") {
-                    if let Some(dockerfile_name) = remaining.split('/').next() {
+            if path.starts_with("dockerfiles/")
+                && let Some(remaining) = path.strip_prefix("dockerfiles/")
+                    && let Some(dockerfile_name) = remaining.split('/').next() {
                         dockerfiles.insert(dockerfile_name.to_string());
                     }
-                }
-            }
         }
 
         let mut result: Vec<String> = dockerfiles.into_iter().collect();

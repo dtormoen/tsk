@@ -330,9 +330,9 @@ impl ClaudeCodeLogProcessor {
                             if let Some(tool_name) = item.get("name").and_then(|n| n.as_str()) {
                                 match tool_name {
                                     "TodoWrite" => {
-                                        if let Some(input) = item.get("input") {
-                                            if let Some(todos) = input.get("todos") {
-                                                if let Ok(todo_items) =
+                                        if let Some(input) = item.get("input")
+                                            && let Some(todos) = input.get("todos")
+                                                && let Ok(todo_items) =
                                                     serde_json::from_value::<Vec<TodoItem>>(
                                                         todos.clone(),
                                                     )
@@ -341,15 +341,13 @@ impl ClaudeCodeLogProcessor {
                                                         &self.format_todo_update(&todo_items),
                                                     );
                                                 }
-                                            }
-                                        }
                                     }
                                     "Read" | "LS" | "NotebookRead" => {
                                         // Skip file reading operations as requested
                                     }
                                     "Edit" | "MultiEdit" => {
-                                        if let Some(input) = item.get("input") {
-                                            if let Some(file_path) =
+                                        if let Some(input) = item.get("input")
+                                            && let Some(file_path) =
                                                 input.get("file_path").and_then(|f| f.as_str())
                                             {
                                                 let file_name = file_path
@@ -376,11 +374,10 @@ impl ClaudeCodeLogProcessor {
                                                     ));
                                                 }
                                             }
-                                        }
                                     }
                                     "Bash" => {
-                                        if let Some(input) = item.get("input") {
-                                            if let Some(cmd) =
+                                        if let Some(input) = item.get("input")
+                                            && let Some(cmd) =
                                                 input.get("command").and_then(|c| c.as_str())
                                             {
                                                 let cmd_preview = if cmd.len() > 60 {
@@ -392,11 +389,10 @@ impl ClaudeCodeLogProcessor {
                                                     "🖥️ Running: {cmd_preview}\n"
                                                 ));
                                             }
-                                        }
                                     }
                                     "Write" => {
-                                        if let Some(input) = item.get("input") {
-                                            if let Some(file_path) =
+                                        if let Some(input) = item.get("input")
+                                            && let Some(file_path) =
                                                 input.get("file_path").and_then(|f| f.as_str())
                                             {
                                                 let file_name = file_path
@@ -406,28 +402,25 @@ impl ClaudeCodeLogProcessor {
                                                 output
                                                     .push_str(&format!("📝 Writing {file_name}\n"));
                                             }
-                                        }
                                     }
                                     "Grep" => {
-                                        if let Some(input) = item.get("input") {
-                                            if let Some(pattern) =
+                                        if let Some(input) = item.get("input")
+                                            && let Some(pattern) =
                                                 input.get("pattern").and_then(|p| p.as_str())
                                             {
                                                 output.push_str(&format!(
                                                     "🔍 Searching for: {pattern}\n"
                                                 ));
                                             }
-                                        }
                                     }
                                     "WebSearch" => {
-                                        if let Some(input) = item.get("input") {
-                                            if let Some(query) =
+                                        if let Some(input) = item.get("input")
+                                            && let Some(query) =
                                                 input.get("query").and_then(|q| q.as_str())
                                             {
                                                 output
                                                     .push_str(&format!("🌐 Web search: {query}\n"));
                                             }
-                                        }
                                     }
                                     _ => {
                                         // Other tools
@@ -437,14 +430,13 @@ impl ClaudeCodeLogProcessor {
                             }
 
                             // Process regular text content
-                            if let Some(text) = item.get("text").and_then(|t| t.as_str()) {
-                                if !text.trim().is_empty() {
+                            if let Some(text) = item.get("text").and_then(|t| t.as_str())
+                                && !text.trim().is_empty() {
                                     if !output.is_empty() {
                                         output.push('\n');
                                     }
                                     output.push_str(&format!("🤖 {text}"));
                                 }
-                            }
                         }
 
                         if !output.is_empty() {

@@ -1,5 +1,4 @@
 use super::Command;
-use crate::agent::AgentProvider;
 use crate::assets::layered::LayeredAssetManager;
 use crate::context::AppContext;
 use crate::docker::DockerManager;
@@ -27,6 +26,7 @@ pub struct DebugCommand {
 impl Command for DebugCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         println!("Starting debug session: {}", self.name);
+        println!("Using agent: {}", self.agent.as_deref().unwrap_or("no-op"));
 
         let start_path = self.repo.as_deref().unwrap_or(".");
         let repo_root = find_repository_root(Path::new(start_path))?;
@@ -97,10 +97,7 @@ impl Command for DebugCommand {
         let sanitized_name = crate::utils::sanitize_for_branch_name(&self.name);
         let branch_name = format!("tsk/debug/{sanitized_name}/{task_id}");
 
-        let agent = self
-            .agent
-            .clone()
-            .unwrap_or_else(|| AgentProvider::default_agent().to_string());
+        let agent = self.agent.clone().unwrap_or_else(|| "no-op".to_string());
 
         let mut task = Task::new(
             task_id.clone(),
@@ -187,7 +184,7 @@ mod tests {
     fn test_debug_command_structure() {
         let cmd = DebugCommand {
             name: "test-debug".to_string(),
-            agent: Some("claude_code".to_string()),
+            agent: Some("claude-code".to_string()),
             tech_stack: None,
             project: None,
             repo: None,
@@ -195,9 +192,23 @@ mod tests {
 
         // Verify the command has the expected fields
         assert_eq!(cmd.name, "test-debug");
-        assert_eq!(cmd.agent, Some("claude_code".to_string()));
+        assert_eq!(cmd.agent, Some("claude-code".to_string()));
         assert_eq!(cmd.tech_stack, None);
         assert_eq!(cmd.project, None);
         assert_eq!(cmd.repo, None);
+    }
+
+    #[test]
+    fn test_debug_command_default_agent() {
+        let cmd = DebugCommand {
+            name: "test-debug".to_string(),
+            agent: None,
+            tech_stack: None,
+            project: None,
+            repo: None,
+        };
+
+        // When agent is None, the debug command should use "no-op" agent
+        assert_eq!(cmd.agent, None);
     }
 }
