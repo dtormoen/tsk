@@ -235,13 +235,13 @@ impl TaskManager {
         for task in &completed_tasks {
             let repo_hash = crate::storage::get_repo_hash(&task.repo_root);
             let task_dir = self.xdg_directories.task_dir(&task.id, &repo_hash);
-            if self.file_system.exists(&task_dir).await.unwrap_or(false) {
-                if let Err(e) = self.file_system.remove_dir(&task_dir).await {
-                    eprintln!(
-                        "Warning: Failed to delete task directory {}: {}",
-                        task.id, e
-                    );
-                }
+            if self.file_system.exists(&task_dir).await.unwrap_or(false)
+                && let Err(e) = self.file_system.remove_dir(&task_dir).await
+            {
+                eprintln!(
+                    "Warning: Failed to delete task directory {}: {}",
+                    task.id, e
+                );
             }
         }
 

@@ -170,10 +170,10 @@ impl DockerTemplateManager {
         // Check embedded assets
         let dockerfiles = self.asset_manager.list_dockerfiles();
         for dockerfile in dockerfiles {
-            if dockerfile.starts_with(&layer_dir) {
-                if let Some(name) = self.extract_layer_name(&dockerfile, &layer_type) {
-                    layers.insert(name);
-                }
+            if dockerfile.starts_with(&layer_dir)
+                && let Some(name) = self.extract_layer_name(&dockerfile, &layer_type)
+            {
+                layers.insert(name);
             }
         }
 
@@ -320,12 +320,11 @@ impl DockerTemplateManager {
                 // For other layer types, each subdirectory is a layer
                 if let Ok(entries) = std::fs::read_dir(&layer_dir) {
                     for entry in entries.flatten() {
-                        if entry.path().is_dir() {
-                            if let Some(name) = entry.file_name().to_str() {
-                                if entry.path().join("Dockerfile").exists() {
-                                    layers.insert(name.to_string());
-                                }
-                            }
+                        if entry.path().is_dir()
+                            && let Some(name) = entry.file_name().to_str()
+                            && entry.path().join("Dockerfile").exists()
+                        {
+                            layers.insert(name.to_string());
                         }
                     }
                 }
