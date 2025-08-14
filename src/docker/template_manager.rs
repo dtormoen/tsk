@@ -171,9 +171,10 @@ impl DockerTemplateManager {
         let dockerfiles = self.asset_manager.list_dockerfiles();
         for dockerfile in dockerfiles {
             if dockerfile.starts_with(&layer_dir)
-                && let Some(name) = self.extract_layer_name(&dockerfile, &layer_type) {
-                    layers.insert(name);
-                }
+                && let Some(name) = self.extract_layer_name(&dockerfile, &layer_type)
+            {
+                layers.insert(name);
+            }
         }
 
         // Check user directory
@@ -321,9 +322,10 @@ impl DockerTemplateManager {
                     for entry in entries.flatten() {
                         if entry.path().is_dir()
                             && let Some(name) = entry.file_name().to_str()
-                                && entry.path().join("Dockerfile").exists() {
-                                    layers.insert(name.to_string());
-                                }
+                            && entry.path().join("Dockerfile").exists()
+                        {
+                            layers.insert(name.to_string());
+                        }
                     }
                 }
             }
