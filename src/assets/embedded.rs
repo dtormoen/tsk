@@ -88,9 +88,10 @@ impl AssetManager for EmbeddedAssetManager {
         for path in Dockerfiles::iter() {
             if path.starts_with("dockerfiles/")
                 && let Some(remaining) = path.strip_prefix("dockerfiles/")
-                    && let Some(dockerfile_name) = remaining.split('/').next() {
-                        dockerfiles.insert(dockerfile_name.to_string());
-                    }
+                && let Some(dockerfile_name) = remaining.split('/').next()
+            {
+                dockerfiles.insert(dockerfile_name.to_string());
+            }
         }
 
         let mut result: Vec<String> = dockerfiles.into_iter().collect();
