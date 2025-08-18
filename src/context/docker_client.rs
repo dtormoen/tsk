@@ -227,10 +227,11 @@ impl DockerClient for DefaultDockerClient {
                         if let Some(error) = info.error {
                             let _ = tx.send(Err(format!("Docker build error: {error}")));
                             break;
-                        } else if let Some(stream_msg) = info.stream {
-                            if !stream_msg.is_empty() && tx.send(Ok(stream_msg)).is_err() {
-                                break; // Receiver dropped
-                            }
+                        } else if let Some(stream_msg) = info.stream
+                            && !stream_msg.is_empty()
+                            && tx.send(Ok(stream_msg)).is_err()
+                        {
+                            break; // Receiver dropped
                         }
                     }
                     Err(e) => {

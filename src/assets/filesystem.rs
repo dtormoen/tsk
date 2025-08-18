@@ -85,15 +85,13 @@ impl AssetManager for FileSystemAssetManager {
         // Check direct path
         if let Ok(entries) = std::fs::read_dir(&self.base_path) {
             for entry in entries.flatten() {
-                if let Ok(file_type) = entry.file_type() {
-                    if file_type.is_file() {
-                        if let Some(file_name) = entry.file_name().to_str() {
-                            if file_name.ends_with(".md") {
-                                let template_name = file_name.trim_end_matches(".md");
-                                templates.push(template_name.to_string());
-                            }
-                        }
-                    }
+                if let Ok(file_type) = entry.file_type()
+                    && file_type.is_file()
+                    && let Some(file_name) = entry.file_name().to_str()
+                    && file_name.ends_with(".md")
+                {
+                    let template_name = file_name.trim_end_matches(".md");
+                    templates.push(template_name.to_string());
                 }
             }
         }
@@ -102,16 +100,14 @@ impl AssetManager for FileSystemAssetManager {
         let templates_dir = self.base_path.join("templates");
         if let Ok(entries) = std::fs::read_dir(&templates_dir) {
             for entry in entries.flatten() {
-                if let Ok(file_type) = entry.file_type() {
-                    if file_type.is_file() {
-                        if let Some(file_name) = entry.file_name().to_str() {
-                            if file_name.ends_with(".md") {
-                                let template_name = file_name.trim_end_matches(".md");
-                                if !templates.contains(&template_name.to_string()) {
-                                    templates.push(template_name.to_string());
-                                }
-                            }
-                        }
+                if let Ok(file_type) = entry.file_type()
+                    && file_type.is_file()
+                    && let Some(file_name) = entry.file_name().to_str()
+                    && file_name.ends_with(".md")
+                {
+                    let template_name = file_name.trim_end_matches(".md");
+                    if !templates.contains(&template_name.to_string()) {
+                        templates.push(template_name.to_string());
                     }
                 }
             }
@@ -127,27 +123,21 @@ impl AssetManager for FileSystemAssetManager {
 
         if let Ok(entries) = std::fs::read_dir(&dockerfiles_dir) {
             for entry in entries.flatten() {
-                if let Ok(file_type) = entry.file_type() {
-                    if file_type.is_dir() {
-                        if let Some(dir_name) = entry.file_name().to_str() {
-                            // Check if this directory contains subdirectories with Dockerfiles
-                            let layer_dir = dockerfiles_dir.join(dir_name);
-                            if let Ok(layer_entries) = std::fs::read_dir(&layer_dir) {
-                                for layer_entry in layer_entries.flatten() {
-                                    if let Ok(layer_file_type) = layer_entry.file_type() {
-                                        if layer_file_type.is_dir() {
-                                            if let Some(layer_name) =
-                                                layer_entry.file_name().to_str()
-                                            {
-                                                let dockerfile_path =
-                                                    layer_dir.join(layer_name).join("Dockerfile");
-                                                if dockerfile_path.exists() {
-                                                    dockerfiles
-                                                        .push(format!("{dir_name}/{layer_name}"));
-                                                }
-                                            }
-                                        }
-                                    }
+                if let Ok(file_type) = entry.file_type()
+                    && file_type.is_dir()
+                    && let Some(dir_name) = entry.file_name().to_str()
+                {
+                    // Check if this directory contains subdirectories with Dockerfiles
+                    let layer_dir = dockerfiles_dir.join(dir_name);
+                    if let Ok(layer_entries) = std::fs::read_dir(&layer_dir) {
+                        for layer_entry in layer_entries.flatten() {
+                            if let Ok(layer_file_type) = layer_entry.file_type()
+                                && layer_file_type.is_dir()
+                                && let Some(layer_name) = layer_entry.file_name().to_str()
+                            {
+                                let dockerfile_path = layer_dir.join(layer_name).join("Dockerfile");
+                                if dockerfile_path.exists() {
+                                    dockerfiles.push(format!("{dir_name}/{layer_name}"));
                                 }
                             }
                         }

@@ -512,10 +512,10 @@ impl GitOperations for DefaultGitOperations {
                 for entry in statuses.iter() {
                     let status = entry.status();
                     // Check if file is untracked (not in index)
-                    if status.is_wt_new() {
-                        if let Some(path) = entry.path() {
-                            untracked_files.push(PathBuf::from(path));
-                        }
+                    if status.is_wt_new()
+                        && let Some(path) = entry.path()
+                    {
+                        untracked_files.push(PathBuf::from(path));
                     }
                 }
 

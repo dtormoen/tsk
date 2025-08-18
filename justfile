@@ -8,12 +8,12 @@ test:
     cargo test -q
 
 format:
-    cargo fmt
     cargo clippy --all-targets --fix --allow-dirty -- -D warnings
+    cargo fmt
 
 precommit:
-    cargo fmt
     cargo clippy --all-targets --fix --allow-dirty -- -D warnings
+    cargo fmt
     cargo test -q
     # Check that the command starts
     cargo run -- --help > /dev/null

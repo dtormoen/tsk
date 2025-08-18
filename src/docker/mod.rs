@@ -144,14 +144,14 @@ impl DockerManager {
         }
 
         // Add instructions directory mount if provided
-        if let Some(inst_path) = instructions_file_path {
-            if let Some(parent) = inst_path.parent() {
-                // Convert to absolute path to avoid Docker volume naming issues
-                let abs_parent = parent
-                    .canonicalize()
-                    .unwrap_or_else(|_| parent.to_path_buf());
-                binds.push(format!("{}:/instructions:ro", abs_parent.to_str().unwrap()));
-            }
+        if let Some(inst_path) = instructions_file_path
+            && let Some(parent) = inst_path.parent()
+        {
+            // Convert to absolute path to avoid Docker volume naming issues
+            let abs_parent = parent
+                .canonicalize()
+                .unwrap_or_else(|_| parent.to_path_buf());
+            binds.push(format!("{}:/instructions:ro", abs_parent.to_str().unwrap()));
         }
 
         // Build environment variables
