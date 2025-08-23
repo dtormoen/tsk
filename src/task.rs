@@ -294,7 +294,19 @@ impl TaskBuilder {
 
             // Open editor with the temporary file
             self.open_editor(temp_path.to_str().ok_or("Invalid path")?)?;
-            self.check_instructions_not_empty(&temp_path, ctx).await?;
+
+            // Check if file is empty and ensure cleanup happens even on error
+            let needs_cleanup = self
+                .check_instructions_not_empty(&temp_path, ctx)
+                .await
+                .is_err();
+
+            if needs_cleanup {
+                // Clean up the temporary file and task directory before returning the error
+                let _ = ctx.file_system().remove_file(&temp_path).await;
+                let _ = ctx.file_system().remove_dir(&task_dir).await;
+                return Err("Instructions file is empty. Task creation cancelled.".into());
+            }
 
             // Move the file to the task directory
             let final_path = task_dir.join("instructions.md");
@@ -993,6 +1005,102 @@ mod tests {
             assert!(result.is_err());
             let err = result.unwrap_err().to_string();
             assert!(err.contains("No such file") || err.contains("os error 2"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_edit_mode_empty_file_cleanup() {
+        use crate::context::file_system::DefaultFileSystem;
+        use crate::test_utils::TestGitRepository;
+        use std::env;
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create a test git repository
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        let current_dir = test_repo.path().to_path_buf();
+
+        // Create XDG config
+        let config = crate::storage::XdgConfig::with_paths(
+            temp_dir.path().join("data"),
+            temp_dir.path().join("runtime"),
+            temp_dir.path().join("config"),
+        );
+        let xdg = crate::storage::XdgDirectories::new(Some(config))
+            .expect("Failed to create XDG directories");
+        xdg.ensure_directories()
+            .expect("Failed to ensure XDG directories");
+
+        // Create AppContext
+        let ctx = AppContext::builder()
+            .with_xdg_directories(Arc::new(xdg.clone()))
+            .with_git_operations(Arc::new(
+                crate::context::git_operations::DefaultGitOperations,
+            ))
+            .with_file_system(Arc::new(DefaultFileSystem))
+            .build();
+
+        // Set up a fake editor that creates an empty file
+        let fake_editor_path = temp_dir.path().join("fake_editor.sh");
+        fs::write(
+            &fake_editor_path,
+            "#!/bin/sh\n# Clear the file to simulate user deleting content\n> \"$1\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(&fake_editor_path, fs::Permissions::from_mode(0o755)).unwrap();
+        unsafe {
+            env::set_var("EDITOR", fake_editor_path.to_str().unwrap());
+        }
+
+        // Try to build task with edit mode (should fail due to empty file)
+        let result = TaskBuilder::new()
+            .repo_root(current_dir.clone())
+            .name("test-task".to_string())
+            .task_type("generic".to_string())
+            .edit(true)
+            .build(&ctx)
+            .await;
+
+        // Task creation should fail
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Instructions file is empty"));
+
+        // Verify temporary file was cleaned up
+        let temp_files: Vec<_> = fs::read_dir(&current_dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .map(|name| {
+                        name.starts_with(".tsk-edit-") && name.ends_with("-instructions.md")
+                    })
+                    .unwrap_or(false)
+            })
+            .collect();
+        assert!(
+            temp_files.is_empty(),
+            "Temporary instruction file should have been cleaned up"
+        );
+
+        // Verify task directory was cleaned up (no task directories should exist)
+        let task_dirs: Vec<_> = fs::read_dir(xdg.data_dir().join("tasks"))
+            .unwrap_or_else(|_| fs::read_dir(temp_dir.path()).unwrap()) // Directory might not exist
+            .filter_map(|entry| entry.ok())
+            .collect();
+        assert!(
+            task_dirs.is_empty(),
+            "Task directory should have been cleaned up when task creation was cancelled"
+        );
+
+        // Clean up environment variable
+        unsafe {
+            env::remove_var("EDITOR");
         }
     }
 
