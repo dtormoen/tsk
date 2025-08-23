@@ -6,11 +6,13 @@ use crate::docker::image_manager::DockerImageManager;
 use crate::docker::template_manager::DockerTemplateManager;
 use crate::git::RepoManager;
 use crate::repo_utils::find_repository_root;
-use crate::storage::XdgDirectories;
 use crate::task::{Task, TaskBuilder, TaskStatus};
 use crate::task_runner::{TaskExecutionError, TaskExecutionResult, TaskRunner};
 use crate::task_storage::{TaskStorage, get_task_storage};
 use std::sync::Arc;
+
+#[cfg(test)]
+use crate::storage::XdgDirectories;
 
 /// Manages task execution and storage operations.
 ///
@@ -20,7 +22,6 @@ pub struct TaskManager {
     task_runner: TaskRunner,
     task_storage: Box<dyn TaskStorage>,
     file_system: Arc<dyn FileSystemOperations>,
-    xdg_directories: Arc<XdgDirectories>,
 }
 
 impl TaskManager {
@@ -75,7 +76,6 @@ impl TaskManager {
             task_runner,
             task_storage: get_task_storage(ctx.xdg_directories(), ctx.file_system()),
             file_system: ctx.file_system(),
-            xdg_directories: ctx.xdg_directories(),
         })
     }
 
@@ -162,13 +162,14 @@ impl TaskManager {
             .await
             .map_err(|e| format!("Error deleting task from storage: {e}"))?;
 
-        // Delete the task directory
+        // Delete the task directory using the copied_repo_path
         let task = task.unwrap();
-        let repo_hash = crate::storage::get_repo_hash(&task.repo_root);
-        let task_dir = self.xdg_directories.task_dir(task_id, &repo_hash);
-        if self.file_system.exists(&task_dir).await.unwrap_or(false) {
+        // The task directory is the parent of the copied repo path
+        if let Some(task_dir) = task.copied_repo_path.parent()
+            && self.file_system.exists(task_dir).await.unwrap_or(false)
+        {
             self.file_system
-                .remove_dir(&task_dir)
+                .remove_dir(task_dir)
                 .await
                 .map_err(|e| format!("Error deleting task directory: {e}"))?;
         }
@@ -194,12 +195,12 @@ impl TaskManager {
             .filter(|t| t.status == TaskStatus::Complete)
             .collect();
 
-        // Delete completed tasks directories
+        // Delete completed tasks directories using copied_repo_path
         for task in &completed_tasks {
-            let repo_hash = crate::storage::get_repo_hash(&task.repo_root);
-            let task_dir = self.xdg_directories.task_dir(&task.id, &repo_hash);
-            if self.file_system.exists(&task_dir).await.unwrap_or(false)
-                && let Err(e) = self.file_system.remove_dir(&task_dir).await
+            // The task directory is the parent of the copied repo path
+            if let Some(task_dir) = task.copied_repo_path.parent()
+                && self.file_system.exists(task_dir).await.unwrap_or(false)
+                && let Err(e) = self.file_system.remove_dir(task_dir).await
             {
                 eprintln!(
                     "Warning: Failed to delete task directory {}: {}",
@@ -341,6 +342,7 @@ mod tests {
         let task_id = "test-task-123".to_string();
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
         let task_dir_path = xdg.task_dir(&task_id, &repo_hash);
+        let copied_repo_path = task_dir_path.join("repo");
 
         // Create the task directory and file
         std::fs::create_dir_all(&task_dir_path).unwrap();
@@ -353,7 +355,7 @@ mod tests {
             task_id,
             repo_root.to_string_lossy(),
             task_id,
-            task_dir_path.to_string_lossy()
+            copied_repo_path.to_string_lossy()
         );
         std::fs::write(&tasks_json_path, task_json).unwrap();
 
@@ -390,39 +392,6 @@ mod tests {
         let queued_task_id = "queued-task-123".to_string();
         let completed_task_id = "completed-task-456".to_string();
 
-        let _queued_task = Task::new(
-            queued_task_id.clone(),
-            repo_root.clone(),
-            "queued-task".to_string(),
-            "feat".to_string(),
-            "instructions.md".to_string(),
-            "claude-code".to_string(),
-            30,
-            format!("tsk/{queued_task_id}"),
-            "abc123".to_string(),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            repo_root.clone(),
-        );
-
-        let mut completed_task = Task::new(
-            completed_task_id.clone(),
-            repo_root.clone(),
-            "completed-task".to_string(),
-            "fix".to_string(),
-            "instructions.md".to_string(),
-            "claude-code".to_string(),
-            30,
-            format!("tsk/{completed_task_id}"),
-            "abc123".to_string(),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            repo_root.clone(),
-        );
-        completed_task.status = TaskStatus::Complete;
-
         // Create task directories and files
         let queued_dir_path = setup_task_directory(
             &xdg,
@@ -441,17 +410,50 @@ mod tests {
         .await
         .unwrap();
 
+        let _queued_task = Task::new(
+            queued_task_id.clone(),
+            repo_root.clone(),
+            "queued-task".to_string(),
+            "feat".to_string(),
+            "instructions.md".to_string(),
+            "claude-code".to_string(),
+            30,
+            format!("tsk/{queued_task_id}"),
+            "abc123".to_string(),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            queued_dir_path.join("repo"),
+        );
+
+        let mut completed_task = Task::new(
+            completed_task_id.clone(),
+            repo_root.clone(),
+            "completed-task".to_string(),
+            "fix".to_string(),
+            "instructions.md".to_string(),
+            "claude-code".to_string(),
+            30,
+            format!("tsk/{completed_task_id}"),
+            "abc123".to_string(),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            completed_dir_path.join("repo"),
+        );
+        completed_task.status = TaskStatus::Complete;
+
         // Create initial tasks.json with both tasks
         let tasks_json = format!(
             r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","tech_stack":"default","project":"default","copied_repo_path":"{}"}},{{"id":"{}","repo_root":"{}","name":"completed-task","task_type":"fix","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"COMPLETE","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":"2024-01-01T01:00:00Z","branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","tech_stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
             queued_task_id,
             repo_root.to_string_lossy(),
             queued_task_id,
-            queued_dir_path.to_string_lossy(),
+            queued_dir_path.join("repo").to_string_lossy(),
             completed_task_id,
             repo_root.to_string_lossy(),
             completed_task_id,
-            completed_dir_path.to_string_lossy()
+            completed_dir_path.join("repo").to_string_lossy()
         );
 
         let tasks_json_path = xdg.tasks_file();
@@ -509,7 +511,7 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            task_dir_path.to_path_buf(),
+            task_dir_path.join("repo"),
         );
         completed_task.status = TaskStatus::Complete;
 
@@ -527,7 +529,7 @@ mod tests {
             repo_root.to_string_lossy(),
             instructions_path.to_string_lossy(),
             task_id,
-            task_dir_path.to_string_lossy()
+            task_dir_path.join("repo").to_string_lossy()
         );
 
         let tasks_json_path = xdg.tasks_file();
@@ -605,6 +607,8 @@ mod tests {
 
         // Create a queued task (should not be retryable)
         let task_id = "efgh5678".to_string();
+        let repo_hash = crate::storage::get_repo_hash(&repo_root);
+        let task_dir = xdg.task_dir(&task_id, &repo_hash);
 
         // Create tasks.json with the queued task
         let tasks_json = format!(
@@ -612,7 +616,7 @@ mod tests {
             task_id,
             repo_root.to_string_lossy(),
             task_id,
-            repo_root.to_string_lossy()
+            task_dir.join("repo").to_string_lossy()
         );
 
         let tasks_json_path = xdg.tasks_file();
@@ -642,6 +646,12 @@ mod tests {
 
         // Create a task with a specific ID
         let task_id = "ijkl9012".to_string();
+
+        // Set up task directory with instructions
+        let task_dir_path = setup_task_directory(&xdg, &task_id, &repo_hash, "Test instructions")
+            .await
+            .unwrap();
+
         let mut completed_task = Task::new(
             task_id.clone(),
             repo_root.clone(),
@@ -655,14 +665,9 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            repo_root.clone(),
+            task_dir_path.join("repo"),
         );
         completed_task.status = TaskStatus::Complete;
-
-        // Set up task directory with instructions
-        let task_dir_path = setup_task_directory(&xdg, &task_id, &repo_hash, "Test instructions")
-            .await
-            .unwrap();
 
         // Create tasks.json with the completed task
         let tasks_json = format!(
@@ -670,7 +675,7 @@ mod tests {
             task_id,
             repo_root.to_string_lossy(),
             task_id,
-            task_dir_path.to_string_lossy()
+            task_dir_path.join("repo").to_string_lossy()
         );
 
         let tasks_json_path = xdg.tasks_file();
