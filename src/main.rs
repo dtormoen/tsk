@@ -1,3 +1,4 @@
+#![deny(clippy::disallowed_methods)]
 use clap::{Args, Parser, Subcommand};
 
 mod agent;

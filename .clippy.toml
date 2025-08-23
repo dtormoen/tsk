@@ -1,0 +1,4 @@
+disallowed-methods = [
+    { path = "std::env::set_var", reason = "Use of set_var is not allowed. Use AppContext config instead of environment variables." },
+    { path = "std::env::remove_var", reason = "Use of remove_var is not allowed. Use AppContext config instead of environment variables." },
+]

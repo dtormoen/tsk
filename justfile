@@ -8,10 +8,10 @@ test:
     cargo test -q
 
 format:
-    cargo clippy --all-targets --fix --allow-dirty -- -D warnings
     cargo fmt
 
 lint:
+    cargo clippy --all-targets -- -D warnings
     cargo clippy -- -D warnings
 
 precommit: format lint test
