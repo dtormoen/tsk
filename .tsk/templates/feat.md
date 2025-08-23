@@ -7,6 +7,7 @@ You need to implement a new feature or change. The description of the feature is
 - Write documentation following rustdoc best practices.
 - Avoid writing unit tests with side effects.
 - Avoid mocks unless they are needed to avoid unit tests with side effects.
+- Improving existing tests is better than adding new tests
 
 ## Final Steps
 After you implement the change, please do the following steps:

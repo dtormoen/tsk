@@ -9,6 +9,7 @@ While working on the change, keep in mind the following:
 - Ruthlessly simplify. Maintain the core user experience, but don't shy from changes that simplify or improve.
 - Add documentation for functions, classes, and modules following best practices where it is missing.
 - Look for and fix bad or difficult to maintain coding patterns.
+- Improving existing tests is better than adding new tests
 
 ## Final Steps
 After you implement the change, please do the following steps:
