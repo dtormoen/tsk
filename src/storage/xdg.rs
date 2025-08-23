@@ -71,6 +71,7 @@ impl XdgDirectories {
     }
 
     /// Get the runtime directory path (for sockets, pid files)
+    #[cfg(test)]
     pub fn runtime_dir(&self) -> &Path {
         &self.runtime_dir
     }
