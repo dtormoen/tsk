@@ -109,19 +109,12 @@ impl ServerLifecycle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+    use crate::context::AppContext;
 
     #[test]
     fn test_server_lifecycle() {
-        let temp_dir = TempDir::new().unwrap();
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-
-        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
-        xdg.ensure_directories().unwrap();
+        let app_context = AppContext::builder().build();
+        let xdg = app_context.xdg_directories();
 
         let lifecycle = ServerLifecycle::new(xdg);
 

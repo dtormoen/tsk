@@ -537,26 +537,22 @@ async fn get_git_config(key: &str) -> Result<String> {
 mod tests {
     use super::*;
     use crate::assets::embedded::EmbeddedAssetManager;
+    use crate::context::AppContext;
     use crate::test_utils::TrackedDockerClient;
     use std::sync::Arc;
     use tempfile::TempDir;
 
     fn create_test_manager() -> DockerImageManager {
         let docker_client = Arc::new(TrackedDockerClient::default());
-        let temp_dir = TempDir::new().unwrap();
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().to_path_buf(),
-            temp_dir.path().to_path_buf(),
-            temp_dir.path().to_path_buf(),
-        );
-        let xdg_dirs = crate::storage::xdg::XdgDirectories::new(Some(config)).unwrap();
+        let ctx = AppContext::builder().build();
+        let xdg_dirs = ctx.xdg_directories();
 
         let template_manager =
-            DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), Arc::new(xdg_dirs.clone()));
+            DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), xdg_dirs.clone());
 
         let composer = DockerComposer::new(DockerTemplateManager::new(
             Arc::new(EmbeddedAssetManager),
-            Arc::new(xdg_dirs),
+            xdg_dirs,
         ));
 
         DockerImageManager::new(docker_client, template_manager, composer)
@@ -653,19 +649,14 @@ mod tests {
         };
 
         let docker_client = Arc::new(docker_client);
-        let temp_dir = TempDir::new().unwrap();
-        let config = crate::storage::xdg::XdgConfig::with_paths(
-            temp_dir.path().to_path_buf(),
-            temp_dir.path().to_path_buf(),
-            temp_dir.path().to_path_buf(),
-        );
-        let xdg_dirs = crate::storage::xdg::XdgDirectories::new(Some(config)).unwrap();
+        let ctx = AppContext::builder().build();
+        let xdg_dirs = ctx.xdg_directories();
 
         let template_manager =
-            DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), Arc::new(xdg_dirs.clone()));
+            DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), xdg_dirs.clone());
         let composer = DockerComposer::new(DockerTemplateManager::new(
             Arc::new(EmbeddedAssetManager),
-            Arc::new(xdg_dirs),
+            xdg_dirs,
         ));
 
         let manager = DockerImageManager::new(docker_client.clone(), template_manager, composer);

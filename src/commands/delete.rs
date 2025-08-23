@@ -54,25 +54,16 @@ impl Command for DeleteCommand {
 mod tests {
     use super::*;
     use crate::context::file_system::DefaultFileSystem;
-    use crate::storage::{XdgConfig, XdgDirectories};
     use crate::task_storage::get_task_storage;
     use crate::test_utils::TestGitRepository;
     use std::sync::Arc;
-    use tempfile::TempDir;
 
     async fn setup_test_environment_with_tasks(
         task_ids: Vec<&str>,
-    ) -> anyhow::Result<(AppContext, TestGitRepository, Arc<XdgDirectories>, TempDir)> {
-        // Create temporary directory for XDG
-        let temp_dir = TempDir::new()?;
-
-        // Create XdgDirectories instance
-        let config = XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-        let xdg = Arc::new(XdgDirectories::new(Some(config))?);
+    ) -> anyhow::Result<(AppContext, TestGitRepository)> {
+        // Create AppContext with test defaults
+        let ctx = AppContext::builder().build();
+        let xdg = ctx.xdg_directories();
         xdg.ensure_directories()?;
 
         // Create a test git repository
@@ -112,20 +103,16 @@ mod tests {
         }
         std::fs::write(&tasks_file_path, &tasks_json_content)?;
 
-        // Create AppContext
-        let ctx = AppContext::builder()
-            .with_xdg_directories(xdg.clone())
-            .build();
-
-        Ok((ctx, test_repo, xdg, temp_dir))
+        Ok((ctx, test_repo))
     }
 
     #[tokio::test]
     async fn test_delete_single_task() {
         let task_id = "test-task-1";
-        let (ctx, _test_repo, xdg, _temp_dir) = setup_test_environment_with_tasks(vec![task_id])
+        let (ctx, _test_repo) = setup_test_environment_with_tasks(vec![task_id])
             .await
             .unwrap();
+        let xdg = ctx.xdg_directories();
 
         let cmd = DeleteCommand {
             task_ids: vec![task_id.to_string()],
@@ -141,7 +128,7 @@ mod tests {
 
         // Verify task is removed from storage
         let file_system = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(xdg.clone(), file_system);
+        let storage = get_task_storage(xdg, file_system);
         let task = storage.get_task(task_id).await.unwrap();
         assert!(task.is_none());
     }
@@ -149,9 +136,10 @@ mod tests {
     #[tokio::test]
     async fn test_delete_multiple_tasks() {
         let task_ids = vec!["task-1", "task-2", "task-3"];
-        let (ctx, _test_repo, xdg, _temp_dir) = setup_test_environment_with_tasks(task_ids.clone())
+        let (ctx, _test_repo) = setup_test_environment_with_tasks(task_ids.clone())
             .await
             .unwrap();
+        let xdg = ctx.xdg_directories();
 
         let cmd = DeleteCommand {
             task_ids: task_ids.iter().map(|s| s.to_string()).collect(),
@@ -169,7 +157,7 @@ mod tests {
 
         // Verify all tasks are removed from storage
         let file_system = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(xdg.clone(), file_system);
+        let storage = get_task_storage(xdg, file_system);
         for task_id in &task_ids {
             let task = storage.get_task(task_id).await.unwrap();
             assert!(task.is_none());
@@ -179,10 +167,10 @@ mod tests {
     #[tokio::test]
     async fn test_delete_with_some_failures() {
         let existing_tasks = vec!["task-1", "task-3"];
-        let (ctx, _test_repo, xdg, _temp_dir) =
-            setup_test_environment_with_tasks(existing_tasks.clone())
-                .await
-                .unwrap();
+        let (ctx, _test_repo) = setup_test_environment_with_tasks(existing_tasks.clone())
+            .await
+            .unwrap();
+        let xdg = ctx.xdg_directories();
 
         // Try to delete both existing and non-existing tasks
         let cmd = DeleteCommand {
@@ -212,8 +200,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_delete_empty_task_ids() {
-        let (ctx, _test_repo, _xdg, _temp_dir) =
-            setup_test_environment_with_tasks(vec![]).await.unwrap();
+        let (ctx, _test_repo) = setup_test_environment_with_tasks(vec![]).await.unwrap();
 
         let cmd = DeleteCommand { task_ids: vec![] };
 

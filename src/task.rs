@@ -1052,31 +1052,13 @@ mod tests {
     async fn test_task_builder_handles_source_commit_error() {
         use crate::test_utils::TestGitRepository;
 
-        let temp_dir = TempDir::new().unwrap();
-
         // Create a non-git directory
         let test_repo = TestGitRepository::new().unwrap();
         test_repo.setup_non_git_directory().unwrap();
         let current_dir = test_repo.path().to_path_buf();
 
-        // Create XDG config
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-        let xdg = crate::storage::XdgDirectories::new(Some(config))
-            .expect("Failed to create XDG directories");
-        xdg.ensure_directories()
-            .expect("Failed to ensure XDG directories");
-
-        // Create AppContext
-        let ctx = AppContext::builder()
-            .with_xdg_directories(Arc::new(xdg))
-            .with_git_operations(Arc::new(
-                crate::context::git_operations::DefaultGitOperations,
-            ))
-            .build();
+        // Create AppContext with test defaults
+        let ctx = AppContext::builder().build();
 
         // Build should fail because it's not a git repo
         let result = TaskBuilder::new()
@@ -1221,8 +1203,6 @@ mod tests {
     async fn test_task_builder_copies_repository() {
         use crate::test_utils::TestGitRepository;
 
-        let temp_dir = TempDir::new().unwrap();
-
         // Create a test git repository with files
         let test_repo = TestGitRepository::new().unwrap();
         test_repo.init_with_commit().unwrap();
@@ -1239,24 +1219,9 @@ mod tests {
 
         let current_dir = test_repo.path().to_path_buf();
 
-        // Create XDG config
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-        let xdg = crate::storage::XdgDirectories::new(Some(config))
-            .expect("Failed to create XDG directories");
-        xdg.ensure_directories()
-            .expect("Failed to ensure XDG directories");
-
-        // Create AppContext
-        let ctx = AppContext::builder()
-            .with_xdg_directories(Arc::new(xdg.clone()))
-            .with_git_operations(Arc::new(
-                crate::context::git_operations::DefaultGitOperations,
-            ))
-            .build();
+        // Create AppContext with test defaults
+        let ctx = AppContext::builder().build();
+        let xdg = ctx.xdg_directories();
 
         // Build task which should copy the repository
         let task = TaskBuilder::new()

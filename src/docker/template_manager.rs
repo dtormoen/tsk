@@ -338,19 +338,15 @@ mod tests {
     use super::*;
     use crate::assets::embedded::EmbeddedAssetManager;
     use crate::assets::layered::LayeredAssetManager;
+    use crate::context::AppContext;
     use std::fs;
     use tempfile::TempDir;
 
     fn create_test_manager() -> DockerTemplateManager {
-        let temp_dir = TempDir::new().unwrap();
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().to_path_buf(),
-            temp_dir.path().to_path_buf(),
-            temp_dir.path().to_path_buf(),
-        );
-        let xdg_dirs = XdgDirectories::new(Some(config)).unwrap();
+        let ctx = AppContext::builder().build();
+        let xdg_dirs = ctx.xdg_directories();
 
-        DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), Arc::new(xdg_dirs))
+        DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), xdg_dirs)
     }
 
     #[test]

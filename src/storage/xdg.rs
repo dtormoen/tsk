@@ -186,7 +186,7 @@ impl XdgDirectories {
     }
 
     /// Gets the Claude configuration directory path
-    pub fn claude_config_dir(&self) -> &PathBuf {
+    pub fn claude_config_dir(&self) -> &Path {
         &self.claude_config_dir
     }
 

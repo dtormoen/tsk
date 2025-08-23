@@ -177,21 +177,15 @@ pub struct ComposedDockerfile {
 mod tests {
     use super::*;
     use crate::assets::embedded::EmbeddedAssetManager;
-    use crate::storage::xdg::XdgDirectories;
+    use crate::context::AppContext;
     use std::sync::Arc;
     use tempfile::TempDir;
 
     fn create_test_composer() -> DockerComposer {
-        let temp_dir = TempDir::new().unwrap();
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().to_path_buf(),
-            temp_dir.path().to_path_buf(),
-            temp_dir.path().to_path_buf(),
-        );
-        let xdg_dirs = XdgDirectories::new(Some(config)).unwrap();
+        let ctx = AppContext::builder().build();
+        let xdg_dirs = ctx.xdg_directories();
 
-        let template_manager =
-            DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), Arc::new(xdg_dirs));
+        let template_manager = DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), xdg_dirs);
 
         DockerComposer::new(template_manager)
     }

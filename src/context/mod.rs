@@ -168,11 +168,12 @@ impl AppContextBuilder {
 
             let xdg_directories = self.xdg_directories.unwrap_or_else(|| {
                 // Create test-safe XDG directories in temp directory
-                let xdg_config = crate::storage::XdgConfig::with_paths(
-                    temp_path.join("data").to_path_buf(),
-                    temp_path.join("runtime").to_path_buf(),
-                    temp_path.join("config").to_path_buf(),
-                );
+                let xdg_config = crate::storage::XdgConfig::builder()
+                    .with_data_dir(temp_path.join("data").to_path_buf())
+                    .with_runtime_dir(temp_path.join("runtime").to_path_buf())
+                    .with_config_dir(temp_path.join("config").to_path_buf())
+                    .with_claude_config_dir(temp_path.join("claude").to_path_buf())
+                    .build();
                 let xdg = XdgDirectories::new(Some(xdg_config))
                     .expect("Failed to initialize test XDG directories");
                 xdg.ensure_directories()

@@ -262,31 +262,18 @@ impl TaskExecutor {
 mod tests {
     use super::*;
     use crate::context::file_system::DefaultFileSystem;
-    use crate::storage::XdgDirectories;
     use crate::task::{Task, TaskStatus};
     use crate::task_storage::get_task_storage;
     use crate::test_utils::git_test_utils::TestGitRepository;
-    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_executor_lifecycle() {
-        let temp_dir = TempDir::new().unwrap();
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-
-        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
+        let app_context = AppContext::builder().build();
+        let xdg = app_context.xdg_directories();
         xdg.ensure_directories().unwrap();
 
         let fs = Arc::new(DefaultFileSystem);
-        let storage = Arc::new(Mutex::new(get_task_storage(xdg.clone(), fs.clone())));
-
-        let app_context = crate::context::AppContext::builder()
-            .with_file_system(fs)
-            .with_xdg_directories(xdg)
-            .build();
+        let storage = Arc::new(Mutex::new(get_task_storage(xdg, fs)));
 
         let executor = TaskExecutor::new(Arc::new(app_context), storage);
 
@@ -316,14 +303,8 @@ mod tests {
     #[tokio::test]
     async fn test_executor_completes_task_without_deadlock() {
         // This test verifies that the executor doesn't deadlock after completing a task
-        let temp_dir = TempDir::new().unwrap();
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-
-        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
+        let app_context = AppContext::builder().build();
+        let xdg = app_context.xdg_directories();
         xdg.ensure_directories().unwrap();
 
         // Create a test git repository for the task
@@ -349,20 +330,14 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            temp_dir.path().join("task-copy"),
+            xdg.data_dir().join("task-copy"),
             false,
         );
 
         // Set up storage with the queued task
         let fs = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(xdg.clone(), fs.clone());
+        let storage = get_task_storage(xdg.clone(), fs);
         storage.add_task(task.clone()).await.unwrap();
-
-        // Create app context with a mock docker client that always succeeds
-        let app_context = crate::context::AppContext::builder()
-            .with_file_system(fs)
-            .with_xdg_directories(xdg)
-            .build();
 
         let storage = Arc::new(Mutex::new(storage));
         let executor = TaskExecutor::new(Arc::new(app_context), storage.clone());
@@ -405,7 +380,7 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            temp_dir.path().join("task-copy-2"),
+            xdg.data_dir().join("task-copy-2"),
             false,
         );
 
@@ -439,14 +414,8 @@ mod tests {
     #[tokio::test]
     async fn test_parallel_execution() {
         // Test that multiple tasks can run in parallel
-        let temp_dir = TempDir::new().unwrap();
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-
-        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
+        let app_context = AppContext::builder().build();
+        let xdg = app_context.xdg_directories();
         xdg.ensure_directories().unwrap();
 
         // Create a test git repository
@@ -474,7 +443,7 @@ mod tests {
                 "default".to_string(),
                 "default".to_string(),
                 chrono::Local::now(),
-                temp_dir.path().join(format!("task-copy-{i}")),
+                xdg.data_dir().join(format!("task-copy-{i}")),
                 false,
             );
             tasks.push(task);
@@ -482,16 +451,10 @@ mod tests {
 
         // Set up storage with queued tasks
         let fs = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(xdg.clone(), fs.clone());
+        let storage = get_task_storage(xdg, fs);
         for task in &tasks {
             storage.add_task(task.clone()).await.unwrap();
         }
-
-        // Create app context
-        let app_context = crate::context::AppContext::builder()
-            .with_file_system(fs)
-            .with_xdg_directories(xdg)
-            .build();
 
         let storage = Arc::new(Mutex::new(storage));
         // Create executor with 2 workers
@@ -533,14 +496,8 @@ mod tests {
     #[tokio::test]
     async fn test_single_worker_sequential_execution() {
         // Test that with a single worker, only one task runs at a time
-        let temp_dir = TempDir::new().unwrap();
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-
-        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
+        let app_context = AppContext::builder().build();
+        let xdg = app_context.xdg_directories();
         xdg.ensure_directories().unwrap();
 
         // Create a test git repository
@@ -568,7 +525,7 @@ mod tests {
                 "default".to_string(),
                 "default".to_string(),
                 chrono::Local::now(),
-                temp_dir.path().join(format!("task-copy-{i}")),
+                xdg.data_dir().join(format!("task-copy-{i}")),
                 false,
             );
             tasks.push(task);
@@ -576,16 +533,10 @@ mod tests {
 
         // Set up storage with queued tasks
         let fs = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(xdg.clone(), fs.clone());
+        let storage = get_task_storage(xdg, fs);
         for task in &tasks {
             storage.add_task(task.clone()).await.unwrap();
         }
-
-        // Create app context
-        let app_context = crate::context::AppContext::builder()
-            .with_file_system(fs)
-            .with_xdg_directories(xdg)
-            .build();
 
         let storage = Arc::new(Mutex::new(storage));
         // Create executor with 1 worker (default)
@@ -646,25 +597,12 @@ mod tests {
     #[tokio::test]
     async fn test_warmup_failure_wait_behavior() {
         // Test that the executor properly handles warmup failure wait periods
-        let temp_dir = TempDir::new().unwrap();
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-
-        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
+        let app_context = Arc::new(AppContext::builder().build());
+        let xdg = app_context.xdg_directories();
         xdg.ensure_directories().unwrap();
 
         let fs = Arc::new(DefaultFileSystem);
-        let storage = Arc::new(Mutex::new(get_task_storage(xdg.clone(), fs.clone())));
-
-        let app_context = Arc::new(
-            crate::context::AppContext::builder()
-                .with_file_system(fs)
-                .with_xdg_directories(xdg)
-                .build(),
-        );
+        let storage = Arc::new(Mutex::new(get_task_storage(xdg, fs)));
 
         // Test 1: Verify wait period can be set and checked
         let executor = TaskExecutor::new(app_context.clone(), storage.clone());
@@ -715,14 +653,8 @@ mod tests {
     #[tokio::test]
     async fn test_task_completion_status() {
         // Test that tasks are properly marked as COMPLETED
-        let temp_dir = TempDir::new().unwrap();
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-
-        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
+        let app_context = AppContext::builder().build();
+        let xdg = app_context.xdg_directories();
         xdg.ensure_directories().unwrap();
 
         // Create a test git repository
@@ -748,20 +680,14 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            temp_dir.path().join("task-copy"),
+            xdg.data_dir().join("task-copy"),
             false,
         );
 
         // Set up storage with the task
         let fs = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(xdg.clone(), fs.clone());
+        let storage = get_task_storage(xdg, fs);
         storage.add_task(task.clone()).await.unwrap();
-
-        // Create app context
-        let app_context = crate::context::AppContext::builder()
-            .with_file_system(fs)
-            .with_xdg_directories(xdg)
-            .build();
 
         let storage = Arc::new(Mutex::new(storage));
         let executor = TaskExecutor::new(Arc::new(app_context), storage.clone());

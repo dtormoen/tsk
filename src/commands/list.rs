@@ -111,26 +111,15 @@ impl Command for ListCommand {
 mod tests {
     use super::*;
     use crate::context::file_system::DefaultFileSystem;
-    use crate::storage::{XdgConfig, XdgDirectories};
     use crate::task_storage::get_task_storage;
     use crate::test_utils::TestGitRepository;
     use std::sync::Arc;
-    use tempfile::TempDir;
 
     /// Helper to create test environment with tasks
-    async fn setup_test_environment_with_tasks(
-        task_count: usize,
-    ) -> anyhow::Result<(AppContext, Arc<XdgDirectories>, TempDir)> {
-        // Create temporary directory for XDG
-        let temp_dir = TempDir::new()?;
-
-        // Create XdgDirectories instance
-        let config = XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-        let xdg = Arc::new(XdgDirectories::new(Some(config))?);
+    async fn setup_test_environment_with_tasks(task_count: usize) -> anyhow::Result<AppContext> {
+        // Create AppContext with test defaults
+        let ctx = AppContext::builder().build();
+        let xdg = ctx.xdg_directories();
         xdg.ensure_directories()?;
 
         // Create test repository for task data (but not for the command execution context)
@@ -178,17 +167,12 @@ mod tests {
         }
         std::fs::write(&tasks_file_path, &tasks_json_content)?;
 
-        // Create AppContext - automatically gets NoOpTskClient
-        let ctx = AppContext::builder()
-            .with_xdg_directories(xdg.clone())
-            .build();
-
-        Ok((ctx, xdg, temp_dir))
+        Ok(ctx)
     }
 
     #[tokio::test]
     async fn test_list_command_no_tasks() {
-        let (ctx, _xdg, _temp_dir) = setup_test_environment_with_tasks(0).await.unwrap();
+        let ctx = setup_test_environment_with_tasks(0).await.unwrap();
 
         let cmd = ListCommand;
         let result = cmd.execute(&ctx).await;
@@ -197,7 +181,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_command_with_tasks() {
-        let (ctx, _xdg, _temp_dir) = setup_test_environment_with_tasks(4).await.unwrap();
+        let ctx = setup_test_environment_with_tasks(4).await.unwrap();
 
         let cmd = ListCommand;
         let result = cmd.execute(&ctx).await;
@@ -206,11 +190,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_command_verifies_task_counts() {
-        let (ctx, xdg, _temp_dir) = setup_test_environment_with_tasks(8).await.unwrap();
+        let ctx = setup_test_environment_with_tasks(8).await.unwrap();
+        let xdg = ctx.xdg_directories();
 
         // Verify the tasks were created correctly
         let file_system = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(xdg.clone(), file_system);
+        let storage = get_task_storage(xdg, file_system);
         let tasks = storage.list_tasks().await.unwrap();
 
         assert_eq!(tasks.len(), 8);

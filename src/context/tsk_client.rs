@@ -173,21 +173,15 @@ impl TskClient for DefaultTskClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+    use crate::context::AppContext;
 
     #[tokio::test]
     async fn test_client_creation() {
-        let temp_dir = TempDir::new().unwrap();
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-
-        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
+        let ctx = AppContext::builder().build();
+        let xdg = ctx.xdg_directories();
         xdg.ensure_directories().unwrap();
 
-        let client = DefaultTskClient::new(xdg.clone());
+        let client = DefaultTskClient::new(xdg);
 
         // Server should not be available without starting it
         assert!(!client.is_server_available().await);
@@ -199,17 +193,11 @@ mod tests {
         // empty responses by returning an error instead of causing a JSON parse error.
         // The actual EOF scenario is tested implicitly when the server closes
         // connections without sending data, which was the original bug.
-        let temp_dir = TempDir::new().unwrap();
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-
-        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
+        let ctx = AppContext::builder().build();
+        let xdg = ctx.xdg_directories();
         xdg.ensure_directories().unwrap();
 
-        let client = DefaultTskClient::new(xdg.clone());
+        let client = DefaultTskClient::new(xdg);
 
         // Attempting to list tasks when server is not running should fail gracefully
         let result = client.list_tasks().await;

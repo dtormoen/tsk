@@ -291,25 +291,14 @@ impl RepoManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::AppContext;
     use crate::context::git_operations::DefaultGitOperations;
     use crate::test_utils::TestGitRepository;
-    use tempfile::TempDir;
-
-    fn create_test_xdg_directories(temp_dir: &TempDir) -> Arc<XdgDirectories> {
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-        let xdg = XdgDirectories::new(Some(config)).unwrap();
-        xdg.ensure_directories().unwrap();
-        Arc::new(xdg)
-    }
 
     #[tokio::test]
     async fn test_copy_repo_not_in_git_repo() {
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let xdg_directories = create_test_xdg_directories(&temp_dir);
+        let app_context = AppContext::builder().build();
+        let xdg_directories = app_context.xdg_directories();
 
         // Create a directory that is not a git repo
         let non_git_repo = TestGitRepository::new().unwrap();
@@ -335,15 +324,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_changes_no_changes() {
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-
         // Create a git repository with an initial commit
         let test_repo = TestGitRepository::new().unwrap();
         test_repo.init_with_commit().unwrap();
 
+        let ctx = AppContext::builder().build();
+        let xdg_directories = ctx.xdg_directories();
         let git_ops = Arc::new(DefaultGitOperations);
         let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
-        let xdg_directories = create_test_xdg_directories(&temp_dir);
         let git_sync = Arc::new(GitSyncManager::new());
         let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
 
@@ -357,8 +345,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_changes_with_changes() {
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-
         // Create a git repository with uncommitted changes
         let test_repo = TestGitRepository::new().unwrap();
         test_repo.init_with_commit().unwrap();
@@ -368,9 +354,10 @@ mod tests {
             .create_file("README.md", "# Test Repository\n\nModified content\n")
             .unwrap();
 
+        let ctx = AppContext::builder().build();
+        let xdg_directories = ctx.xdg_directories();
         let git_ops = Arc::new(DefaultGitOperations);
         let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
-        let xdg_directories = create_test_xdg_directories(&temp_dir);
         let git_sync = Arc::new(GitSyncManager::new());
         let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
 
@@ -383,8 +370,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_changes_no_commits() {
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let xdg_directories = create_test_xdg_directories(&temp_dir);
+        let app_context = AppContext::builder().build();
+        let xdg_directories = app_context.xdg_directories();
 
         // Create main repository
         let main_repo = TestGitRepository::new().unwrap();
@@ -459,8 +446,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_changes_with_commits() {
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let xdg_directories = create_test_xdg_directories(&temp_dir);
+        let app_context = AppContext::builder().build();
+        let xdg_directories = app_context.xdg_directories();
 
         // Create main repository
         let main_repo = TestGitRepository::new().unwrap();
@@ -540,8 +527,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_copy_repo_with_source_commit() {
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let xdg_directories = create_test_xdg_directories(&temp_dir);
+        let app_context = AppContext::builder().build();
+        let xdg_directories = app_context.xdg_directories();
 
         // Create a repository with multiple commits
         let test_repo = TestGitRepository::new().unwrap();
@@ -591,8 +578,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_copy_repo_without_source_commit() {
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let xdg_directories = create_test_xdg_directories(&temp_dir);
+        let app_context = AppContext::builder().build();
+        let xdg_directories = app_context.xdg_directories();
 
         // Create a repository with commits
         let test_repo = TestGitRepository::new().unwrap();
@@ -633,8 +620,8 @@ mod tests {
     async fn test_copy_repo_separates_tracked_and_untracked_files() {
         use crate::test_utils::create_files_with_gitignore;
 
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let xdg_directories = create_test_xdg_directories(&temp_dir);
+        let app_context = AppContext::builder().build();
+        let xdg_directories = app_context.xdg_directories();
 
         // Create a repository with mixed file types
         let test_repo = TestGitRepository::new().unwrap();
@@ -717,8 +704,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_copy_repo_includes_tsk_directory() {
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let xdg_directories = create_test_xdg_directories(&temp_dir);
+        let app_context = AppContext::builder().build();
+        let xdg_directories = app_context.xdg_directories();
 
         // Create a repository with .tsk directory
         let test_repo = TestGitRepository::new().unwrap();

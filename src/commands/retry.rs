@@ -55,26 +55,17 @@ impl Command for RetryCommand {
 mod tests {
     use super::*;
     use crate::context::file_system::DefaultFileSystem;
-    use crate::storage::{XdgConfig, XdgDirectories};
     use crate::task::TaskStatus;
     use crate::task_storage::get_task_storage;
     use crate::test_utils::TestGitRepository;
     use std::sync::Arc;
-    use tempfile::TempDir;
 
     async fn setup_test_environment_with_completed_tasks(
         task_ids: Vec<&str>,
-    ) -> anyhow::Result<(AppContext, TestGitRepository, Arc<XdgDirectories>, TempDir)> {
-        // Create temporary directory for XDG
-        let temp_dir = TempDir::new()?;
-
-        // Create XdgDirectories instance
-        let config = XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-        let xdg = Arc::new(XdgDirectories::new(Some(config))?);
+    ) -> anyhow::Result<(AppContext, TestGitRepository)> {
+        // Create AppContext with test defaults
+        let ctx = AppContext::builder().build();
+        let xdg = ctx.xdg_directories();
         xdg.ensure_directories()?;
 
         // Create a test git repository
@@ -111,21 +102,15 @@ mod tests {
         let tasks_json_content = format!("[{}]", tasks_json.join(","));
         std::fs::write(xdg.tasks_file(), tasks_json_content)?;
 
-        // Create AppContext
-        let ctx = AppContext::builder()
-            .with_xdg_directories(xdg.clone())
-            .build();
-
-        Ok((ctx, test_repo, xdg, temp_dir))
+        Ok((ctx, test_repo))
     }
 
     #[tokio::test]
     async fn test_retry_single_task() {
         let task_id = "test-task-1";
-        let (ctx, _test_repo, xdg, _temp_dir) =
-            setup_test_environment_with_completed_tasks(vec![task_id])
-                .await
-                .unwrap();
+        let (ctx, _test_repo) = setup_test_environment_with_completed_tasks(vec![task_id])
+            .await
+            .unwrap();
 
         let cmd = RetryCommand {
             task_ids: vec![task_id.to_string()],
@@ -137,7 +122,7 @@ mod tests {
 
         // Verify new task was created
         let file_system = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(xdg.clone(), file_system);
+        let storage = get_task_storage(ctx.xdg_directories(), file_system);
         let all_tasks = storage.list_tasks().await.unwrap();
 
         // Should have 2 tasks now (original + retry)
@@ -152,10 +137,9 @@ mod tests {
     #[tokio::test]
     async fn test_retry_multiple_tasks() {
         let task_ids = vec!["task-1", "task-2", "task-3"];
-        let (ctx, _test_repo, xdg, _temp_dir) =
-            setup_test_environment_with_completed_tasks(task_ids.clone())
-                .await
-                .unwrap();
+        let (ctx, _test_repo) = setup_test_environment_with_completed_tasks(task_ids.clone())
+            .await
+            .unwrap();
 
         let cmd = RetryCommand {
             task_ids: task_ids.iter().map(|s| s.to_string()).collect(),
@@ -167,7 +151,7 @@ mod tests {
 
         // Verify new tasks were created
         let file_system = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(xdg.clone(), file_system);
+        let storage = get_task_storage(ctx.xdg_directories(), file_system);
         let all_tasks = storage.list_tasks().await.unwrap();
 
         // Should have 6 tasks now (3 originals + 3 retries)
@@ -184,10 +168,9 @@ mod tests {
     #[tokio::test]
     async fn test_retry_with_some_failures() {
         let existing_tasks = vec!["task-1", "task-3"];
-        let (ctx, _test_repo, xdg, _temp_dir) =
-            setup_test_environment_with_completed_tasks(existing_tasks.clone())
-                .await
-                .unwrap();
+        let (ctx, _test_repo) = setup_test_environment_with_completed_tasks(existing_tasks.clone())
+            .await
+            .unwrap();
 
         // Try to retry both existing and non-existing tasks
         let cmd = RetryCommand {
@@ -210,7 +193,7 @@ mod tests {
 
         // Verify existing tasks were still retried
         let file_system = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(xdg.clone(), file_system);
+        let storage = get_task_storage(ctx.xdg_directories(), file_system);
         let all_tasks = storage.list_tasks().await.unwrap();
 
         // Should have 4 tasks (2 originals + 2 retries)
@@ -226,10 +209,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_retry_empty_task_ids() {
-        let (ctx, _test_repo, _xdg, _temp_dir) =
-            setup_test_environment_with_completed_tasks(vec![])
-                .await
-                .unwrap();
+        let (ctx, _test_repo) = setup_test_environment_with_completed_tasks(vec![])
+            .await
+            .unwrap();
 
         let cmd = RetryCommand {
             task_ids: vec![],
@@ -243,16 +225,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_retry_queued_task_fails() {
-        // Create temporary directory for XDG
-        let temp_dir = TempDir::new().unwrap();
-
-        // Create XdgDirectories instance
-        let config = XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
+        // Create AppContext with test defaults
+        let ctx = AppContext::builder().build();
+        let xdg = ctx.xdg_directories();
         xdg.ensure_directories().unwrap();
 
         // Create a test git repository
@@ -274,11 +249,6 @@ mod tests {
             task_dir_path.to_string_lossy()
         );
         std::fs::write(xdg.tasks_file(), task_json).unwrap();
-
-        // Create AppContext
-        let ctx = AppContext::builder()
-            .with_xdg_directories(xdg.clone())
-            .build();
 
         let cmd = RetryCommand {
             task_ids: vec![task_id.to_string()],

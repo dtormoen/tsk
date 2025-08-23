@@ -199,23 +199,16 @@ mod tests {
 
     #[test]
     fn test_standard_layers_with_project() {
-        let temp_dir = TempDir::new().unwrap();
+        use crate::context::AppContext;
 
-        // Create project templates directory
+        let app_context = AppContext::builder().build();
+        let xdg_dirs = app_context.xdg_directories();
+
+        // Create project templates directory in the test temp directory
+        let temp_dir = TempDir::new().unwrap();
         let project_templates = temp_dir.path().join(".tsk").join("templates");
         fs::create_dir_all(&project_templates).unwrap();
         fs::write(project_templates.join("feature.md"), "Project template").unwrap();
-
-        // Create mock XDG directories
-        let config_dir = temp_dir.path().join("config");
-        fs::create_dir_all(&config_dir).unwrap();
-
-        let xdg_config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().to_path_buf(),
-            temp_dir.path().to_path_buf(),
-            config_dir,
-        );
-        let xdg_dirs = XdgDirectories::new(Some(xdg_config)).unwrap();
 
         let manager =
             LayeredAssetManager::new_with_standard_layers(Some(temp_dir.path()), &xdg_dirs);
@@ -226,6 +219,8 @@ mod tests {
 
     #[test]
     fn test_layered_template_resolution_priority() {
+        use crate::storage::XdgConfig;
+
         // Create temporary directories
         let temp_dir = TempDir::new().unwrap();
 
@@ -244,12 +239,12 @@ mod tests {
         fs::write(user_templates.join("feat.md"), "User feat template").unwrap();
         fs::write(user_templates.join("doc.md"), "User doc template").unwrap();
 
-        // Create XDG directories (XdgDirectories will append "tsk" to the config_dir path)
-        let xdg_config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            config_dir,
-        );
+        // Create XDG config with the custom config directory to use user templates
+        let xdg_config = XdgConfig::builder()
+            .with_data_dir(temp_dir.path().join("data"))
+            .with_runtime_dir(temp_dir.path().join("runtime"))
+            .with_config_dir(config_dir)
+            .build();
         let xdg_dirs = XdgDirectories::new(Some(xdg_config)).unwrap();
 
         // Create layered asset manager
@@ -371,11 +366,11 @@ mod tests {
         fs::write(user_templates.join("feat.md"), "User feat").unwrap();
         fs::write(user_templates.join("custom.md"), "User custom").unwrap();
 
-        let xdg_config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            config_dir,
-        );
+        let xdg_config = crate::storage::XdgConfig::builder()
+            .with_data_dir(temp_dir.path().join("data"))
+            .with_runtime_dir(temp_dir.path().join("runtime"))
+            .with_config_dir(config_dir)
+            .build();
         let xdg_dirs = XdgDirectories::new(Some(xdg_config)).unwrap();
 
         let manager = LayeredAssetManager::new_with_standard_layers(Some(&project_dir), &xdg_dirs);
@@ -430,11 +425,11 @@ mod tests {
         )
         .unwrap();
 
-        let xdg_config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            config_dir,
-        );
+        let xdg_config = crate::storage::XdgConfig::builder()
+            .with_data_dir(temp_dir.path().join("data"))
+            .with_runtime_dir(temp_dir.path().join("runtime"))
+            .with_config_dir(config_dir)
+            .build();
         let xdg_dirs = XdgDirectories::new(Some(xdg_config)).unwrap();
 
         let manager = LayeredAssetManager::new_with_standard_layers(Some(&project_dir), &xdg_dirs);

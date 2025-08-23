@@ -198,32 +198,23 @@ pub fn get_task_storage(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::AppContext;
     use crate::context::file_system::DefaultFileSystem;
     use crate::task::Task;
-    use tempfile::TempDir;
-
-    fn create_test_xdg_directories(temp_dir: &TempDir) -> Arc<XdgDirectories> {
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-        let xdg = XdgDirectories::new(Some(config)).unwrap();
-        xdg.ensure_directories().unwrap();
-        Arc::new(xdg)
-    }
 
     #[tokio::test]
     async fn test_json_task_storage() {
-        let temp_dir = TempDir::new().unwrap();
+        let ctx = AppContext::builder().build();
+        let xdg_directories = ctx.xdg_directories();
+        xdg_directories.ensure_directories().unwrap();
+
         let file_system = Arc::new(DefaultFileSystem);
-        let xdg_directories = create_test_xdg_directories(&temp_dir);
         let storage = JsonTaskStorage::new(xdg_directories.clone(), file_system);
 
         // Test adding a task
         let task = Task::new(
             "abcd1234".to_string(),
-            temp_dir.path().to_path_buf(),
+            xdg_directories.data_dir().to_path_buf(),
             "test-task".to_string(),
             "feature".to_string(),
             "instructions.md".to_string(),
@@ -234,7 +225,7 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            temp_dir.path().to_path_buf(),
+            xdg_directories.data_dir().to_path_buf(),
             false,
         );
 
@@ -265,7 +256,7 @@ mod tests {
         // Test deleting tasks by status
         let task1 = Task::new(
             "efgh5678".to_string(),
-            temp_dir.path().to_path_buf(),
+            xdg_directories.data_dir().to_path_buf(),
             "task1".to_string(),
             "feature".to_string(),
             "instructions.md".to_string(),
@@ -276,12 +267,12 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            temp_dir.path().to_path_buf(),
+            xdg_directories.data_dir().to_path_buf(),
             false,
         );
         let mut task2 = Task::new(
             "ijkl9012".to_string(),
-            temp_dir.path().to_path_buf(),
+            xdg_directories.data_dir().to_path_buf(),
             "task2".to_string(),
             "bug-fix".to_string(),
             "instructions.md".to_string(),
@@ -292,13 +283,13 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            temp_dir.path().to_path_buf(),
+            xdg_directories.data_dir().to_path_buf(),
             false,
         );
         task2.status = TaskStatus::Complete;
         let mut task3 = Task::new(
             "mnop3456".to_string(),
-            temp_dir.path().to_path_buf(),
+            xdg_directories.data_dir().to_path_buf(),
             "task3".to_string(),
             "refactor".to_string(),
             "instructions.md".to_string(),
@@ -309,7 +300,7 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            temp_dir.path().to_path_buf(),
+            xdg_directories.data_dir().to_path_buf(),
             false,
         );
         task3.status = TaskStatus::Failed;
