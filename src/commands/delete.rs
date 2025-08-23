@@ -15,7 +15,7 @@ impl Command for DeleteCommand {
             return Err("No task IDs provided".into());
         }
 
-        let task_manager = TaskManager::with_storage(ctx)?;
+        let task_manager = TaskManager::new(ctx)?;
         let mut successful_deletes = 0;
         let mut failed_deletes = 0;
 

@@ -243,7 +243,7 @@ impl TaskExecutor {
         task: &Task,
     ) -> Result<(), TaskExecutionError> {
         // Create a task manager with the current context
-        let task_manager = TaskManager::with_storage(context).map_err(|e| TaskExecutionError {
+        let task_manager = TaskManager::new(context).map_err(|e| TaskExecutionError {
             message: e,
             is_warmup_failure: false,
         })?;

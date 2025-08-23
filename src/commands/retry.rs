@@ -16,7 +16,7 @@ impl Command for RetryCommand {
             return Err("No task IDs provided".into());
         }
 
-        let task_manager = TaskManager::with_storage(ctx)?;
+        let task_manager = TaskManager::new(ctx)?;
         let mut successful_retries = 0;
         let mut failed_retries = 0;
 

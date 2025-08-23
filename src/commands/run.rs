@@ -77,7 +77,7 @@ impl Command for RunCommand {
             self.workers
         );
 
-        let task_manager = TaskManager::with_storage(ctx)?;
+        let task_manager = TaskManager::new(ctx)?;
         let total_tasks = queued_tasks.len();
         let succeeded = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let failed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -116,7 +116,7 @@ impl Command for RunCommand {
 
             for task in queued_tasks {
                 let permit = semaphore.clone().acquire_owned().await.unwrap();
-                let task_manager = TaskManager::with_storage(ctx)?;
+                let task_manager = TaskManager::new(ctx)?;
                 let succeeded = succeeded.clone();
                 let failed = failed.clone();
 

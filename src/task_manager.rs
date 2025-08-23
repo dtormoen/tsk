@@ -12,14 +12,27 @@ use crate::task_runner::{TaskExecutionError, TaskExecutionResult, TaskRunner};
 use crate::task_storage::{TaskStorage, get_task_storage};
 use std::sync::Arc;
 
+/// Manages task execution and storage operations.
+///
+/// TaskManager provides a unified interface for creating, executing, and managing tasks.
+/// It handles task persistence through TaskStorage and delegates execution to TaskRunner.
 pub struct TaskManager {
     task_runner: TaskRunner,
-    task_storage: Option<Box<dyn TaskStorage>>,
+    task_storage: Box<dyn TaskStorage>,
     file_system: Arc<dyn FileSystemOperations>,
     xdg_directories: Arc<XdgDirectories>,
 }
 
 impl TaskManager {
+    /// Creates a new TaskManager with task storage initialized.
+    ///
+    /// # Arguments
+    ///
+    /// * `ctx` - The application context providing dependencies
+    ///
+    /// # Returns
+    ///
+    /// Returns a configured TaskManager or an error if initialization fails.
     pub fn new(ctx: &AppContext) -> Result<Self, String> {
         let repo_manager = RepoManager::new(
             ctx.xdg_directories(),
@@ -60,72 +73,29 @@ impl TaskManager {
 
         Ok(Self {
             task_runner,
-            task_storage: None,
+            task_storage: get_task_storage(ctx.xdg_directories(), ctx.file_system()),
             file_system: ctx.file_system(),
             xdg_directories: ctx.xdg_directories(),
         })
     }
 
-    pub fn with_storage(ctx: &AppContext) -> Result<Self, String> {
-        let repo_manager = RepoManager::new(
-            ctx.xdg_directories(),
-            ctx.file_system(),
-            ctx.git_operations(),
-            ctx.git_sync_manager(),
-        );
-        let docker_manager = DockerManager::new(ctx.docker_client());
-
-        // Create image manager with a default configuration
-        // Individual tasks will create their own image managers with task-specific repos
-        let project_root = find_repository_root(std::path::Path::new(".")).ok();
-        let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
-            project_root.as_deref(),
-            &ctx.xdg_directories(),
-        ));
-        let template_manager =
-            DockerTemplateManager::new(asset_manager.clone(), ctx.xdg_directories());
-        let composer = DockerComposer::new(DockerTemplateManager::new(
-            asset_manager,
-            ctx.xdg_directories(),
-        ));
-        let image_manager = Arc::new(DockerImageManager::new(
-            ctx.docker_client(),
-            template_manager,
-            composer,
-        ));
-
-        let task_runner = TaskRunner::new(
-            repo_manager,
-            docker_manager,
-            image_manager,
-            ctx.notification_client(),
-            ctx.docker_client(),
-            ctx.xdg_directories(),
-            ctx.config(),
-        );
-
-        Ok(Self {
-            task_runner,
-            task_storage: Some(get_task_storage(ctx.xdg_directories(), ctx.file_system())),
-            file_system: ctx.file_system(),
-            xdg_directories: ctx.xdg_directories(),
-        })
-    }
-
-    /// Execute a task from the queue (with status updates)
+    /// Execute a task from the queue with status updates.
+    ///
+    /// Updates task status in storage throughout the execution lifecycle:
+    /// - Sets status to Running when execution starts
+    /// - Updates to Complete/Failed based on execution result
+    /// - Records timestamps and error messages
     pub async fn execute_queued_task(
         &self,
         task: &Task,
     ) -> Result<TaskExecutionResult, TaskExecutionError> {
-        // Update task status to running if we have storage
-        if let Some(ref storage) = self.task_storage {
-            let mut running_task = task.clone();
-            running_task.status = TaskStatus::Running;
-            running_task.started_at = Some(chrono::Utc::now());
+        // Update task status to running
+        let mut running_task = task.clone();
+        running_task.status = TaskStatus::Running;
+        running_task.started_at = Some(chrono::Utc::now());
 
-            if let Err(e) = storage.update_task(running_task.clone()).await {
-                eprintln!("Error updating task status: {e}");
-            }
+        if let Err(e) = self.task_storage.update_task(running_task.clone()).await {
+            eprintln!("Error updating task status: {e}");
         }
 
         // Execute the task
@@ -133,58 +103,51 @@ impl TaskManager {
 
         match execution_result {
             Ok(result) => {
-                // Update task status based on the task result if we have storage
-                if let Some(ref storage) = self.task_storage {
-                    let mut updated_task = task.clone();
-                    updated_task.completed_at = Some(chrono::Utc::now());
-                    updated_task.branch_name = result.branch_name.clone();
+                // Update task status based on the task result
+                let mut updated_task = task.clone();
+                updated_task.completed_at = Some(chrono::Utc::now());
+                updated_task.branch_name = result.branch_name.clone();
 
-                    // Check if we have a parsed result from the log processor
-                    if let Some(task_result) = result.task_result.as_ref() {
-                        if task_result.success {
-                            updated_task.status = TaskStatus::Complete;
-                        } else {
-                            updated_task.status = TaskStatus::Failed;
-                            updated_task.error_message = Some(task_result.message.clone());
-                        }
-                    } else {
-                        // Default to complete if no explicit result was found
+                // Check if we have a parsed result from the log processor
+                if let Some(task_result) = result.task_result.as_ref() {
+                    if task_result.success {
                         updated_task.status = TaskStatus::Complete;
+                    } else {
+                        updated_task.status = TaskStatus::Failed;
+                        updated_task.error_message = Some(task_result.message.clone());
                     }
+                } else {
+                    // Default to complete if no explicit result was found
+                    updated_task.status = TaskStatus::Complete;
+                }
 
-                    if let Err(e) = storage.update_task(updated_task).await {
-                        eprintln!("Error updating task status: {e}");
-                    }
+                if let Err(e) = self.task_storage.update_task(updated_task).await {
+                    eprintln!("Error updating task status: {e}");
                 }
                 Ok(result)
             }
             Err(e) => {
-                // Update task status to failed if we have storage
-                if let Some(ref storage) = self.task_storage {
-                    let mut failed_task = task.clone();
-                    failed_task.status = TaskStatus::Failed;
-                    failed_task.error_message = Some(e.message.clone());
-                    failed_task.completed_at = Some(chrono::Utc::now());
+                // Update task status to failed
+                let mut failed_task = task.clone();
+                failed_task.status = TaskStatus::Failed;
+                failed_task.error_message = Some(e.message.clone());
+                failed_task.completed_at = Some(chrono::Utc::now());
 
-                    if let Err(storage_err) = storage.update_task(failed_task).await {
-                        eprintln!("Error updating task status: {storage_err}");
-                    }
+                if let Err(storage_err) = self.task_storage.update_task(failed_task).await {
+                    eprintln!("Error updating task status: {storage_err}");
                 }
                 Err(e)
             }
         }
     }
 
-    /// Delete a specific task and its associated directory
+    /// Delete a specific task and its associated directory.
+    ///
+    /// Removes the task from storage and deletes its working directory.
     pub async fn delete_task(&self, task_id: &str) -> Result<(), String> {
-        // Get task storage to delete from database
-        let storage = match &self.task_storage {
-            Some(s) => s,
-            None => return Err("Task storage not initialized".to_string()),
-        };
-
         // Get the task to find its directory
-        let task = storage
+        let task = self
+            .task_storage
             .get_task(task_id)
             .await
             .map_err(|e| format!("Error getting task: {e}"))?;
@@ -194,7 +157,7 @@ impl TaskManager {
         }
 
         // Delete from storage first
-        storage
+        self.task_storage
             .delete_task(task_id)
             .await
             .map_err(|e| format!("Error deleting task from storage: {e}"))?;
@@ -213,16 +176,14 @@ impl TaskManager {
         Ok(())
     }
 
-    /// Delete all completed tasks
+    /// Delete all completed tasks.
+    ///
+    /// Removes completed tasks from storage and deletes their working directories.
+    /// Returns the number of tasks deleted.
     pub async fn clean_tasks(&self) -> Result<usize, String> {
-        // Get task storage
-        let storage = match &self.task_storage {
-            Some(s) => s,
-            None => return Err("Task storage not initialized".to_string()),
-        };
-
         // Get all tasks to find directories to delete
-        let all_tasks = storage
+        let all_tasks = self
+            .task_storage
             .list_tasks()
             .await
             .map_err(|e| format!("Error listing tasks: {e}"))?;
@@ -248,7 +209,8 @@ impl TaskManager {
         }
 
         // Delete completed tasks from storage
-        let deleted_count = storage
+        let deleted_count = self
+            .task_storage
             .delete_tasks_by_status(vec![TaskStatus::Complete])
             .await
             .map_err(|e| format!("Error deleting completed tasks: {e}"))?;
@@ -256,21 +218,19 @@ impl TaskManager {
         Ok(deleted_count)
     }
 
-    /// Retry a task by creating a new task with the same instructions
+    /// Retry a task by creating a new task with the same instructions.
+    ///
+    /// Creates a duplicate task with a new ID, optionally allowing instruction editing.
+    /// The original task must have been executed (not Queued) to be retried.
     pub async fn retry_task(
         &self,
         task_id: &str,
         edit_instructions: bool,
         ctx: &AppContext,
     ) -> Result<String, String> {
-        // Get task storage
-        let storage = match &self.task_storage {
-            Some(s) => s,
-            None => return Err("Task storage not initialized".to_string()),
-        };
-
         // Retrieve the original task
-        let original_task = storage
+        let original_task = self
+            .task_storage
             .get_task(task_id)
             .await
             .map_err(|e| format!("Error getting task: {e}"))?;
@@ -297,7 +257,7 @@ impl TaskManager {
             .map_err(|e| format!("Failed to build retry task: {e}"))?;
 
         // Store the new task
-        storage
+        self.task_storage
             .add_task(new_task.clone())
             .await
             .map_err(|e| format!("Error adding retry task to storage: {e}"))?;
@@ -402,7 +362,7 @@ mod tests {
             .with_xdg_directories(xdg.clone())
             .build();
 
-        let task_manager = TaskManager::with_storage(&ctx).unwrap();
+        let task_manager = TaskManager::new(&ctx).unwrap();
 
         // Delete the task
         let result = task_manager.delete_task(&task_id).await;
@@ -415,8 +375,7 @@ mod tests {
         );
 
         // Verify task is removed from storage
-        let storage = task_manager.task_storage.as_ref().unwrap();
-        let task = storage.get_task(&task_id).await.unwrap();
+        let task = task_manager.task_storage.get_task(&task_id).await.unwrap();
         assert!(task.is_none(), "Task should have been deleted from storage");
     }
 
@@ -502,7 +461,7 @@ mod tests {
         std::fs::write(&tasks_json_path, tasks_json).unwrap();
 
         // Create TaskManager and clean tasks
-        let task_manager = TaskManager::with_storage(&ctx).unwrap();
+        let task_manager = TaskManager::new(&ctx).unwrap();
 
         let result = task_manager.clean_tasks().await;
         assert!(result.is_ok(), "Failed to clean tasks: {result:?}");
@@ -520,8 +479,7 @@ mod tests {
         );
 
         // Verify storage was updated
-        let storage = task_manager.task_storage.as_ref().unwrap();
-        let remaining_tasks = storage.list_tasks().await.unwrap();
+        let remaining_tasks = task_manager.task_storage.list_tasks().await.unwrap();
         assert_eq!(remaining_tasks.len(), 1);
         assert_eq!(remaining_tasks[0].id, queued_task_id);
     }
@@ -579,7 +537,7 @@ mod tests {
         std::fs::write(&tasks_json_path, tasks_json).unwrap();
 
         // Create TaskManager and retry the task
-        let task_manager = TaskManager::with_storage(&ctx).unwrap();
+        let task_manager = TaskManager::new(&ctx).unwrap();
 
         let result = task_manager.retry_task(&task_id, false, &ctx).await;
         assert!(result.is_ok(), "Failed to retry task: {result:?}");
@@ -589,8 +547,11 @@ mod tests {
         assert_eq!(new_task_id.len(), 8);
 
         // Verify task was added to storage
-        let storage = task_manager.task_storage.as_ref().unwrap();
-        let new_task = storage.get_task(&new_task_id).await.unwrap();
+        let new_task = task_manager
+            .task_storage
+            .get_task(&new_task_id)
+            .await
+            .unwrap();
         assert!(new_task.is_some());
         let new_task = new_task.unwrap();
         // Since we removed the "retry-" prefix, name should be the same as original
@@ -623,7 +584,7 @@ mod tests {
         std::fs::write(&tasks_json_path, "[]").unwrap();
 
         // Create TaskManager and try to retry a non-existent task
-        let task_manager = TaskManager::with_storage(&ctx).unwrap();
+        let task_manager = TaskManager::new(&ctx).unwrap();
 
         let result = task_manager
             .retry_task("non-existent-task", false, &ctx)
@@ -661,7 +622,7 @@ mod tests {
         std::fs::write(&tasks_json_path, tasks_json).unwrap();
 
         // Create TaskManager and try to retry a queued task
-        let task_manager = TaskManager::with_storage(&ctx).unwrap();
+        let task_manager = TaskManager::new(&ctx).unwrap();
 
         let result = task_manager.retry_task(&task_id, false, &ctx).await;
         assert!(result.is_err());
@@ -719,7 +680,7 @@ mod tests {
         std::fs::write(&tasks_json_path, tasks_json).unwrap();
 
         // Create TaskManager and clean tasks
-        let task_manager = TaskManager::with_storage(&ctx).unwrap();
+        let task_manager = TaskManager::new(&ctx).unwrap();
 
         let result = task_manager.clean_tasks().await;
         assert!(result.is_ok(), "Failed to clean tasks: {result:?}");
@@ -733,8 +694,7 @@ mod tests {
         );
 
         // Verify storage was updated
-        let storage = task_manager.task_storage.as_ref().unwrap();
-        let remaining_tasks = storage.list_tasks().await.unwrap();
+        let remaining_tasks = task_manager.task_storage.list_tasks().await.unwrap();
         assert_eq!(remaining_tasks.len(), 0);
     }
 
@@ -763,10 +723,10 @@ mod tests {
         let ctx = AppContext::builder().with_xdg_directories(xdg).build();
 
         // This should succeed even without being in a git repository
-        let result = TaskManager::with_storage(&ctx);
+        let result = TaskManager::new(&ctx);
         assert!(
             result.is_ok(),
-            "TaskManager::with_storage should work without a git repository"
+            "TaskManager::new should work without a git repository"
         );
     }
 }
