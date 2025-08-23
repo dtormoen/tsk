@@ -1,5 +1,6 @@
+use crate::context::config::Config;
 use std::io::{self, Write};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// Trait for terminal operations
 pub trait TerminalOperations: Send + Sync {
@@ -13,6 +14,8 @@ pub trait TerminalOperations: Send + Sync {
 /// Default terminal operations implementation
 pub struct DefaultTerminalOperations {
     state: Mutex<TerminalState>,
+    #[allow(dead_code)] // Will be used when terminal operations need config-based customization
+    config: Option<Arc<Config>>,
 }
 
 struct TerminalState {
@@ -23,28 +26,49 @@ struct TerminalState {
 impl DefaultTerminalOperations {
     /// Create a new terminal operations instance
     pub fn new() -> Self {
-        let supported = Self::is_supported();
+        let supported = Self::is_supported(None);
 
         Self {
             state: Mutex::new(TerminalState {
                 supported,
                 original_title: None,
             }),
+            config: None,
+        }
+    }
+
+    /// Create a new terminal operations instance with a custom Config
+    #[allow(dead_code)] // Used in tests and for future config-based terminal customization
+    pub fn with_config(config: Arc<Config>) -> Self {
+        let supported = Self::is_supported(Some(&config));
+
+        Self {
+            state: Mutex::new(TerminalState {
+                supported,
+                original_title: None,
+            }),
+            config: Some(config),
         }
     }
 
     /// Check if terminal title updates are supported
-    fn is_supported() -> bool {
+    fn is_supported(config: Option<&Config>) -> bool {
         // Check if we're in a TTY
         if !atty::is(atty::Stream::Stdout) {
             return false;
         }
 
         // Check for common terminal environment variables
-        if let Ok(term) = std::env::var("TERM") {
+        let term = if let Some(cfg) = config {
+            cfg.terminal_type().map(|s| s.to_string())
+        } else {
+            std::env::var("TERM").ok()
+        };
+
+        if let Some(term_type) = term {
             // Most modern terminals support title changes
             // Exclude known non-supporting terminals
-            !matches!(term.as_str(), "dumb" | "unknown")
+            !matches!(term_type.as_str(), "dumb" | "unknown")
         } else {
             false
         }
@@ -137,21 +161,30 @@ mod tests {
 
     #[test]
     fn test_terminal_support_detection() {
-        // Test with TERM environment variable
-        unsafe {
-            std::env::set_var("TERM", "xterm-256color");
-        }
-        assert!(DefaultTerminalOperations::is_supported() || !atty::is(atty::Stream::Stdout));
+        // Test with xterm-256color terminal
+        let config_xterm = Config::builder()
+            .with_terminal_type(Some("xterm-256color".to_string()))
+            .build();
+        assert!(
+            DefaultTerminalOperations::is_supported(Some(&config_xterm))
+                || !atty::is(atty::Stream::Stdout)
+        );
 
-        unsafe {
-            std::env::set_var("TERM", "dumb");
-        }
-        assert!(!DefaultTerminalOperations::is_supported());
+        // Test with dumb terminal
+        let config_dumb = Config::builder()
+            .with_terminal_type(Some("dumb".to_string()))
+            .build();
+        assert!(!DefaultTerminalOperations::is_supported(Some(&config_dumb)));
 
-        unsafe {
-            std::env::remove_var("TERM");
-        }
-        assert!(!DefaultTerminalOperations::is_supported());
+        // Test with no terminal type set
+        let config_none = Config::builder().with_terminal_type(None).build();
+        assert!(!DefaultTerminalOperations::is_supported(Some(&config_none)));
+
+        // Test terminal operations with config
+        let terminal_with_config = DefaultTerminalOperations::with_config(Arc::new(config_xterm));
+        // Should not panic
+        terminal_with_config.set_title("Test");
+        terminal_with_config.restore_title();
     }
 
     #[test]

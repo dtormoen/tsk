@@ -1,16 +1,38 @@
 use super::{Agent, LogProcessor};
+use crate::context::config::Config;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 
 /// Claude Code AI agent implementation
-pub struct ClaudeCodeAgent;
+pub struct ClaudeCodeAgent {
+    config: Option<Arc<Config>>,
+}
 
 impl ClaudeCodeAgent {
     pub fn new() -> Self {
-        Self
+        Self { config: None }
+    }
+
+    /// Creates a new ClaudeCodeAgent with a custom Config
+    #[allow(dead_code)] // Used in tests and will be used when AgentProvider supports Config
+    pub fn with_config(config: Arc<Config>) -> Self {
+        Self {
+            config: Some(config),
+        }
+    }
+
+    fn get_claude_config_dir(&self) -> PathBuf {
+        if let Some(config) = &self.config {
+            config.claude_config_dir().clone()
+        } else {
+            // Fallback to environment variable
+            let home_dir = std::env::var("HOME").unwrap_or_else(|_| "/home/agent".to_string());
+            PathBuf::from(home_dir).join(".claude")
+        }
     }
 }
 
@@ -40,19 +62,19 @@ impl Agent for ClaudeCodeAgent {
     }
 
     fn volumes(&self) -> Vec<(String, String, String)> {
-        // Get the home directory path for mounting ~/.claude and ~/.claude.json
-        let home_dir = std::env::var("HOME").unwrap_or_else(|_| "/home/agent".to_string());
+        let claude_config_dir = self.get_claude_config_dir();
+        let claude_json_path = claude_config_dir.with_extension("json");
 
         vec![
             // Claude config directory
             (
-                format!("{home_dir}/.claude"),
+                claude_config_dir.to_string_lossy().to_string(),
                 "/home/agent/.claude".to_string(),
                 "".to_string(),
             ),
             // Claude config file
             (
-                format!("{home_dir}/.claude.json"),
+                claude_json_path.to_string_lossy().to_string(),
                 "/home/agent/.claude.json".to_string(),
                 "".to_string(),
             ),
@@ -76,8 +98,7 @@ impl Agent for ClaudeCodeAgent {
 
     async fn validate(&self) -> Result<(), String> {
         // Check if ~/.claude.json exists
-        let home_dir = std::env::var("HOME").map_err(|_| "HOME environment variable not set")?;
-        let claude_config = Path::new(&home_dir).join(".claude.json");
+        let claude_config = self.get_claude_config_dir().with_extension("json");
 
         if !claude_config.exists() {
             return Err(format!(
@@ -1172,11 +1193,13 @@ mod tests {
     async fn test_claude_code_agent_validate_without_config() {
         // Create a temporary HOME directory without .claude.json
         let temp_dir = tempfile::tempdir().unwrap();
-        unsafe {
-            std::env::set_var("HOME", temp_dir.path());
-        }
+        let config = Arc::new(
+            Config::builder()
+                .with_claude_config_dir(temp_dir.path().join(".claude"))
+                .build(),
+        );
 
-        let agent = ClaudeCodeAgent::new();
+        let agent = ClaudeCodeAgent::with_config(config);
         let result = agent.validate().await;
 
         assert!(result.is_err());
@@ -1196,5 +1219,15 @@ mod tests {
         // Just verify we can create a log processor
         // The actual log processor functionality is tested elsewhere
         let _ = log_processor.get_full_log();
+
+        // Also test with custom config
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config = Arc::new(
+            Config::builder()
+                .with_claude_config_dir(temp_dir.path().join(".claude"))
+                .build(),
+        );
+        let agent_with_config = ClaudeCodeAgent::with_config(config);
+        let _ = agent_with_config.create_log_processor();
     }
 }

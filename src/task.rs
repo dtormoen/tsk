@@ -293,7 +293,8 @@ impl TaskBuilder {
                 .await?;
 
             // Open editor with the temporary file
-            self.open_editor(temp_path.to_str().ok_or("Invalid path")?)?;
+            let config = ctx.config();
+            self.open_editor(temp_path.to_str().ok_or("Invalid path")?, &config)?;
 
             // Check if file is empty and ensure cleanup happens even on error
             let needs_cleanup = self
@@ -474,18 +475,16 @@ impl TaskBuilder {
         Ok(dest_path.to_string_lossy().to_string())
     }
 
-    fn open_editor(&self, instructions_path: &str) -> Result<(), Box<dyn Error>> {
-        let editor = std::env::var("EDITOR").unwrap_or_else(|_| {
-            if std::env::var("VISUAL").is_ok() {
-                std::env::var("VISUAL").unwrap()
-            } else {
-                "vi".to_string()
-            }
-        });
+    fn open_editor(
+        &self,
+        instructions_path: &str,
+        config: &crate::context::config::Config,
+    ) -> Result<(), Box<dyn Error>> {
+        let editor = config.editor();
 
-        println!("Opening instructions file in editor: {editor}");
+        println!("Opening instructions file in editor: {}", editor);
 
-        let status = std::process::Command::new(&editor)
+        let status = std::process::Command::new(editor)
             .arg(instructions_path)
             .status()?;
 
@@ -1006,7 +1005,6 @@ mod tests {
     async fn test_task_builder_edit_mode_empty_file_cleanup() {
         use crate::context::file_system::DefaultFileSystem;
         use crate::test_utils::TestGitRepository;
-        use std::env;
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
 
@@ -1018,24 +1016,15 @@ mod tests {
         let current_dir = test_repo.path().to_path_buf();
 
         // Create XDG config
-        let config = crate::storage::XdgConfig::with_paths(
+        let xdg_config = crate::storage::XdgConfig::with_paths(
             temp_dir.path().join("data"),
             temp_dir.path().join("runtime"),
             temp_dir.path().join("config"),
         );
-        let xdg = crate::storage::XdgDirectories::new(Some(config))
+        let xdg = crate::storage::XdgDirectories::new(Some(xdg_config))
             .expect("Failed to create XDG directories");
         xdg.ensure_directories()
             .expect("Failed to ensure XDG directories");
-
-        // Create AppContext
-        let ctx = AppContext::builder()
-            .with_xdg_directories(Arc::new(xdg.clone()))
-            .with_git_operations(Arc::new(
-                crate::context::git_operations::DefaultGitOperations,
-            ))
-            .with_file_system(Arc::new(DefaultFileSystem))
-            .build();
 
         // Set up a fake editor that creates an empty file
         let fake_editor_path = temp_dir.path().join("fake_editor.sh");
@@ -1045,9 +1034,23 @@ mod tests {
         )
         .unwrap();
         fs::set_permissions(&fake_editor_path, fs::Permissions::from_mode(0o755)).unwrap();
-        unsafe {
-            env::set_var("EDITOR", fake_editor_path.to_str().unwrap());
-        }
+
+        // Create config with fake editor
+        let editor_config = Arc::new(
+            crate::context::config::Config::builder()
+                .with_editor(fake_editor_path.to_str().unwrap().to_string())
+                .build(),
+        );
+
+        // Update context with editor config
+        let ctx = AppContext::builder()
+            .with_config(editor_config)
+            .with_xdg_directories(Arc::new(xdg.clone()))
+            .with_git_operations(Arc::new(
+                crate::context::git_operations::DefaultGitOperations,
+            ))
+            .with_file_system(Arc::new(DefaultFileSystem))
+            .build();
 
         // Try to build task with edit mode (should fail due to empty file)
         let result = TaskBuilder::new()
@@ -1092,10 +1095,7 @@ mod tests {
             "Task directory should have been cleaned up when task creation was cancelled"
         );
 
-        // Clean up environment variable
-        unsafe {
-            env::remove_var("EDITOR");
-        }
+        // No need to clean up environment variable anymore
     }
 
     #[tokio::test]

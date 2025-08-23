@@ -235,7 +235,8 @@ mod tests {
         let claude_json_path = temp_home.path().join(".claude.json");
         std::fs::write(&claude_json_path, "{}").unwrap();
 
-        // Save original HOME and restore it after test
+        // Note: Currently agents are created through AgentProvider which doesn't pass Config.
+        // Until AgentProvider is refactored to accept Config, we still need to set HOME env var.
         let original_home = std::env::var("HOME").ok();
         unsafe {
             std::env::set_var("HOME", temp_home.path());

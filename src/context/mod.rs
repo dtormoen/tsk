@@ -1,3 +1,4 @@
+pub mod config;
 pub mod docker_client;
 pub mod file_system;
 pub mod git_operations;
@@ -7,6 +8,7 @@ pub mod tsk_client;
 use crate::git_sync::GitSyncManager;
 use crate::notifications::NotificationClient;
 use crate::storage::XdgDirectories;
+use config::Config;
 use docker_client::DockerClient;
 use file_system::FileSystemOperations;
 use git_operations::GitOperations;
@@ -21,6 +23,7 @@ pub use terminal::TerminalOperations as TerminalOperationsTrait;
 
 #[derive(Clone)]
 pub struct AppContext {
+    config: Arc<Config>,
     docker_client: Arc<dyn DockerClient>,
     file_system: Arc<dyn FileSystemOperations>,
     git_operations: Arc<dyn GitOperations>,
@@ -34,6 +37,10 @@ pub struct AppContext {
 impl AppContext {
     pub fn builder() -> AppContextBuilder {
         AppContextBuilder::new()
+    }
+
+    pub fn config(&self) -> Arc<Config> {
+        Arc::clone(&self.config)
     }
 
     pub fn docker_client(&self) -> Arc<dyn DockerClient> {
@@ -70,6 +77,7 @@ impl AppContext {
 }
 
 pub struct AppContextBuilder {
+    config: Option<Arc<Config>>,
     docker_client: Option<Arc<dyn DockerClient>>,
     file_system: Option<Arc<dyn FileSystemOperations>>,
     git_operations: Option<Arc<dyn GitOperations>>,
@@ -90,6 +98,7 @@ impl Default for AppContextBuilder {
 impl AppContextBuilder {
     pub fn new() -> Self {
         Self {
+            config: None,
             docker_client: None,
             file_system: None,
             git_operations: None,
@@ -99,6 +108,14 @@ impl AppContextBuilder {
             tsk_client: None,
             xdg_directories: None,
         }
+    }
+
+    /// Configure the Config for this context
+    ///
+    /// Used extensively in tests to provide environment variable overrides
+    pub fn with_config(mut self, config: Arc<Config>) -> Self {
+        self.config = Some(config);
+        self
     }
 
     /// Configure the Docker client for this context
@@ -174,6 +191,7 @@ impl AppContextBuilder {
             .unwrap_or_else(|| Arc::new(file_system::DefaultFileSystem));
 
         AppContext {
+            config: self.config.unwrap_or_else(|| Arc::new(Config::new())),
             docker_client,
             file_system,
             git_operations: self
