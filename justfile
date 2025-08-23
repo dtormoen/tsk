@@ -2,7 +2,7 @@ build:
     cargo build
 
 install:
-    cargo install --path . --locked --force
+    cargo install --path . --force
 
 test:
     cargo test -q
