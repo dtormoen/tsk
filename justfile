@@ -11,9 +11,9 @@ format:
     cargo clippy --all-targets --fix --allow-dirty -- -D warnings
     cargo fmt
 
-precommit:
-    cargo clippy --all-targets --fix --allow-dirty -- -D warnings
-    cargo fmt
-    cargo test -q
+lint:
+    cargo clippy -- -D warnings
+
+precommit: format lint test
     # Check that the command starts
     cargo run -- --help > /dev/null
