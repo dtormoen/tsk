@@ -61,6 +61,9 @@ pub struct Task {
     pub project: String,
     /// Path to the copied repository for this task
     pub copied_repo_path: PathBuf,
+    /// Whether this task should run in interactive mode
+    #[serde(default)]
+    pub is_interactive: bool,
 }
 
 impl Task {
@@ -80,6 +83,7 @@ impl Task {
         project: String,
         created_at: DateTime<Local>,
         copied_repo_path: PathBuf,
+        is_interactive: bool,
     ) -> Self {
         Self {
             id,
@@ -99,6 +103,7 @@ impl Task {
             tech_stack,
             project,
             copied_repo_path,
+            is_interactive,
         }
     }
 }
@@ -117,6 +122,7 @@ pub struct TaskBuilder {
     tech_stack: Option<String>,
     project: Option<String>,
     copied_repo_path: Option<PathBuf>,
+    is_interactive: bool,
 }
 
 impl TaskBuilder {
@@ -133,6 +139,7 @@ impl TaskBuilder {
             tech_stack: None,
             project: None,
             copied_repo_path: None,
+            is_interactive: false,
         }
     }
 
@@ -147,6 +154,7 @@ impl TaskBuilder {
         builder.tech_stack = Some(task.tech_stack.clone());
         builder.project = Some(task.project.clone());
         builder.copied_repo_path = Some(task.copied_repo_path.clone());
+        builder.is_interactive = task.is_interactive;
 
         // Copy the instructions file path
         builder.instructions_file_path = Some(PathBuf::from(&task.instructions_file));
@@ -202,6 +210,13 @@ impl TaskBuilder {
 
     pub fn project(mut self, project: Option<String>) -> Self {
         self.project = project;
+        self
+    }
+
+    /// Sets whether the task should run in interactive mode
+    #[allow(dead_code)]
+    pub fn with_interactive(mut self, is_interactive: bool) -> Self {
+        self.is_interactive = is_interactive;
         self
     }
 
@@ -404,6 +419,7 @@ impl TaskBuilder {
             project,
             created_at,
             copied_repo_path,
+            self.is_interactive,
         );
 
         Ok(task)
@@ -573,6 +589,7 @@ mod tests {
             "default".to_string(),
             chrono::Local::now(),
             PathBuf::from("/test/copied"),
+            false,
         )
     }
 
@@ -1232,6 +1249,39 @@ mod tests {
         assert_eq!(task.id, "qrst7890");
         assert_eq!(task.task_type, "feat");
         assert_eq!(task.name, "test-task");
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_with_interactive() {
+        let (_temp_dir, test_repo, ctx) = create_test_context();
+        let current_dir = test_repo.path().to_path_buf();
+
+        // Test building an interactive task
+        let task = TaskBuilder::new()
+            .repo_root(current_dir.clone())
+            .name("interactive-task".to_string())
+            .task_type("generic".to_string())
+            .description(Some("Interactive task".to_string()))
+            .with_interactive(true)
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        assert_eq!(task.name, "interactive-task");
+        assert!(task.is_interactive);
+
+        // Test building a non-interactive task (default)
+        let task2 = TaskBuilder::new()
+            .repo_root(current_dir.clone())
+            .name("regular-task".to_string())
+            .task_type("generic".to_string())
+            .description(Some("Regular task".to_string()))
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        assert_eq!(task2.name, "regular-task");
+        assert!(!task2.is_interactive);
     }
 
     #[tokio::test]

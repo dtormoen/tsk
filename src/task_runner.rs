@@ -104,7 +104,6 @@ impl TaskRunner {
     pub async fn execute_task(
         &self,
         task: &Task,
-        is_interactive: bool,
     ) -> Result<TaskExecutionResult, TaskExecutionError> {
         // Get the agent for this task
         let agent = AgentProvider::get_agent(&task.agent, self.config.clone())
@@ -185,7 +184,7 @@ impl TaskRunner {
                     &repo_path,
                     Some(&instructions_file_path),
                     agent.as_ref(),
-                    is_interactive,
+                    task.is_interactive,
                     &task.id,
                 )
                 .await
@@ -326,9 +325,10 @@ mod tests {
             tech_stack: "default".to_string(),
             project: "default".to_string(),
             copied_repo_path: task_copy_dir,
+            is_interactive: false,
         };
 
-        let result = task_runner.execute_task(&task, false).await;
+        let result = task_runner.execute_task(&task).await;
 
         assert!(result.is_ok(), "Error: {:?}", result.as_ref().err());
         let execution_result = result.unwrap();

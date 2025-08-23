@@ -235,6 +235,7 @@ mod tests {
             "default".to_string(),
             chrono::Local::now(),
             temp_dir.path().to_path_buf(),
+            false,
         );
 
         storage.add_task(task.clone()).await.unwrap();
@@ -276,6 +277,7 @@ mod tests {
             "default".to_string(),
             chrono::Local::now(),
             temp_dir.path().to_path_buf(),
+            false,
         );
         let mut task2 = Task::new(
             "ijkl9012".to_string(),
@@ -291,6 +293,7 @@ mod tests {
             "default".to_string(),
             chrono::Local::now(),
             temp_dir.path().to_path_buf(),
+            false,
         );
         task2.status = TaskStatus::Complete;
         let mut task3 = Task::new(
@@ -307,6 +310,7 @@ mod tests {
             "default".to_string(),
             chrono::Local::now(),
             temp_dir.path().to_path_buf(),
+            false,
         );
         task3.status = TaskStatus::Failed;
 

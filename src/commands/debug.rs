@@ -104,6 +104,7 @@ impl Command for DebugCommand {
             project.unwrap_or_else(|| "default".to_string()),
             chrono::Local::now(),
             repo_root.clone(), // temporary, will be updated after repo copy
+            true,              // Debug sessions are always interactive
         );
 
         // Create a RepoManager to handle repository operations
@@ -131,9 +132,9 @@ impl Command for DebugCommand {
         // Create TaskRunner using AppContext
         let task_runner = TaskRunner::new(ctx);
 
-        // Execute task in interactive mode
+        // Execute task (interactive mode is set on the task itself)
         task_runner
-            .execute_task(&task, true)
+            .execute_task(&task)
             .await
             .map_err(|e| e.message)?;
 

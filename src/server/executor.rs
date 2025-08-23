@@ -350,6 +350,7 @@ mod tests {
             "default".to_string(),
             chrono::Local::now(),
             temp_dir.path().join("task-copy"),
+            false,
         );
 
         // Set up storage with the queued task
@@ -406,6 +407,7 @@ mod tests {
             "default".to_string(),
             chrono::Local::now(),
             temp_dir.path().join("task-copy-2"),
+            false,
         );
 
         let storage_guard = storage.lock().await;
@@ -474,6 +476,7 @@ mod tests {
                 "default".to_string(),
                 chrono::Local::now(),
                 temp_dir.path().join(format!("task-copy-{i}")),
+                false,
             );
             tasks.push(task);
         }
@@ -568,6 +571,7 @@ mod tests {
                 "default".to_string(),
                 chrono::Local::now(),
                 temp_dir.path().join(format!("task-copy-{i}")),
+                false,
             );
             tasks.push(task);
         }
@@ -748,6 +752,7 @@ mod tests {
             "default".to_string(),
             chrono::Local::now(),
             temp_dir.path().join("task-copy"),
+            false,
         );
 
         // Set up storage with the task

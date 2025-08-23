@@ -57,7 +57,7 @@ impl TaskManager {
         }
 
         // Execute the task
-        let execution_result = self.task_runner.execute_task(task, false).await;
+        let execution_result = self.task_runner.execute_task(task).await;
 
         match execution_result {
             Ok(result) => {
@@ -382,6 +382,7 @@ mod tests {
             "default".to_string(),
             chrono::Local::now(),
             queued_dir_path.join("repo"),
+            false,
         );
 
         let mut completed_task = Task::new(
@@ -398,6 +399,7 @@ mod tests {
             "default".to_string(),
             chrono::Local::now(),
             completed_dir_path.join("repo"),
+            false,
         );
         completed_task.status = TaskStatus::Complete;
 
@@ -470,6 +472,7 @@ mod tests {
             "default".to_string(),
             chrono::Local::now(),
             task_dir_path.join("repo"),
+            false,
         );
         completed_task.status = TaskStatus::Complete;
 
@@ -624,6 +627,7 @@ mod tests {
             "default".to_string(),
             chrono::Local::now(),
             task_dir_path.join("repo"),
+            false,
         );
         completed_task.status = TaskStatus::Complete;
 
