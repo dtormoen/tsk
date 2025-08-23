@@ -1,11 +1,11 @@
 use crate::agent::AgentProvider;
 use crate::assets::layered::LayeredAssetManager;
+use crate::context::AppContext;
 use crate::docker::{
     DockerManager, composer::DockerComposer, image_manager::DockerImageManager,
     template_manager::DockerTemplateManager,
 };
 use crate::git::RepoManager;
-use crate::notifications::NotificationClient;
 use crate::task::Task;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -39,36 +39,68 @@ impl From<String> for TaskExecutionError {
     }
 }
 
+/// Manages the execution of individual tasks in Docker containers.
+///
+/// TaskRunner handles the complete lifecycle of task execution including:
+/// - Agent validation and warmup
+/// - Docker image management and container execution
+/// - Repository changes and git operations
+/// - Task completion notifications
 pub struct TaskRunner {
     repo_manager: RepoManager,
     docker_manager: DockerManager,
-    notification_client: Arc<dyn NotificationClient>,
+    notification_client: Arc<dyn crate::notifications::NotificationClient>,
     docker_client: Arc<dyn crate::context::docker_client::DockerClient>,
     xdg_directories: Arc<crate::storage::XdgDirectories>,
     config: Arc<crate::context::config::Config>,
 }
 
 impl TaskRunner {
-    pub fn new(
-        repo_manager: RepoManager,
-        docker_manager: DockerManager,
-        _docker_image_manager: Arc<DockerImageManager>,
-        notification_client: Arc<dyn NotificationClient>,
-        docker_client: Arc<dyn crate::context::docker_client::DockerClient>,
-        xdg_directories: Arc<crate::storage::XdgDirectories>,
-        config: Arc<crate::context::config::Config>,
-    ) -> Self {
+    /// Creates a new TaskRunner from the application context.
+    ///
+    /// Extracts all required dependencies from the AppContext and constructs
+    /// the necessary components internally.
+    ///
+    /// # Arguments
+    ///
+    /// * `ctx` - The application context providing all required dependencies
+    pub fn new(ctx: &AppContext) -> Self {
+        let repo_manager = RepoManager::new(
+            ctx.xdg_directories(),
+            ctx.file_system(),
+            ctx.git_operations(),
+            ctx.git_sync_manager(),
+        );
+        let docker_manager = DockerManager::new(ctx.docker_client());
+
         Self {
             repo_manager,
             docker_manager,
-            notification_client,
-            docker_client,
-            xdg_directories,
-            config,
+            notification_client: ctx.notification_client(),
+            docker_client: ctx.docker_client(),
+            xdg_directories: ctx.xdg_directories(),
+            config: ctx.config(),
         }
     }
 
-    /// Execute a task
+    /// Execute a task in a Docker container.
+    ///
+    /// Performs the complete task execution lifecycle:
+    /// 1. Validates and warms up the specified agent
+    /// 2. Creates task-specific Docker images with appropriate layers
+    /// 3. Runs the container with the task instructions
+    /// 4. Commits and fetches changes back to the main repository
+    /// 5. Sends completion notifications
+    ///
+    /// # Arguments
+    ///
+    /// * `task` - The task to execute
+    /// * `is_interactive` - Whether to run the container interactively
+    ///
+    /// # Returns
+    ///
+    /// Returns `TaskExecutionResult` on success or `TaskExecutionError` on failure.
+    /// Warmup failures are specially marked in the error for retry handling.
     pub async fn execute_task(
         &self,
         task: &Task,
@@ -213,13 +245,13 @@ mod tests {
     use super::*;
     use crate::context::file_system::{DefaultFileSystem, FileSystemOperations};
     use crate::task::{Task, TaskStatus};
-    use crate::test_utils::{FixedResponseDockerClient, git_test_utils::TestGitRepository};
+    use crate::test_utils::git_test_utils::TestGitRepository;
     use std::sync::Arc;
 
     #[tokio::test]
     #[ignore = "Test requires Docker to be available for image building"]
     async fn test_execute_task_success() {
-        use crate::git::RepoManager;
+        use crate::context::AppContext;
 
         // Create a test git repository
         let test_repo = TestGitRepository::new().unwrap();
@@ -245,8 +277,6 @@ mod tests {
 
         // Use DefaultFileSystem for real file operations
         let fs = Arc::new(DefaultFileSystem);
-        let git_ops = Arc::new(crate::context::git_operations::DefaultGitOperations);
-        let docker_client = Arc::new(FixedResponseDockerClient::default());
 
         // Create test XDG directories
         let temp_xdg = tempfile::tempdir().unwrap();
@@ -259,37 +289,14 @@ mod tests {
             Arc::new(crate::storage::XdgDirectories::new(Some(xdg_config)).unwrap());
         xdg_directories.ensure_directories().unwrap();
 
-        let git_sync = Arc::new(crate::git_sync::GitSyncManager::new());
-        let repo_manager = RepoManager::new(xdg_directories.clone(), fs.clone(), git_ops, git_sync);
-        let docker_manager = crate::docker::DockerManager::new(docker_client.clone());
+        // Create AppContext with test dependencies
+        let ctx = AppContext::builder()
+            .with_xdg_directories(xdg_directories.clone())
+            .with_file_system(fs.clone())
+            .with_config(config)
+            .build();
 
-        // Create docker image manager
-        use crate::assets::embedded::EmbeddedAssetManager;
-        use crate::docker::composer::DockerComposer;
-        use crate::docker::template_manager::DockerTemplateManager;
-
-        let template_manager =
-            DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), xdg_directories.clone());
-        let composer = DockerComposer::new(DockerTemplateManager::new(
-            Arc::new(EmbeddedAssetManager),
-            xdg_directories.clone(),
-        ));
-        let docker_image_manager = Arc::new(DockerImageManager::new(
-            docker_client.clone(),
-            template_manager,
-            composer,
-        ));
-
-        let notification_client = Arc::new(crate::notifications::NoOpNotificationClient);
-        let task_runner = TaskRunner::new(
-            repo_manager,
-            docker_manager,
-            docker_image_manager,
-            notification_client,
-            docker_client,
-            xdg_directories.clone(),
-            config,
-        );
+        let task_runner = TaskRunner::new(&ctx);
 
         // Create a task copy directory
         let repo_hash = crate::storage::get_repo_hash(test_repo.path());

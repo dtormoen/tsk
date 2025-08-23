@@ -1,11 +1,4 @@
-use crate::assets::layered::LayeredAssetManager;
 use crate::context::{AppContext, file_system::FileSystemOperations};
-use crate::docker::DockerManager;
-use crate::docker::composer::DockerComposer;
-use crate::docker::image_manager::DockerImageManager;
-use crate::docker::template_manager::DockerTemplateManager;
-use crate::git::RepoManager;
-use crate::repo_utils::find_repository_root;
 use crate::task::{Task, TaskBuilder, TaskStatus};
 use crate::task_runner::{TaskExecutionError, TaskExecutionResult, TaskRunner};
 use crate::task_storage::{TaskStorage, get_task_storage};
@@ -35,42 +28,7 @@ impl TaskManager {
     ///
     /// Returns a configured TaskManager or an error if initialization fails.
     pub fn new(ctx: &AppContext) -> Result<Self, String> {
-        let repo_manager = RepoManager::new(
-            ctx.xdg_directories(),
-            ctx.file_system(),
-            ctx.git_operations(),
-            ctx.git_sync_manager(),
-        );
-        let docker_manager = DockerManager::new(ctx.docker_client());
-
-        // Create image manager with a default configuration
-        // Individual tasks will create their own image managers with task-specific repos
-        let project_root = find_repository_root(std::path::Path::new(".")).ok();
-        let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
-            project_root.as_deref(),
-            &ctx.xdg_directories(),
-        ));
-        let template_manager =
-            DockerTemplateManager::new(asset_manager.clone(), ctx.xdg_directories());
-        let composer = DockerComposer::new(DockerTemplateManager::new(
-            asset_manager,
-            ctx.xdg_directories(),
-        ));
-        let image_manager = Arc::new(DockerImageManager::new(
-            ctx.docker_client(),
-            template_manager,
-            composer,
-        ));
-
-        let task_runner = TaskRunner::new(
-            repo_manager,
-            docker_manager,
-            image_manager,
-            ctx.notification_client(),
-            ctx.docker_client(),
-            ctx.xdg_directories(),
-            ctx.config(),
-        );
+        let task_runner = TaskRunner::new(ctx);
 
         Ok(Self {
             task_runner,
