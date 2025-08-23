@@ -167,18 +167,10 @@ struct ClaudeMessage {
     session_id: Option<String>,
     timestamp: Option<String>,
     #[serde(rename = "toolUseResult")]
-    tool_use_result: Option<ToolUseResult>,
+    tool_use_result: Option<Value>, // Changed to Value for flexible structure
     summary: Option<String>,
-}
-
-/// Tool use result from user messages
-#[derive(Debug, Deserialize, Serialize)]
-struct ToolUseResult {
-    stdout: Option<String>,
-    stderr: Option<String>,
-    is_error: Option<bool>,
-    error: Option<String>,
-    filenames: Option<Vec<String>>,
+    #[serde(rename = "leafUuid")]
+    leaf_uuid: Option<String>, // For summary messages
 }
 
 /// Message content structure from Claude Code
@@ -259,11 +251,20 @@ impl ClaudeCodeLogProcessor {
             "user" => self.format_user_message(&msg),
             "result" => self.format_result_message(msg),
             "summary" => {
-                // Show summary messages
+                // Summary messages indicate task completion
                 if let Some(summary_text) = msg.summary {
-                    Some(format!("📋 Summary: {summary_text}"))
+                    // Store as final result if not already set
+                    if self.final_result.is_none() {
+                        self.final_result = Some(TaskResult {
+                            success: true, // Summary messages typically indicate success
+                            message: summary_text.clone(),
+                            cost_usd: None,
+                            duration_ms: None,
+                        });
+                    }
+                    Some(format!("✅ Task Complete: {summary_text}"))
                 } else {
-                    Some("📋 [summary]".to_string())
+                    Some("✅ Task Complete".to_string())
                 }
             }
             other_type => {
@@ -275,63 +276,131 @@ impl ClaudeCodeLogProcessor {
 
     /// Formats a user message with tool result information
     fn format_user_message(&self, msg: &ClaudeMessage) -> Option<String> {
-        if let Some(tool_result) = &msg.tool_use_result {
-            let mut output = String::new();
-
-            // Check for specific tool results
-            if let Some(filenames) = &tool_result.filenames {
-                let count = filenames.len();
-                output.push_str(&format!(
-                    "👤 Tool result: Found {count} file{}",
-                    if count == 1 { "" } else { "s" }
-                ));
-            } else if let Some(stdout) = &tool_result.stdout {
-                if stdout.contains("test result: ok") {
-                    output.push_str("👤 Tool result: Tests passed ✅");
-                } else if stdout.contains("test result: FAILED") {
-                    output.push_str("👤 Tool result: Tests failed ❌");
-                } else if stdout.trim().is_empty() {
-                    output.push_str("👤 Tool result: Command completed");
-                } else {
-                    // For other outputs, show a brief summary
-                    let first_line = stdout.lines().next().unwrap_or("").trim();
-                    if first_line.len() > 50 {
-                        output.push_str(&format!("👤 Tool result: {}...", &first_line[..50]));
-                    } else {
-                        output.push_str(&format!("👤 Tool result: {first_line}"));
+        // First check if this is a tool result message
+        if let Some(message) = &msg.message
+            && let Some(content) = &message.content
+        {
+            // Check if content is an array with tool_result
+            if let Value::Array(contents) = content {
+                for item in contents {
+                    if let Some("tool_result") = item.get("type").and_then(|t| t.as_str()) {
+                        // This is a tool result - extract the tool that was used
+                        if let Some(_tool_use_id) =
+                            item.get("tool_use_id").and_then(|id| id.as_str())
+                        {
+                            // Try to determine which tool was used from toolUseResult
+                            if let Some(tool_result_extra) = msg.tool_use_result.as_ref() {
+                                // Check for specific result types to identify the tool
+                                if tool_result_extra.get("type").and_then(|t| t.as_str())
+                                    == Some("text")
+                                {
+                                    if let Some(file_info) = tool_result_extra.get("file")
+                                        && let Some(path) =
+                                            file_info.get("filePath").and_then(|p| p.as_str())
+                                    {
+                                        let filename = path.rsplit('/').next().unwrap_or(path);
+                                        return Some(format!("📖 Read result: {filename}"));
+                                    }
+                                    return Some("📖 Read result".to_string());
+                                } else if tool_result_extra.get("filePath").is_some() {
+                                    return Some("✏️ Edit result".to_string());
+                                } else if tool_result_extra.get("oldTodos").is_some()
+                                    || tool_result_extra.get("newTodos").is_some()
+                                {
+                                    return Some("📝 TodoWrite result".to_string());
+                                } else if tool_result_extra.get("stdout").is_some() {
+                                    let stdout = tool_result_extra
+                                        .get("stdout")
+                                        .and_then(|s| s.as_str())
+                                        .unwrap_or("");
+                                    if stdout.contains("test result: ok") {
+                                        return Some("🖥️ Bash result: Tests passed ✅".to_string());
+                                    } else if stdout.contains("test result: FAILED") {
+                                        return Some("🖥️ Bash result: Tests failed ❌".to_string());
+                                    } else if stdout.trim().is_empty() {
+                                        return Some(
+                                            "🖥️ Bash result: Command completed".to_string(),
+                                        );
+                                    } else {
+                                        let first_line = stdout.lines().next().unwrap_or("").trim();
+                                        if first_line.len() > 40 {
+                                            return Some(format!(
+                                                "🖥️ Bash result: {}...",
+                                                &first_line[..40]
+                                            ));
+                                        } else {
+                                            return Some(format!("🖥️ Bash result: {first_line}"));
+                                        }
+                                    }
+                                } else if tool_result_extra.get("filenames").is_some() {
+                                    if let Some(filenames) = tool_result_extra
+                                        .get("filenames")
+                                        .and_then(|f| f.as_array())
+                                    {
+                                        let count = filenames.len();
+                                        return Some(format!(
+                                            "🔍 Search result: Found {count} file{}",
+                                            if count == 1 { "" } else { "s" }
+                                        ));
+                                    }
+                                    return Some("🔍 Search result".to_string());
+                                }
+                            }
+                            // Generic tool result if we couldn't identify the type
+                            return Some("🔧 Tool result".to_string());
+                        }
                     }
                 }
-            } else if let Some(error) = &tool_result.error {
-                output.push_str(&format!("👤 Tool error: {error}"));
-            } else if tool_result.is_error == Some(true) {
-                output.push_str("👤 Tool result: Error occurred");
-            } else {
-                output.push_str("👤 Tool result: Completed");
             }
-
-            Some(output)
-        } else {
-            // Check if this is a regular user message with content
-            if let Some(message) = &msg.message {
-                if let Some(Value::String(text)) = &message.content {
-                    // Show brief summary of user message
-                    let first_line = text.lines().next().unwrap_or("").trim();
-                    if first_line.starts_with("# ") {
-                        Some(format!("👤 User: {}", first_line.trim_start_matches("# ")))
-                    } else if first_line.len() > 60 {
-                        Some(format!("👤 User: {}...", &first_line[..60]))
-                    } else if !first_line.is_empty() {
-                        Some(format!("👤 User: {first_line}"))
-                    } else {
-                        Some("👤 [user]".to_string())
-                    }
-                } else {
-                    Some("👤 [user]".to_string())
+            // Check if it's a regular user message with string content
+            else if let Value::String(text) = content {
+                let first_line = text.lines().next().unwrap_or("").trim();
+                if first_line.starts_with("# ") {
+                    return Some(format!("👤 User: {}", first_line.trim_start_matches("# ")));
+                } else if first_line.len() > 60 {
+                    return Some(format!("👤 User: {}...", &first_line[..60]));
+                } else if !first_line.is_empty() {
+                    return Some(format!("👤 User: {first_line}"));
                 }
-            } else {
-                Some("👤 [user]".to_string())
             }
         }
+
+        // Legacy format support for backward compatibility
+        if let Some(tool_result) = &msg.tool_use_result {
+            let mut output = String::new();
+            if let Some(filenames) = tool_result.get("filenames").and_then(|v| v.as_array()) {
+                let count = filenames.len();
+                output.push_str(&format!(
+                    "🔍 Search result: Found {count} file{}",
+                    if count == 1 { "" } else { "s" }
+                ));
+            } else if let Some(stdout) = tool_result.get("stdout").and_then(|v| v.as_str()) {
+                if stdout.contains("test result: ok") {
+                    output.push_str("🖥️ Bash result: Tests passed ✅");
+                } else if stdout.contains("test result: FAILED") {
+                    output.push_str("🖥️ Bash result: Tests failed ❌");
+                } else if stdout.trim().is_empty() {
+                    output.push_str("🖥️ Bash result: Command completed");
+                } else {
+                    let first_line = stdout.lines().next().unwrap_or("").trim();
+                    if first_line.len() > 40 {
+                        output.push_str(&format!("🖥️ Bash result: {}...", &first_line[..40]));
+                    } else {
+                        output.push_str(&format!("🖥️ Bash result: {first_line}"));
+                    }
+                }
+            } else if let Some(error) = tool_result.get("error").and_then(|v| v.as_str()) {
+                output.push_str(&format!("❌ Tool error: {error}"));
+            } else if tool_result.get("is_error").and_then(|v| v.as_bool()) == Some(true) {
+                output.push_str("❌ Tool error occurred");
+            } else {
+                output.push_str("🔧 Tool result: Completed");
+            }
+            return Some(output);
+        }
+
+        // Default fallback
+        Some("👤 [user]".to_string())
     }
 
     /// Formats an assistant message, extracting text content, tool uses, and todo updates
@@ -343,8 +412,10 @@ impl ClaudeCodeLogProcessor {
                         let mut output = String::new();
 
                         for item in contents {
-                            // Check for tool use
-                            if let Some(tool_name) = item.get("name").and_then(|n| n.as_str()) {
+                            // Check for tool use - new format has type: "tool_use" with name field
+                            if let Some("tool_use") = item.get("type").and_then(|t| t.as_str())
+                                && let Some(tool_name) = item.get("name").and_then(|n| n.as_str())
+                            {
                                 match tool_name {
                                     "TodoWrite" => {
                                         if let Some(input) = item.get("input")
@@ -357,8 +428,30 @@ impl ClaudeCodeLogProcessor {
                                             output.push_str(&self.format_todo_update(&todo_items));
                                         }
                                     }
-                                    "Read" | "LS" | "NotebookRead" => {
-                                        // Skip file reading operations as requested
+                                    "Read" => {
+                                        if let Some(input) = item.get("input")
+                                            && let Some(file_path) =
+                                                input.get("file_path").and_then(|f| f.as_str())
+                                        {
+                                            let file_name =
+                                                file_path.rsplit('/').next().unwrap_or(file_path);
+                                            output.push_str(&format!("📖 Reading {file_name}\n"));
+                                        } else {
+                                            output.push_str("📖 Reading file\n");
+                                        }
+                                    }
+                                    "LS" => {
+                                        if let Some(input) = item.get("input")
+                                            && let Some(path) =
+                                                input.get("path").and_then(|p| p.as_str())
+                                        {
+                                            output.push_str(&format!("📂 Listing {path}\n"));
+                                        } else {
+                                            output.push_str("📂 Listing directory\n");
+                                        }
+                                    }
+                                    "NotebookRead" => {
+                                        output.push_str("📓 Reading notebook\n");
                                     }
                                     "Edit" | "MultiEdit" => {
                                         if let Some(input) = item.get("input")
@@ -681,6 +774,66 @@ impl LogProcessor for ClaudeCodeLogProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_process_new_format_from_examples() {
+        let mut processor = ClaudeCodeLogProcessor::new();
+
+        // Test user message with tool result from actual log
+        let user_msg = r#"{
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [{"tool_use_id": "toolu_01C7QqhSgaCe94zmaQG81s2k", "type": "tool_result", "content": "File content here..."}]
+            },
+            "toolUseResult": {
+                "type": "text",
+                "file": {
+                    "filePath": "/workspace/src/test.rs",
+                    "content": "test content",
+                    "numLines": 10
+                }
+            }
+        }"#;
+        let result = processor.process_line(user_msg);
+        println!("User message result: {:?}", result);
+
+        // Test assistant message with tool use from actual log
+        let assistant_tool_msg = r#"{
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "model": "claude-opus-4-1-20250805",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "toolu_01C7QqhSgaCe94zmaQG81s2k",
+                    "name": "Read",
+                    "input": {"file_path": "/workspace/src/context/config.rs"}
+                }]
+            }
+        }"#;
+        let result = processor.process_line(assistant_tool_msg);
+        println!("Assistant tool message result: {:?}", result);
+        assert!(result.is_some());
+
+        // Test user message with TodoWrite result
+        let todo_result_msg = r#"{
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [{"tool_use_id": "toolu_01LZrNvkVyDfV4ZyWu79RYrz", "type": "tool_result", "content": "Todos have been modified successfully"}]
+            },
+            "toolUseResult": {
+                "oldTodos": [],
+                "newTodos": [
+                    {"content": "Analyze current AppContext", "status": "in_progress", "activeForm": "Analyzing current AppContext"},
+                    {"content": "Review test usage patterns", "status": "pending", "activeForm": "Reviewing test usage patterns"}
+                ]
+            }
+        }"#;
+        let result = processor.process_line(todo_result_msg);
+        println!("Todo result message: {:?}", result);
+    }
 
     #[test]
     fn test_process_assistant_message() {
@@ -1024,7 +1177,7 @@ mod tests {
         }"#;
 
         let result = processor.process_line(json);
-        assert_eq!(result, Some("👤 Tool result: Tests passed ✅".to_string()));
+        assert_eq!(result, Some("🖥️ Bash result: Tests passed ✅".to_string()));
     }
 
     #[test]
@@ -1038,7 +1191,7 @@ mod tests {
         }"#;
 
         let result = processor.process_line(json);
-        assert_eq!(result, Some("👤 Tool result: Found 3 files".to_string()));
+        assert_eq!(result, Some("🔍 Search result: Found 3 files".to_string()));
     }
 
     #[test]
@@ -1112,7 +1265,7 @@ mod tests {
         let result = processor.process_line(json);
         assert_eq!(
             result,
-            Some("📋 Summary: Test Summary: Running unit tests".to_string())
+            Some("✅ Task Complete: Test Summary: Running unit tests".to_string())
         );
     }
 
