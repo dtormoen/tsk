@@ -208,61 +208,50 @@ impl TaskRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::file_system::{DefaultFileSystem, FileSystemOperations};
     use crate::task::{Task, TaskStatus};
-    use crate::test_utils::FixedResponseDockerClient;
+    use crate::test_utils::{FixedResponseDockerClient, git_test_utils::TestGitRepository};
     use std::sync::Arc;
 
     #[tokio::test]
     #[ignore = "Test requires Docker to be available for image building"]
     async fn test_execute_task_success() {
-        use crate::context::file_system::tests::MockFileSystem;
         use crate::git::RepoManager;
 
+        // Create a test git repository
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+
+        // Create necessary files in the repository
+        test_repo
+            .create_file(".tsk/tasks/instructions.md", "Test task instructions")
+            .unwrap();
+        test_repo.create_file("test.txt", "test content").unwrap();
+        test_repo.stage_all().unwrap();
+        test_repo.commit("Add test files").unwrap();
+
         // Set up a temporary home directory with a mock .claude.json file
-        let temp_dir = tempfile::tempdir().unwrap();
-        let claude_json_path = temp_dir.path().join(".claude.json");
+        let temp_home = tempfile::tempdir().unwrap();
+        let claude_json_path = temp_home.path().join(".claude.json");
         std::fs::write(&claude_json_path, "{}").unwrap();
+
+        // Save original HOME and restore it after test
+        let original_home = std::env::var("HOME").ok();
         unsafe {
-            std::env::set_var("HOME", temp_dir.path());
+            std::env::set_var("HOME", temp_home.path());
         }
 
-        // Set up git configuration for tests
-        unsafe {
-            std::env::set_var("GIT_CONFIG_GLOBAL", temp_dir.path().join(".gitconfig"));
-        }
-        unsafe {
-            std::env::set_var("GIT_CONFIG_SYSTEM", "/dev/null");
-        }
-
-        // Configure git for the test
-        std::process::Command::new("git")
-            .args(["config", "--global", "user.name", "Test User"])
-            .output()
-            .unwrap();
-        std::process::Command::new("git")
-            .args(["config", "--global", "user.email", "test@example.com"])
-            .output()
-            .unwrap();
-
-        // Create mock file system with necessary files and directories
-        let fs = Arc::new(
-            MockFileSystem::new()
-                .with_dir(".git")
-                .with_dir(".tsk")
-                .with_dir(".tsk/tasks")
-                .with_file("test.txt", "test content")
-                .with_file("instructions.md", "Test task instructions"),
-        );
-
-        // TODO: Replace MockGitOperations with real git operations
+        // Use DefaultFileSystem for real file operations
+        let fs = Arc::new(DefaultFileSystem);
         let git_ops = Arc::new(crate::context::git_operations::DefaultGitOperations);
         let docker_client = Arc::new(FixedResponseDockerClient::default());
 
-        // Create test XDG directories using XdgConfig
+        // Create test XDG directories
+        let temp_xdg = tempfile::tempdir().unwrap();
         let xdg_config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("xdg-data"),
-            temp_dir.path().join("xdg-runtime"),
-            temp_dir.path().join("xdg-config"),
+            temp_xdg.path().join("xdg-data"),
+            temp_xdg.path().join("xdg-runtime"),
+            temp_xdg.path().join("xdg-config"),
         );
         let xdg_directories =
             Arc::new(crate::storage::XdgDirectories::new(Some(xdg_config)).unwrap());
@@ -272,7 +261,7 @@ mod tests {
         let repo_manager = RepoManager::new(xdg_directories.clone(), fs.clone(), git_ops, git_sync);
         let docker_manager = crate::docker::DockerManager::new(docker_client.clone());
 
-        // Create a mock docker image manager
+        // Create docker image manager
         use crate::assets::embedded::EmbeddedAssetManager;
         use crate::docker::composer::DockerComposer;
         use crate::docker::template_manager::DockerTemplateManager;
@@ -296,15 +285,25 @@ mod tests {
             docker_image_manager,
             notification_client,
             docker_client,
-            xdg_directories,
+            xdg_directories.clone(),
         );
+
+        // Create a task copy directory
+        let repo_hash = crate::storage::get_repo_hash(test_repo.path());
+        let task_copy_dir = xdg_directories.task_dir("test-task-123", &repo_hash);
+
+        // Use the async filesystem operations to copy the repository
+        fs.copy_dir(test_repo.path(), &task_copy_dir).await.unwrap();
 
         let task = Task {
             id: "test-task-123".to_string(),
-            repo_root: temp_dir.path().to_path_buf(),
+            repo_root: test_repo.path().to_path_buf(),
             name: "test-task".to_string(),
             task_type: "feature".to_string(),
-            instructions_file: "instructions.md".to_string(),
+            instructions_file: task_copy_dir
+                .join(".tsk/tasks/instructions.md")
+                .to_string_lossy()
+                .to_string(),
             agent: "claude-code".to_string(),
             timeout: 30,
             status: TaskStatus::Queued,
@@ -313,13 +312,22 @@ mod tests {
             completed_at: None,
             branch_name: "tsk/feature/test-task/test-task-123".to_string(),
             error_message: None,
-            source_commit: "abc123".to_string(),
+            source_commit: test_repo.get_current_commit().unwrap(),
             tech_stack: "default".to_string(),
             project: "default".to_string(),
-            copied_repo_path: std::env::current_dir().unwrap(),
+            copied_repo_path: task_copy_dir,
         };
 
         let result = task_runner.execute_task(&task, false).await;
+
+        // Restore original HOME
+        unsafe {
+            if let Some(home) = original_home {
+                std::env::set_var("HOME", home);
+            } else {
+                std::env::remove_var("HOME");
+            }
+        }
 
         assert!(result.is_ok(), "Error: {:?}", result.as_ref().err());
         let execution_result = result.unwrap();

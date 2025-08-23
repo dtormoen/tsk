@@ -261,10 +261,11 @@ impl TaskExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::file_system::tests::MockFileSystem;
+    use crate::context::file_system::DefaultFileSystem;
     use crate::storage::XdgDirectories;
     use crate::task::{Task, TaskStatus};
     use crate::task_storage::get_task_storage;
+    use crate::test_utils::git_test_utils::TestGitRepository;
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -279,7 +280,7 @@ mod tests {
         let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
         xdg.ensure_directories().unwrap();
 
-        let fs = Arc::new(MockFileSystem::new());
+        let fs = Arc::new(DefaultFileSystem);
         let storage = Arc::new(Mutex::new(get_task_storage(xdg.clone(), fs.clone())));
 
         let app_context = crate::context::AppContext::builder()
@@ -325,25 +326,34 @@ mod tests {
         let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
         xdg.ensure_directories().unwrap();
 
-        // Create a mock task that will complete successfully
+        // Create a test git repository for the task
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        test_repo
+            .create_file("instructions.md", "Test instructions")
+            .unwrap();
+        test_repo.stage_all().unwrap();
+        test_repo.commit("Add instructions").unwrap();
+
+        // Create a task that will complete successfully
         let task = Task::new(
             "test-task-123".to_string(),
-            temp_dir.path().to_path_buf(),
+            test_repo.path().to_path_buf(),
             "test-task".to_string(),
             "test".to_string(),
             "instructions.md".to_string(),
             "claude-code".to_string(),
             30,
             "tsk/test-task-123".to_string(),
-            "abc123".to_string(),
+            test_repo.get_current_commit().unwrap(),
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            temp_dir.path().to_path_buf(),
+            temp_dir.path().join("task-copy"),
         );
 
         // Set up storage with the queued task
-        let fs = Arc::new(MockFileSystem::new());
+        let fs = Arc::new(DefaultFileSystem);
         let storage = get_task_storage(xdg.clone(), fs.clone());
         storage.add_task(task.clone()).await.unwrap();
 
@@ -384,18 +394,18 @@ mod tests {
         // Add another queued task to verify the executor can continue processing
         let task2 = Task::new(
             "test-task-456".to_string(),
-            temp_dir.path().to_path_buf(),
+            test_repo.path().to_path_buf(),
             "test-task-2".to_string(),
             "test".to_string(),
             "instructions.md".to_string(),
             "claude-code".to_string(),
             30,
             "tsk/test-task-456".to_string(),
-            "abc123".to_string(),
+            test_repo.get_current_commit().unwrap(),
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            temp_dir.path().to_path_buf(),
+            temp_dir.path().join("task-copy-2"),
         );
 
         let storage_guard = storage.lock().await;
@@ -438,29 +448,38 @@ mod tests {
         let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
         xdg.ensure_directories().unwrap();
 
+        // Create a test git repository
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        test_repo
+            .create_file("instructions.md", "Test instructions")
+            .unwrap();
+        test_repo.stage_all().unwrap();
+        let commit_sha = test_repo.commit("Add instructions").unwrap();
+
         // Create multiple tasks
         let mut tasks = vec![];
         for i in 0..3 {
             let task = Task::new(
                 format!("test-task-{i}"),
-                temp_dir.path().to_path_buf(),
+                test_repo.path().to_path_buf(),
                 format!("test-task-{i}"),
                 "test".to_string(),
                 "instructions.md".to_string(),
                 "claude-code".to_string(),
                 30,
                 format!("tsk/test-task-{i}"),
-                "abc123".to_string(),
+                commit_sha.clone(),
                 "default".to_string(),
                 "default".to_string(),
                 chrono::Local::now(),
-                temp_dir.path().to_path_buf(),
+                temp_dir.path().join(format!("task-copy-{i}")),
             );
             tasks.push(task);
         }
 
         // Set up storage with queued tasks
-        let fs = Arc::new(MockFileSystem::new());
+        let fs = Arc::new(DefaultFileSystem);
         let storage = get_task_storage(xdg.clone(), fs.clone());
         for task in &tasks {
             storage.add_task(task.clone()).await.unwrap();
@@ -523,29 +542,38 @@ mod tests {
         let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
         xdg.ensure_directories().unwrap();
 
+        // Create a test git repository
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        test_repo
+            .create_file("instructions.md", "Test instructions")
+            .unwrap();
+        test_repo.stage_all().unwrap();
+        let commit_sha = test_repo.commit("Add instructions").unwrap();
+
         // Create 3 tasks with different timings
         let mut tasks = vec![];
         for i in 0..3 {
             let task = Task::new(
                 format!("test-task-{i}"),
-                temp_dir.path().to_path_buf(),
+                test_repo.path().to_path_buf(),
                 format!("test-task-{i}"),
                 "test".to_string(),
                 "instructions.md".to_string(),
                 "claude-code".to_string(),
                 30,
                 format!("tsk/test-task-{i}"),
-                "abc123".to_string(),
+                commit_sha.clone(),
                 "default".to_string(),
                 "default".to_string(),
                 chrono::Local::now(),
-                temp_dir.path().to_path_buf(),
+                temp_dir.path().join(format!("task-copy-{i}")),
             );
             tasks.push(task);
         }
 
         // Set up storage with queued tasks
-        let fs = Arc::new(MockFileSystem::new());
+        let fs = Arc::new(DefaultFileSystem);
         let storage = get_task_storage(xdg.clone(), fs.clone());
         for task in &tasks {
             storage.add_task(task.clone()).await.unwrap();
@@ -627,7 +655,7 @@ mod tests {
         let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
         xdg.ensure_directories().unwrap();
 
-        let fs = Arc::new(MockFileSystem::new());
+        let fs = Arc::new(DefaultFileSystem);
         let storage = Arc::new(Mutex::new(get_task_storage(xdg.clone(), fs.clone())));
 
         let app_context = Arc::new(
@@ -643,21 +671,30 @@ mod tests {
         let wait_time = Instant::now() + Duration::from_millis(50);
         *executor.warmup_failure_wait_until.lock().await = Some(wait_time);
 
+        // Create a test git repository
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        test_repo
+            .create_file("instructions.md", "Test instructions")
+            .unwrap();
+        test_repo.stage_all().unwrap();
+        let commit_sha = test_repo.commit("Add instructions").unwrap();
+
         // Create a queued task
         let task = Task::new(
             "test-task".to_string(),
-            temp_dir.path().to_path_buf(),
+            test_repo.path().to_path_buf(),
             "test".to_string(),
             "test".to_string(),
             "instructions.md".to_string(),
             "no-op".to_string(),
             30,
             "tsk/test-task".to_string(),
-            "abc123".to_string(),
+            commit_sha,
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            temp_dir.path().to_path_buf(),
+            temp_dir.path().join("task-copy"),
         );
 
         let storage_guard = storage.lock().await;
@@ -739,25 +776,34 @@ mod tests {
         let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
         xdg.ensure_directories().unwrap();
 
+        // Create a test git repository
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        test_repo
+            .create_file("instructions.md", "Test instructions")
+            .unwrap();
+        test_repo.stage_all().unwrap();
+        let commit_sha = test_repo.commit("Add instructions").unwrap();
+
         // Create a single task
         let task = Task::new(
             "test-task-complete".to_string(),
-            temp_dir.path().to_path_buf(),
+            test_repo.path().to_path_buf(),
             "test-task".to_string(),
             "test".to_string(),
             "instructions.md".to_string(),
             "claude-code".to_string(),
             30,
             "tsk/test-task".to_string(),
-            "abc123".to_string(),
+            commit_sha,
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            temp_dir.path().to_path_buf(),
+            temp_dir.path().join("task-copy"),
         );
 
         // Set up storage with the task
-        let fs = Arc::new(MockFileSystem::new());
+        let fs = Arc::new(DefaultFileSystem);
         let storage = get_task_storage(xdg.clone(), fs.clone());
         storage.add_task(task.clone()).await.unwrap();
 
