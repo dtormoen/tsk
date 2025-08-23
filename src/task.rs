@@ -514,7 +514,6 @@ impl Default for TaskBuilder {
 mod tests {
     use super::*;
     use crate::context::AppContext;
-    use crate::context::file_system::{FileSystemOperations, tests::MockFileSystem};
     use std::sync::Arc;
     use tempfile::TempDir;
 
@@ -789,63 +788,62 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_builder_write_instructions_content() {
-        let temp_dir = TempDir::new().unwrap();
-        let current_dir = temp_dir.path().to_path_buf();
+        use crate::test_utils::TestGitRepository;
 
         // Test 1: Basic write without template
         {
-            let fs = Arc::new(
-                MockFileSystem::new()
-                    .with_dir(current_dir.join(".tsk/tasks").to_string_lossy().as_ref()),
-            );
+            let test_repo = TestGitRepository::new().unwrap();
+            test_repo.init().unwrap();
+            let current_dir = test_repo.path().to_path_buf();
 
-            let ctx = AppContext::builder().with_file_system(fs.clone()).build();
+            // Create necessary directories
+            std::fs::create_dir_all(current_dir.join(".tsk/tasks")).unwrap();
+
+            let ctx = AppContext::builder().build();
 
             let task_builder = TaskBuilder::new()
                 .name("test-task".to_string())
                 .task_type("generic".to_string())
                 .description(Some("Test description".to_string()));
 
-            let temp_path = Path::new(".tsk-edit-abcd1234-instructions.md");
+            let temp_path = current_dir.join(".tsk-edit-abcd1234-instructions.md");
             let result_path = task_builder
-                .write_instructions_content(temp_path, "generic", &ctx)
+                .write_instructions_content(&temp_path, "generic", &ctx)
                 .await
                 .unwrap();
 
             assert_eq!(result_path, temp_path.to_string_lossy().to_string());
-            let content = fs.read_file(temp_path).await.unwrap();
+            let content = ctx.file_system().read_file(&temp_path).await.unwrap();
             assert!(content.contains("Test description"));
         }
 
         // Test 2: Write with template
         {
+            let test_repo = TestGitRepository::new().unwrap();
+            test_repo.init().unwrap();
+            let current_dir = test_repo.path().to_path_buf();
+
             let template_content = "# Feature Template\n\n{{DESCRIPTION}}";
             let template_dir = current_dir.join(".tsk/templates");
 
-            let fs = Arc::new(
-                MockFileSystem::new()
-                    .with_dir(current_dir.join(".tsk/tasks").to_string_lossy().as_ref())
-                    .with_dir(template_dir.to_string_lossy().as_ref())
-                    .with_file(
-                        template_dir.join("feat.md").to_string_lossy().as_ref(),
-                        template_content,
-                    ),
-            );
+            // Create template directory and file
+            std::fs::create_dir_all(&template_dir).unwrap();
+            std::fs::write(template_dir.join("feat.md"), template_content).unwrap();
 
-            let ctx = AppContext::builder().with_file_system(fs.clone()).build();
+            let ctx = AppContext::builder().build();
 
             let task_builder = TaskBuilder::new()
                 .name("test-feature".to_string())
                 .task_type("feat".to_string())
                 .description(Some("My new feature".to_string()));
 
-            let temp_path = Path::new(".tsk-edit-efgh5678-instructions.md");
+            let temp_path = current_dir.join(".tsk-edit-efgh5678-instructions.md");
             task_builder
-                .write_instructions_content(temp_path, "feat", &ctx)
+                .write_instructions_content(&temp_path, "feat", &ctx)
                 .await
                 .unwrap();
 
-            let content = fs.read_file(temp_path).await.unwrap();
+            let content = ctx.file_system().read_file(&temp_path).await.unwrap();
             assert!(content.contains("My new feature"));
             assert!(content.contains("Feature"));
             assert!(!content.contains("{{DESCRIPTION}}"));

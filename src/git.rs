@@ -342,10 +342,7 @@ mod tests {
         non_git_repo.setup_non_git_directory().unwrap();
 
         let git_ops = Arc::new(DefaultGitOperations);
-
-        use crate::context::file_system::tests::MockFileSystem;
-        let fs = Arc::new(MockFileSystem::new());
-
+        let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
         let git_sync = Arc::new(GitSyncManager::new());
         let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
 
@@ -371,10 +368,7 @@ mod tests {
         test_repo.init_with_commit().unwrap();
 
         let git_ops = Arc::new(DefaultGitOperations);
-
-        use crate::context::file_system::tests::MockFileSystem;
-        let fs = Arc::new(MockFileSystem::new());
-
+        let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
         let xdg_directories = create_test_xdg_directories(&temp_dir);
         let git_sync = Arc::new(GitSyncManager::new());
         let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
@@ -401,10 +395,7 @@ mod tests {
             .unwrap();
 
         let git_ops = Arc::new(DefaultGitOperations);
-
-        use crate::context::file_system::tests::MockFileSystem;
-        let fs = Arc::new(MockFileSystem::new());
-
+        let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
         let xdg_directories = create_test_xdg_directories(&temp_dir);
         let git_sync = Arc::new(GitSyncManager::new());
         let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
