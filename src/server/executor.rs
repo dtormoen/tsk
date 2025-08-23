@@ -362,7 +362,6 @@ mod tests {
         let app_context = crate::context::AppContext::builder()
             .with_file_system(fs)
             .with_xdg_directories(xdg)
-            .with_docker_client(Arc::new(crate::test_utils::NoOpDockerClient))
             .build();
 
         let storage = Arc::new(Mutex::new(storage));
@@ -492,7 +491,6 @@ mod tests {
         let app_context = crate::context::AppContext::builder()
             .with_file_system(fs)
             .with_xdg_directories(xdg)
-            .with_docker_client(Arc::new(crate::test_utils::NoOpDockerClient))
             .build();
 
         let storage = Arc::new(Mutex::new(storage));
@@ -587,7 +585,6 @@ mod tests {
         let app_context = crate::context::AppContext::builder()
             .with_file_system(fs)
             .with_xdg_directories(xdg)
-            .with_docker_client(Arc::new(crate::test_utils::NoOpDockerClient))
             .build();
 
         let storage = Arc::new(Mutex::new(storage));
@@ -764,7 +761,6 @@ mod tests {
         let app_context = crate::context::AppContext::builder()
             .with_file_system(fs)
             .with_xdg_directories(xdg)
-            .with_docker_client(Arc::new(crate::test_utils::NoOpDockerClient))
             .build();
 
         let storage = Arc::new(Mutex::new(storage));

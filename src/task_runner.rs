@@ -240,7 +240,6 @@ impl TaskRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::file_system::{DefaultFileSystem, FileSystemOperations};
     use crate::task::{Task, TaskStatus};
     use crate::test_utils::git_test_utils::TestGitRepository;
     use std::sync::Arc;
@@ -271,9 +270,6 @@ mod tests {
         // Create XDG config with the test claude directory
         use crate::storage::XdgConfig;
 
-        // Use DefaultFileSystem for real file operations
-        let fs = Arc::new(DefaultFileSystem);
-
         // Create test XDG directories with claude config
         let temp_xdg = tempfile::tempdir().unwrap();
         let xdg_config = XdgConfig::builder()
@@ -286,10 +282,9 @@ mod tests {
             Arc::new(crate::storage::XdgDirectories::new(Some(xdg_config)).unwrap());
         xdg_directories.ensure_directories().unwrap();
 
-        // Create AppContext with test dependencies
+        // Create AppContext with special claude config
         let ctx = AppContext::builder()
             .with_xdg_directories(xdg_directories.clone())
-            .with_file_system(fs.clone())
             .build();
 
         let task_runner = TaskRunner::new(&ctx);
@@ -299,7 +294,10 @@ mod tests {
         let task_copy_dir = xdg_directories.task_dir("test-task-123", &repo_hash);
 
         // Use the async filesystem operations to copy the repository
-        fs.copy_dir(test_repo.path(), &task_copy_dir).await.unwrap();
+        ctx.file_system()
+            .copy_dir(test_repo.path(), &task_copy_dir)
+            .await
+            .unwrap();
 
         let task = Task {
             id: "test-task-123".to_string(),

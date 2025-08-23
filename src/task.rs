@@ -539,36 +539,22 @@ mod tests {
     use tempfile::TempDir;
 
     /// Helper to create a standard test context with real file system and git operations
-    /// Returns (xdg_temp_dir, git_repo, AppContext)
-    fn create_test_context() -> (TempDir, crate::test_utils::TestGitRepository, AppContext) {
-        use crate::context::git_operations::DefaultGitOperations;
+    /// Returns (git_repo, AppContext)
+    fn create_test_context() -> (crate::test_utils::TestGitRepository, AppContext) {
         use crate::test_utils::TestGitRepository;
-
-        let temp_dir = TempDir::new().unwrap();
 
         // Create a test git repository
         let test_repo = TestGitRepository::new().unwrap();
         test_repo.init_with_commit().unwrap();
 
-        // Create XDG config
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-        let xdg = crate::storage::XdgDirectories::new(Some(config))
-            .expect("Failed to create XDG directories");
-        xdg.ensure_directories()
-            .expect("Failed to ensure XDG directories");
+        // Create AppContext - automatically gets test defaults:
+        // - Temporary XDG directories
+        // - NoOpDockerClient
+        // - NoOpTskClient
+        // - DefaultGitOperations
+        let ctx = AppContext::builder().build();
 
-        // Create AppContext with real implementations
-        let ctx = AppContext::builder()
-            .with_xdg_directories(Arc::new(xdg))
-            .with_git_operations(Arc::new(DefaultGitOperations))
-            .build();
-
-        // Return xdg temp_dir and the test_repo to keep both alive
-        (temp_dir, test_repo, ctx)
+        (test_repo, ctx)
     }
 
     /// Helper to create a test task with default values
@@ -595,7 +581,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_builder_basic() {
-        let (_temp_dir, test_repo, ctx) = create_test_context();
+        let (test_repo, ctx) = create_test_context();
         let current_dir = test_repo.path().to_path_buf();
 
         let task = TaskBuilder::new()
@@ -619,8 +605,6 @@ mod tests {
     async fn test_task_builder_with_template() {
         use crate::test_utils::TestGitRepository;
 
-        let temp_dir = TempDir::new().unwrap();
-
         // Create a test git repository
         let test_repo = TestGitRepository::new().unwrap();
         test_repo.init_with_commit().unwrap();
@@ -632,24 +616,8 @@ mod tests {
             .create_file(".tsk/templates/feat.md", template_content)
             .unwrap();
 
-        // Create XDG config
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-        let xdg = crate::storage::XdgDirectories::new(Some(config))
-            .expect("Failed to create XDG directories");
-        xdg.ensure_directories()
-            .expect("Failed to ensure XDG directories");
-
-        // Create AppContext with real implementations
-        let ctx = AppContext::builder()
-            .with_xdg_directories(Arc::new(xdg))
-            .with_git_operations(Arc::new(
-                crate::context::git_operations::DefaultGitOperations,
-            ))
-            .build();
+        // Create AppContext - automatically gets test defaults
+        let ctx = AppContext::builder().build();
 
         // Build task with template
         let task = TaskBuilder::new()
@@ -708,8 +676,6 @@ mod tests {
     async fn test_task_builder_template_without_description_placeholder() {
         use crate::test_utils::TestGitRepository;
 
-        let temp_dir = TempDir::new().unwrap();
-
         // Create a test git repository
         let test_repo = TestGitRepository::new().unwrap();
         test_repo.init_with_commit().unwrap();
@@ -721,24 +687,8 @@ mod tests {
             .create_file(".tsk/templates/ack.md", template_content)
             .unwrap();
 
-        // Create XDG config
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-        let xdg = crate::storage::XdgDirectories::new(Some(config))
-            .expect("Failed to create XDG directories");
-        xdg.ensure_directories()
-            .expect("Failed to ensure XDG directories");
-
-        // Create AppContext with real implementations
-        let ctx = AppContext::builder()
-            .with_xdg_directories(Arc::new(xdg))
-            .with_git_operations(Arc::new(
-                crate::context::git_operations::DefaultGitOperations,
-            ))
-            .build();
+        // Create AppContext - automatically gets test defaults
+        let ctx = AppContext::builder().build();
 
         // Build task without description (should succeed for templates without placeholder)
         let task = TaskBuilder::new()
@@ -770,7 +720,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_builder_with_instructions_file() {
-        let (_temp_dir, test_repo, ctx) = create_test_context();
+        let (test_repo, ctx) = create_test_context();
         let current_dir = test_repo.path().to_path_buf();
 
         // Create instructions file in test repo
@@ -876,8 +826,6 @@ mod tests {
     async fn test_task_builder_captures_source_commit() {
         use crate::test_utils::TestGitRepository;
 
-        let temp_dir = TempDir::new().unwrap();
-
         // Create a test git repository with commits
         let test_repo = TestGitRepository::new().unwrap();
         let initial_commit = test_repo.init_with_commit().unwrap();
@@ -891,24 +839,8 @@ mod tests {
 
         let current_dir = test_repo.path().to_path_buf();
 
-        // Create XDG config
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-        let xdg = crate::storage::XdgDirectories::new(Some(config))
-            .expect("Failed to create XDG directories");
-        xdg.ensure_directories()
-            .expect("Failed to ensure XDG directories");
-
-        // Create AppContext
-        let ctx = AppContext::builder()
-            .with_xdg_directories(Arc::new(xdg))
-            .with_git_operations(Arc::new(
-                crate::context::git_operations::DefaultGitOperations,
-            ))
-            .build();
+        // Create AppContext - automatically gets test defaults
+        let ctx = AppContext::builder().build();
 
         // Build task
         let task = TaskBuilder::new()
@@ -927,7 +859,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_builder_from_existing() {
-        let (_temp_dir, test_repo, ctx) = create_test_context();
+        let (test_repo, ctx) = create_test_context();
         let current_dir = test_repo.path().to_path_buf();
 
         // Create an existing task with instructions file
@@ -1164,7 +1096,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_builder_with_docker_config() {
-        let (_temp_dir, test_repo, ctx) = create_test_context();
+        let (test_repo, ctx) = create_test_context();
         let current_dir = test_repo.path().to_path_buf();
 
         let task = TaskBuilder::new()
@@ -1205,7 +1137,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_id_generation_with_task_type() {
-        let (_temp_dir, test_repo, ctx) = create_test_context();
+        let (test_repo, ctx) = create_test_context();
         let current_dir = test_repo.path().to_path_buf();
 
         // Test with "feat" task type
@@ -1254,7 +1186,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_builder_with_interactive() {
-        let (_temp_dir, test_repo, ctx) = create_test_context();
+        let (test_repo, ctx) = create_test_context();
         let current_dir = test_repo.path().to_path_buf();
 
         // Test building an interactive task

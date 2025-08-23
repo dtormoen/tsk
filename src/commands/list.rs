@@ -113,7 +113,7 @@ mod tests {
     use crate::context::file_system::DefaultFileSystem;
     use crate::storage::{XdgConfig, XdgDirectories};
     use crate::task_storage::get_task_storage;
-    use crate::test_utils::{NoOpTskClient, TestGitRepository};
+    use crate::test_utils::TestGitRepository;
     use std::sync::Arc;
     use tempfile::TempDir;
 
@@ -178,10 +178,9 @@ mod tests {
         }
         std::fs::write(&tasks_file_path, &tasks_json_content)?;
 
-        // Create AppContext with a NoOp TSK client
+        // Create AppContext - automatically gets NoOpTskClient
         let ctx = AppContext::builder()
             .with_xdg_directories(xdg.clone())
-            .with_tsk_client(Arc::new(NoOpTskClient))
             .build();
 
         Ok((ctx, xdg, temp_dir))

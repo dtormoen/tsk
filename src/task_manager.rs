@@ -230,31 +230,19 @@ mod tests {
     use super::*;
     use crate::test_utils::TestGitRepository;
     use std::sync::Arc;
-    use tempfile::TempDir;
 
     /// Helper function to set up a test environment with XDG directories, git repository, and AppContext
     async fn setup_test_environment()
     -> anyhow::Result<(Arc<XdgDirectories>, TestGitRepository, AppContext)> {
-        // Create temporary directory for XDG
-        let temp_dir = TempDir::new()?;
-
-        // Create XdgDirectories instance using XdgConfig
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-        let xdg = Arc::new(XdgDirectories::new(Some(config))?);
-        xdg.ensure_directories()?;
-
         // Create a test git repository
         let test_repo = TestGitRepository::new()?;
         test_repo.init_with_commit()?;
 
-        // Create AppContext
-        let ctx = AppContext::builder()
-            .with_xdg_directories(xdg.clone())
-            .build();
+        // Create AppContext - automatically gets test defaults
+        let ctx = AppContext::builder().build();
+
+        // Get the XDG directories from the context
+        let xdg = ctx.xdg_directories();
 
         Ok((xdg, test_repo, ctx))
     }
@@ -279,22 +267,14 @@ mod tests {
     async fn test_delete_task() {
         use crate::test_utils::TestGitRepository;
 
-        // Create temporary directory for XDG
-        let temp_dir = TempDir::new().unwrap();
-
-        // Create XdgDirectories instance using XdgConfig
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
-        xdg.ensure_directories().unwrap();
-
         // Create a test git repository
         let test_repo = TestGitRepository::new().unwrap();
         test_repo.init_with_commit().unwrap();
         let repo_root = test_repo.path().to_path_buf();
+
+        // Create AppContext - automatically gets test defaults
+        let ctx = AppContext::builder().build();
+        let xdg = ctx.xdg_directories();
 
         // Create a task
         let task_id = "test-task-123".to_string();
@@ -316,11 +296,6 @@ mod tests {
             copied_repo_path.to_string_lossy()
         );
         std::fs::write(&tasks_json_path, task_json).unwrap();
-
-        // Create AppContext
-        let ctx = AppContext::builder()
-            .with_xdg_directories(xdg.clone())
-            .build();
 
         let task_manager = TaskManager::new(&ctx).unwrap();
 
@@ -667,17 +642,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_with_storage_no_git_repo() {
-        // Create temporary directory for XDG (not a git repo)
-        let temp_dir = TempDir::new().unwrap();
-
-        // Create XdgDirectories instance using XdgConfig
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-        let xdg = Arc::new(XdgDirectories::new(Some(config)).unwrap());
-        xdg.ensure_directories().unwrap();
+        // Create AppContext - automatically gets test defaults
+        let ctx = AppContext::builder().build();
+        let xdg = ctx.xdg_directories();
 
         // Create empty tasks.json
         let tasks_json_path = xdg.tasks_file();
@@ -685,9 +652,6 @@ mod tests {
             std::fs::create_dir_all(parent).unwrap();
         }
         std::fs::write(&tasks_json_path, "[]").unwrap();
-
-        // Create AppContext without a git repository
-        let ctx = AppContext::builder().with_xdg_directories(xdg).build();
 
         // This should succeed even without being in a git repository
         let result = TaskManager::new(&ctx);

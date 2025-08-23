@@ -202,36 +202,21 @@ async fn handle_client(
 mod tests {
     use super::*;
     use crate::context::AppContext;
-    use crate::test_utils::NoOpDockerClient;
     use std::sync::Arc;
-    use tempfile::TempDir;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::UnixStream;
 
     /// Helper to create a test AppContext
-    fn create_test_context() -> (Arc<AppContext>, TempDir) {
-        let temp_dir = TempDir::new().unwrap();
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-        let xdg = Arc::new(crate::storage::XdgDirectories::new(Some(config)).unwrap());
-        xdg.ensure_directories().unwrap();
-
-        let context = AppContext::builder()
-            .with_docker_client(Arc::new(NoOpDockerClient))
-            .with_xdg_directories(xdg)
-            .build();
-
-        (Arc::new(context), temp_dir)
+    fn create_test_context() -> Arc<AppContext> {
+        // Create AppContext - automatically gets test defaults
+        Arc::new(AppContext::builder().build())
     }
 
     #[tokio::test]
     async fn test_handle_client_with_empty_connection() {
         // This test verifies that the server gracefully handles connections
         // that don't send any data (like is_server_available checks)
-        let (app_context, _temp_dir) = create_test_context();
+        let app_context = create_test_context();
         let storage = get_task_storage(app_context.xdg_directories(), app_context.file_system());
         let storage = Arc::new(Mutex::new(storage));
         let shutdown_signal = Arc::new(Mutex::new(false));
@@ -252,7 +237,7 @@ mod tests {
     #[tokio::test]
     async fn test_handle_client_with_valid_request() {
         // This test verifies that valid requests still work correctly
-        let (app_context, _temp_dir) = create_test_context();
+        let app_context = create_test_context();
         let storage = get_task_storage(app_context.xdg_directories(), app_context.file_system());
         let storage = Arc::new(Mutex::new(storage));
         let shutdown_signal = Arc::new(Mutex::new(false));

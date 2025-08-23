@@ -73,14 +73,10 @@ impl Command for QuickCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{NoOpDockerClient, NoOpTskClient};
-    use std::sync::Arc;
 
     fn create_test_context() -> AppContext {
-        AppContext::builder()
-            .with_docker_client(Arc::new(NoOpDockerClient))
-            .with_tsk_client(Arc::new(NoOpTskClient))
-            .build()
+        // Automatically gets test defaults: NoOpDockerClient, NoOpTskClient, etc.
+        AppContext::builder().build()
     }
 
     #[tokio::test]
@@ -118,9 +114,6 @@ mod tests {
     #[tokio::test]
     async fn test_quick_command_template_without_description() {
         use crate::test_utils::TestGitRepository;
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().unwrap();
 
         // Create a test git repository
         let test_repo = TestGitRepository::new().unwrap();
@@ -132,26 +125,8 @@ mod tests {
             .create_file(".tsk/templates/ack.md", template_content)
             .unwrap();
 
-        // Create XDG config
-        let config = crate::storage::XdgConfig::with_paths(
-            temp_dir.path().join("data"),
-            temp_dir.path().join("runtime"),
-            temp_dir.path().join("config"),
-        );
-        let xdg = crate::storage::XdgDirectories::new(Some(config))
-            .expect("Failed to create XDG directories");
-        xdg.ensure_directories()
-            .expect("Failed to ensure XDG directories");
-
-        // Create AppContext with real implementations
-        let ctx = AppContext::builder()
-            .with_xdg_directories(Arc::new(xdg))
-            .with_git_operations(Arc::new(
-                crate::context::git_operations::DefaultGitOperations,
-            ))
-            .with_docker_client(Arc::new(NoOpDockerClient))
-            .with_tsk_client(Arc::new(NoOpTskClient))
-            .build();
+        // Create AppContext - automatically gets test defaults
+        let ctx = AppContext::builder().build();
 
         // Create QuickCommand without description (should succeed for templates without placeholder)
         let cmd = QuickCommand {
