@@ -456,6 +456,7 @@ impl DockerManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::config::Config as AppConfig;
     use crate::test_utils::TrackedDockerClient;
 
     #[tokio::test]
@@ -465,7 +466,8 @@ mod tests {
 
         let worktree_path = Path::new("/tmp/test-worktree");
 
-        let agent = crate::agent::ClaudeCodeAgent::new();
+        let config = Arc::new(AppConfig::new());
+        let agent = crate::agent::ClaudeCodeAgent::with_config(config);
         let result = manager
             .run_task_container(
                 "tsk/base",
@@ -525,7 +527,8 @@ mod tests {
 
         let worktree_path = Path::new("/tmp/test-worktree");
 
-        let agent = crate::agent::ClaudeCodeAgent::new();
+        let config = Arc::new(AppConfig::new());
+        let agent = crate::agent::ClaudeCodeAgent::with_config(config);
         let result = manager
             .run_task_container(
                 "tsk/base",
@@ -571,7 +574,8 @@ mod tests {
 
         let worktree_path = Path::new("/tmp/test-worktree");
 
-        let agent = crate::agent::ClaudeCodeAgent::new();
+        let config = Arc::new(AppConfig::new());
+        let agent = crate::agent::ClaudeCodeAgent::with_config(config);
         let result = manager
             .run_task_container(
                 "tsk/base",
@@ -606,7 +610,8 @@ mod tests {
 
         let worktree_path = Path::new("/tmp/test-worktree");
 
-        let agent = crate::agent::ClaudeCodeAgent::new();
+        let config = Arc::new(AppConfig::new());
+        let agent = crate::agent::ClaudeCodeAgent::with_config(config);
         let result = manager
             .run_task_container(
                 "tsk/base",
@@ -632,7 +637,8 @@ mod tests {
 
         let worktree_path = Path::new("/tmp/test-worktree");
 
-        let agent = crate::agent::ClaudeCodeAgent::new();
+        let config = Arc::new(AppConfig::new());
+        let agent = crate::agent::ClaudeCodeAgent::with_config(config);
         let _ = manager
             .run_task_container(
                 "tsk/base",
@@ -697,7 +703,8 @@ mod tests {
         let worktree_path = Path::new("/tmp/test-worktree");
         let instructions_path = PathBuf::from("/tmp/tsk-test/instructions.txt");
 
-        let agent = crate::agent::ClaudeCodeAgent::new();
+        let config = Arc::new(AppConfig::new());
+        let agent = crate::agent::ClaudeCodeAgent::with_config(config);
         let result = manager
             .run_task_container(
                 "tsk/base",
@@ -731,7 +738,8 @@ mod tests {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let absolute_path = temp_dir.path().join("test-worktree");
 
-        let agent = crate::agent::ClaudeCodeAgent::new();
+        let config = Arc::new(AppConfig::new());
+        let agent = crate::agent::ClaudeCodeAgent::with_config(config);
         let result = manager
             .run_task_container(
                 "tsk/base",

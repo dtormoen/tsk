@@ -13,15 +13,10 @@ pub struct ClaudeCodeAgent {
 }
 
 impl ClaudeCodeAgent {
-    /// Creates a new ClaudeCodeAgent with default configuration
+    /// Creates a new ClaudeCodeAgent with the provided configuration
     ///
-    /// This constructor is deprecated in favor of `with_config` to ensure
-    /// proper configuration management.
-    pub fn new() -> Self {
-        Self::with_config(Arc::new(Config::new()))
-    }
-
-    /// Creates a new ClaudeCodeAgent with a custom Config
+    /// # Arguments
+    /// * `config` - Arc reference to the Config instance containing environment settings
     pub fn with_config(config: Arc<Config>) -> Self {
         Self {
             config: Some(config),
@@ -39,7 +34,7 @@ impl ClaudeCodeAgent {
 
 impl Default for ClaudeCodeAgent {
     fn default() -> Self {
-        Self::new()
+        Self::with_config(Arc::new(Config::new()))
     }
 }
 
@@ -1147,7 +1142,8 @@ mod tests {
 
     #[test]
     fn test_claude_code_agent_properties() {
-        let agent = ClaudeCodeAgent::new();
+        let config = Arc::new(Config::new());
+        let agent = ClaudeCodeAgent::with_config(config);
 
         // Test name
         assert_eq!(agent.name(), "claude-code");
@@ -1175,7 +1171,8 @@ mod tests {
 
     #[test]
     fn test_claude_code_agent_build_command() {
-        let agent = ClaudeCodeAgent::new();
+        let config = Arc::new(Config::new());
+        let agent = ClaudeCodeAgent::with_config(config);
 
         // Test with full path
         let command = agent.build_command("/tmp/instructions.md");
@@ -1213,7 +1210,8 @@ mod tests {
 
     #[test]
     fn test_claude_code_agent_create_log_processor() {
-        let agent = ClaudeCodeAgent::new();
+        let config = Arc::new(Config::new());
+        let agent = ClaudeCodeAgent::with_config(config);
 
         let log_processor = agent.create_log_processor();
 
