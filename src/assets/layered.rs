@@ -138,65 +138,40 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    struct MockAssetManager {
-        templates: Vec<String>,
-        template_content: String,
-    }
+    /// Creates a temporary directory with templates for testing
+    fn create_temp_templates_dir(templates: &[(&str, &str)]) -> TempDir {
+        let temp_dir = TempDir::new().unwrap();
+        let templates_dir = temp_dir.path().join("templates");
+        fs::create_dir_all(&templates_dir).unwrap();
 
-    impl MockAssetManager {
-        fn new(templates: Vec<String>, template_content: String) -> Self {
-            Self {
-                templates,
-                template_content,
-            }
-        }
-    }
-
-    #[async_trait]
-    impl AssetManager for MockAssetManager {
-        fn get_template(&self, template_type: &str) -> Result<String> {
-            if self.templates.contains(&template_type.to_string()) {
-                Ok(self.template_content.clone())
-            } else {
-                Err(anyhow::anyhow!("Template not found"))
-            }
+        for (name, content) in templates {
+            fs::write(templates_dir.join(format!("{}.md", name)), content).unwrap();
         }
 
-        fn get_dockerfile(&self, _dockerfile_name: &str) -> Result<Vec<u8>> {
-            Err(anyhow::anyhow!("Not implemented"))
-        }
-
-        fn get_dockerfile_file(&self, _dockerfile_name: &str, _file_path: &str) -> Result<Vec<u8>> {
-            Err(anyhow::anyhow!("Not implemented"))
-        }
-
-        fn list_templates(&self) -> Vec<String> {
-            self.templates.clone()
-        }
-
-        fn list_dockerfiles(&self) -> Vec<String> {
-            Vec::new()
-        }
+        temp_dir
     }
 
     #[test]
     fn test_layered_get_template_priority() {
-        let layer1 = Arc::new(MockAssetManager::new(
-            vec!["feature".to_string()],
-            "Layer 1 content".to_string(),
-        ));
-        let layer2 = Arc::new(MockAssetManager::new(
-            vec!["feature".to_string(), "fix".to_string()],
-            "Layer 2 content".to_string(),
-        ));
+        // Create first layer with "feature" template
+        let layer1_dir = create_temp_templates_dir(&[("feature", "Layer 1 content")]);
+
+        // Create second layer with "feature" and "fix" templates
+        let layer2_dir = create_temp_templates_dir(&[
+            ("feature", "Layer 2 content"),
+            ("fix", "Layer 2 fix content"),
+        ]);
+
+        let layer1 = Arc::new(FileSystemAssetManager::new(layer1_dir.path().to_path_buf()));
+        let layer2 = Arc::new(FileSystemAssetManager::new(layer2_dir.path().to_path_buf()));
 
         let manager = LayeredAssetManager::new(vec![layer1, layer2]);
 
-        // Should get from first layer
+        // Should get from first layer (higher priority)
         assert_eq!(manager.get_template("feature").unwrap(), "Layer 1 content");
 
         // Should get from second layer since first doesn't have it
-        assert_eq!(manager.get_template("fix").unwrap(), "Layer 2 content");
+        assert_eq!(manager.get_template("fix").unwrap(), "Layer 2 fix content");
 
         // Should fail if not in any layer
         assert!(manager.get_template("nonexistent").is_err());
@@ -204,18 +179,21 @@ mod tests {
 
     #[test]
     fn test_layered_list_templates_aggregation() {
-        let layer1 = Arc::new(MockAssetManager::new(
-            vec!["feature".to_string(), "fix".to_string()],
-            "content".to_string(),
-        ));
-        let layer2 = Arc::new(MockAssetManager::new(
-            vec!["fix".to_string(), "doc".to_string()],
-            "content".to_string(),
-        ));
+        // Create first layer with "feature" and "fix" templates
+        let layer1_dir =
+            create_temp_templates_dir(&[("feature", "Layer 1 feature"), ("fix", "Layer 1 fix")]);
+
+        // Create second layer with "fix" and "doc" templates
+        let layer2_dir =
+            create_temp_templates_dir(&[("fix", "Layer 2 fix"), ("doc", "Layer 2 doc")]);
+
+        let layer1 = Arc::new(FileSystemAssetManager::new(layer1_dir.path().to_path_buf()));
+        let layer2 = Arc::new(FileSystemAssetManager::new(layer2_dir.path().to_path_buf()));
 
         let manager = LayeredAssetManager::new(vec![layer1, layer2]);
         let templates = manager.list_templates();
 
+        // Should contain all unique templates, sorted alphabetically
         assert_eq!(templates, vec!["doc", "feature", "fix"]);
     }
 
