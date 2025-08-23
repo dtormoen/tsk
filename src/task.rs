@@ -336,7 +336,7 @@ impl TaskBuilder {
                 println!("Using tech stack: {ts}");
                 ts
             }
-            None => match ctx.repository_context().detect_tech_stack(&repo_root).await {
+            None => match crate::repository::detect_tech_stack(&repo_root).await {
                 Ok(detected) => {
                     println!("Auto-detected tech stack: {detected}");
                     detected
@@ -353,22 +353,16 @@ impl TaskBuilder {
                 println!("Using project: {p}");
                 p
             }
-            None => {
-                match ctx
-                    .repository_context()
-                    .detect_project_name(&repo_root)
-                    .await
-                {
-                    Ok(detected) => {
-                        println!("Auto-detected project name: {detected}");
-                        detected
-                    }
-                    Err(e) => {
-                        eprintln!("Warning: Failed to detect project name: {e}. Using default.");
-                        "default".to_string()
-                    }
+            None => match crate::repository::detect_project_name(&repo_root).await {
+                Ok(detected) => {
+                    println!("Auto-detected project name: {detected}");
+                    detected
                 }
-            }
+                Err(e) => {
+                    eprintln!("Warning: Failed to detect project name: {e}. Using default.");
+                    "default".to_string()
+                }
+            },
         };
 
         // Generate human-readable branch name with format: tsk/{task-type}/{task-name}/{task-id}

@@ -37,7 +37,7 @@ impl Command for DockerBuildCommand {
                 let repo_root = find_repository_root(std::path::Path::new("."))
                     .unwrap_or_else(|_| std::path::PathBuf::from("."));
 
-                match ctx.repository_context().detect_tech_stack(&repo_root).await {
+                match crate::repository::detect_tech_stack(&repo_root).await {
                     Ok(detected) => {
                         println!("Auto-detected tech stack: {detected}");
                         detected
@@ -63,11 +63,7 @@ impl Command for DockerBuildCommand {
                 let repo_root = find_repository_root(std::path::Path::new("."))
                     .unwrap_or_else(|_| std::path::PathBuf::from("."));
 
-                match ctx
-                    .repository_context()
-                    .detect_project_name(&repo_root)
-                    .await
-                {
+                match crate::repository::detect_project_name(&repo_root).await {
                     Ok(detected) => {
                         println!("Auto-detected project name: {detected}");
                         Some(detected)

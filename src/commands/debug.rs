@@ -37,7 +37,7 @@ impl Command for DebugCommand {
                 println!("Using tech stack: {ts}");
                 ts.clone()
             }
-            None => match ctx.repository_context().detect_tech_stack(&repo_root).await {
+            None => match crate::repository::detect_tech_stack(&repo_root).await {
                 Ok(detected) => {
                     println!("Auto-detected tech stack: {detected}");
                     detected
@@ -55,22 +55,16 @@ impl Command for DebugCommand {
                 println!("Using project: {p}");
                 Some(p.clone())
             }
-            None => {
-                match ctx
-                    .repository_context()
-                    .detect_project_name(&repo_root)
-                    .await
-                {
-                    Ok(detected) => {
-                        println!("Auto-detected project name: {detected}");
-                        Some(detected)
-                    }
-                    Err(e) => {
-                        eprintln!("Warning: Failed to detect project name: {e}. Using default.");
-                        Some("default".to_string())
-                    }
+            None => match crate::repository::detect_project_name(&repo_root).await {
+                Ok(detected) => {
+                    println!("Auto-detected project name: {detected}");
+                    Some(detected)
                 }
-            }
+                Err(e) => {
+                    eprintln!("Warning: Failed to detect project name: {e}. Using default.");
+                    Some("default".to_string())
+                }
+            },
         };
 
         // Create a debug prompt file

@@ -9,6 +9,7 @@ mod git;
 mod git_sync;
 mod notifications;
 mod repo_utils;
+mod repository;
 mod server;
 mod storage;
 mod task;

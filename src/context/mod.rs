@@ -1,7 +1,6 @@
 pub mod docker_client;
 pub mod file_system;
 pub mod git_operations;
-pub mod repository_context;
 pub mod terminal;
 pub mod tsk_client;
 
@@ -11,7 +10,6 @@ use crate::storage::XdgDirectories;
 use docker_client::DockerClient;
 use file_system::FileSystemOperations;
 use git_operations::GitOperations;
-use repository_context::RepositoryContext;
 use terminal::TerminalOperations;
 
 use std::sync::Arc;
@@ -28,7 +26,6 @@ pub struct AppContext {
     git_operations: Arc<dyn GitOperations>,
     git_sync_manager: Arc<GitSyncManager>,
     notification_client: Arc<dyn NotificationClient>,
-    repository_context: Arc<dyn RepositoryContext>,
     terminal_operations: Arc<dyn TerminalOperations>,
     tsk_client: Arc<dyn TskClient>,
     xdg_directories: Arc<XdgDirectories>,
@@ -59,10 +56,6 @@ impl AppContext {
         Arc::clone(&self.notification_client)
     }
 
-    pub fn repository_context(&self) -> Arc<dyn RepositoryContext> {
-        Arc::clone(&self.repository_context)
-    }
-
     pub fn terminal_operations(&self) -> Arc<dyn TerminalOperations> {
         Arc::clone(&self.terminal_operations)
     }
@@ -82,7 +75,6 @@ pub struct AppContextBuilder {
     git_operations: Option<Arc<dyn GitOperations>>,
     git_sync_manager: Option<Arc<GitSyncManager>>,
     notification_client: Option<Arc<dyn NotificationClient>>,
-    repository_context: Option<Arc<dyn RepositoryContext>>,
     terminal_operations: Option<Arc<dyn TerminalOperations>>,
     tsk_client: Option<Arc<dyn TskClient>>,
     xdg_directories: Option<Arc<XdgDirectories>>,
@@ -103,7 +95,6 @@ impl AppContextBuilder {
             git_operations: None,
             git_sync_manager: None,
             notification_client: None,
-            repository_context: None,
             terminal_operations: None,
             tsk_client: None,
             xdg_directories: None,
@@ -182,12 +173,6 @@ impl AppContextBuilder {
             .file_system
             .unwrap_or_else(|| Arc::new(file_system::DefaultFileSystem));
 
-        let repository_context = self.repository_context.unwrap_or_else(|| {
-            Arc::new(repository_context::DefaultRepositoryContext::new(
-                file_system.clone(),
-            ))
-        });
-
         AppContext {
             docker_client,
             file_system,
@@ -200,7 +185,6 @@ impl AppContextBuilder {
             notification_client: self
                 .notification_client
                 .unwrap_or_else(|| crate::notifications::create_notification_client()),
-            repository_context,
             terminal_operations: self
                 .terminal_operations
                 .unwrap_or_else(|| Arc::new(terminal::DefaultTerminalOperations::new())),
