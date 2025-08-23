@@ -1,4 +1,3 @@
-pub mod config;
 pub mod docker_client;
 pub mod file_system;
 pub mod git_operations;
@@ -8,7 +7,6 @@ pub mod tsk_client;
 use crate::git_sync::GitSyncManager;
 use crate::notifications::NotificationClient;
 use crate::storage::XdgDirectories;
-use config::Config;
 use docker_client::DockerClient;
 use file_system::FileSystemOperations;
 use git_operations::GitOperations;
@@ -17,13 +15,17 @@ use terminal::TerminalOperations;
 use std::sync::Arc;
 use tsk_client::TskClient;
 
+#[cfg(test)]
+use crate::test_utils::{NoOpDockerClient, NoOpTskClient};
+#[cfg(test)]
+use tempfile::TempDir;
+
 // Re-export terminal trait for tests
 #[cfg(test)]
 pub use terminal::TerminalOperations as TerminalOperationsTrait;
 
 #[derive(Clone)]
 pub struct AppContext {
-    config: Arc<Config>,
     docker_client: Arc<dyn DockerClient>,
     file_system: Arc<dyn FileSystemOperations>,
     git_operations: Arc<dyn GitOperations>,
@@ -32,15 +34,13 @@ pub struct AppContext {
     terminal_operations: Arc<dyn TerminalOperations>,
     tsk_client: Arc<dyn TskClient>,
     xdg_directories: Arc<XdgDirectories>,
+    #[cfg(test)]
+    _temp_dir: Option<Arc<TempDir>>,
 }
 
 impl AppContext {
     pub fn builder() -> AppContextBuilder {
         AppContextBuilder::new()
-    }
-
-    pub fn config(&self) -> Arc<Config> {
-        Arc::clone(&self.config)
     }
 
     pub fn docker_client(&self) -> Arc<dyn DockerClient> {
@@ -77,7 +77,6 @@ impl AppContext {
 }
 
 pub struct AppContextBuilder {
-    config: Option<Arc<Config>>,
     docker_client: Option<Arc<dyn DockerClient>>,
     file_system: Option<Arc<dyn FileSystemOperations>>,
     git_operations: Option<Arc<dyn GitOperations>>,
@@ -98,7 +97,6 @@ impl Default for AppContextBuilder {
 impl AppContextBuilder {
     pub fn new() -> Self {
         Self {
-            config: None,
             docker_client: None,
             file_system: None,
             git_operations: None,
@@ -108,14 +106,6 @@ impl AppContextBuilder {
             tsk_client: None,
             xdg_directories: None,
         }
-    }
-
-    /// Configure the Config for this context
-    ///
-    /// Used extensively in tests to provide environment variable overrides
-    pub fn with_config(mut self, config: Arc<Config>) -> Self {
-        self.config = Some(config);
-        self
     }
 
     /// Configure the Docker client for this context
@@ -170,44 +160,101 @@ impl AppContextBuilder {
     }
 
     pub fn build(self) -> AppContext {
-        let xdg_directories = self.xdg_directories.unwrap_or_else(|| {
-            let xdg = XdgDirectories::new(None).expect("Failed to initialize XDG directories");
-            // Ensure directories exist
-            xdg.ensure_directories()
-                .expect("Failed to create XDG directories");
-            Arc::new(xdg)
-        });
+        #[cfg(test)]
+        {
+            // In test mode, automatically create test-safe temporary directories and mocks
+            let temp_dir = Arc::new(TempDir::new().expect("Failed to create temp dir"));
+            let temp_path = temp_dir.path();
 
-        let tsk_client = self.tsk_client.unwrap_or_else(|| {
-            Arc::new(tsk_client::DefaultTskClient::new(xdg_directories.clone()))
-        });
+            let xdg_directories = self.xdg_directories.unwrap_or_else(|| {
+                // Create test-safe XDG directories in temp directory
+                let xdg_config = crate::storage::XdgConfig::with_paths(
+                    temp_path.join("data").to_path_buf(),
+                    temp_path.join("runtime").to_path_buf(),
+                    temp_path.join("config").to_path_buf(),
+                );
+                let xdg = XdgDirectories::new(Some(xdg_config))
+                    .expect("Failed to initialize test XDG directories");
+                xdg.ensure_directories()
+                    .expect("Failed to create test XDG directories");
+                Arc::new(xdg)
+            });
 
-        let docker_client = self
-            .docker_client
-            .unwrap_or_else(|| Arc::new(docker_client::DefaultDockerClient::new()));
+            let tsk_client = self.tsk_client.unwrap_or_else(|| {
+                // Use NoOpTskClient by default in tests
+                Arc::new(NoOpTskClient)
+            });
 
-        let file_system = self
-            .file_system
-            .unwrap_or_else(|| Arc::new(file_system::DefaultFileSystem));
+            let docker_client = self.docker_client.unwrap_or_else(|| {
+                // Use NoOpDockerClient by default in tests
+                Arc::new(NoOpDockerClient)
+            });
 
-        AppContext {
-            config: self.config.unwrap_or_else(|| Arc::new(Config::new())),
-            docker_client,
-            file_system,
-            git_operations: self
-                .git_operations
-                .unwrap_or_else(|| Arc::new(git_operations::DefaultGitOperations)),
-            git_sync_manager: self
-                .git_sync_manager
-                .unwrap_or_else(|| Arc::new(GitSyncManager::new())),
-            notification_client: self
-                .notification_client
-                .unwrap_or_else(|| crate::notifications::create_notification_client()),
-            terminal_operations: self
-                .terminal_operations
-                .unwrap_or_else(|| Arc::new(terminal::DefaultTerminalOperations::new())),
-            tsk_client,
-            xdg_directories,
+            let file_system = self
+                .file_system
+                .unwrap_or_else(|| Arc::new(file_system::DefaultFileSystem));
+
+            AppContext {
+                docker_client,
+                file_system,
+                git_operations: self
+                    .git_operations
+                    .unwrap_or_else(|| Arc::new(git_operations::DefaultGitOperations)),
+                git_sync_manager: self
+                    .git_sync_manager
+                    .unwrap_or_else(|| Arc::new(GitSyncManager::new())),
+                notification_client: self
+                    .notification_client
+                    .unwrap_or_else(|| crate::notifications::create_notification_client()),
+                terminal_operations: self
+                    .terminal_operations
+                    .unwrap_or_else(|| Arc::new(terminal::DefaultTerminalOperations::new())),
+                tsk_client,
+                xdg_directories,
+                _temp_dir: Some(temp_dir),
+            }
+        }
+
+        #[cfg(not(test))]
+        {
+            let xdg_directories = self.xdg_directories.unwrap_or_else(|| {
+                let xdg = XdgDirectories::new(None).expect("Failed to initialize XDG directories");
+                // Ensure directories exist
+                xdg.ensure_directories()
+                    .expect("Failed to create XDG directories");
+                Arc::new(xdg)
+            });
+
+            let tsk_client = self.tsk_client.unwrap_or_else(|| {
+                Arc::new(tsk_client::DefaultTskClient::new(xdg_directories.clone()))
+            });
+
+            let docker_client = self
+                .docker_client
+                .unwrap_or_else(|| Arc::new(docker_client::DefaultDockerClient::new()));
+
+            let file_system = self
+                .file_system
+                .unwrap_or_else(|| Arc::new(file_system::DefaultFileSystem));
+
+            AppContext {
+                docker_client,
+                file_system,
+                git_operations: self
+                    .git_operations
+                    .unwrap_or_else(|| Arc::new(git_operations::DefaultGitOperations)),
+                git_sync_manager: self
+                    .git_sync_manager
+                    .unwrap_or_else(|| Arc::new(GitSyncManager::new())),
+                notification_client: self
+                    .notification_client
+                    .unwrap_or_else(|| crate::notifications::create_notification_client()),
+                terminal_operations: self
+                    .terminal_operations
+                    .unwrap_or_else(|| Arc::new(terminal::DefaultTerminalOperations::new())),
+                tsk_client,
+                xdg_directories,
+            }
         }
     }
 }

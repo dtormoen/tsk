@@ -308,8 +308,8 @@ impl TaskBuilder {
                 .await?;
 
             // Open editor with the temporary file
-            let config = ctx.config();
-            self.open_editor(temp_path.to_str().ok_or("Invalid path")?, &config)?;
+            let xdg_directories = ctx.xdg_directories();
+            self.open_editor(temp_path.to_str().ok_or("Invalid path")?, &xdg_directories)?;
 
             // Check if file is empty and ensure cleanup happens even on error
             let needs_cleanup = self
@@ -494,9 +494,9 @@ impl TaskBuilder {
     fn open_editor(
         &self,
         instructions_path: &str,
-        config: &crate::context::config::Config,
+        xdg_directories: &crate::storage::XdgDirectories,
     ) -> Result<(), Box<dyn Error>> {
-        let editor = config.editor();
+        let editor = xdg_directories.editor();
 
         println!("Opening instructions file in editor: {}", editor);
 
@@ -1052,17 +1052,18 @@ mod tests {
         .unwrap();
         fs::set_permissions(&fake_editor_path, fs::Permissions::from_mode(0o755)).unwrap();
 
-        // Create config with fake editor
-        let editor_config = Arc::new(
-            crate::context::config::Config::builder()
-                .with_editor(fake_editor_path.to_str().unwrap().to_string())
-                .build(),
-        );
+        // Create XDG config with fake editor
+        let xdg_config = crate::storage::XdgConfig::builder()
+            .with_data_dir(temp_dir.path().join("data"))
+            .with_runtime_dir(temp_dir.path().join("runtime"))
+            .with_config_dir(temp_dir.path().join("config"))
+            .with_editor(fake_editor_path.to_str().unwrap().to_string())
+            .build();
+        let xdg = Arc::new(crate::storage::XdgDirectories::new(Some(xdg_config)).unwrap());
 
-        // Update context with editor config
+        // Update context with editor in XDG directories
         let ctx = AppContext::builder()
-            .with_config(editor_config)
-            .with_xdg_directories(Arc::new(xdg.clone()))
+            .with_xdg_directories(xdg.clone())
             .with_git_operations(Arc::new(
                 crate::context::git_operations::DefaultGitOperations,
             ))

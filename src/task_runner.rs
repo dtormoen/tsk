@@ -52,7 +52,6 @@ pub struct TaskRunner {
     notification_client: Arc<dyn crate::notifications::NotificationClient>,
     docker_client: Arc<dyn crate::context::docker_client::DockerClient>,
     xdg_directories: Arc<crate::storage::XdgDirectories>,
-    config: Arc<crate::context::config::Config>,
 }
 
 impl TaskRunner {
@@ -79,7 +78,6 @@ impl TaskRunner {
             notification_client: ctx.notification_client(),
             docker_client: ctx.docker_client(),
             xdg_directories: ctx.xdg_directories(),
-            config: ctx.config(),
         }
     }
 
@@ -106,7 +104,7 @@ impl TaskRunner {
         task: &Task,
     ) -> Result<TaskExecutionResult, TaskExecutionError> {
         // Get the agent for this task
-        let agent = AgentProvider::get_agent(&task.agent, self.config.clone())
+        let agent = AgentProvider::get_agent(&task.agent, self.xdg_directories.clone())
             .map_err(|e| format!("Error getting agent: {e}"))?;
 
         // Validate the agent
@@ -270,20 +268,20 @@ mod tests {
         let claude_json_path = temp_home.path().join(".claude.json");
         std::fs::write(&claude_json_path, "{}").unwrap();
 
-        // Create a Config with the test directory
-        use crate::context::config::Config;
-        let config = Arc::new(Config::builder().with_claude_config_dir(claude_dir).build());
+        // Create XDG config with the test claude directory
+        use crate::storage::XdgConfig;
 
         // Use DefaultFileSystem for real file operations
         let fs = Arc::new(DefaultFileSystem);
 
-        // Create test XDG directories
+        // Create test XDG directories with claude config
         let temp_xdg = tempfile::tempdir().unwrap();
-        let xdg_config = crate::storage::XdgConfig::with_paths(
-            temp_xdg.path().join("xdg-data"),
-            temp_xdg.path().join("xdg-runtime"),
-            temp_xdg.path().join("xdg-config"),
-        );
+        let xdg_config = XdgConfig::builder()
+            .with_data_dir(temp_xdg.path().join("xdg-data"))
+            .with_runtime_dir(temp_xdg.path().join("xdg-runtime"))
+            .with_config_dir(temp_xdg.path().join("xdg-config"))
+            .with_claude_config_dir(claude_dir)
+            .build();
         let xdg_directories =
             Arc::new(crate::storage::XdgDirectories::new(Some(xdg_config)).unwrap());
         xdg_directories.ensure_directories().unwrap();
@@ -292,7 +290,6 @@ mod tests {
         let ctx = AppContext::builder()
             .with_xdg_directories(xdg_directories.clone())
             .with_file_system(fs.clone())
-            .with_config(config)
             .build();
 
         let task_runner = TaskRunner::new(&ctx);

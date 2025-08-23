@@ -10,7 +10,7 @@ pub enum XdgError {
     Io(#[from] std::io::Error),
 }
 
-/// Configuration for overriding XDG directory paths
+/// Configuration for overriding XDG directory paths and environment settings
 #[derive(Debug, Clone, Default)]
 pub struct XdgConfig {
     /// Override for data directory (XDG_DATA_HOME)
@@ -19,6 +19,12 @@ pub struct XdgConfig {
     pub runtime_dir: Option<PathBuf>,
     /// Override for config directory (XDG_CONFIG_HOME)
     pub config_dir: Option<PathBuf>,
+    /// Override for Claude configuration directory (defaults to $HOME/.claude)
+    pub claude_config_dir: Option<PathBuf>,
+    /// Override for editor command (defaults to $EDITOR or "vi")
+    pub editor: Option<String>,
+    /// Override for terminal type (from $TERM)
+    pub terminal_type: Option<Option<String>>,
 }
 
 impl XdgConfig {
@@ -31,7 +37,96 @@ impl XdgConfig {
             data_dir: Some(data_dir),
             runtime_dir: Some(runtime_dir),
             config_dir: Some(config_dir),
+            claude_config_dir: None,
+            editor: None,
+            terminal_type: None,
         }
+    }
+
+    /// Create a builder for XdgConfig with more fine-grained control
+    #[allow(dead_code)] // Used in tests for creating custom configs
+    pub fn builder() -> XdgConfigBuilder {
+        XdgConfigBuilder::new()
+    }
+}
+
+/// Builder for creating XdgConfig instances with custom values
+#[allow(dead_code)] // Used in tests for creating custom configs
+pub struct XdgConfigBuilder {
+    data_dir: Option<PathBuf>,
+    runtime_dir: Option<PathBuf>,
+    config_dir: Option<PathBuf>,
+    claude_config_dir: Option<PathBuf>,
+    editor: Option<String>,
+    terminal_type: Option<Option<String>>,
+}
+
+#[allow(dead_code)] // Used in tests for creating custom configs  
+impl XdgConfigBuilder {
+    /// Creates a new XdgConfigBuilder
+    pub fn new() -> Self {
+        Self {
+            data_dir: None,
+            runtime_dir: None,
+            config_dir: None,
+            claude_config_dir: None,
+            editor: None,
+            terminal_type: None,
+        }
+    }
+
+    /// Sets the data directory
+    pub fn with_data_dir(mut self, dir: PathBuf) -> Self {
+        self.data_dir = Some(dir);
+        self
+    }
+
+    /// Sets the runtime directory
+    pub fn with_runtime_dir(mut self, dir: PathBuf) -> Self {
+        self.runtime_dir = Some(dir);
+        self
+    }
+
+    /// Sets the config directory
+    pub fn with_config_dir(mut self, dir: PathBuf) -> Self {
+        self.config_dir = Some(dir);
+        self
+    }
+
+    /// Sets the Claude configuration directory
+    pub fn with_claude_config_dir(mut self, dir: PathBuf) -> Self {
+        self.claude_config_dir = Some(dir);
+        self
+    }
+
+    /// Sets the editor command
+    pub fn with_editor(mut self, editor: String) -> Self {
+        self.editor = Some(editor);
+        self
+    }
+
+    /// Sets the terminal type
+    pub fn with_terminal_type(mut self, terminal_type: Option<String>) -> Self {
+        self.terminal_type = Some(terminal_type);
+        self
+    }
+
+    /// Builds the XdgConfig instance
+    pub fn build(self) -> XdgConfig {
+        XdgConfig {
+            data_dir: self.data_dir,
+            runtime_dir: self.runtime_dir,
+            config_dir: self.config_dir,
+            claude_config_dir: self.claude_config_dir,
+            editor: self.editor,
+            terminal_type: self.terminal_type,
+        }
+    }
+}
+
+impl Default for XdgConfigBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -41,6 +136,9 @@ pub struct XdgDirectories {
     data_dir: PathBuf,
     runtime_dir: PathBuf,
     config_dir: PathBuf,
+    claude_config_dir: PathBuf,
+    editor: String,
+    terminal_type: Option<String>,
 }
 
 impl XdgDirectories {
@@ -54,11 +152,17 @@ impl XdgDirectories {
         let data_dir = Self::resolve_data_dir(&config)?;
         let runtime_dir = Self::resolve_runtime_dir(&config)?;
         let config_dir = Self::resolve_config_dir(&config)?;
+        let claude_config_dir = Self::resolve_claude_config_dir(&config)?;
+        let editor = Self::resolve_editor(&config);
+        let terminal_type = Self::resolve_terminal_type(&config);
 
         Ok(Self {
             data_dir,
             runtime_dir,
             config_dir,
+            claude_config_dir,
+            editor,
+            terminal_type,
         })
     }
 
@@ -79,6 +183,21 @@ impl XdgDirectories {
     /// Get the config directory path (for configuration files)
     pub fn config_dir(&self) -> &Path {
         &self.config_dir
+    }
+
+    /// Gets the Claude configuration directory path
+    pub fn claude_config_dir(&self) -> &PathBuf {
+        &self.claude_config_dir
+    }
+
+    /// Gets the editor command
+    pub fn editor(&self) -> &str {
+        &self.editor
+    }
+
+    /// Gets the terminal type if set
+    pub fn terminal_type(&self) -> Option<&str> {
+        self.terminal_type.as_deref()
     }
 
     /// Get the path to the tasks.json file
@@ -176,6 +295,40 @@ impl XdgDirectories {
 
         Ok(PathBuf::from(home).join(".config").join("tsk"))
     }
+
+    fn resolve_claude_config_dir(config: &XdgConfig) -> Result<PathBuf, XdgError> {
+        // Check config override first
+        if let Some(ref claude_config_dir) = config.claude_config_dir {
+            return Ok(claude_config_dir.clone());
+        }
+
+        // Fall back to ~/.claude
+        let home = env::var("HOME")
+            .or_else(|_| env::var("USERPROFILE"))
+            .map_err(|_| XdgError::NoHomeDirectory)?;
+
+        Ok(PathBuf::from(home).join(".claude"))
+    }
+
+    fn resolve_editor(config: &XdgConfig) -> String {
+        // Check config override first
+        if let Some(ref editor) = config.editor {
+            return editor.clone();
+        }
+
+        // Check EDITOR environment variable, fall back to "vi"
+        env::var("EDITOR").unwrap_or_else(|_| "vi".to_string())
+    }
+
+    fn resolve_terminal_type(config: &XdgConfig) -> Option<String> {
+        // Check config override first
+        if let Some(ref terminal_type) = config.terminal_type {
+            return terminal_type.clone();
+        }
+
+        // Check TERM environment variable
+        env::var("TERM").ok()
+    }
 }
 
 #[cfg(test)]
@@ -201,6 +354,13 @@ mod tests {
             Path::new("/custom/runtime/tsk/tsk.sock")
         );
         assert_eq!(dirs.pid_file(), Path::new("/custom/runtime/tsk/tsk.pid"));
+        // Check that environment fields have defaults
+        assert!(!dirs.editor().is_empty());
+        assert!(
+            dirs.claude_config_dir()
+                .to_string_lossy()
+                .contains(".claude")
+        );
     }
 
     #[test]
@@ -221,6 +381,9 @@ mod tests {
             data_dir: Some(PathBuf::from("/override/data")),
             runtime_dir: None,
             config_dir: Some(PathBuf::from("/override/config")),
+            claude_config_dir: None,
+            editor: None,
+            terminal_type: None,
         };
 
         let dirs = XdgDirectories::new(Some(config)).expect("Failed to create XDG directories");
@@ -239,6 +402,9 @@ mod tests {
             data_dir: Some(PathBuf::from("/config/data")),
             runtime_dir: None,
             config_dir: None,
+            claude_config_dir: None,
+            editor: None,
+            terminal_type: None,
         };
 
         let dirs = XdgDirectories::new(Some(config)).expect("Failed to create XDG directories");
@@ -258,5 +424,39 @@ mod tests {
         let task_dir = dirs.task_dir("task-123", "repo-abc");
 
         assert!(task_dir.to_string_lossy().contains("repo-abc-task-123"));
+    }
+
+    #[test]
+    fn test_xdg_config_builder_with_environment_fields() {
+        let config = XdgConfig::builder()
+            .with_claude_config_dir(PathBuf::from("/test/.claude"))
+            .with_editor("emacs".to_string())
+            .with_terminal_type(Some("xterm-256color".to_string()))
+            .build();
+
+        let dirs = XdgDirectories::new(Some(config)).expect("Failed to create XDG directories");
+
+        assert_eq!(dirs.claude_config_dir(), Path::new("/test/.claude"));
+        assert_eq!(dirs.editor(), "emacs");
+        assert_eq!(dirs.terminal_type(), Some("xterm-256color"));
+    }
+
+    #[test]
+    fn test_xdg_config_builder_partial_environment() {
+        let config = XdgConfig::builder()
+            .with_editor("nano".to_string())
+            .with_terminal_type(None)
+            .build();
+
+        let dirs = XdgDirectories::new(Some(config)).expect("Failed to create XDG directories");
+
+        assert_eq!(dirs.editor(), "nano");
+        assert_eq!(dirs.terminal_type(), None);
+        // Claude config dir should use default
+        assert!(
+            dirs.claude_config_dir()
+                .to_string_lossy()
+                .contains(".claude")
+        );
     }
 }

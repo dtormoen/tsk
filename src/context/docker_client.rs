@@ -67,11 +67,13 @@ pub trait DockerClient: Send + Sync {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)] // Used in production code when no mock is provided
 pub struct DefaultDockerClient {
     docker: Docker,
 }
 
 impl DefaultDockerClient {
+    #[allow(dead_code)] // Used in production code when no mock is provided
     pub fn new() -> Self {
         match Docker::connect_with_local_defaults() {
             Ok(docker) => Self { docker },

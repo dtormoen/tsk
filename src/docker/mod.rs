@@ -456,7 +456,7 @@ impl DockerManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::config::Config as AppConfig;
+    use crate::storage::XdgDirectories;
     use crate::test_utils::TrackedDockerClient;
 
     #[tokio::test]
@@ -466,8 +466,8 @@ mod tests {
 
         let worktree_path = Path::new("/tmp/test-worktree");
 
-        let config = Arc::new(AppConfig::new());
-        let agent = crate::agent::ClaudeCodeAgent::with_config(config);
+        let xdg_directories = Arc::new(XdgDirectories::new(None).unwrap());
+        let agent = crate::agent::ClaudeCodeAgent::with_xdg_directories(xdg_directories);
         let result = manager
             .run_task_container(
                 "tsk/base",
@@ -527,8 +527,8 @@ mod tests {
 
         let worktree_path = Path::new("/tmp/test-worktree");
 
-        let config = Arc::new(AppConfig::new());
-        let agent = crate::agent::ClaudeCodeAgent::with_config(config);
+        let xdg_directories = Arc::new(XdgDirectories::new(None).unwrap());
+        let agent = crate::agent::ClaudeCodeAgent::with_xdg_directories(xdg_directories);
         let result = manager
             .run_task_container(
                 "tsk/base",
@@ -574,8 +574,8 @@ mod tests {
 
         let worktree_path = Path::new("/tmp/test-worktree");
 
-        let config = Arc::new(AppConfig::new());
-        let agent = crate::agent::ClaudeCodeAgent::with_config(config);
+        let xdg_directories = Arc::new(XdgDirectories::new(None).unwrap());
+        let agent = crate::agent::ClaudeCodeAgent::with_xdg_directories(xdg_directories);
         let result = manager
             .run_task_container(
                 "tsk/base",
@@ -610,8 +610,8 @@ mod tests {
 
         let worktree_path = Path::new("/tmp/test-worktree");
 
-        let config = Arc::new(AppConfig::new());
-        let agent = crate::agent::ClaudeCodeAgent::with_config(config);
+        let xdg_directories = Arc::new(XdgDirectories::new(None).unwrap());
+        let agent = crate::agent::ClaudeCodeAgent::with_xdg_directories(xdg_directories);
         let result = manager
             .run_task_container(
                 "tsk/base",
@@ -637,8 +637,8 @@ mod tests {
 
         let worktree_path = Path::new("/tmp/test-worktree");
 
-        let config = Arc::new(AppConfig::new());
-        let agent = crate::agent::ClaudeCodeAgent::with_config(config);
+        let xdg_directories = Arc::new(XdgDirectories::new(None).unwrap());
+        let agent = crate::agent::ClaudeCodeAgent::with_xdg_directories(xdg_directories);
         let _ = manager
             .run_task_container(
                 "tsk/base",
@@ -703,8 +703,8 @@ mod tests {
         let worktree_path = Path::new("/tmp/test-worktree");
         let instructions_path = PathBuf::from("/tmp/tsk-test/instructions.txt");
 
-        let config = Arc::new(AppConfig::new());
-        let agent = crate::agent::ClaudeCodeAgent::with_config(config);
+        let xdg_directories = Arc::new(XdgDirectories::new(None).unwrap());
+        let agent = crate::agent::ClaudeCodeAgent::with_xdg_directories(xdg_directories);
         let result = manager
             .run_task_container(
                 "tsk/base",
@@ -738,8 +738,8 @@ mod tests {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let absolute_path = temp_dir.path().join("test-worktree");
 
-        let config = Arc::new(AppConfig::new());
-        let agent = crate::agent::ClaudeCodeAgent::with_config(config);
+        let xdg_directories = Arc::new(XdgDirectories::new(None).unwrap());
+        let agent = crate::agent::ClaudeCodeAgent::with_xdg_directories(xdg_directories);
         let result = manager
             .run_task_container(
                 "tsk/base",

@@ -1,4 +1,4 @@
-use crate::context::config::Config;
+use crate::storage::XdgDirectories;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
@@ -15,7 +15,7 @@ pub trait TerminalOperations: Send + Sync {
 pub struct DefaultTerminalOperations {
     state: Mutex<TerminalState>,
     #[allow(dead_code)] // Will be used when terminal operations need config-based customization
-    config: Option<Arc<Config>>,
+    xdg_directories: Option<Arc<XdgDirectories>>,
 }
 
 struct TerminalState {
@@ -33,34 +33,34 @@ impl DefaultTerminalOperations {
                 supported,
                 original_title: None,
             }),
-            config: None,
+            xdg_directories: None,
         }
     }
 
-    /// Create a new terminal operations instance with a custom Config
+    /// Create a new terminal operations instance with XDG directories
     #[allow(dead_code)] // Used in tests and for future config-based terminal customization
-    pub fn with_config(config: Arc<Config>) -> Self {
-        let supported = Self::is_supported(Some(&config));
+    pub fn with_xdg_directories(xdg_directories: Arc<XdgDirectories>) -> Self {
+        let supported = Self::is_supported(Some(&xdg_directories));
 
         Self {
             state: Mutex::new(TerminalState {
                 supported,
                 original_title: None,
             }),
-            config: Some(config),
+            xdg_directories: Some(xdg_directories),
         }
     }
 
     /// Check if terminal title updates are supported
-    fn is_supported(config: Option<&Config>) -> bool {
+    fn is_supported(xdg_directories: Option<&XdgDirectories>) -> bool {
         // Check if we're in a TTY
         if !atty::is(atty::Stream::Stdout) {
             return false;
         }
 
         // Check for common terminal environment variables
-        let term = if let Some(cfg) = config {
-            cfg.terminal_type().map(|s| s.to_string())
+        let term = if let Some(xdg) = xdg_directories {
+            xdg.terminal_type().map(|s| s.to_string())
         } else {
             std::env::var("TERM").ok()
         };
@@ -161,30 +161,36 @@ mod tests {
 
     #[test]
     fn test_terminal_support_detection() {
+        use crate::storage::{XdgConfig, XdgDirectories};
+
         // Test with xterm-256color terminal
-        let config_xterm = Config::builder()
+        let xdg_config_xterm = XdgConfig::builder()
             .with_terminal_type(Some("xterm-256color".to_string()))
             .build();
+        let xdg_xterm = XdgDirectories::new(Some(xdg_config_xterm)).unwrap();
         assert!(
-            DefaultTerminalOperations::is_supported(Some(&config_xterm))
+            DefaultTerminalOperations::is_supported(Some(&xdg_xterm))
                 || !atty::is(atty::Stream::Stdout)
         );
 
         // Test with dumb terminal
-        let config_dumb = Config::builder()
+        let xdg_config_dumb = XdgConfig::builder()
             .with_terminal_type(Some("dumb".to_string()))
             .build();
-        assert!(!DefaultTerminalOperations::is_supported(Some(&config_dumb)));
+        let xdg_dumb = XdgDirectories::new(Some(xdg_config_dumb)).unwrap();
+        assert!(!DefaultTerminalOperations::is_supported(Some(&xdg_dumb)));
 
         // Test with no terminal type set
-        let config_none = Config::builder().with_terminal_type(None).build();
-        assert!(!DefaultTerminalOperations::is_supported(Some(&config_none)));
+        let xdg_config_none = XdgConfig::builder().with_terminal_type(None).build();
+        let xdg_none = XdgDirectories::new(Some(xdg_config_none)).unwrap();
+        assert!(!DefaultTerminalOperations::is_supported(Some(&xdg_none)));
 
-        // Test terminal operations with config
-        let terminal_with_config = DefaultTerminalOperations::with_config(Arc::new(config_xterm));
+        // Test terminal operations with XDG directories
+        let terminal_with_xdg =
+            DefaultTerminalOperations::with_xdg_directories(Arc::new(xdg_xterm));
         // Should not panic
-        terminal_with_config.set_title("Test");
-        terminal_with_config.restore_title();
+        terminal_with_xdg.set_title("Test");
+        terminal_with_xdg.restore_title();
     }
 
     #[test]
