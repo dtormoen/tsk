@@ -80,7 +80,10 @@ impl RepoManager {
             .await
             .map_err(|e| format!("Failed to check if .git exists: {e}"))?
         {
-            self.copy_directory(&git_src, &git_dst).await?;
+            self.file_system
+                .copy_dir(&git_src, &git_dst)
+                .await
+                .map_err(|e| format!("Failed to copy .git directory: {e}"))?;
         }
 
         // Copy all tracked files
@@ -121,7 +124,10 @@ impl RepoManager {
             // Check if this is a directory
             if self.file_system.read_dir(&src_path).await.is_ok() {
                 // It's a directory, copy it recursively
-                self.copy_directory(&src_path, &dst_path).await?;
+                self.file_system
+                    .copy_dir(&src_path, &dst_path)
+                    .await
+                    .map_err(|e| format!("Failed to copy directory {}: {e}", src_path.display()))?;
             } else {
                 // It's a file
                 // Create parent directory if it doesn't exist
@@ -159,7 +165,10 @@ impl RepoManager {
             .await
             .map_err(|e| format!("Failed to check if .tsk exists: {e}"))?
         {
-            self.copy_directory(&tsk_src, &tsk_dst).await?;
+            self.file_system
+                .copy_dir(&tsk_src, &tsk_dst)
+                .await
+                .map_err(|e| format!("Failed to copy .tsk directory: {e}"))?;
         }
 
         // Create a new branch in the copied repository
@@ -182,41 +191,6 @@ impl RepoManager {
         println!("Created repository copy at: {}", repo_path.display());
         println!("Branch: {branch_name}");
         Ok((repo_path, branch_name))
-    }
-
-    /// Copy directory recursively
-    #[allow(clippy::only_used_in_recursion)]
-    async fn copy_directory(&self, src: &Path, dst: &Path) -> Result<(), String> {
-        self.file_system
-            .create_dir(dst)
-            .await
-            .map_err(|e| format!("Failed to create destination directory: {e}"))?;
-
-        let entries = self
-            .file_system
-            .read_dir(src)
-            .await
-            .map_err(|e| format!("Failed to read directory: {e}"))?;
-
-        for path in entries {
-            let file_name = path
-                .file_name()
-                .ok_or_else(|| "Invalid file name".to_string())?;
-
-            let dst_path = dst.join(file_name);
-
-            // Check if it's a directory by trying to read it as one
-            if self.file_system.read_dir(&path).await.is_ok() {
-                Box::pin(self.copy_directory(&path, &dst_path)).await?;
-            } else {
-                self.file_system
-                    .copy_file(&path, &dst_path)
-                    .await
-                    .map_err(|e| format!("Failed to copy file {}: {}", path.display(), e))?;
-            }
-        }
-
-        Ok(())
     }
 
     /// Commit any uncommitted changes in the repository

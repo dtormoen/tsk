@@ -281,23 +281,25 @@ mod tests {
 
     #[tokio::test]
     async fn test_app_context_with_file_system() {
-        use crate::context::file_system::tests::MockFileSystem;
+        use crate::context::file_system::DefaultFileSystem;
+        use tempfile::TempDir;
 
+        let temp_dir = TempDir::new().unwrap();
         let docker_client = Arc::new(FixedResponseDockerClient::default());
-        let file_system =
-            Arc::new(MockFileSystem::new().with_file("/test/file.txt", "test content"));
+        let file_system = Arc::new(DefaultFileSystem);
 
         let app_context = AppContext::builder()
             .with_docker_client(docker_client)
             .with_file_system(file_system.clone())
             .build();
 
-        // Verify we can use the file system
+        // Create a test file
+        let test_file = temp_dir.path().join("file.txt");
         let fs = app_context.file_system();
-        let content = fs
-            .read_file(std::path::Path::new("/test/file.txt"))
-            .await
-            .unwrap();
+        fs.write_file(&test_file, "test content").await.unwrap();
+
+        // Verify we can use the file system
+        let content = fs.read_file(&test_file).await.unwrap();
         assert_eq!(content, "test content");
     }
 

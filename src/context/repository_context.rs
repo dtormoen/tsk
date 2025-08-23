@@ -149,15 +149,22 @@ mod tests {
         }
     }
 
-    use crate::context::file_system::tests::MockFileSystem;
+    use crate::context::file_system::DefaultFileSystem;
+    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_detect_rust_tech_stack() {
-        let mock_fs = MockFileSystem::new().with_file("/repo/Cargo.toml", "");
+        let temp_dir = TempDir::new().unwrap();
+        let fs = Arc::new(DefaultFileSystem);
 
-        let repo_context = DefaultRepositoryContext::new(Arc::new(mock_fs));
+        // Create Cargo.toml file
+        fs.write_file(&temp_dir.path().join("Cargo.toml"), "")
+            .await
+            .unwrap();
+
+        let repo_context = DefaultRepositoryContext::new(fs);
         let result = repo_context
-            .detect_tech_stack(Path::new("/repo"))
+            .detect_tech_stack(temp_dir.path())
             .await
             .unwrap();
 
@@ -166,11 +173,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_python_tech_stack() {
-        let mock_fs = MockFileSystem::new().with_file("/repo/pyproject.toml", "");
+        let temp_dir = TempDir::new().unwrap();
+        let fs = Arc::new(DefaultFileSystem);
 
-        let repo_context = DefaultRepositoryContext::new(Arc::new(mock_fs));
+        // Create pyproject.toml file
+        fs.write_file(&temp_dir.path().join("pyproject.toml"), "")
+            .await
+            .unwrap();
+
+        let repo_context = DefaultRepositoryContext::new(fs);
         let result = repo_context
-            .detect_tech_stack(Path::new("/repo"))
+            .detect_tech_stack(temp_dir.path())
             .await
             .unwrap();
 
@@ -179,11 +192,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_python_tech_stack_requirements() {
-        let mock_fs = MockFileSystem::new().with_file("/repo/requirements.txt", "");
+        let temp_dir = TempDir::new().unwrap();
+        let fs = Arc::new(DefaultFileSystem);
 
-        let repo_context = DefaultRepositoryContext::new(Arc::new(mock_fs));
+        // Create requirements.txt file
+        fs.write_file(&temp_dir.path().join("requirements.txt"), "")
+            .await
+            .unwrap();
+
+        let repo_context = DefaultRepositoryContext::new(fs);
         let result = repo_context
-            .detect_tech_stack(Path::new("/repo"))
+            .detect_tech_stack(temp_dir.path())
             .await
             .unwrap();
 
@@ -192,11 +211,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_node_tech_stack() {
-        let mock_fs = MockFileSystem::new().with_file("/repo/package.json", "");
+        let temp_dir = TempDir::new().unwrap();
+        let fs = Arc::new(DefaultFileSystem);
 
-        let repo_context = DefaultRepositoryContext::new(Arc::new(mock_fs));
+        // Create package.json file
+        fs.write_file(&temp_dir.path().join("package.json"), "")
+            .await
+            .unwrap();
+
+        let repo_context = DefaultRepositoryContext::new(fs);
         let result = repo_context
-            .detect_tech_stack(Path::new("/repo"))
+            .detect_tech_stack(temp_dir.path())
             .await
             .unwrap();
 
@@ -205,11 +230,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_go_tech_stack() {
-        let mock_fs = MockFileSystem::new().with_file("/repo/go.mod", "");
+        let temp_dir = TempDir::new().unwrap();
+        let fs = Arc::new(DefaultFileSystem);
 
-        let repo_context = DefaultRepositoryContext::new(Arc::new(mock_fs));
+        // Create go.mod file
+        fs.write_file(&temp_dir.path().join("go.mod"), "")
+            .await
+            .unwrap();
+
+        let repo_context = DefaultRepositoryContext::new(fs);
         let result = repo_context
-            .detect_tech_stack(Path::new("/repo"))
+            .detect_tech_stack(temp_dir.path())
             .await
             .unwrap();
 
@@ -218,11 +249,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_java_tech_stack() {
-        let mock_fs = MockFileSystem::new().with_file("/repo/pom.xml", "");
+        let temp_dir = TempDir::new().unwrap();
+        let fs = Arc::new(DefaultFileSystem);
 
-        let repo_context = DefaultRepositoryContext::new(Arc::new(mock_fs));
+        // Create pom.xml file
+        fs.write_file(&temp_dir.path().join("pom.xml"), "")
+            .await
+            .unwrap();
+
+        let repo_context = DefaultRepositoryContext::new(fs);
         let result = repo_context
-            .detect_tech_stack(Path::new("/repo"))
+            .detect_tech_stack(temp_dir.path())
             .await
             .unwrap();
 
@@ -231,11 +268,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_lua_tech_stack_rockspec() {
-        let mock_fs = MockFileSystem::new().with_file("/repo/rockspec", "");
+        let temp_dir = TempDir::new().unwrap();
+        let fs = Arc::new(DefaultFileSystem);
 
-        let repo_context = DefaultRepositoryContext::new(Arc::new(mock_fs));
+        // Create rockspec file
+        fs.write_file(&temp_dir.path().join("rockspec"), "")
+            .await
+            .unwrap();
+
+        let repo_context = DefaultRepositoryContext::new(fs);
         let result = repo_context
-            .detect_tech_stack(Path::new("/repo"))
+            .detect_tech_stack(temp_dir.path())
             .await
             .unwrap();
 
@@ -244,11 +287,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_lua_tech_stack_luacheckrc() {
-        let mock_fs = MockFileSystem::new().with_file("/repo/.luacheckrc", "");
+        let temp_dir = TempDir::new().unwrap();
+        let fs = Arc::new(DefaultFileSystem);
 
-        let repo_context = DefaultRepositoryContext::new(Arc::new(mock_fs));
+        // Create .luacheckrc file
+        fs.write_file(&temp_dir.path().join(".luacheckrc"), "")
+            .await
+            .unwrap();
+
+        let repo_context = DefaultRepositoryContext::new(fs);
         let result = repo_context
-            .detect_tech_stack(Path::new("/repo"))
+            .detect_tech_stack(temp_dir.path())
             .await
             .unwrap();
 
@@ -257,11 +306,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_lua_tech_stack_init() {
-        let mock_fs = MockFileSystem::new().with_file("/repo/init.lua", "");
+        let temp_dir = TempDir::new().unwrap();
+        let fs = Arc::new(DefaultFileSystem);
 
-        let repo_context = DefaultRepositoryContext::new(Arc::new(mock_fs));
+        // Create init.lua file
+        fs.write_file(&temp_dir.path().join("init.lua"), "")
+            .await
+            .unwrap();
+
+        let repo_context = DefaultRepositoryContext::new(fs);
         let result = repo_context
-            .detect_tech_stack(Path::new("/repo"))
+            .detect_tech_stack(temp_dir.path())
             .await
             .unwrap();
 
@@ -270,11 +325,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_default_tech_stack() {
-        let mock_fs = MockFileSystem::new();
+        let temp_dir = TempDir::new().unwrap();
+        let fs = Arc::new(DefaultFileSystem);
 
-        let repo_context = DefaultRepositoryContext::new(Arc::new(mock_fs));
+        // No special files created
+        let repo_context = DefaultRepositoryContext::new(fs);
         let result = repo_context
-            .detect_tech_stack(Path::new("/repo"))
+            .detect_tech_stack(temp_dir.path())
             .await
             .unwrap();
 
@@ -283,11 +340,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_project_name() {
-        let mock_fs = MockFileSystem::new();
-        let repo_context = DefaultRepositoryContext::new(Arc::new(mock_fs));
+        let fs = Arc::new(DefaultFileSystem);
+        let repo_context = DefaultRepositoryContext::new(fs);
+
+        // Create a temp dir with a specific name to test
+        let temp_base = TempDir::new().unwrap();
+        let project_dir = temp_base.path().join("my-awesome-project");
+        tokio::fs::create_dir(&project_dir).await.unwrap();
 
         let result = repo_context
-            .detect_project_name(Path::new("/home/user/my-awesome-project"))
+            .detect_project_name(&project_dir)
             .await
             .unwrap();
         assert_eq!(result, "my-awesome-project");
@@ -295,11 +357,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_clean_project_name() {
-        let mock_fs = MockFileSystem::new();
-        let repo_context = DefaultRepositoryContext::new(Arc::new(mock_fs));
+        let fs = Arc::new(DefaultFileSystem);
+        let repo_context = DefaultRepositoryContext::new(fs);
+
+        // Create a temp dir with special characters in the name
+        let temp_base = TempDir::new().unwrap();
+        let project_dir = temp_base.path().join("My_Awesome Project!");
+        tokio::fs::create_dir(&project_dir).await.unwrap();
 
         let result = repo_context
-            .detect_project_name(Path::new("/home/user/My_Awesome Project!"))
+            .detect_project_name(&project_dir)
             .await
             .unwrap();
         assert_eq!(result, "my-awesome-project");
@@ -307,11 +374,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_project_name_with_special_chars() {
-        let mock_fs = MockFileSystem::new();
-        let repo_context = DefaultRepositoryContext::new(Arc::new(mock_fs));
+        let fs = Arc::new(DefaultFileSystem);
+        let repo_context = DefaultRepositoryContext::new(fs);
+
+        // Create a temp dir with special characters
+        let temp_base = TempDir::new().unwrap();
+        let project_dir = temp_base.path().join("test@#$%project");
+        tokio::fs::create_dir(&project_dir).await.unwrap();
 
         let result = repo_context
-            .detect_project_name(Path::new("/home/user/test@#$%project"))
+            .detect_project_name(&project_dir)
             .await
             .unwrap();
         assert_eq!(result, "test-project");
@@ -319,8 +391,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_project_name_fallback() {
-        let mock_fs = MockFileSystem::new();
-        let repo_context = DefaultRepositoryContext::new(Arc::new(mock_fs));
+        let fs = Arc::new(DefaultFileSystem);
+        let repo_context = DefaultRepositoryContext::new(fs);
 
         let result = repo_context
             .detect_project_name(Path::new("/"))

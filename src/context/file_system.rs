@@ -5,6 +5,7 @@ use std::path::Path;
 #[async_trait]
 pub trait FileSystemOperations: Send + Sync {
     async fn create_dir(&self, path: &Path) -> Result<()>;
+    async fn copy_dir(&self, from: &Path, to: &Path) -> Result<()>;
     async fn write_file(&self, path: &Path, content: &str) -> Result<()>;
     async fn read_file(&self, path: &Path) -> Result<String>;
     async fn exists(&self, path: &Path) -> Result<bool>;
@@ -20,6 +21,28 @@ pub struct DefaultFileSystem;
 impl FileSystemOperations for DefaultFileSystem {
     async fn create_dir(&self, path: &Path) -> Result<()> {
         tokio::fs::create_dir_all(path).await?;
+        Ok(())
+    }
+
+    async fn copy_dir(&self, from: &Path, to: &Path) -> Result<()> {
+        self.create_dir(to).await?;
+
+        let mut entries = tokio::fs::read_dir(from).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            let relative_path = path.strip_prefix(from)?;
+            let dst_path = to.join(relative_path);
+
+            if entry.file_type().await?.is_dir() {
+                self.copy_dir(&path, &dst_path).await?;
+            } else {
+                if let Some(parent) = dst_path.parent() {
+                    self.create_dir(parent).await?;
+                }
+                self.copy_file(&path, &dst_path).await?;
+            }
+        }
+
         Ok(())
     }
 
@@ -106,6 +129,43 @@ pub(crate) mod tests {
         async fn create_dir(&self, path: &Path) -> Result<()> {
             let path_str = path.to_string_lossy().to_string();
             self.dirs.lock().unwrap().push(path_str);
+            Ok(())
+        }
+
+        async fn copy_dir(&self, from: &Path, to: &Path) -> Result<()> {
+            let from_str = from.to_string_lossy().to_string();
+            let to_str = to.to_string_lossy().to_string();
+
+            // Copy all files
+            let files = self.files.lock().unwrap();
+            let mut new_files = HashMap::new();
+
+            for (path, content) in files.iter() {
+                if path.starts_with(&from_str) {
+                    let relative = path.strip_prefix(&from_str).unwrap();
+                    let new_path = format!("{to_str}{relative}");
+                    new_files.insert(new_path, content.clone());
+                }
+            }
+
+            drop(files);
+            self.files.lock().unwrap().extend(new_files);
+
+            // Copy all directories
+            let dirs = self.dirs.lock().unwrap();
+            let mut new_dirs = Vec::new();
+
+            for dir in dirs.iter() {
+                if dir.starts_with(&from_str) {
+                    let relative = dir.strip_prefix(&from_str).unwrap();
+                    let new_dir = format!("{to_str}{relative}");
+                    new_dirs.push(new_dir);
+                }
+            }
+
+            drop(dirs);
+            self.dirs.lock().unwrap().extend(new_dirs);
+            self.dirs.lock().unwrap().push(to_str);
             Ok(())
         }
 
@@ -275,6 +335,48 @@ pub(crate) mod tests {
 
             let dest_content = fs.read_file(&dest_path).await.unwrap();
             assert_eq!(dest_content, content);
+        }
+
+        #[tokio::test]
+        async fn test_default_file_system_copy_dir() {
+            let temp_dir = TempDir::new().unwrap();
+            let fs = DefaultFileSystem;
+
+            let source_dir = temp_dir.path().join("source_dir");
+            let dest_dir = temp_dir.path().join("dest_dir");
+
+            // Create source directory structure
+            fs.create_dir(&source_dir).await.unwrap();
+            fs.write_file(&source_dir.join("file1.txt"), "content1")
+                .await
+                .unwrap();
+            fs.create_dir(&source_dir.join("subdir")).await.unwrap();
+            fs.write_file(&source_dir.join("subdir").join("file2.txt"), "content2")
+                .await
+                .unwrap();
+
+            // Copy directory
+            fs.copy_dir(&source_dir, &dest_dir).await.unwrap();
+
+            // Verify structure
+            assert!(fs.exists(&dest_dir).await.unwrap());
+            assert!(fs.exists(&dest_dir.join("file1.txt")).await.unwrap());
+            assert!(fs.exists(&dest_dir.join("subdir")).await.unwrap());
+            assert!(
+                fs.exists(&dest_dir.join("subdir").join("file2.txt"))
+                    .await
+                    .unwrap()
+            );
+
+            // Verify content
+            let content1 = fs.read_file(&dest_dir.join("file1.txt")).await.unwrap();
+            assert_eq!(content1, "content1");
+
+            let content2 = fs
+                .read_file(&dest_dir.join("subdir").join("file2.txt"))
+                .await
+                .unwrap();
+            assert_eq!(content2, "content2");
         }
 
         #[tokio::test]
