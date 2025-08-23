@@ -13,12 +13,15 @@ pub struct ClaudeCodeAgent {
 }
 
 impl ClaudeCodeAgent {
+    /// Creates a new ClaudeCodeAgent with default configuration
+    ///
+    /// This constructor is deprecated in favor of `with_config` to ensure
+    /// proper configuration management.
     pub fn new() -> Self {
-        Self { config: None }
+        Self::with_config(Arc::new(Config::new()))
     }
 
     /// Creates a new ClaudeCodeAgent with a custom Config
-    #[allow(dead_code)] // Used in tests and will be used when AgentProvider supports Config
     pub fn with_config(config: Arc<Config>) -> Self {
         Self {
             config: Some(config),
@@ -26,13 +29,11 @@ impl ClaudeCodeAgent {
     }
 
     fn get_claude_config_dir(&self) -> PathBuf {
-        if let Some(config) = &self.config {
-            config.claude_config_dir().clone()
-        } else {
-            // Fallback to environment variable
-            let home_dir = std::env::var("HOME").unwrap_or_else(|_| "/home/agent".to_string());
-            PathBuf::from(home_dir).join(".claude")
-        }
+        self.config
+            .as_ref()
+            .expect("Config should always be present")
+            .claude_config_dir()
+            .clone()
     }
 }
 

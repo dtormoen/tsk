@@ -699,7 +699,6 @@ mod tests {
         let manager = create_test_manager();
 
         // Test build_image with dry_run=false (normal mode)
-        // In test mode, this won't actually build due to cfg!(test) but validates the flow
         let result = manager
             .build_image(
                 "default",
@@ -711,10 +710,8 @@ mod tests {
             )
             .await;
 
-        // This will fail due to missing git config in tests, which is expected
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("git"));
+        let image = result.unwrap();
+        assert_eq!(image.tag, "tsk/default/claude-code/default");
     }
 
     #[test]

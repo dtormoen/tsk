@@ -167,15 +167,16 @@ mod tests {
             repo: Some(test_repo.path().to_string_lossy().to_string()),
         };
 
-        // Execute should succeed (will fail at docker execution, but task creation should work)
+        // Execute should succeed for templates without {{DESCRIPTION}} placeholder
+        // The NoOpDockerClient simulates successful execution
         let result = cmd.execute(&ctx).await;
-        // The command will fail because we're using NoOpDockerClient, but it should fail
-        // at the docker execution stage, not at task creation
-        assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
+
+        // The test verifies that templates without {{DESCRIPTION}} placeholder
+        // don't require a description to be provided
         assert!(
-            !err_msg.contains("Either description or instructions file"),
-            "Should not fail due to missing description for template without placeholder"
+            result.is_ok(),
+            "Should succeed for template without placeholder: {:?}",
+            result.err()
         );
     }
 }

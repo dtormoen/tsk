@@ -158,6 +158,7 @@ impl Command for DebugCommand {
             ctx.notification_client(),
             ctx.docker_client(),
             ctx.xdg_directories(),
+            ctx.config(),
         );
 
         // Execute task in interactive mode

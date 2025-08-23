@@ -55,6 +55,7 @@ impl TaskManager {
             ctx.notification_client(),
             ctx.docker_client(),
             ctx.xdg_directories(),
+            ctx.config(),
         );
 
         Ok(Self {
@@ -100,6 +101,7 @@ impl TaskManager {
             ctx.notification_client(),
             ctx.docker_client(),
             ctx.xdg_directories(),
+            ctx.config(),
         );
 
         Ok(Self {

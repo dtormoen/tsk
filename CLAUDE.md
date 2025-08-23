@@ -100,6 +100,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Provides overrides for `HOME/.claude`, `EDITOR`, and `TERM` environment variables
   - Eliminates unsafe `env::set_var` operations in tests
   - Accessed via `AppContext::config()` method
+  - Passed to agents via `AgentProvider::get_agent()` for proper configuration
 - `FileSystemOperations` trait abstracts all file system operations for testability
 - `GitOperations` trait abstracts all git operations for improved testability and separation of concerns
 - `XdgDirectories` provides XDG-compliant directory paths for centralized storage

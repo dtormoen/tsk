@@ -45,6 +45,7 @@ pub struct TaskRunner {
     notification_client: Arc<dyn NotificationClient>,
     docker_client: Arc<dyn crate::context::docker_client::DockerClient>,
     xdg_directories: Arc<crate::storage::XdgDirectories>,
+    config: Arc<crate::context::config::Config>,
 }
 
 impl TaskRunner {
@@ -55,6 +56,7 @@ impl TaskRunner {
         notification_client: Arc<dyn NotificationClient>,
         docker_client: Arc<dyn crate::context::docker_client::DockerClient>,
         xdg_directories: Arc<crate::storage::XdgDirectories>,
+        config: Arc<crate::context::config::Config>,
     ) -> Self {
         Self {
             repo_manager,
@@ -62,6 +64,7 @@ impl TaskRunner {
             notification_client,
             docker_client,
             xdg_directories,
+            config,
         }
     }
 
@@ -72,7 +75,7 @@ impl TaskRunner {
         is_interactive: bool,
     ) -> Result<TaskExecutionResult, TaskExecutionError> {
         // Get the agent for this task
-        let agent = AgentProvider::get_agent(&task.agent)
+        let agent = AgentProvider::get_agent(&task.agent, self.config.clone())
             .map_err(|e| format!("Error getting agent: {e}"))?;
 
         // Validate the agent
@@ -232,15 +235,13 @@ mod tests {
 
         // Set up a temporary home directory with a mock .claude.json file
         let temp_home = tempfile::tempdir().unwrap();
+        let claude_dir = temp_home.path().join(".claude");
         let claude_json_path = temp_home.path().join(".claude.json");
         std::fs::write(&claude_json_path, "{}").unwrap();
 
-        // Note: Currently agents are created through AgentProvider which doesn't pass Config.
-        // Until AgentProvider is refactored to accept Config, we still need to set HOME env var.
-        let original_home = std::env::var("HOME").ok();
-        unsafe {
-            std::env::set_var("HOME", temp_home.path());
-        }
+        // Create a Config with the test directory
+        use crate::context::config::Config;
+        let config = Arc::new(Config::builder().with_claude_config_dir(claude_dir).build());
 
         // Use DefaultFileSystem for real file operations
         let fs = Arc::new(DefaultFileSystem);
@@ -287,6 +288,7 @@ mod tests {
             notification_client,
             docker_client,
             xdg_directories.clone(),
+            config,
         );
 
         // Create a task copy directory
@@ -320,15 +322,6 @@ mod tests {
         };
 
         let result = task_runner.execute_task(&task, false).await;
-
-        // Restore original HOME
-        unsafe {
-            if let Some(home) = original_home {
-                std::env::set_var("HOME", home);
-            } else {
-                std::env::remove_var("HOME");
-            }
-        }
 
         assert!(result.is_ok(), "Error: {:?}", result.as_ref().err());
         let execution_result = result.unwrap();
