@@ -1,5 +1,6 @@
-build:
-    cargo build
+setup:
+    cargo install cargo-binstall
+    cargo binstall cargo-edit cargo-outdated -y
 
 install:
     cargo install --path . --locked --force
@@ -17,3 +18,12 @@ lint:
 precommit: format lint test
     # Check that the command starts
     cargo run -- --help > /dev/null
+
+# Upgrade all dependencies in cargo.toml
+upgrade-deps:
+    cargo upgrade
+
+# Update all dependencies in cargo.lock
+update-deps:
+    cargo update
+

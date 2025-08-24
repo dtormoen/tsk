@@ -5,7 +5,8 @@ pub mod template_manager;
 
 use crate::agent::{Agent, LogProcessor};
 use crate::context::docker_client::DockerClient;
-use bollard::container::{Config, CreateContainerOptions, LogsOptions, RemoveContainerOptions};
+use bollard::models::{ContainerCreateBody, HostConfig};
+use bollard::query_parameters::{LogsOptions, RemoveContainerOptions};
 use futures_util::stream::StreamExt;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -57,17 +58,17 @@ impl DockerManager {
 
     async fn ensure_proxy(&self) -> Result<(), String> {
         // Check if proxy container exists
-        let proxy_config = Config {
+        let proxy_config = ContainerCreateBody {
             image: Some(PROXY_IMAGE.to_string()),
             exposed_ports: Some(
                 vec![("3128/tcp".to_string(), HashMap::new())]
                     .into_iter()
                     .collect(),
             ),
-            host_config: Some(bollard::service::HostConfig {
+            host_config: Some(HostConfig {
                 network_mode: Some(TSK_NETWORK_NAME.to_string()),
-                restart_policy: Some(bollard::service::RestartPolicy {
-                    name: Some(bollard::service::RestartPolicyNameEnum::UNLESS_STOPPED),
+                restart_policy: Some(bollard::models::RestartPolicy {
+                    name: Some(bollard::models::RestartPolicyNameEnum::UNLESS_STOPPED),
                     maximum_retry_count: None,
                 }),
                 ..Default::default()
@@ -75,10 +76,9 @@ impl DockerManager {
             ..Default::default()
         };
 
-        let create_options = CreateContainerOptions {
-            name: PROXY_CONTAINER_NAME.to_string(),
-            platform: None,
-        };
+        let create_options = bollard::query_parameters::CreateContainerOptionsBuilder::default()
+            .name(PROXY_CONTAINER_NAME)
+            .build();
 
         // Try to create the container (this will fail if it already exists)
         match self
@@ -201,7 +201,7 @@ impl DockerManager {
         interactive: bool,
         instructions_file_path: Option<&PathBuf>,
         agent: Option<&dyn Agent>,
-    ) -> Config<String> {
+    ) -> ContainerCreateBody {
         // Build binds vector starting with workspace
         let mut binds = vec![format!("{worktree_path_str}:{CONTAINER_WORKING_DIR}")];
 
@@ -251,12 +251,12 @@ impl DockerManager {
             env_vars.push(format!("USER={CONTAINER_USER}"));
         }
 
-        Config {
+        ContainerCreateBody {
             image: Some(image.to_string()),
             // No entrypoint needed anymore - just run as agent user directly
             user: Some(CONTAINER_USER.to_string()),
             cmd: command,
-            host_config: Some(bollard::service::HostConfig {
+            host_config: Some(HostConfig {
                 binds: Some(binds),
                 network_mode: Some(TSK_NETWORK_NAME.to_string()),
                 memory: Some(CONTAINER_MEMORY_LIMIT),
@@ -380,10 +380,9 @@ impl DockerManager {
             );
 
             let container_name = format!("tsk-{task_id}");
-            let options = CreateContainerOptions {
-                name: container_name.clone(),
-                platform: None,
-            };
+            let options = bollard::query_parameters::CreateContainerOptionsBuilder::default()
+                .name(&container_name)
+                .build();
 
             let container_id = self.client.create_container(Some(options), config).await?;
 
@@ -788,14 +787,28 @@ mod tests {
 
         // Check proxy container config
         let (proxy_options, proxy_config) = &create_calls[0];
-        assert_eq!(proxy_options.as_ref().unwrap().name, PROXY_CONTAINER_NAME);
+        assert_eq!(
+            proxy_options.as_ref().unwrap().name,
+            Some(PROXY_CONTAINER_NAME.to_string())
+        );
         assert_eq!(proxy_config.image, Some(PROXY_IMAGE.to_string()));
 
         // Check task container config
         let (options, config) = &create_calls[1];
 
-        assert!(options.as_ref().unwrap().name.starts_with("tsk-"));
-        assert_eq!(options.as_ref().unwrap().name, "tsk-test-task-id");
+        assert!(
+            options
+                .as_ref()
+                .unwrap()
+                .name
+                .as_ref()
+                .unwrap()
+                .starts_with("tsk-")
+        );
+        assert_eq!(
+            options.as_ref().unwrap().name,
+            Some("tsk-test-task-id".to_string())
+        );
         assert_eq!(config.image, Some("tsk/base".to_string()));
         assert_eq!(config.working_dir, Some(CONTAINER_WORKING_DIR.to_string()));
         // User is now set directly

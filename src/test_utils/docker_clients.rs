@@ -1,7 +1,9 @@
 use crate::context::docker_client::DockerClient;
 use async_trait::async_trait;
-use bollard::container::{Config, CreateContainerOptions, LogsOptions, RemoveContainerOptions};
-use bollard::image::BuildImageOptions;
+use bollard::models::ContainerCreateBody;
+use bollard::query_parameters::{
+    BuildImageOptions, CreateContainerOptions, LogsOptions, RemoveContainerOptions,
+};
 use futures_util::Stream;
 use std::sync::{Arc, Mutex};
 
@@ -17,8 +19,8 @@ impl DockerClient for NoOpDockerClient {
 
     async fn create_container(
         &self,
-        _options: Option<CreateContainerOptions<String>>,
-        _config: Config<String>,
+        _options: Option<CreateContainerOptions>,
+        _config: ContainerCreateBody,
     ) -> Result<String, String> {
         Ok("noop-container-id".to_string())
     }
@@ -31,18 +33,14 @@ impl DockerClient for NoOpDockerClient {
         Ok(0)
     }
 
-    async fn logs(
-        &self,
-        _id: &str,
-        _options: Option<LogsOptions<String>>,
-    ) -> Result<String, String> {
+    async fn logs(&self, _id: &str, _options: Option<LogsOptions>) -> Result<String, String> {
         Ok("".to_string())
     }
 
     async fn logs_stream(
         &self,
         _id: &str,
-        _options: Option<LogsOptions<String>>,
+        _options: Option<LogsOptions>,
     ) -> Result<Box<dyn Stream<Item = Result<String, String>> + Send + Unpin>, String> {
         use futures_util::stream;
         let stream = stream::once(async { Ok("".to_string()) });
@@ -67,7 +65,7 @@ impl DockerClient for NoOpDockerClient {
 
     async fn build_image(
         &self,
-        _options: BuildImageOptions<String>,
+        _options: BuildImageOptions,
         _tar_archive: Vec<u8>,
     ) -> Result<Box<dyn Stream<Item = Result<String, String>> + Send + Unpin>, String> {
         use futures_util::stream;
@@ -116,8 +114,8 @@ impl DockerClient for FixedResponseDockerClient {
 
     async fn create_container(
         &self,
-        _options: Option<CreateContainerOptions<String>>,
-        _config: Config<String>,
+        _options: Option<CreateContainerOptions>,
+        _config: ContainerCreateBody,
     ) -> Result<String, String> {
         if self.should_fail_create {
             Err("Failed to create container".to_string())
@@ -138,18 +136,14 @@ impl DockerClient for FixedResponseDockerClient {
         Ok(self.exit_code)
     }
 
-    async fn logs(
-        &self,
-        _id: &str,
-        _options: Option<LogsOptions<String>>,
-    ) -> Result<String, String> {
+    async fn logs(&self, _id: &str, _options: Option<LogsOptions>) -> Result<String, String> {
         Ok(self.logs_output.clone())
     }
 
     async fn logs_stream(
         &self,
         _id: &str,
-        _options: Option<LogsOptions<String>>,
+        _options: Option<LogsOptions>,
     ) -> Result<Box<dyn Stream<Item = Result<String, String>> + Send + Unpin>, String> {
         use futures_util::stream::StreamExt;
         let output = self.logs_output.clone();
@@ -175,7 +169,7 @@ impl DockerClient for FixedResponseDockerClient {
 
     async fn build_image(
         &self,
-        _options: BuildImageOptions<String>,
+        _options: BuildImageOptions,
         _tar_archive: Vec<u8>,
     ) -> Result<Box<dyn Stream<Item = Result<String, String>> + Send + Unpin>, String> {
         use futures_util::stream::StreamExt;
@@ -193,8 +187,8 @@ impl DockerClient for FixedResponseDockerClient {
     }
 }
 
-type CreateContainerCall = (Option<CreateContainerOptions<String>>, Config<String>);
-type LogsCall = (String, Option<LogsOptions<String>>);
+type CreateContainerCall = (Option<CreateContainerOptions>, ContainerCreateBody);
+type LogsCall = (String, Option<LogsOptions>);
 type RemoveContainerCall = (String, Option<RemoveContainerOptions>);
 
 #[derive(Clone)]
@@ -241,14 +235,14 @@ impl DockerClient for TrackedDockerClient {
 
     async fn create_container(
         &self,
-        options: Option<CreateContainerOptions<String>>,
-        config: Config<String>,
+        options: Option<CreateContainerOptions>,
+        config: ContainerCreateBody,
     ) -> Result<String, String> {
         let call_count = self.create_container_calls.lock().unwrap().len();
 
         // Determine the result before moving config
         let result = if let Some(opt) = &options {
-            if opt.name == "tsk-proxy" {
+            if opt.name == Some("tsk-proxy".to_string()) {
                 Ok("test-proxy-container-id".to_string())
             } else if let Some(cmd) = &config.cmd {
                 if cmd.contains(&"false".to_string()) {
@@ -293,7 +287,7 @@ impl DockerClient for TrackedDockerClient {
         }
     }
 
-    async fn logs(&self, id: &str, options: Option<LogsOptions<String>>) -> Result<String, String> {
+    async fn logs(&self, id: &str, options: Option<LogsOptions>) -> Result<String, String> {
         self.logs_calls
             .lock()
             .unwrap()
@@ -304,7 +298,7 @@ impl DockerClient for TrackedDockerClient {
     async fn logs_stream(
         &self,
         id: &str,
-        options: Option<LogsOptions<String>>,
+        options: Option<LogsOptions>,
     ) -> Result<Box<dyn Stream<Item = Result<String, String>> + Send + Unpin>, String> {
         // For tests, just return the logs as a single-item stream
         let logs = self.logs(id, options).await?;
@@ -338,7 +332,7 @@ impl DockerClient for TrackedDockerClient {
 
     async fn build_image(
         &self,
-        _options: BuildImageOptions<String>,
+        _options: BuildImageOptions,
         _tar_archive: Vec<u8>,
     ) -> Result<Box<dyn Stream<Item = Result<String, String>> + Send + Unpin>, String> {
         use futures_util::stream::StreamExt;

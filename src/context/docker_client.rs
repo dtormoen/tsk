@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 use bollard::Docker;
-use bollard::container::{Config, CreateContainerOptions, LogsOptions, RemoveContainerOptions};
-use bollard::image::{BuildImageOptions, ListImagesOptions};
-use bollard::network::{CreateNetworkOptions, ListNetworksOptions};
+use bollard::models::{ContainerCreateBody, NetworkCreateRequest};
+use bollard::query_parameters::{
+    BuildImageOptions, CreateContainerOptions, LogsOptions, RemoveContainerOptions,
+};
 use futures_util::stream::{Stream, StreamExt};
 use std::collections::HashMap;
 
@@ -12,8 +13,8 @@ pub trait DockerClient: Send + Sync {
     fn as_any(&self) -> &dyn std::any::Any;
     async fn create_container(
         &self,
-        options: Option<CreateContainerOptions<String>>,
-        config: Config<String>,
+        options: Option<CreateContainerOptions>,
+        config: ContainerCreateBody,
     ) -> Result<String, String>;
 
     async fn start_container(&self, id: &str) -> Result<(), String>;
@@ -24,12 +25,12 @@ pub trait DockerClient: Send + Sync {
     ///
     /// Used by test utilities and debugging tools
     #[allow(dead_code)] // Used by test implementations
-    async fn logs(&self, id: &str, options: Option<LogsOptions<String>>) -> Result<String, String>;
+    async fn logs(&self, id: &str, options: Option<LogsOptions>) -> Result<String, String>;
 
     async fn logs_stream(
         &self,
         id: &str,
-        options: Option<LogsOptions<String>>,
+        options: Option<LogsOptions>,
     ) -> Result<Box<dyn futures_util::Stream<Item = Result<String, String>> + Send + Unpin>, String>;
 
     async fn remove_container(
@@ -52,7 +53,7 @@ pub trait DockerClient: Send + Sync {
     /// A stream of build output messages, or an error if the build fails to start
     async fn build_image(
         &self,
-        options: BuildImageOptions<String>,
+        options: BuildImageOptions,
         tar_archive: Vec<u8>,
     ) -> Result<Box<dyn futures_util::Stream<Item = Result<String, String>> + Send + Unpin>, String>;
 
@@ -114,8 +115,8 @@ impl DockerClient for DefaultDockerClient {
     }
     async fn create_container(
         &self,
-        options: Option<CreateContainerOptions<String>>,
-        config: Config<String>,
+        options: Option<CreateContainerOptions>,
+        config: ContainerCreateBody,
     ) -> Result<String, String> {
         let response = self
             .docker
@@ -127,7 +128,7 @@ impl DockerClient for DefaultDockerClient {
 
     async fn start_container(&self, id: &str) -> Result<(), String> {
         self.docker
-            .start_container::<String>(id, None)
+            .start_container(id, None::<bollard::query_parameters::StartContainerOptions>)
             .await
             .map_err(|e| format!("Failed to start container: {e}"))
     }
@@ -137,7 +138,7 @@ impl DockerClient for DefaultDockerClient {
 
         let mut stream = self
             .docker
-            .wait_container(id, None::<bollard::container::WaitContainerOptions<String>>);
+            .wait_container(id, None::<bollard::query_parameters::WaitContainerOptions>);
         if let Some(result) = stream.next().await {
             match result {
                 Ok(wait_response) => Ok(wait_response.status_code),
@@ -148,7 +149,7 @@ impl DockerClient for DefaultDockerClient {
         }
     }
 
-    async fn logs(&self, id: &str, options: Option<LogsOptions<String>>) -> Result<String, String> {
+    async fn logs(&self, id: &str, options: Option<LogsOptions>) -> Result<String, String> {
         let mut stream = self.docker.logs(id, options);
         let mut output = String::new();
 
@@ -165,7 +166,7 @@ impl DockerClient for DefaultDockerClient {
     async fn logs_stream(
         &self,
         id: &str,
-        options: Option<LogsOptions<String>>,
+        options: Option<LogsOptions>,
     ) -> Result<Box<dyn Stream<Item = Result<String, String>> + Send + Unpin>, String> {
         let stream = self.docker.logs(id, options);
         let mapped_stream = stream.map(|result| match result {
@@ -187,7 +188,7 @@ impl DockerClient for DefaultDockerClient {
     }
 
     async fn create_network(&self, name: &str) -> Result<String, String> {
-        let options = CreateNetworkOptions {
+        let options = NetworkCreateRequest {
             name: name.to_string(),
             ..Default::default()
         };
@@ -198,14 +199,16 @@ impl DockerClient for DefaultDockerClient {
             .await
             .map_err(|e| format!("Failed to create network: {e}"))?;
 
-        Ok(response.id.unwrap_or_else(|| name.to_string()))
+        Ok(response.id)
     }
 
     async fn network_exists(&self, name: &str) -> Result<bool, String> {
         let mut filters = HashMap::new();
         filters.insert("name", vec![name]);
 
-        let options = ListNetworksOptions { filters };
+        let options = bollard::query_parameters::ListNetworksOptionsBuilder::default()
+            .filters(&filters)
+            .build();
 
         let networks = self
             .docker
@@ -218,7 +221,7 @@ impl DockerClient for DefaultDockerClient {
 
     async fn build_image(
         &self,
-        options: BuildImageOptions<String>,
+        options: BuildImageOptions,
         tar_archive: Vec<u8>,
     ) -> Result<Box<dyn futures_util::Stream<Item = Result<String, String>> + Send + Unpin>, String>
     {
@@ -230,7 +233,11 @@ impl DockerClient for DefaultDockerClient {
 
         // Spawn a task to handle the streaming
         tokio::spawn(async move {
-            let mut stream = docker.build_image(options, None, Some(tar_archive.into()));
+            use bytes::Bytes;
+            use http_body_util::{Either, Full};
+
+            let body = Either::Left(Full::new(Bytes::from(tar_archive)));
+            let mut stream = docker.build_image(options, None, Some(body));
 
             while let Some(build_info) = stream.next().await {
                 match build_info {
@@ -262,10 +269,9 @@ impl DockerClient for DefaultDockerClient {
         let mut filters = HashMap::new();
         filters.insert("reference", vec![tag]);
 
-        let options = ListImagesOptions {
-            filters,
-            ..Default::default()
-        };
+        let options = bollard::query_parameters::ListImagesOptionsBuilder::default()
+            .filters(&filters)
+            .build();
 
         let images = self
             .docker
@@ -279,7 +285,10 @@ impl DockerClient for DefaultDockerClient {
     async fn inspect_container(&self, id: &str) -> Result<String, String> {
         let container = self
             .docker
-            .inspect_container(id, None)
+            .inspect_container(
+                id,
+                None::<bollard::query_parameters::InspectContainerOptions>,
+            )
             .await
             .map_err(|e| format!("Failed to inspect container: {e}"))?;
 

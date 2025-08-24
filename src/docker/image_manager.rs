@@ -5,7 +5,6 @@
 //! and simplified APIs for the rest of the system.
 
 use anyhow::{Context, Result};
-use bollard::image::BuildImageOptions;
 use std::sync::Arc;
 
 use crate::assets::layered::LayeredAssetManager;
@@ -345,12 +344,11 @@ impl DockerImageManager {
         let _ = std::fs::remove_dir_all(&dockerfile_dir);
 
         // Build options for proxy
-        let options = BuildImageOptions {
-            dockerfile: "Dockerfile".to_string(),
-            t: "tsk/proxy".to_string(),
-            nocache: no_cache,
-            ..Default::default()
-        };
+        let mut options_builder = bollard::query_parameters::BuildImageOptionsBuilder::default();
+        options_builder = options_builder.dockerfile("Dockerfile");
+        options_builder = options_builder.t("tsk/proxy");
+        options_builder = options_builder.nocache(no_cache);
+        let options = options_builder.build();
 
         // Build the image using the DockerClient with streaming output
         let mut build_stream = self
@@ -436,13 +434,12 @@ impl DockerImageManager {
             build_args.insert("GIT_USER_EMAIL".to_string(), git_user_email.to_string());
         }
 
-        let options = BuildImageOptions {
-            dockerfile: "Dockerfile.tsk".to_string(),
-            t: composed.image_tag.clone(),
-            nocache: no_cache,
-            buildargs: build_args,
-            ..Default::default()
-        };
+        let mut options_builder = bollard::query_parameters::BuildImageOptionsBuilder::default();
+        options_builder = options_builder.dockerfile("Dockerfile.tsk");
+        options_builder = options_builder.t(&composed.image_tag);
+        options_builder = options_builder.nocache(no_cache);
+        options_builder = options_builder.buildargs(&build_args);
+        let options = options_builder.build();
 
         // Build the image using the DockerClient with streaming output
         let mut build_stream = self

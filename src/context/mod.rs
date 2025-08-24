@@ -317,7 +317,7 @@ mod tests {
         // Test that we can use the docker client through the context
         let client = app_context.docker_client();
         let container_id = client
-            .create_container(None, bollard::container::Config::default())
+            .create_container(None, bollard::models::ContainerCreateBody::default())
             .await
             .unwrap();
 
