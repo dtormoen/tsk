@@ -71,7 +71,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Automatic fallback to default project layer when specific layer is missing
 
 **Storage** (`src/storage/`)
-- `XdgDirectories`: Manages XDG-compliant directory structure
+- `TskConfig`: Manages TSK configuration and XDG-compliant directory structure
 - Centralized task storage across all repositories
 - Runtime directory for server socket and PID file
 
@@ -103,7 +103,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Passed to agents via `AgentProvider::get_agent()` for proper configuration
 - `FileSystemOperations` trait abstracts all file system operations for testability
 - `GitOperations` trait abstracts all git operations for improved testability and separation of concerns
-- `XdgDirectories` provides XDG-compliant directory paths for centralized storage
+- `TskConfig` provides TSK configuration and XDG-compliant directory paths for centralized storage
 
 **Auto-Detection** (`src/repository.rs`)
 - Automatic detection of technology stack based on repository files:

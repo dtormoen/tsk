@@ -24,7 +24,7 @@ impl LayeredAssetManager {
     /// 1. Project-level assets (.tsk/)
     /// 2. User-level assets (~/.config/tsk/)
     /// 3. Built-in assets (embedded)
-    pub fn new_with_standard_layers(project_root: Option<&Path>, xdg_dirs: &TskConfig) -> Self {
+    pub fn new_with_standard_layers(project_root: Option<&Path>, tsk_config: &TskConfig) -> Self {
         let mut layers: Vec<Arc<dyn AssetManager>> = Vec::new();
 
         // Project layer (highest priority)
@@ -36,7 +36,7 @@ impl LayeredAssetManager {
         }
 
         // User layer - use the entire config directory to support both templates and dockerfiles
-        let user_config_dir = xdg_dirs.config_dir();
+        let user_config_dir = tsk_config.config_dir();
         if user_config_dir.exists() {
             layers.push(Arc::new(FileSystemAssetManager::new(
                 user_config_dir.to_path_buf(),
@@ -199,7 +199,7 @@ mod tests {
         use crate::context::AppContext;
 
         let app_context = AppContext::builder().build();
-        let xdg_dirs = app_context.tsk_config();
+        let tsk_config = app_context.tsk_config();
 
         // Create project templates directory in the test temp directory
         let temp_dir = TempDir::new().unwrap();
@@ -208,7 +208,7 @@ mod tests {
         fs::write(project_templates.join("feature.md"), "Project template").unwrap();
 
         let manager =
-            LayeredAssetManager::new_with_standard_layers(Some(temp_dir.path()), &xdg_dirs);
+            LayeredAssetManager::new_with_standard_layers(Some(temp_dir.path()), &tsk_config);
 
         // Should get project template
         assert_eq!(manager.get_template("feature").unwrap(), "Project template");
@@ -242,10 +242,11 @@ mod tests {
             .with_runtime_dir(temp_dir.path().join("runtime"))
             .with_config_dir(config_dir)
             .build();
-        let xdg_dirs = TskConfig::new(Some(xdg_config)).unwrap();
+        let tsk_config = TskConfig::new(Some(xdg_config)).unwrap();
 
         // Create layered asset manager
-        let manager = LayeredAssetManager::new_with_standard_layers(Some(&project_dir), &xdg_dirs);
+        let manager =
+            LayeredAssetManager::new_with_standard_layers(Some(&project_dir), &tsk_config);
 
         // Test priority: project > user > built-in
         assert_eq!(
@@ -368,9 +369,10 @@ mod tests {
             .with_runtime_dir(temp_dir.path().join("runtime"))
             .with_config_dir(config_dir)
             .build();
-        let xdg_dirs = TskConfig::new(Some(xdg_config)).unwrap();
+        let tsk_config = TskConfig::new(Some(xdg_config)).unwrap();
 
-        let manager = LayeredAssetManager::new_with_standard_layers(Some(&project_dir), &xdg_dirs);
+        let manager =
+            LayeredAssetManager::new_with_standard_layers(Some(&project_dir), &tsk_config);
 
         let templates = manager.list_templates();
 
@@ -427,9 +429,10 @@ mod tests {
             .with_runtime_dir(temp_dir.path().join("runtime"))
             .with_config_dir(config_dir)
             .build();
-        let xdg_dirs = TskConfig::new(Some(xdg_config)).unwrap();
+        let tsk_config = TskConfig::new(Some(xdg_config)).unwrap();
 
-        let manager = LayeredAssetManager::new_with_standard_layers(Some(&project_dir), &xdg_dirs);
+        let manager =
+            LayeredAssetManager::new_with_standard_layers(Some(&project_dir), &tsk_config);
 
         // Test that project dockerfile takes precedence
         let myapp_dockerfile = manager.get_dockerfile("project/myapp").unwrap();

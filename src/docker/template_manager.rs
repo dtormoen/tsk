@@ -15,15 +15,15 @@ use crate::docker::layers::{DockerImageConfig, DockerLayer, DockerLayerContent, 
 /// Manages Docker templates and layer composition
 pub struct DockerTemplateManager {
     asset_manager: Arc<dyn AssetManager>,
-    xdg_dirs: Arc<TskConfig>,
+    tsk_config: Arc<TskConfig>,
 }
 
 impl DockerTemplateManager {
     /// Creates a new DockerTemplateManager
-    pub fn new(asset_manager: Arc<dyn AssetManager>, xdg_dirs: Arc<TskConfig>) -> Self {
+    pub fn new(asset_manager: Arc<dyn AssetManager>, tsk_config: Arc<TskConfig>) -> Self {
         Self {
             asset_manager,
-            xdg_dirs,
+            tsk_config,
         }
     }
 
@@ -178,7 +178,7 @@ impl DockerTemplateManager {
         }
 
         // Check user directory
-        let user_docker_dir = self.xdg_dirs.config_dir().join("dockerfiles");
+        let user_docker_dir = self.tsk_config.config_dir().join("dockerfiles");
         if user_docker_dir.exists() {
             self.scan_directory_for_layers(&user_docker_dir, &layer_type, &mut layers);
         }
@@ -344,9 +344,9 @@ mod tests {
 
     fn create_test_manager() -> DockerTemplateManager {
         let ctx = AppContext::builder().build();
-        let xdg_dirs = ctx.tsk_config();
+        let tsk_config = ctx.tsk_config();
 
-        DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), xdg_dirs)
+        DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), tsk_config)
     }
 
     #[test]

@@ -177,11 +177,12 @@ impl AppContextBuilder {
                     .with_git_user_name("Test User".to_string())
                     .with_git_user_email("test@example.com".to_string())
                     .build();
-                let xdg = TskConfig::new(Some(xdg_config))
+                let config = TskConfig::new(Some(xdg_config))
                     .expect("Failed to initialize test TSK configuration");
-                xdg.ensure_directories()
+                config
+                    .ensure_directories()
                     .expect("Failed to create test TSK configuration");
-                Arc::new(xdg)
+                Arc::new(config)
             });
 
             let tsk_client = self.tsk_client.unwrap_or_else(|| {
@@ -222,11 +223,12 @@ impl AppContextBuilder {
         #[cfg(not(test))]
         {
             let tsk_config = self.tsk_config.unwrap_or_else(|| {
-                let xdg = TskConfig::new(None).expect("Failed to initialize TSK configuration");
+                let config = TskConfig::new(None).expect("Failed to initialize TSK configuration");
                 // Ensure directories exist
-                xdg.ensure_directories()
+                config
+                    .ensure_directories()
                     .expect("Failed to create TSK configuration");
-                Arc::new(xdg)
+                Arc::new(config)
             });
 
             let tsk_client = self

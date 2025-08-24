@@ -59,8 +59,8 @@ impl DefaultTerminalOperations {
         }
 
         // Check for common terminal environment variables
-        let term = if let Some(xdg) = tsk_config {
-            xdg.terminal_type().map(|s| s.to_string())
+        let term = if let Some(config) = tsk_config {
+            config.terminal_type().map(|s| s.to_string())
         } else {
             std::env::var("TERM").ok()
         };
@@ -167,9 +167,9 @@ mod tests {
         let xdg_config_xterm = XdgConfig::builder()
             .with_terminal_type(Some("xterm-256color".to_string()))
             .build();
-        let xdg_xterm = TskConfig::new(Some(xdg_config_xterm)).unwrap();
+        let config_xterm = TskConfig::new(Some(xdg_config_xterm)).unwrap();
         assert!(
-            DefaultTerminalOperations::is_supported(Some(&xdg_xterm))
+            DefaultTerminalOperations::is_supported(Some(&config_xterm))
                 || !atty::is(atty::Stream::Stdout)
         );
 
@@ -177,19 +177,20 @@ mod tests {
         let xdg_config_dumb = XdgConfig::builder()
             .with_terminal_type(Some("dumb".to_string()))
             .build();
-        let xdg_dumb = TskConfig::new(Some(xdg_config_dumb)).unwrap();
-        assert!(!DefaultTerminalOperations::is_supported(Some(&xdg_dumb)));
+        let config_dumb = TskConfig::new(Some(xdg_config_dumb)).unwrap();
+        assert!(!DefaultTerminalOperations::is_supported(Some(&config_dumb)));
 
         // Test with no terminal type set
         let xdg_config_none = XdgConfig::builder().with_terminal_type(None).build();
-        let xdg_none = TskConfig::new(Some(xdg_config_none)).unwrap();
-        assert!(!DefaultTerminalOperations::is_supported(Some(&xdg_none)));
+        let config_none = TskConfig::new(Some(xdg_config_none)).unwrap();
+        assert!(!DefaultTerminalOperations::is_supported(Some(&config_none)));
 
         // Test terminal operations with TSK configuration
-        let terminal_with_xdg = DefaultTerminalOperations::with_tsk_config(Arc::new(xdg_xterm));
+        let terminal_with_config =
+            DefaultTerminalOperations::with_tsk_config(Arc::new(config_xterm));
         // Should not panic
-        terminal_with_xdg.set_title("Test");
-        terminal_with_xdg.restore_title();
+        terminal_with_config.set_title("Test");
+        terminal_with_config.restore_title();
     }
 
     #[test]

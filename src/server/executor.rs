@@ -335,11 +335,11 @@ mod tests {
     #[tokio::test]
     async fn test_executor_lifecycle() {
         let app_context = AppContext::builder().build();
-        let xdg = app_context.tsk_config();
-        xdg.ensure_directories().unwrap();
+        let config = app_context.tsk_config();
+        config.ensure_directories().unwrap();
 
         let fs = Arc::new(DefaultFileSystem);
-        let storage = Arc::new(Mutex::new(get_task_storage(xdg, fs)));
+        let storage = Arc::new(Mutex::new(get_task_storage(config, fs)));
 
         let executor = TaskExecutor::new(Arc::new(app_context), storage);
         let executor = Arc::new(executor);
@@ -378,18 +378,18 @@ mod tests {
     async fn test_executor_processes_tasks() {
         // Test that executor processes tasks without deadlock and can handle multiple tasks
         let app_context = AppContext::builder().build();
-        let xdg = app_context.tsk_config();
-        xdg.ensure_directories().unwrap();
+        let config = app_context.tsk_config();
+        config.ensure_directories().unwrap();
 
         let (test_repo, commit_sha) = setup_test_repo().unwrap();
 
         // Create two tasks
-        let task1 = create_test_task("task-1", test_repo.path(), &commit_sha, xdg.data_dir());
-        let task2 = create_test_task("task-2", test_repo.path(), &commit_sha, xdg.data_dir());
+        let task1 = create_test_task("task-1", test_repo.path(), &commit_sha, config.data_dir());
+        let task2 = create_test_task("task-2", test_repo.path(), &commit_sha, config.data_dir());
 
         // Set up storage with the first task
         let fs = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(xdg, fs);
+        let storage = get_task_storage(config, fs);
         storage.add_task(task1.clone()).await.unwrap();
 
         let storage = Arc::new(Mutex::new(storage));
@@ -450,8 +450,8 @@ mod tests {
         // Test both parallel execution (multiple workers) and sequential execution (single worker)
         for (workers, expected_concurrent) in [(1, 1), (2, 2)] {
             let app_context = AppContext::builder().build();
-            let xdg = app_context.tsk_config();
-            xdg.ensure_directories().unwrap();
+            let config = app_context.tsk_config();
+            config.ensure_directories().unwrap();
 
             let (test_repo, commit_sha) = setup_test_repo().unwrap();
 
@@ -459,12 +459,12 @@ mod tests {
             let task_ids = ["parallel-1", "parallel-2", "parallel-3"];
             let tasks: Vec<Task> = task_ids
                 .iter()
-                .map(|id| create_test_task(id, test_repo.path(), &commit_sha, xdg.data_dir()))
+                .map(|id| create_test_task(id, test_repo.path(), &commit_sha, config.data_dir()))
                 .collect();
 
             // Set up storage with queued tasks
             let fs = Arc::new(DefaultFileSystem);
-            let storage = get_task_storage(xdg, fs);
+            let storage = get_task_storage(config, fs);
             for task in &tasks {
                 storage.add_task(task.clone()).await.unwrap();
             }

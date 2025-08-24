@@ -183,9 +183,10 @@ mod tests {
 
     fn create_test_composer() -> DockerComposer {
         let ctx = AppContext::builder().build();
-        let xdg_dirs = ctx.tsk_config();
+        let tsk_config = ctx.tsk_config();
 
-        let template_manager = DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), xdg_dirs);
+        let template_manager =
+            DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), tsk_config);
 
         DockerComposer::new(template_manager)
     }

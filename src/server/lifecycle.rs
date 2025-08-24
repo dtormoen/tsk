@@ -114,9 +114,9 @@ mod tests {
     #[test]
     fn test_server_lifecycle() {
         let app_context = AppContext::builder().build();
-        let xdg = app_context.tsk_config();
+        let config = app_context.tsk_config();
 
-        let lifecycle = ServerLifecycle::new(xdg);
+        let lifecycle = ServerLifecycle::new(config);
 
         // Initially no server should be running
         assert!(!lifecycle.is_server_running());

@@ -178,10 +178,10 @@ mod tests {
     #[tokio::test]
     async fn test_client_creation() {
         let ctx = AppContext::builder().build();
-        let xdg = ctx.tsk_config();
-        xdg.ensure_directories().unwrap();
+        let config = ctx.tsk_config();
+        config.ensure_directories().unwrap();
 
-        let client = DefaultTskClient::new(xdg);
+        let client = DefaultTskClient::new(config);
 
         // Server should not be available without starting it
         assert!(!client.is_server_available().await);
@@ -194,10 +194,10 @@ mod tests {
         // The actual EOF scenario is tested implicitly when the server closes
         // connections without sending data, which was the original bug.
         let ctx = AppContext::builder().build();
-        let xdg = ctx.tsk_config();
-        xdg.ensure_directories().unwrap();
+        let config = ctx.tsk_config();
+        config.ensure_directories().unwrap();
 
-        let client = DefaultTskClient::new(xdg);
+        let client = DefaultTskClient::new(config);
 
         // Attempting to list tasks when server is not running should fail gracefully
         let result = client.list_tasks().await;

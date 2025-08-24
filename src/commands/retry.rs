@@ -65,8 +65,8 @@ mod tests {
     ) -> anyhow::Result<(AppContext, TestGitRepository)> {
         // Create AppContext with test defaults
         let ctx = AppContext::builder().build();
-        let xdg = ctx.tsk_config();
-        xdg.ensure_directories()?;
+        let config = ctx.tsk_config();
+        config.ensure_directories()?;
 
         // Create a test git repository
         let test_repo = TestGitRepository::new()?;
@@ -77,7 +77,7 @@ mod tests {
         // Create tasks
         let mut tasks_json = Vec::new();
         for (i, task_id) in task_ids.iter().enumerate() {
-            let task_dir_path = xdg.task_dir(task_id, &repo_hash);
+            let task_dir_path = config.task_dir(task_id, &repo_hash);
             std::fs::create_dir_all(&task_dir_path)?;
 
             // Create instructions file
@@ -100,7 +100,7 @@ mod tests {
 
         // Write tasks.json
         let tasks_json_content = format!("[{}]", tasks_json.join(","));
-        std::fs::write(xdg.tasks_file(), tasks_json_content)?;
+        std::fs::write(config.tasks_file(), tasks_json_content)?;
 
         Ok((ctx, test_repo))
     }
@@ -227,8 +227,8 @@ mod tests {
     async fn test_retry_queued_task_fails() {
         // Create AppContext with test defaults
         let ctx = AppContext::builder().build();
-        let xdg = ctx.tsk_config();
-        xdg.ensure_directories().unwrap();
+        let config = ctx.tsk_config();
+        config.ensure_directories().unwrap();
 
         // Create a test git repository
         let test_repo = TestGitRepository::new().unwrap();
@@ -238,7 +238,7 @@ mod tests {
 
         // Create a queued task (should not be retryable)
         let task_id = "queued-task";
-        let task_dir_path = xdg.task_dir(task_id, &repo_hash);
+        let task_dir_path = config.task_dir(task_id, &repo_hash);
         std::fs::create_dir_all(&task_dir_path).unwrap();
 
         let task_json = format!(
@@ -248,7 +248,7 @@ mod tests {
             task_id,
             task_dir_path.to_string_lossy()
         );
-        std::fs::write(xdg.tasks_file(), task_json).unwrap();
+        std::fs::write(config.tasks_file(), task_json).unwrap();
 
         let cmd = RetryCommand {
             task_ids: vec![task_id.to_string()],

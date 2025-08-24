@@ -242,19 +242,19 @@ mod tests {
         let ctx = AppContext::builder().build();
 
         // Get the TSK configuration from the context
-        let xdg = ctx.tsk_config();
+        let config = ctx.tsk_config();
 
-        Ok((xdg, test_repo, ctx))
+        Ok((config, test_repo, ctx))
     }
 
     /// Helper function to set up task directory structure with files
     async fn setup_task_directory(
-        xdg: &TskConfig,
+        config: &TskConfig,
         task_id: &str,
         repo_hash: &str,
         instructions_content: &str,
     ) -> anyhow::Result<std::path::PathBuf> {
-        let task_dir_path = xdg.task_dir(task_id, repo_hash);
+        let task_dir_path = config.task_dir(task_id, repo_hash);
         std::fs::create_dir_all(&task_dir_path)?;
 
         let instructions_path = task_dir_path.join("instructions.md");
@@ -274,12 +274,12 @@ mod tests {
 
         // Create AppContext - automatically gets test defaults
         let ctx = AppContext::builder().build();
-        let xdg = ctx.tsk_config();
+        let config = ctx.tsk_config();
 
         // Create a task
         let task_id = "test-task-123".to_string();
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
-        let task_dir_path = xdg.task_dir(&task_id, &repo_hash);
+        let task_dir_path = config.task_dir(&task_id, &repo_hash);
         let copied_repo_path = task_dir_path.join("repo");
 
         // Create the task directory and file
@@ -287,7 +287,7 @@ mod tests {
         std::fs::write(task_dir_path.join("test.txt"), "test content").unwrap();
 
         // Create tasks.json with the task
-        let tasks_json_path = xdg.tasks_file();
+        let tasks_json_path = config.tasks_file();
         let task_json = format!(
             r#"[{{"id":"{}","repo_root":"{}","name":"test-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","tech_stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
             task_id,
@@ -317,7 +317,7 @@ mod tests {
     #[tokio::test]
     async fn test_clean_tasks() {
         // Set up test environment
-        let (xdg, test_repo, ctx) = setup_test_environment().await.unwrap();
+        let (config, test_repo, ctx) = setup_test_environment().await.unwrap();
         let repo_root = test_repo.path().to_path_buf();
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
 
@@ -327,7 +327,7 @@ mod tests {
 
         // Create task directories and files
         let queued_dir_path = setup_task_directory(
-            &xdg,
+            &config,
             &queued_task_id,
             &repo_hash,
             "Queued task instructions",
@@ -335,7 +335,7 @@ mod tests {
         .await
         .unwrap();
         let completed_dir_path = setup_task_directory(
-            &xdg,
+            &config,
             &completed_task_id,
             &repo_hash,
             "Completed task instructions",
@@ -391,7 +391,7 @@ mod tests {
             completed_dir_path.join("repo").to_string_lossy()
         );
 
-        let tasks_json_path = xdg.tasks_file();
+        let tasks_json_path = config.tasks_file();
         if let Some(parent) = tasks_json_path.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
@@ -424,13 +424,13 @@ mod tests {
     #[tokio::test]
     async fn test_retry_task() {
         // Set up test environment
-        let (xdg, test_repo, ctx) = setup_test_environment().await.unwrap();
+        let (config, test_repo, ctx) = setup_test_environment().await.unwrap();
         let repo_root = test_repo.path().to_path_buf();
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
 
         // Create a completed task to retry
         let task_id = "abcd1234".to_string();
-        let task_dir_path = xdg.task_dir(&task_id, &repo_hash);
+        let task_dir_path = config.task_dir(&task_id, &repo_hash);
         let instructions_path = task_dir_path.join("instructions.md");
 
         let mut completed_task = Task::new(
@@ -454,7 +454,7 @@ mod tests {
         // Set up task directory with instructions
         let instructions_content =
             "# Original Task Instructions\n\nThis is the original task content.";
-        setup_task_directory(&xdg, &task_id, &repo_hash, instructions_content)
+        setup_task_directory(&config, &task_id, &repo_hash, instructions_content)
             .await
             .unwrap();
 
@@ -468,7 +468,7 @@ mod tests {
             task_dir_path.join("repo").to_string_lossy()
         );
 
-        let tasks_json_path = xdg.tasks_file();
+        let tasks_json_path = config.tasks_file();
         if let Some(parent) = tasks_json_path.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
@@ -500,7 +500,7 @@ mod tests {
         assert_eq!(new_task.status, TaskStatus::Queued);
 
         // Verify instructions file was created
-        let new_task_dir = xdg.task_dir(&new_task_id, &repo_hash);
+        let new_task_dir = config.task_dir(&new_task_id, &repo_hash);
         let new_instructions_path = new_task_dir.join("instructions.md");
         assert!(new_instructions_path.exists());
 
@@ -512,10 +512,10 @@ mod tests {
     #[tokio::test]
     async fn test_retry_task_not_found() {
         // Set up test environment
-        let (xdg, _test_repo, ctx) = setup_test_environment().await.unwrap();
+        let (config, _test_repo, ctx) = setup_test_environment().await.unwrap();
 
         // Create empty tasks.json
-        let tasks_json_path = xdg.tasks_file();
+        let tasks_json_path = config.tasks_file();
         if let Some(parent) = tasks_json_path.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
@@ -538,13 +538,13 @@ mod tests {
     #[tokio::test]
     async fn test_retry_task_queued_error() {
         // Set up test environment
-        let (xdg, test_repo, ctx) = setup_test_environment().await.unwrap();
+        let (config, test_repo, ctx) = setup_test_environment().await.unwrap();
         let repo_root = test_repo.path().to_path_buf();
 
         // Create a queued task (should not be retryable)
         let task_id = "efgh5678".to_string();
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
-        let task_dir = xdg.task_dir(&task_id, &repo_hash);
+        let task_dir = config.task_dir(&task_id, &repo_hash);
 
         // Create tasks.json with the queued task
         let tasks_json = format!(
@@ -555,7 +555,7 @@ mod tests {
             task_dir.join("repo").to_string_lossy()
         );
 
-        let tasks_json_path = xdg.tasks_file();
+        let tasks_json_path = config.tasks_file();
         if let Some(parent) = tasks_json_path.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
@@ -576,7 +576,7 @@ mod tests {
     #[tokio::test]
     async fn test_clean_tasks_with_id_matching() {
         // Set up test environment
-        let (xdg, test_repo, ctx) = setup_test_environment().await.unwrap();
+        let (config, test_repo, ctx) = setup_test_environment().await.unwrap();
         let repo_root = test_repo.path().to_path_buf();
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
 
@@ -584,9 +584,10 @@ mod tests {
         let task_id = "ijkl9012".to_string();
 
         // Set up task directory with instructions
-        let task_dir_path = setup_task_directory(&xdg, &task_id, &repo_hash, "Test instructions")
-            .await
-            .unwrap();
+        let task_dir_path =
+            setup_task_directory(&config, &task_id, &repo_hash, "Test instructions")
+                .await
+                .unwrap();
 
         let mut completed_task = Task::new(
             task_id.clone(),
@@ -615,7 +616,7 @@ mod tests {
             task_dir_path.join("repo").to_string_lossy()
         );
 
-        let tasks_json_path = xdg.tasks_file();
+        let tasks_json_path = config.tasks_file();
         if let Some(parent) = tasks_json_path.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
@@ -644,10 +645,10 @@ mod tests {
     async fn test_with_storage_no_git_repo() {
         // Create AppContext - automatically gets test defaults
         let ctx = AppContext::builder().build();
-        let xdg = ctx.tsk_config();
+        let config = ctx.tsk_config();
 
         // Create empty tasks.json
-        let tasks_json_path = xdg.tasks_file();
+        let tasks_json_path = config.tasks_file();
         if let Some(parent) = tasks_json_path.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
