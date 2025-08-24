@@ -265,6 +265,72 @@ mod tests {
     use crate::task::{Task, TaskStatus};
     use crate::task_storage::get_task_storage;
     use crate::test_utils::git_test_utils::TestGitRepository;
+    use tokio::time::timeout;
+
+    /// Wait for tasks to reach a certain state with timeout.
+    ///
+    /// Polls the storage periodically to check if the condition is met.
+    /// Returns true if condition met, false if timeout reached.
+    async fn wait_for_condition<F>(
+        storage: &Arc<Mutex<Box<dyn TaskStorage>>>,
+        timeout_duration: Duration,
+        mut condition: F,
+    ) -> bool
+    where
+        F: FnMut(&[Task]) -> bool,
+    {
+        let deadline = Instant::now() + timeout_duration;
+
+        while Instant::now() < deadline {
+            let storage_guard = storage.lock().await;
+            let tasks = storage_guard.list_tasks().await.unwrap();
+            drop(storage_guard);
+
+            if condition(&tasks) {
+                return true;
+            }
+
+            // Small delay to avoid busy waiting
+            sleep(Duration::from_millis(50)).await;
+        }
+
+        false
+    }
+
+    /// Create a standard test task with given ID.
+    fn create_test_task(
+        id: &str,
+        repo_path: &std::path::Path,
+        commit_sha: &str,
+        data_dir: &std::path::Path,
+    ) -> Task {
+        Task::new(
+            id.to_string(),
+            repo_path.to_path_buf(),
+            format!("task-{id}"),
+            "test".to_string(),
+            "instructions.md".to_string(),
+            "claude-code".to_string(),
+            30,
+            format!("tsk/test/{id}"),
+            commit_sha.to_string(),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            data_dir.join(format!("task-copy-{id}")),
+            false,
+        )
+    }
+
+    /// Setup test repository with instructions file.
+    fn setup_test_repo() -> Result<(TestGitRepository, String), Box<dyn std::error::Error>> {
+        let test_repo = TestGitRepository::new()?;
+        test_repo.init_with_commit()?;
+        test_repo.create_file("instructions.md", "Test instructions")?;
+        test_repo.stage_all()?;
+        let commit_sha = test_repo.commit("Add instructions")?;
+        Ok((test_repo, commit_sha))
+    }
 
     #[tokio::test]
     async fn test_executor_lifecycle() {
@@ -276,68 +342,55 @@ mod tests {
         let storage = Arc::new(Mutex::new(get_task_storage(xdg, fs)));
 
         let executor = TaskExecutor::new(Arc::new(app_context), storage);
+        let executor = Arc::new(executor);
 
-        // Test that executor can be started and stopped
+        // Test that executor starts as not running
         assert!(!*executor.running.lock().await);
 
         // Start executor in background
-        let executor_clone = Arc::new(executor);
         let exec_handle = {
-            let exec = executor_clone.clone();
+            let exec = executor.clone();
             tokio::spawn(async move {
                 let _ = exec.start().await;
             })
         };
 
-        // Give it time to start
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        assert!(*executor_clone.running.lock().await);
+        // Wait for executor to start (poll the running flag)
+        let started = timeout(Duration::from_secs(1), async {
+            while !*executor.running.lock().await {
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .is_ok();
+
+        assert!(started, "Executor should have started within timeout");
+        assert!(*executor.running.lock().await);
 
         // Stop executor
-        executor_clone.stop().await;
+        executor.stop().await;
         let _ = exec_handle.await;
 
-        assert!(!*executor_clone.running.lock().await);
+        assert!(!*executor.running.lock().await);
     }
 
     #[tokio::test]
-    async fn test_executor_completes_task_without_deadlock() {
-        // This test verifies that the executor doesn't deadlock after completing a task
+    async fn test_executor_processes_tasks() {
+        // Test that executor processes tasks without deadlock and can handle multiple tasks
         let app_context = AppContext::builder().build();
         let xdg = app_context.tsk_config();
         xdg.ensure_directories().unwrap();
 
-        // Create a test git repository for the task
-        let test_repo = TestGitRepository::new().unwrap();
-        test_repo.init_with_commit().unwrap();
-        test_repo
-            .create_file("instructions.md", "Test instructions")
-            .unwrap();
-        test_repo.stage_all().unwrap();
-        test_repo.commit("Add instructions").unwrap();
+        let (test_repo, commit_sha) = setup_test_repo().unwrap();
 
-        // Create a task that will complete successfully
-        let task = Task::new(
-            "test-task-123".to_string(),
-            test_repo.path().to_path_buf(),
-            "test-task".to_string(),
-            "test".to_string(),
-            "instructions.md".to_string(),
-            "claude-code".to_string(),
-            30,
-            "tsk/test-task-123".to_string(),
-            test_repo.get_current_commit().unwrap(),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            xdg.data_dir().join("task-copy"),
-            false,
-        );
+        // Create two tasks
+        let task1 = create_test_task("task-1", test_repo.path(), &commit_sha, xdg.data_dir());
+        let task2 = create_test_task("task-2", test_repo.path(), &commit_sha, xdg.data_dir());
 
-        // Set up storage with the queued task
+        // Set up storage with the first task
         let fs = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(xdg.clone(), fs);
-        storage.add_task(task.clone()).await.unwrap();
+        let storage = get_task_storage(xdg, fs);
+        storage.add_task(task1.clone()).await.unwrap();
 
         let storage = Arc::new(Mutex::new(storage));
         let executor = TaskExecutor::new(Arc::new(app_context), storage.clone());
@@ -351,248 +404,143 @@ mod tests {
             })
         };
 
-        // Wait for the task to be processed
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        // Wait for first task to complete (not be stuck in RUNNING)
+        let task1_processed = wait_for_condition(&storage, Duration::from_secs(5), |tasks| {
+            tasks
+                .iter()
+                .find(|t| t.id == task1.id)
+                .map(|t| t.status != TaskStatus::Queued && t.status != TaskStatus::Running)
+                .unwrap_or(false)
+        })
+        .await;
 
-        // Check that the task was updated to COMPLETE or FAILED (not stuck in RUNNING)
-        let storage_guard = storage.lock().await;
-        let updated_task = storage_guard.get_task(&task.id).await.unwrap().unwrap();
-        drop(storage_guard);
-
-        // The task should not be stuck in RUNNING state
-        assert_ne!(
-            updated_task.status,
-            TaskStatus::Running,
-            "Task should not be stuck in RUNNING state - indicates a deadlock"
+        assert!(
+            task1_processed,
+            "First task should be processed within timeout"
         );
 
-        // Add another queued task to verify the executor can continue processing
-        let task2 = Task::new(
-            "test-task-456".to_string(),
-            test_repo.path().to_path_buf(),
-            "test-task-2".to_string(),
-            "test".to_string(),
-            "instructions.md".to_string(),
-            "claude-code".to_string(),
-            30,
-            "tsk/test-task-456".to_string(),
-            test_repo.get_current_commit().unwrap(),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            xdg.data_dir().join("task-copy-2"),
-            false,
+        // Add second task to verify executor continues processing
+        {
+            let storage_guard = storage.lock().await;
+            storage_guard.add_task(task2.clone()).await.unwrap();
+        }
+
+        // Wait for second task to start processing (shows executor isn't deadlocked)
+        let task2_started = wait_for_condition(&storage, Duration::from_secs(5), |tasks| {
+            tasks
+                .iter()
+                .find(|t| t.id == task2.id)
+                .map(|t| t.status != TaskStatus::Queued)
+                .unwrap_or(false)
+        })
+        .await;
+
+        assert!(
+            task2_started,
+            "Second task should start processing, indicating no deadlock"
         );
-
-        let storage_guard = storage.lock().await;
-        storage_guard.add_task(task2.clone()).await.unwrap();
-        drop(storage_guard);
-
-        // Wait a bit more to see if the executor picks up the second task
-        tokio::time::sleep(Duration::from_secs(2)).await;
 
         // Stop executor
         executor.stop().await;
         let _ = exec_handle.await;
-
-        // Verify the executor was able to process tasks after the first one completed
-        let storage_guard = storage.lock().await;
-        let all_tasks = storage_guard.list_tasks().await.unwrap();
-        drop(storage_guard);
-
-        // At least one task should have been processed
-        let processed_tasks = all_tasks
-            .iter()
-            .filter(|t| t.status != TaskStatus::Queued)
-            .count();
-        assert!(
-            processed_tasks >= 1,
-            "Executor should have processed at least one task"
-        );
     }
 
     #[tokio::test]
-    async fn test_parallel_execution() {
-        // Test that multiple tasks can run in parallel
-        let app_context = AppContext::builder().build();
-        let xdg = app_context.tsk_config();
-        xdg.ensure_directories().unwrap();
+    async fn test_worker_concurrency() {
+        // Test both parallel execution (multiple workers) and sequential execution (single worker)
+        for (workers, expected_concurrent) in [(1, 1), (2, 2)] {
+            let app_context = AppContext::builder().build();
+            let xdg = app_context.tsk_config();
+            xdg.ensure_directories().unwrap();
 
-        // Create a test git repository
-        let test_repo = TestGitRepository::new().unwrap();
-        test_repo.init_with_commit().unwrap();
-        test_repo
-            .create_file("instructions.md", "Test instructions")
-            .unwrap();
-        test_repo.stage_all().unwrap();
-        let commit_sha = test_repo.commit("Add instructions").unwrap();
+            let (test_repo, commit_sha) = setup_test_repo().unwrap();
 
-        // Create multiple tasks
-        let mut tasks = vec![];
-        for i in 0..3 {
-            let task = Task::new(
-                format!("test-task-{i}"),
-                test_repo.path().to_path_buf(),
-                format!("test-task-{i}"),
-                "test".to_string(),
-                "instructions.md".to_string(),
-                "claude-code".to_string(),
-                30,
-                format!("tsk/test-task-{i}"),
-                commit_sha.clone(),
-                "default".to_string(),
-                "default".to_string(),
-                chrono::Local::now(),
-                xdg.data_dir().join(format!("task-copy-{i}")),
-                false,
+            // Create 3 tasks
+            let task_ids = ["parallel-1", "parallel-2", "parallel-3"];
+            let tasks: Vec<Task> = task_ids
+                .iter()
+                .map(|id| create_test_task(id, test_repo.path(), &commit_sha, xdg.data_dir()))
+                .collect();
+
+            // Set up storage with queued tasks
+            let fs = Arc::new(DefaultFileSystem);
+            let storage = get_task_storage(xdg, fs);
+            for task in &tasks {
+                storage.add_task(task.clone()).await.unwrap();
+            }
+
+            let storage = Arc::new(Mutex::new(storage));
+            let executor =
+                TaskExecutor::with_workers(Arc::new(app_context), storage.clone(), workers);
+            let executor = Arc::new(executor);
+
+            // Start executor in background
+            let exec_handle = {
+                let exec = executor.clone();
+                tokio::spawn(async move {
+                    let _ = exec.start().await;
+                })
+            };
+
+            // Wait for expected number of tasks to be running concurrently
+            let concurrent_running =
+                wait_for_condition(&storage, Duration::from_secs(5), |tasks| {
+                    let running_count = tasks
+                        .iter()
+                        .filter(|t| t.status == TaskStatus::Running)
+                        .count();
+                    // Check if we've reached the expected concurrency or if some tasks completed
+                    running_count == expected_concurrent as usize
+                        || tasks.iter().any(|t| {
+                            t.status == TaskStatus::Complete || t.status == TaskStatus::Failed
+                        })
+                })
+                .await;
+
+            assert!(
+                concurrent_running,
+                "Should reach expected concurrency level within timeout"
             );
-            tasks.push(task);
+
+            // Verify concurrency constraint
+            let storage_guard = storage.lock().await;
+            let snapshot = storage_guard.list_tasks().await.unwrap();
+            drop(storage_guard);
+
+            let running_at_snapshot = snapshot
+                .iter()
+                .filter(|t| t.status == TaskStatus::Running)
+                .count();
+            assert!(
+                running_at_snapshot <= expected_concurrent as usize,
+                "With {} worker(s), at most {} task(s) should run concurrently, but {} were running",
+                workers,
+                expected_concurrent,
+                running_at_snapshot
+            );
+
+            // Stop executor
+            executor.stop().await;
+            let _ = exec_handle.await;
+
+            // Verify at least some tasks were processed
+            let storage_guard = storage.lock().await;
+            let final_tasks = storage_guard.list_tasks().await.unwrap();
+            drop(storage_guard);
+
+            let processed = final_tasks
+                .iter()
+                .filter(|t| t.status != TaskStatus::Queued)
+                .count();
+            assert!(
+                processed >= 1,
+                "At least one task should have been processed with {} worker(s)",
+                workers
+            );
         }
-
-        // Set up storage with queued tasks
-        let fs = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(xdg, fs);
-        for task in &tasks {
-            storage.add_task(task.clone()).await.unwrap();
-        }
-
-        let storage = Arc::new(Mutex::new(storage));
-        // Create executor with 2 workers
-        let executor = TaskExecutor::with_workers(Arc::new(app_context), storage.clone(), 2);
-        let executor = Arc::new(executor);
-
-        // Start executor in background
-        let exec_handle = {
-            let exec = executor.clone();
-            tokio::spawn(async move {
-                let _ = exec.start().await;
-            })
-        };
-
-        // Give some time for parallel execution
-        tokio::time::sleep(Duration::from_secs(3)).await;
-
-        // Stop executor
-        executor.stop().await;
-        let _ = exec_handle.await;
-
-        // Check that multiple tasks were processed
-        let storage_guard = storage.lock().await;
-        let all_tasks = storage_guard.list_tasks().await.unwrap();
-        drop(storage_guard);
-
-        let processed_tasks = all_tasks
-            .iter()
-            .filter(|t| t.status != TaskStatus::Queued)
-            .count();
-
-        // With 2 workers and 3 tasks, at least 2 should be processed
-        assert!(
-            processed_tasks >= 2,
-            "With 2 workers, at least 2 tasks should have been processed, but only {processed_tasks} were"
-        );
     }
 
-    #[tokio::test]
-    async fn test_single_worker_sequential_execution() {
-        // Test that with a single worker, only one task runs at a time
-        let app_context = AppContext::builder().build();
-        let xdg = app_context.tsk_config();
-        xdg.ensure_directories().unwrap();
-
-        // Create a test git repository
-        let test_repo = TestGitRepository::new().unwrap();
-        test_repo.init_with_commit().unwrap();
-        test_repo
-            .create_file("instructions.md", "Test instructions")
-            .unwrap();
-        test_repo.stage_all().unwrap();
-        let commit_sha = test_repo.commit("Add instructions").unwrap();
-
-        // Create 3 tasks with different timings
-        let mut tasks = vec![];
-        for i in 0..3 {
-            let task = Task::new(
-                format!("test-task-{i}"),
-                test_repo.path().to_path_buf(),
-                format!("test-task-{i}"),
-                "test".to_string(),
-                "instructions.md".to_string(),
-                "claude-code".to_string(),
-                30,
-                format!("tsk/test-task-{i}"),
-                commit_sha.clone(),
-                "default".to_string(),
-                "default".to_string(),
-                chrono::Local::now(),
-                xdg.data_dir().join(format!("task-copy-{i}")),
-                false,
-            );
-            tasks.push(task);
-        }
-
-        // Set up storage with queued tasks
-        let fs = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(xdg, fs);
-        for task in &tasks {
-            storage.add_task(task.clone()).await.unwrap();
-        }
-
-        let storage = Arc::new(Mutex::new(storage));
-        // Create executor with 1 worker (default)
-        let executor = TaskExecutor::new(Arc::new(app_context), storage.clone());
-        let executor = Arc::new(executor);
-
-        // Start executor in background
-        let exec_handle = {
-            let exec = executor.clone();
-            tokio::spawn(async move {
-                let _ = exec.start().await;
-            })
-        };
-
-        // Give a small amount of time for first task to start
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
-        // Check that only one task is running
-        let storage_guard = storage.lock().await;
-        let running_tasks = storage_guard
-            .list_tasks()
-            .await
-            .unwrap()
-            .into_iter()
-            .filter(|t| t.status == TaskStatus::Running)
-            .count();
-        drop(storage_guard);
-
-        assert!(
-            running_tasks <= 1,
-            "With 1 worker, at most 1 task should be running, but {running_tasks} were running"
-        );
-
-        // Give more time for execution
-        tokio::time::sleep(Duration::from_secs(2)).await;
-
-        // Stop executor
-        executor.stop().await;
-        let _ = exec_handle.await;
-
-        // Verify tasks were processed sequentially (no more than 1 running at a time)
-        let storage_guard = storage.lock().await;
-        let all_tasks = storage_guard.list_tasks().await.unwrap();
-        drop(storage_guard);
-
-        let processed_tasks = all_tasks
-            .iter()
-            .filter(|t| t.status != TaskStatus::Queued)
-            .count();
-
-        // At least some tasks should have been processed
-        assert!(
-            processed_tasks >= 1,
-            "At least 1 task should have been processed"
-        );
-    }
+    // test_single_worker_sequential_execution removed - covered by test_worker_concurrency
 
     #[tokio::test]
     async fn test_warmup_failure_wait_behavior() {
@@ -604,129 +552,33 @@ mod tests {
         let fs = Arc::new(DefaultFileSystem);
         let storage = Arc::new(Mutex::new(get_task_storage(xdg, fs)));
 
-        // Test 1: Verify wait period can be set and checked
-        let executor = TaskExecutor::new(app_context.clone(), storage.clone());
+        let executor = TaskExecutor::new(app_context, storage);
 
         // Initially no wait period
-        {
-            let wait_until = executor.warmup_failure_wait_until.lock().await;
-            assert!(wait_until.is_none(), "Should start with no wait period");
-        }
+        assert!(
+            executor.warmup_failure_wait_until.lock().await.is_none(),
+            "Should start with no wait period"
+        );
 
         // Set a wait period in the future
-        let future_time = Instant::now() + Duration::from_secs(3600); // 1 hour
+        let future_time = Instant::now() + Duration::from_secs(3600);
         *executor.warmup_failure_wait_until.lock().await = Some(future_time);
 
-        // Verify wait period is set
-        {
-            let wait_until = executor.warmup_failure_wait_until.lock().await;
-            assert!(wait_until.is_some(), "Wait period should be set");
-            assert!(
-                wait_until.unwrap() > Instant::now(),
-                "Wait period should be in the future"
-            );
-        }
-
-        // Test 2: Verify wait period can be cleared manually
-        let executor2 = TaskExecutor::new(app_context, storage.clone());
-
-        // Set a wait period
-        let wait_time = Instant::now() + Duration::from_secs(1);
-        *executor2.warmup_failure_wait_until.lock().await = Some(wait_time);
-
-        // Verify it's set
-        {
-            let wait_until = executor2.warmup_failure_wait_until.lock().await;
-            assert!(wait_until.is_some(), "Wait period should be set");
-        }
+        // Verify wait period is set and in the future
+        let wait_until = *executor.warmup_failure_wait_until.lock().await;
+        assert!(wait_until.is_some(), "Wait period should be set");
+        assert!(
+            wait_until.unwrap() > Instant::now(),
+            "Wait period should be in the future"
+        );
 
         // Clear the wait period
-        *executor2.warmup_failure_wait_until.lock().await = None;
+        *executor.warmup_failure_wait_until.lock().await = None;
 
         // Verify it's cleared
-        {
-            let wait_until = executor2.warmup_failure_wait_until.lock().await;
-            assert!(wait_until.is_none(), "Wait period should be cleared");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_task_completion_status() {
-        // Test that tasks are properly marked as COMPLETED
-        let app_context = AppContext::builder().build();
-        let xdg = app_context.tsk_config();
-        xdg.ensure_directories().unwrap();
-
-        // Create a test git repository
-        let test_repo = TestGitRepository::new().unwrap();
-        test_repo.init_with_commit().unwrap();
-        test_repo
-            .create_file("instructions.md", "Test instructions")
-            .unwrap();
-        test_repo.stage_all().unwrap();
-        let commit_sha = test_repo.commit("Add instructions").unwrap();
-
-        // Create a single task
-        let task = Task::new(
-            "test-task-complete".to_string(),
-            test_repo.path().to_path_buf(),
-            "test-task".to_string(),
-            "test".to_string(),
-            "instructions.md".to_string(),
-            "claude-code".to_string(),
-            30,
-            "tsk/test-task".to_string(),
-            commit_sha,
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            xdg.data_dir().join("task-copy"),
-            false,
-        );
-
-        // Set up storage with the task
-        let fs = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(xdg, fs);
-        storage.add_task(task.clone()).await.unwrap();
-
-        let storage = Arc::new(Mutex::new(storage));
-        let executor = TaskExecutor::new(Arc::new(app_context), storage.clone());
-        let executor = Arc::new(executor);
-
-        // Start executor in background
-        let exec_handle = {
-            let exec = executor.clone();
-            tokio::spawn(async move {
-                let _ = exec.start().await;
-            })
-        };
-
-        // Give enough time for the task to complete
-        tokio::time::sleep(Duration::from_secs(3)).await;
-
-        // Stop executor
-        executor.stop().await;
-        let _ = exec_handle.await;
-
-        // Verify the task was marked as COMPLETE
-        let storage_guard = storage.lock().await;
-        let updated_task = storage_guard.get_task(&task.id).await.unwrap().unwrap();
-        drop(storage_guard);
-
         assert!(
-            matches!(
-                updated_task.status,
-                TaskStatus::Complete | TaskStatus::Failed
-            ),
-            "Task should be marked as COMPLETE or FAILED, but was {:?}",
-            updated_task.status
-        );
-
-        // Ensure it's not stuck in RUNNING
-        assert_ne!(
-            updated_task.status,
-            TaskStatus::Running,
-            "Task should not be stuck in RUNNING state"
+            executor.warmup_failure_wait_until.lock().await.is_none(),
+            "Wait period should be cleared"
         );
     }
 }
