@@ -58,7 +58,7 @@ impl Command for AddCommand {
                     eprintln!("Falling back to direct file write...");
 
                     // Fall back to direct storage
-                    let storage = get_task_storage(ctx.xdg_directories(), ctx.file_system());
+                    let storage = get_task_storage(ctx.tsk_config(), ctx.file_system());
                     storage
                         .add_task(task.clone())
                         .await
@@ -67,7 +67,7 @@ impl Command for AddCommand {
             }
         } else {
             // Server not available, write directly
-            let storage = get_task_storage(ctx.xdg_directories(), ctx.file_system());
+            let storage = get_task_storage(ctx.tsk_config(), ctx.file_system());
             storage
                 .add_task(task.clone())
                 .await

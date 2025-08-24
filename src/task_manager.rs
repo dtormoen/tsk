@@ -5,7 +5,7 @@ use crate::task_storage::{TaskStorage, get_task_storage};
 use std::sync::Arc;
 
 #[cfg(test)]
-use crate::storage::XdgDirectories;
+use crate::context::tsk_config::TskConfig;
 
 /// Manages task execution and storage operations.
 ///
@@ -32,7 +32,7 @@ impl TaskManager {
 
         Ok(Self {
             task_runner,
-            task_storage: get_task_storage(ctx.xdg_directories(), ctx.file_system()),
+            task_storage: get_task_storage(ctx.tsk_config(), ctx.file_system()),
             file_system: ctx.file_system(),
         })
     }
@@ -231,9 +231,9 @@ mod tests {
     use crate::test_utils::TestGitRepository;
     use std::sync::Arc;
 
-    /// Helper function to set up a test environment with XDG directories, git repository, and AppContext
+    /// Helper function to set up a test environment with TSK configuration, git repository, and AppContext
     async fn setup_test_environment()
-    -> anyhow::Result<(Arc<XdgDirectories>, TestGitRepository, AppContext)> {
+    -> anyhow::Result<(Arc<TskConfig>, TestGitRepository, AppContext)> {
         // Create a test git repository
         let test_repo = TestGitRepository::new()?;
         test_repo.init_with_commit()?;
@@ -241,15 +241,15 @@ mod tests {
         // Create AppContext - automatically gets test defaults
         let ctx = AppContext::builder().build();
 
-        // Get the XDG directories from the context
-        let xdg = ctx.xdg_directories();
+        // Get the TSK configuration from the context
+        let xdg = ctx.tsk_config();
 
         Ok((xdg, test_repo, ctx))
     }
 
     /// Helper function to set up task directory structure with files
     async fn setup_task_directory(
-        xdg: &XdgDirectories,
+        xdg: &TskConfig,
         task_id: &str,
         repo_hash: &str,
         instructions_content: &str,
@@ -274,7 +274,7 @@ mod tests {
 
         // Create AppContext - automatically gets test defaults
         let ctx = AppContext::builder().build();
-        let xdg = ctx.xdg_directories();
+        let xdg = ctx.tsk_config();
 
         // Create a task
         let task_id = "test-task-123".to_string();
@@ -644,7 +644,7 @@ mod tests {
     async fn test_with_storage_no_git_repo() {
         // Create AppContext - automatically gets test defaults
         let ctx = AppContext::builder().build();
-        let xdg = ctx.xdg_directories();
+        let xdg = ctx.tsk_config();
 
         // Create empty tasks.json
         let tasks_json_path = xdg.tasks_file();

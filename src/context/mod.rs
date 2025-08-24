@@ -3,10 +3,11 @@ pub mod file_system;
 pub mod git_operations;
 pub mod terminal;
 pub mod tsk_client;
+pub mod tsk_config;
 
+use crate::context::tsk_config::TskConfig;
 use crate::git_sync::GitSyncManager;
 use crate::notifications::NotificationClient;
-use crate::storage::XdgDirectories;
 use docker_client::DockerClient;
 use file_system::FileSystemOperations;
 use git_operations::GitOperations;
@@ -33,7 +34,7 @@ pub struct AppContext {
     notification_client: Arc<dyn NotificationClient>,
     terminal_operations: Arc<dyn TerminalOperations>,
     tsk_client: Arc<dyn TskClient>,
-    xdg_directories: Arc<XdgDirectories>,
+    tsk_config: Arc<TskConfig>,
     #[cfg(test)]
     _temp_dir: Option<Arc<TempDir>>,
 }
@@ -71,8 +72,8 @@ impl AppContext {
         Arc::clone(&self.tsk_client)
     }
 
-    pub fn xdg_directories(&self) -> Arc<XdgDirectories> {
-        Arc::clone(&self.xdg_directories)
+    pub fn tsk_config(&self) -> Arc<TskConfig> {
+        Arc::clone(&self.tsk_config)
     }
 }
 
@@ -84,7 +85,7 @@ pub struct AppContextBuilder {
     notification_client: Option<Arc<dyn NotificationClient>>,
     terminal_operations: Option<Arc<dyn TerminalOperations>>,
     tsk_client: Option<Arc<dyn TskClient>>,
-    xdg_directories: Option<Arc<XdgDirectories>>,
+    tsk_config: Option<Arc<TskConfig>>,
 }
 
 impl Default for AppContextBuilder {
@@ -104,7 +105,7 @@ impl AppContextBuilder {
             notification_client: None,
             terminal_operations: None,
             tsk_client: None,
-            xdg_directories: None,
+            tsk_config: None,
         }
     }
 
@@ -151,11 +152,11 @@ impl AppContextBuilder {
         self
     }
 
-    /// Configure the XDG directories for this context
+    /// Configure the TSK configuration for this context
     ///
     /// Used extensively in tests and production code throughout the codebase
-    pub fn with_xdg_directories(mut self, xdg_directories: Arc<XdgDirectories>) -> Self {
-        self.xdg_directories = Some(xdg_directories);
+    pub fn with_tsk_config(mut self, tsk_config: Arc<TskConfig>) -> Self {
+        self.tsk_config = Some(tsk_config);
         self
     }
 
@@ -166,18 +167,18 @@ impl AppContextBuilder {
             let temp_dir = Arc::new(TempDir::new().expect("Failed to create temp dir"));
             let temp_path = temp_dir.path();
 
-            let xdg_directories = self.xdg_directories.unwrap_or_else(|| {
-                // Create test-safe XDG directories in temp directory
-                let xdg_config = crate::storage::XdgConfig::builder()
+            let tsk_config = self.tsk_config.unwrap_or_else(|| {
+                // Create test-safe TSK configuration in temp directory
+                let xdg_config = crate::context::tsk_config::XdgConfig::builder()
                     .with_data_dir(temp_path.join("data").to_path_buf())
                     .with_runtime_dir(temp_path.join("runtime").to_path_buf())
                     .with_config_dir(temp_path.join("config").to_path_buf())
                     .with_claude_config_dir(temp_path.join("claude").to_path_buf())
                     .build();
-                let xdg = XdgDirectories::new(Some(xdg_config))
-                    .expect("Failed to initialize test XDG directories");
+                let xdg = TskConfig::new(Some(xdg_config))
+                    .expect("Failed to initialize test TSK configuration");
                 xdg.ensure_directories()
-                    .expect("Failed to create test XDG directories");
+                    .expect("Failed to create test TSK configuration");
                 Arc::new(xdg)
             });
 
@@ -211,24 +212,24 @@ impl AppContextBuilder {
                     .terminal_operations
                     .unwrap_or_else(|| Arc::new(terminal::DefaultTerminalOperations::new())),
                 tsk_client,
-                xdg_directories,
+                tsk_config,
                 _temp_dir: Some(temp_dir),
             }
         }
 
         #[cfg(not(test))]
         {
-            let xdg_directories = self.xdg_directories.unwrap_or_else(|| {
-                let xdg = XdgDirectories::new(None).expect("Failed to initialize XDG directories");
+            let tsk_config = self.tsk_config.unwrap_or_else(|| {
+                let xdg = TskConfig::new(None).expect("Failed to initialize TSK configuration");
                 // Ensure directories exist
                 xdg.ensure_directories()
-                    .expect("Failed to create XDG directories");
+                    .expect("Failed to create TSK configuration");
                 Arc::new(xdg)
             });
 
-            let tsk_client = self.tsk_client.unwrap_or_else(|| {
-                Arc::new(tsk_client::DefaultTskClient::new(xdg_directories.clone()))
-            });
+            let tsk_client = self
+                .tsk_client
+                .unwrap_or_else(|| Arc::new(tsk_client::DefaultTskClient::new(tsk_config.clone())));
 
             let docker_client = self
                 .docker_client
@@ -254,7 +255,7 @@ impl AppContextBuilder {
                     .terminal_operations
                     .unwrap_or_else(|| Arc::new(terminal::DefaultTerminalOperations::new())),
                 tsk_client,
-                xdg_directories,
+                tsk_config,
             }
         }
     }

@@ -40,7 +40,7 @@ impl Command for ListCommand {
                     eprintln!("Falling back to direct file read...");
 
                     // Fall back to direct storage
-                    let storage = get_task_storage(ctx.xdg_directories(), ctx.file_system());
+                    let storage = get_task_storage(ctx.tsk_config(), ctx.file_system());
                     storage
                         .list_tasks()
                         .await
@@ -49,7 +49,7 @@ impl Command for ListCommand {
             }
         } else {
             // Server not available, read directly
-            let storage = get_task_storage(ctx.xdg_directories(), ctx.file_system());
+            let storage = get_task_storage(ctx.tsk_config(), ctx.file_system());
             storage
                 .list_tasks()
                 .await
@@ -119,7 +119,7 @@ mod tests {
     async fn setup_test_environment_with_tasks(task_count: usize) -> anyhow::Result<AppContext> {
         // Create AppContext with test defaults
         let ctx = AppContext::builder().build();
-        let xdg = ctx.xdg_directories();
+        let xdg = ctx.tsk_config();
         xdg.ensure_directories()?;
 
         // Create test repository for task data (but not for the command execution context)
@@ -191,7 +191,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_command_verifies_task_counts() {
         let ctx = setup_test_environment_with_tasks(8).await.unwrap();
-        let xdg = ctx.xdg_directories();
+        let xdg = ctx.tsk_config();
 
         // Verify the tasks were created correctly
         let file_system = Arc::new(DefaultFileSystem);

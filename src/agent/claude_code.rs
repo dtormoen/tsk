@@ -1,5 +1,5 @@
 use super::{Agent, LogProcessor};
-use crate::storage::XdgDirectories;
+use crate::context::tsk_config::TskConfig;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -9,24 +9,24 @@ use std::sync::Arc;
 
 /// Claude Code AI agent implementation
 pub struct ClaudeCodeAgent {
-    xdg_directories: Option<Arc<XdgDirectories>>,
+    tsk_config: Option<Arc<TskConfig>>,
 }
 
 impl ClaudeCodeAgent {
-    /// Creates a new ClaudeCodeAgent with the provided XDG directories
+    /// Creates a new ClaudeCodeAgent with the provided TSK configuration
     ///
     /// # Arguments
-    /// * `xdg_directories` - Arc reference to the XdgDirectories instance containing environment settings
-    pub fn with_xdg_directories(xdg_directories: Arc<XdgDirectories>) -> Self {
+    /// * `tsk_config` - Arc reference to the TskConfig instance containing environment settings
+    pub fn with_tsk_config(tsk_config: Arc<TskConfig>) -> Self {
         Self {
-            xdg_directories: Some(xdg_directories),
+            tsk_config: Some(tsk_config),
         }
     }
 
     fn get_claude_config_dir(&self) -> PathBuf {
-        self.xdg_directories
+        self.tsk_config
             .as_ref()
-            .expect("XdgDirectories should always be present")
+            .expect("TskConfig should always be present")
             .claude_config_dir()
             .to_path_buf()
     }
@@ -34,8 +34,8 @@ impl ClaudeCodeAgent {
 
 impl Default for ClaudeCodeAgent {
     fn default() -> Self {
-        Self::with_xdg_directories(Arc::new(
-            XdgDirectories::new(None).expect("Failed to create XdgDirectories"),
+        Self::with_tsk_config(Arc::new(
+            TskConfig::new(None).expect("Failed to create TskConfig"),
         ))
     }
 }
@@ -1302,8 +1302,8 @@ mod tests {
 
     #[test]
     fn test_claude_code_agent_properties() {
-        let xdg_directories = Arc::new(XdgDirectories::new(None).unwrap());
-        let agent = ClaudeCodeAgent::with_xdg_directories(xdg_directories);
+        let tsk_config = Arc::new(TskConfig::new(None).unwrap());
+        let agent = ClaudeCodeAgent::with_tsk_config(tsk_config);
 
         // Test name
         assert_eq!(agent.name(), "claude-code");
@@ -1331,8 +1331,8 @@ mod tests {
 
     #[test]
     fn test_claude_code_agent_build_command() {
-        let xdg_directories = Arc::new(XdgDirectories::new(None).unwrap());
-        let agent = ClaudeCodeAgent::with_xdg_directories(xdg_directories);
+        let tsk_config = Arc::new(TskConfig::new(None).unwrap());
+        let agent = ClaudeCodeAgent::with_tsk_config(tsk_config);
 
         // Test with full path
         let command = agent.build_command("/tmp/instructions.md");
@@ -1352,11 +1352,11 @@ mod tests {
         // In test mode, validation is skipped so this test just verifies
         // that validate() returns Ok in test environments
         let temp_dir = tempfile::tempdir().unwrap();
-        let xdg_config = crate::storage::XdgConfig::builder()
+        let xdg_config = crate::context::tsk_config::XdgConfig::builder()
             .with_claude_config_dir(temp_dir.path().join(".claude"))
             .build();
-        let xdg_directories = Arc::new(XdgDirectories::new(Some(xdg_config)).unwrap());
-        let agent = ClaudeCodeAgent::with_xdg_directories(xdg_directories);
+        let tsk_config = Arc::new(TskConfig::new(Some(xdg_config)).unwrap());
+        let agent = ClaudeCodeAgent::with_tsk_config(tsk_config);
         let result = agent.validate().await;
 
         // In test mode, validation is skipped
@@ -1365,8 +1365,8 @@ mod tests {
 
     #[test]
     fn test_claude_code_agent_create_log_processor() {
-        let xdg_directories = Arc::new(XdgDirectories::new(None).unwrap());
-        let agent = ClaudeCodeAgent::with_xdg_directories(xdg_directories);
+        let tsk_config = Arc::new(TskConfig::new(None).unwrap());
+        let agent = ClaudeCodeAgent::with_tsk_config(tsk_config);
 
         let log_processor = agent.create_log_processor();
 
@@ -1376,11 +1376,11 @@ mod tests {
 
         // Also test with custom config
         let temp_dir = tempfile::tempdir().unwrap();
-        let xdg_config = crate::storage::XdgConfig::builder()
+        let xdg_config = crate::context::tsk_config::XdgConfig::builder()
             .with_claude_config_dir(temp_dir.path().join(".claude"))
             .build();
-        let xdg_directories = Arc::new(XdgDirectories::new(Some(xdg_config)).unwrap());
-        let agent_with_config = ClaudeCodeAgent::with_xdg_directories(xdg_directories);
+        let tsk_config = Arc::new(TskConfig::new(Some(xdg_config)).unwrap());
+        let agent_with_config = ClaudeCodeAgent::with_tsk_config(tsk_config);
         let _ = agent_with_config.create_log_processor();
     }
 }

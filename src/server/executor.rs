@@ -269,7 +269,7 @@ mod tests {
     #[tokio::test]
     async fn test_executor_lifecycle() {
         let app_context = AppContext::builder().build();
-        let xdg = app_context.xdg_directories();
+        let xdg = app_context.tsk_config();
         xdg.ensure_directories().unwrap();
 
         let fs = Arc::new(DefaultFileSystem);
@@ -304,7 +304,7 @@ mod tests {
     async fn test_executor_completes_task_without_deadlock() {
         // This test verifies that the executor doesn't deadlock after completing a task
         let app_context = AppContext::builder().build();
-        let xdg = app_context.xdg_directories();
+        let xdg = app_context.tsk_config();
         xdg.ensure_directories().unwrap();
 
         // Create a test git repository for the task
@@ -415,7 +415,7 @@ mod tests {
     async fn test_parallel_execution() {
         // Test that multiple tasks can run in parallel
         let app_context = AppContext::builder().build();
-        let xdg = app_context.xdg_directories();
+        let xdg = app_context.tsk_config();
         xdg.ensure_directories().unwrap();
 
         // Create a test git repository
@@ -497,7 +497,7 @@ mod tests {
     async fn test_single_worker_sequential_execution() {
         // Test that with a single worker, only one task runs at a time
         let app_context = AppContext::builder().build();
-        let xdg = app_context.xdg_directories();
+        let xdg = app_context.tsk_config();
         xdg.ensure_directories().unwrap();
 
         // Create a test git repository
@@ -598,7 +598,7 @@ mod tests {
     async fn test_warmup_failure_wait_behavior() {
         // Test that the executor properly handles warmup failure wait periods
         let app_context = Arc::new(AppContext::builder().build());
-        let xdg = app_context.xdg_directories();
+        let xdg = app_context.tsk_config();
         xdg.ensure_directories().unwrap();
 
         let fs = Arc::new(DefaultFileSystem);
@@ -654,7 +654,7 @@ mod tests {
     async fn test_task_completion_status() {
         // Test that tasks are properly marked as COMPLETED
         let app_context = AppContext::builder().build();
-        let xdg = app_context.xdg_directories();
+        let xdg = app_context.tsk_config();
         xdg.ensure_directories().unwrap();
 
         // Create a test git repository

@@ -235,10 +235,8 @@ impl TaskBuilder {
         // Check if template requires description
         let template_needs_description = if task_type != "generic" {
             // Create asset manager for template validation
-            let asset_manager = LayeredAssetManager::new_with_standard_layers(
-                Some(&repo_root),
-                &ctx.xdg_directories(),
-            );
+            let asset_manager =
+                LayeredAssetManager::new_with_standard_layers(Some(&repo_root), &ctx.tsk_config());
             match asset_manager.get_template(&task_type) {
                 Ok(template_content) => template_content.contains("{{DESCRIPTION}}"),
                 Err(_) => true, // If we can't read the template, assume it needs description
@@ -275,10 +273,8 @@ impl TaskBuilder {
         // Validate task type
         if task_type != "generic" {
             // Create asset manager for template validation
-            let asset_manager = LayeredAssetManager::new_with_standard_layers(
-                Some(&repo_root),
-                &ctx.xdg_directories(),
-            );
+            let asset_manager =
+                LayeredAssetManager::new_with_standard_layers(Some(&repo_root), &ctx.tsk_config());
             let available_templates = asset_manager.list_templates();
             if !available_templates.contains(&task_type.to_string()) {
                 return Err(format!(
@@ -296,7 +292,7 @@ impl TaskBuilder {
         let id = nanoid::nanoid!(8);
         let task_dir_name = id.clone();
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
-        let task_dir = ctx.xdg_directories().task_dir(&task_dir_name, &repo_hash);
+        let task_dir = ctx.tsk_config().task_dir(&task_dir_name, &repo_hash);
         ctx.file_system().create_dir(&task_dir).await?;
 
         // Create instructions file
@@ -308,8 +304,8 @@ impl TaskBuilder {
                 .await?;
 
             // Open editor with the temporary file
-            let xdg_directories = ctx.xdg_directories();
-            self.open_editor(temp_path.to_str().ok_or("Invalid path")?, &xdg_directories)?;
+            let tsk_config = ctx.tsk_config();
+            self.open_editor(temp_path.to_str().ok_or("Invalid path")?, &tsk_config)?;
 
             // Check if file is empty and ensure cleanup happens even on error
             let needs_cleanup = self
@@ -388,7 +384,7 @@ impl TaskBuilder {
 
         // Copy the repository for the task
         let repo_manager = RepoManager::new(
-            ctx.xdg_directories(),
+            ctx.tsk_config(),
             ctx.file_system(),
             ctx.git_operations(),
             ctx.git_sync_manager(),
@@ -443,7 +439,7 @@ impl TaskBuilder {
                 // Create asset manager for template retrieval
                 let asset_manager = LayeredAssetManager::new_with_standard_layers(
                     self.repo_root.as_deref(),
-                    &ctx.xdg_directories(),
+                    &ctx.tsk_config(),
                 );
                 match asset_manager.get_template(task_type) {
                     Ok(template_content) => template_content.replace("{{DESCRIPTION}}", desc),
@@ -463,7 +459,7 @@ impl TaskBuilder {
                 // Create asset manager for template retrieval
                 let asset_manager = LayeredAssetManager::new_with_standard_layers(
                     self.repo_root.as_deref(),
-                    &ctx.xdg_directories(),
+                    &ctx.tsk_config(),
                 );
                 match asset_manager.get_template(task_type) {
                     Ok(template_content) => {
@@ -494,9 +490,9 @@ impl TaskBuilder {
     fn open_editor(
         &self,
         instructions_path: &str,
-        xdg_directories: &crate::storage::XdgDirectories,
+        tsk_config: &crate::context::tsk_config::TskConfig,
     ) -> Result<(), Box<dyn Error>> {
-        let editor = xdg_directories.editor();
+        let editor = tsk_config.editor();
 
         println!("Opening instructions file in editor: {}", editor);
 
@@ -548,7 +544,7 @@ mod tests {
         test_repo.init_with_commit().unwrap();
 
         // Create AppContext - automatically gets test defaults:
-        // - Temporary XDG directories
+        // - Temporary TSK configuration
         // - NoOpDockerClient
         // - NoOpTskClient
         // - DefaultGitOperations
@@ -635,7 +631,7 @@ mod tests {
 
         // Read the instructions file to verify template was used
         let instructions_path = ctx
-            .xdg_directories()
+            .tsk_config()
             .data_dir()
             .join("tasks")
             .join(&task.id)
@@ -705,7 +701,7 @@ mod tests {
 
         // Read the instructions file to verify template was used as-is
         let instructions_path = ctx
-            .xdg_directories()
+            .tsk_config()
             .data_dir()
             .join("tasks")
             .join(&task.id)
@@ -745,7 +741,7 @@ mod tests {
 
         // Verify instructions file was used
         let task_instructions_path = ctx
-            .xdg_directories()
+            .tsk_config()
             .data_dir()
             .join("tasks")
             .join(&task.id)
@@ -875,9 +871,7 @@ mod tests {
 
         // Write instructions file to task directory (simulating existing task)
         let repo_hash = crate::storage::get_repo_hash(&current_dir);
-        let task_dir = ctx
-            .xdg_directories()
-            .task_dir(&existing_task.id, &repo_hash);
+        let task_dir = ctx.tsk_config().task_dir(&existing_task.id, &repo_hash);
         ctx.file_system().create_dir(&task_dir).await.unwrap();
         let instructions_path = task_dir.join(&existing_task.instructions_file);
         ctx.file_system()
@@ -922,7 +916,7 @@ mod tests {
 
             // Verify instructions file contains the original content (wrapped in template)
             let new_task_instructions_path = ctx
-                .xdg_directories()
+                .tsk_config()
                 .data_dir()
                 .join("tasks")
                 .join(&task.id)
@@ -965,15 +959,15 @@ mod tests {
         let current_dir = test_repo.path().to_path_buf();
 
         // Create XDG config
-        let xdg_config = crate::storage::XdgConfig::with_paths(
+        let xdg_config = crate::context::tsk_config::XdgConfig::with_paths(
             temp_dir.path().join("data"),
             temp_dir.path().join("runtime"),
             temp_dir.path().join("config"),
         );
-        let xdg = crate::storage::XdgDirectories::new(Some(xdg_config))
-            .expect("Failed to create XDG directories");
+        let xdg = crate::context::tsk_config::TskConfig::new(Some(xdg_config))
+            .expect("Failed to create TSK configuration");
         xdg.ensure_directories()
-            .expect("Failed to ensure XDG directories");
+            .expect("Failed to ensure TSK configuration");
 
         // Set up a fake editor that creates an empty file
         let fake_editor_path = temp_dir.path().join("fake_editor.sh");
@@ -985,17 +979,17 @@ mod tests {
         fs::set_permissions(&fake_editor_path, fs::Permissions::from_mode(0o755)).unwrap();
 
         // Create XDG config with fake editor
-        let xdg_config = crate::storage::XdgConfig::builder()
+        let xdg_config = crate::context::tsk_config::XdgConfig::builder()
             .with_data_dir(temp_dir.path().join("data"))
             .with_runtime_dir(temp_dir.path().join("runtime"))
             .with_config_dir(temp_dir.path().join("config"))
             .with_editor(fake_editor_path.to_str().unwrap().to_string())
             .build();
-        let xdg = Arc::new(crate::storage::XdgDirectories::new(Some(xdg_config)).unwrap());
+        let xdg = Arc::new(crate::context::tsk_config::TskConfig::new(Some(xdg_config)).unwrap());
 
-        // Update context with editor in XDG directories
+        // Update context with editor in TSK configuration
         let ctx = AppContext::builder()
-            .with_xdg_directories(xdg.clone())
+            .with_tsk_config(xdg.clone())
             .with_git_operations(Arc::new(
                 crate::context::git_operations::DefaultGitOperations,
             ))
@@ -1221,7 +1215,7 @@ mod tests {
 
         // Create AppContext with test defaults
         let ctx = AppContext::builder().build();
-        let xdg = ctx.xdg_directories();
+        let xdg = ctx.tsk_config();
 
         // Build task which should copy the repository
         let task = TaskBuilder::new()

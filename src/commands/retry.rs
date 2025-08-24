@@ -65,7 +65,7 @@ mod tests {
     ) -> anyhow::Result<(AppContext, TestGitRepository)> {
         // Create AppContext with test defaults
         let ctx = AppContext::builder().build();
-        let xdg = ctx.xdg_directories();
+        let xdg = ctx.tsk_config();
         xdg.ensure_directories()?;
 
         // Create a test git repository
@@ -122,7 +122,7 @@ mod tests {
 
         // Verify new task was created
         let file_system = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(ctx.xdg_directories(), file_system);
+        let storage = get_task_storage(ctx.tsk_config(), file_system);
         let all_tasks = storage.list_tasks().await.unwrap();
 
         // Should have 2 tasks now (original + retry)
@@ -151,7 +151,7 @@ mod tests {
 
         // Verify new tasks were created
         let file_system = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(ctx.xdg_directories(), file_system);
+        let storage = get_task_storage(ctx.tsk_config(), file_system);
         let all_tasks = storage.list_tasks().await.unwrap();
 
         // Should have 6 tasks now (3 originals + 3 retries)
@@ -193,7 +193,7 @@ mod tests {
 
         // Verify existing tasks were still retried
         let file_system = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(ctx.xdg_directories(), file_system);
+        let storage = get_task_storage(ctx.tsk_config(), file_system);
         let all_tasks = storage.list_tasks().await.unwrap();
 
         // Should have 4 tasks (2 originals + 2 retries)
@@ -227,7 +227,7 @@ mod tests {
     async fn test_retry_queued_task_fails() {
         // Create AppContext with test defaults
         let ctx = AppContext::builder().build();
-        let xdg = ctx.xdg_directories();
+        let xdg = ctx.tsk_config();
         xdg.ensure_directories().unwrap();
 
         // Create a test git repository

@@ -1,5 +1,5 @@
+use crate::context::tsk_config::TskConfig;
 use crate::server::protocol::{Request, Response};
-use crate::storage::XdgDirectories;
 use crate::task::{Task, TaskStatus};
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -46,9 +46,9 @@ pub struct DefaultTskClient {
 
 impl DefaultTskClient {
     /// Create a new TSK client
-    pub fn new(xdg_directories: Arc<XdgDirectories>) -> Self {
+    pub fn new(tsk_config: Arc<TskConfig>) -> Self {
         Self {
-            socket_path: xdg_directories.socket_path(),
+            socket_path: tsk_config.socket_path(),
         }
     }
 
@@ -178,7 +178,7 @@ mod tests {
     #[tokio::test]
     async fn test_client_creation() {
         let ctx = AppContext::builder().build();
-        let xdg = ctx.xdg_directories();
+        let xdg = ctx.tsk_config();
         xdg.ensure_directories().unwrap();
 
         let client = DefaultTskClient::new(xdg);
@@ -194,7 +194,7 @@ mod tests {
         // The actual EOF scenario is tested implicitly when the server closes
         // connections without sending data, which was the original bug.
         let ctx = AppContext::builder().build();
-        let xdg = ctx.xdg_directories();
+        let xdg = ctx.tsk_config();
         xdg.ensure_directories().unwrap();
 
         let client = DefaultTskClient::new(xdg);

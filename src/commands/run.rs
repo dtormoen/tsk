@@ -55,7 +55,7 @@ impl Command for RunCommand {
         }
 
         // Run in client mode (execute current tasks and exit)
-        let storage = get_task_storage(ctx.xdg_directories(), ctx.file_system());
+        let storage = get_task_storage(ctx.tsk_config(), ctx.file_system());
         let tasks = storage
             .list_tasks()
             .await

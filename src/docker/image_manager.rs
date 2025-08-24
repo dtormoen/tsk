@@ -545,7 +545,7 @@ mod tests {
     fn create_test_manager() -> DockerImageManager {
         let docker_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
-        let xdg_dirs = ctx.xdg_directories();
+        let xdg_dirs = ctx.tsk_config();
 
         let template_manager =
             DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), xdg_dirs.clone());
@@ -650,7 +650,7 @@ mod tests {
 
         let docker_client = Arc::new(docker_client);
         let ctx = AppContext::builder().build();
-        let xdg_dirs = ctx.xdg_directories();
+        let xdg_dirs = ctx.tsk_config();
 
         let template_manager =
             DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), xdg_dirs.clone());

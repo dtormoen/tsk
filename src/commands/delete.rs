@@ -63,7 +63,7 @@ mod tests {
     ) -> anyhow::Result<(AppContext, TestGitRepository)> {
         // Create AppContext with test defaults
         let ctx = AppContext::builder().build();
-        let xdg = ctx.xdg_directories();
+        let xdg = ctx.tsk_config();
         xdg.ensure_directories()?;
 
         // Create a test git repository
@@ -112,7 +112,7 @@ mod tests {
         let (ctx, _test_repo) = setup_test_environment_with_tasks(vec![task_id])
             .await
             .unwrap();
-        let xdg = ctx.xdg_directories();
+        let xdg = ctx.tsk_config();
 
         let cmd = DeleteCommand {
             task_ids: vec![task_id.to_string()],
@@ -139,7 +139,7 @@ mod tests {
         let (ctx, _test_repo) = setup_test_environment_with_tasks(task_ids.clone())
             .await
             .unwrap();
-        let xdg = ctx.xdg_directories();
+        let xdg = ctx.tsk_config();
 
         let cmd = DeleteCommand {
             task_ids: task_ids.iter().map(|s| s.to_string()).collect(),
@@ -170,7 +170,7 @@ mod tests {
         let (ctx, _test_repo) = setup_test_environment_with_tasks(existing_tasks.clone())
             .await
             .unwrap();
-        let xdg = ctx.xdg_directories();
+        let xdg = ctx.tsk_config();
 
         // Try to delete both existing and non-existing tasks
         let cmd = DeleteCommand {

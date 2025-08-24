@@ -1,4 +1,4 @@
-use crate::storage::XdgDirectories;
+use crate::context::tsk_config::TskConfig;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -7,18 +7,18 @@ use std::sync::Arc;
 
 /// Manages server lifecycle (PID files, etc.)
 pub struct ServerLifecycle {
-    xdg_directories: Arc<XdgDirectories>,
+    tsk_config: Arc<TskConfig>,
 }
 
 impl ServerLifecycle {
     /// Create a new server lifecycle manager
-    pub fn new(xdg_directories: Arc<XdgDirectories>) -> Self {
-        Self { xdg_directories }
+    pub fn new(tsk_config: Arc<TskConfig>) -> Self {
+        Self { tsk_config }
     }
 
     /// Check if a server is already running
     pub fn is_server_running(&self) -> bool {
-        let pid_file = self.xdg_directories.pid_file();
+        let pid_file = self.tsk_config.pid_file();
 
         if !pid_file.exists() {
             return false;
@@ -36,7 +36,7 @@ impl ServerLifecycle {
 
     /// Write current process PID to file
     pub fn write_pid(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let pid_file = self.xdg_directories.pid_file();
+        let pid_file = self.tsk_config.pid_file();
         let pid = process::id();
 
         let mut file = fs::File::create(&pid_file)?;
@@ -47,7 +47,7 @@ impl ServerLifecycle {
 
     /// Read PID from file
     pub fn read_pid(&self) -> Option<u32> {
-        let pid_file = self.xdg_directories.pid_file();
+        let pid_file = self.tsk_config.pid_file();
 
         let mut file = match fs::File::open(&pid_file) {
             Ok(f) => f,
@@ -64,7 +64,7 @@ impl ServerLifecycle {
 
     /// Remove PID file
     pub fn remove_pid(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let pid_file = self.xdg_directories.pid_file();
+        let pid_file = self.tsk_config.pid_file();
         if pid_file.exists() {
             fs::remove_file(&pid_file)?;
         }
@@ -88,7 +88,7 @@ impl ServerLifecycle {
 
     /// Get the server socket path
     pub fn socket_path(&self) -> PathBuf {
-        self.xdg_directories.socket_path()
+        self.tsk_config.socket_path()
     }
 
     /// Clean up server resources
@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn test_server_lifecycle() {
         let app_context = AppContext::builder().build();
-        let xdg = app_context.xdg_directories();
+        let xdg = app_context.tsk_config();
 
         let lifecycle = ServerLifecycle::new(xdg);
 

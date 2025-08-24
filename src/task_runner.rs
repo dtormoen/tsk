@@ -51,7 +51,7 @@ pub struct TaskRunner {
     docker_manager: DockerManager,
     notification_client: Arc<dyn crate::notifications::NotificationClient>,
     docker_client: Arc<dyn crate::context::docker_client::DockerClient>,
-    xdg_directories: Arc<crate::storage::XdgDirectories>,
+    tsk_config: Arc<crate::context::tsk_config::TskConfig>,
 }
 
 impl TaskRunner {
@@ -65,7 +65,7 @@ impl TaskRunner {
     /// * `ctx` - The application context providing all required dependencies
     pub fn new(ctx: &AppContext) -> Self {
         let repo_manager = RepoManager::new(
-            ctx.xdg_directories(),
+            ctx.tsk_config(),
             ctx.file_system(),
             ctx.git_operations(),
             ctx.git_sync_manager(),
@@ -77,7 +77,7 @@ impl TaskRunner {
             docker_manager,
             notification_client: ctx.notification_client(),
             docker_client: ctx.docker_client(),
-            xdg_directories: ctx.xdg_directories(),
+            tsk_config: ctx.tsk_config(),
         }
     }
 
@@ -104,7 +104,7 @@ impl TaskRunner {
         task: &Task,
     ) -> Result<TaskExecutionResult, TaskExecutionError> {
         // Get the agent for this task
-        let agent = AgentProvider::get_agent(&task.agent, self.xdg_directories.clone())
+        let agent = AgentProvider::get_agent(&task.agent, self.tsk_config.clone())
             .map_err(|e| format!("Error getting agent: {e}"))?;
 
         // Validate the agent
@@ -140,13 +140,13 @@ impl TaskRunner {
             // This ensures that project-specific dockerfiles are found in the copied repository
             let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
                 Some(&repo_path),
-                &self.xdg_directories,
+                &self.tsk_config,
             ));
             let template_manager =
-                DockerTemplateManager::new(asset_manager.clone(), self.xdg_directories.clone());
+                DockerTemplateManager::new(asset_manager.clone(), self.tsk_config.clone());
             let composer = DockerComposer::new(DockerTemplateManager::new(
                 asset_manager,
-                self.xdg_directories.clone(),
+                self.tsk_config.clone(),
             ));
             let task_image_manager =
                 DockerImageManager::new(self.docker_client.clone(), template_manager, composer);
@@ -268,9 +268,9 @@ mod tests {
         std::fs::write(&claude_json_path, "{}").unwrap();
 
         // Create XDG config with the test claude directory
-        use crate::storage::XdgConfig;
+        use crate::context::tsk_config::XdgConfig;
 
-        // Create test XDG directories with claude config
+        // Create test TSK configuration with claude config
         let temp_xdg = tempfile::tempdir().unwrap();
         let xdg_config = XdgConfig::builder()
             .with_data_dir(temp_xdg.path().join("xdg-data"))
@@ -278,20 +278,20 @@ mod tests {
             .with_config_dir(temp_xdg.path().join("xdg-config"))
             .with_claude_config_dir(claude_dir)
             .build();
-        let xdg_directories =
-            Arc::new(crate::storage::XdgDirectories::new(Some(xdg_config)).unwrap());
-        xdg_directories.ensure_directories().unwrap();
+        let tsk_config =
+            Arc::new(crate::context::tsk_config::TskConfig::new(Some(xdg_config)).unwrap());
+        tsk_config.ensure_directories().unwrap();
 
         // Create AppContext with special claude config
         let ctx = AppContext::builder()
-            .with_xdg_directories(xdg_directories.clone())
+            .with_tsk_config(tsk_config.clone())
             .build();
 
         let task_runner = TaskRunner::new(&ctx);
 
         // Create a task copy directory
         let repo_hash = crate::storage::get_repo_hash(test_repo.path());
-        let task_copy_dir = xdg_directories.task_dir("test-task-123", &repo_hash);
+        let task_copy_dir = tsk_config.task_dir("test-task-123", &repo_hash);
 
         // Use the async filesystem operations to copy the repository
         ctx.file_system()

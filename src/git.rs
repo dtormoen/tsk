@@ -1,13 +1,13 @@
 use crate::context::file_system::FileSystemOperations;
 use crate::context::git_operations::GitOperations;
+use crate::context::tsk_config::TskConfig;
 use crate::git_sync::GitSyncManager;
-use crate::storage::XdgDirectories;
 use chrono::{DateTime, Local};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub struct RepoManager {
-    xdg_directories: Arc<XdgDirectories>,
+    tsk_config: Arc<TskConfig>,
     file_system: Arc<dyn FileSystemOperations>,
     git_operations: Arc<dyn GitOperations>,
     git_sync_manager: Arc<GitSyncManager>,
@@ -15,13 +15,13 @@ pub struct RepoManager {
 
 impl RepoManager {
     pub fn new(
-        xdg_directories: Arc<XdgDirectories>,
+        tsk_config: Arc<TskConfig>,
         file_system: Arc<dyn FileSystemOperations>,
         git_operations: Arc<dyn GitOperations>,
         git_sync_manager: Arc<GitSyncManager>,
     ) -> Self {
         Self {
-            xdg_directories,
+            tsk_config,
             file_system,
             git_operations,
             git_sync_manager,
@@ -45,7 +45,7 @@ impl RepoManager {
 
         // Create the task directory structure in centralized location
         let repo_hash = crate::storage::get_repo_hash(repo_root);
-        let task_dir = self.xdg_directories.task_dir(task_dir_name, &repo_hash);
+        let task_dir = self.tsk_config.task_dir(task_dir_name, &repo_hash);
         let repo_path = task_dir.join("repo");
 
         // Create directories if they don't exist
@@ -298,7 +298,7 @@ mod tests {
     #[tokio::test]
     async fn test_copy_repo_not_in_git_repo() {
         let app_context = AppContext::builder().build();
-        let xdg_directories = app_context.xdg_directories();
+        let tsk_config = app_context.tsk_config();
 
         // Create a directory that is not a git repo
         let non_git_repo = TestGitRepository::new().unwrap();
@@ -307,7 +307,7 @@ mod tests {
         let git_ops = Arc::new(DefaultGitOperations);
         let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
         let git_sync = Arc::new(GitSyncManager::new());
-        let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
+        let manager = RepoManager::new(tsk_config, fs, git_ops, git_sync);
 
         let result = manager
             .copy_repo(
@@ -329,11 +329,11 @@ mod tests {
         test_repo.init_with_commit().unwrap();
 
         let ctx = AppContext::builder().build();
-        let xdg_directories = ctx.xdg_directories();
+        let tsk_config = ctx.tsk_config();
         let git_ops = Arc::new(DefaultGitOperations);
         let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
         let git_sync = Arc::new(GitSyncManager::new());
-        let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
+        let manager = RepoManager::new(tsk_config, fs, git_ops, git_sync);
 
         // Test committing when there are no changes
         let result = manager
@@ -355,11 +355,11 @@ mod tests {
             .unwrap();
 
         let ctx = AppContext::builder().build();
-        let xdg_directories = ctx.xdg_directories();
+        let tsk_config = ctx.tsk_config();
         let git_ops = Arc::new(DefaultGitOperations);
         let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
         let git_sync = Arc::new(GitSyncManager::new());
-        let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
+        let manager = RepoManager::new(tsk_config, fs, git_ops, git_sync);
 
         let result = manager
             .commit_changes(test_repo.path(), "Test commit")
@@ -371,7 +371,7 @@ mod tests {
     #[tokio::test]
     async fn test_fetch_changes_no_commits() {
         let app_context = AppContext::builder().build();
-        let xdg_directories = app_context.xdg_directories();
+        let tsk_config = app_context.tsk_config();
 
         // Create main repository
         let main_repo = TestGitRepository::new().unwrap();
@@ -426,7 +426,7 @@ mod tests {
         let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
 
         let git_sync = Arc::new(GitSyncManager::new());
-        let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
+        let manager = RepoManager::new(tsk_config, fs, git_ops, git_sync);
 
         // Fetch changes from task repo to main repo (should return false as there are no new commits)
         let result = manager
@@ -447,7 +447,7 @@ mod tests {
     #[tokio::test]
     async fn test_fetch_changes_with_commits() {
         let app_context = AppContext::builder().build();
-        let xdg_directories = app_context.xdg_directories();
+        let tsk_config = app_context.tsk_config();
 
         // Create main repository
         let main_repo = TestGitRepository::new().unwrap();
@@ -507,7 +507,7 @@ mod tests {
         let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
 
         let git_sync = Arc::new(GitSyncManager::new());
-        let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
+        let manager = RepoManager::new(tsk_config, fs, git_ops, git_sync);
 
         // Fetch changes from task repo to main repo (should return true as there are new commits)
         let result = manager
@@ -528,7 +528,7 @@ mod tests {
     #[tokio::test]
     async fn test_copy_repo_with_source_commit() {
         let app_context = AppContext::builder().build();
-        let xdg_directories = app_context.xdg_directories();
+        let tsk_config = app_context.tsk_config();
 
         // Create a repository with multiple commits
         let test_repo = TestGitRepository::new().unwrap();
@@ -551,7 +551,7 @@ mod tests {
         let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
 
         let git_sync = Arc::new(GitSyncManager::new());
-        let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
+        let manager = RepoManager::new(tsk_config, fs, git_ops, git_sync);
 
         // Copy repo from the first commit
         let task_id = "efgh5678";
@@ -579,7 +579,7 @@ mod tests {
     #[tokio::test]
     async fn test_copy_repo_without_source_commit() {
         let app_context = AppContext::builder().build();
-        let xdg_directories = app_context.xdg_directories();
+        let tsk_config = app_context.tsk_config();
 
         // Create a repository with commits
         let test_repo = TestGitRepository::new().unwrap();
@@ -596,7 +596,7 @@ mod tests {
         let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
 
         let git_sync = Arc::new(GitSyncManager::new());
-        let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
+        let manager = RepoManager::new(tsk_config, fs, git_ops, git_sync);
 
         // Copy repo without specifying source commit (should use HEAD)
         let task_id = "ijkl9012";
@@ -621,7 +621,7 @@ mod tests {
         use crate::test_utils::create_files_with_gitignore;
 
         let app_context = AppContext::builder().build();
-        let xdg_directories = app_context.xdg_directories();
+        let tsk_config = app_context.tsk_config();
 
         // Create a repository with mixed file types
         let test_repo = TestGitRepository::new().unwrap();
@@ -632,7 +632,7 @@ mod tests {
         let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
 
         let git_sync = Arc::new(GitSyncManager::new());
-        let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
+        let manager = RepoManager::new(tsk_config, fs, git_ops, git_sync);
 
         // Copy the repository
         let task_id = "mnop3456";
@@ -705,7 +705,7 @@ mod tests {
     #[tokio::test]
     async fn test_copy_repo_includes_tsk_directory() {
         let app_context = AppContext::builder().build();
-        let xdg_directories = app_context.xdg_directories();
+        let tsk_config = app_context.tsk_config();
 
         // Create a repository with .tsk directory
         let test_repo = TestGitRepository::new().unwrap();
@@ -739,7 +739,7 @@ mod tests {
         let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
 
         let git_sync = Arc::new(GitSyncManager::new());
-        let manager = RepoManager::new(xdg_directories, fs, git_ops, git_sync);
+        let manager = RepoManager::new(tsk_config, fs, git_ops, git_sync);
 
         // Copy the repository
         let task_id = "qrst7890";

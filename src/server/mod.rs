@@ -26,9 +26,9 @@ pub struct TskServer {
 impl TskServer {
     /// Create a new TSK server instance with specified number of workers
     pub fn with_workers(app_context: Arc<AppContext>, workers: u32) -> Self {
-        let xdg_directories = app_context.xdg_directories();
-        let socket_path = xdg_directories.socket_path();
-        let storage = get_task_storage(xdg_directories.clone(), app_context.file_system());
+        let tsk_config = app_context.tsk_config();
+        let socket_path = tsk_config.socket_path();
+        let storage = get_task_storage(tsk_config.clone(), app_context.file_system());
         let storage = Arc::new(Mutex::new(storage));
 
         let executor = Arc::new(TaskExecutor::with_workers(
@@ -36,7 +36,7 @@ impl TskServer {
             storage.clone(),
             workers,
         ));
-        let lifecycle = ServerLifecycle::new(xdg_directories);
+        let lifecycle = ServerLifecycle::new(tsk_config);
 
         Self {
             app_context,
@@ -217,7 +217,7 @@ mod tests {
         // This test verifies that the server gracefully handles connections
         // that don't send any data (like is_server_available checks)
         let app_context = create_test_context();
-        let storage = get_task_storage(app_context.xdg_directories(), app_context.file_system());
+        let storage = get_task_storage(app_context.tsk_config(), app_context.file_system());
         let storage = Arc::new(Mutex::new(storage));
         let shutdown_signal = Arc::new(Mutex::new(false));
 
@@ -238,7 +238,7 @@ mod tests {
     async fn test_handle_client_with_valid_request() {
         // This test verifies that valid requests still work correctly
         let app_context = create_test_context();
-        let storage = get_task_storage(app_context.xdg_directories(), app_context.file_system());
+        let storage = get_task_storage(app_context.tsk_config(), app_context.file_system());
         let storage = Arc::new(Mutex::new(storage));
         let shutdown_signal = Arc::new(Mutex::new(false));
 

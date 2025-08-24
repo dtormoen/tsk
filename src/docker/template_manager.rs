@@ -9,18 +9,18 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::assets::AssetManager;
+use crate::context::tsk_config::TskConfig;
 use crate::docker::layers::{DockerImageConfig, DockerLayer, DockerLayerContent, DockerLayerType};
-use crate::storage::xdg::XdgDirectories;
 
 /// Manages Docker templates and layer composition
 pub struct DockerTemplateManager {
     asset_manager: Arc<dyn AssetManager>,
-    xdg_dirs: Arc<XdgDirectories>,
+    xdg_dirs: Arc<TskConfig>,
 }
 
 impl DockerTemplateManager {
     /// Creates a new DockerTemplateManager
-    pub fn new(asset_manager: Arc<dyn AssetManager>, xdg_dirs: Arc<XdgDirectories>) -> Self {
+    pub fn new(asset_manager: Arc<dyn AssetManager>, xdg_dirs: Arc<TskConfig>) -> Self {
         Self {
             asset_manager,
             xdg_dirs,
@@ -344,7 +344,7 @@ mod tests {
 
     fn create_test_manager() -> DockerTemplateManager {
         let ctx = AppContext::builder().build();
-        let xdg_dirs = ctx.xdg_directories();
+        let xdg_dirs = ctx.tsk_config();
 
         DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), xdg_dirs)
     }
@@ -554,11 +554,11 @@ mod tests {
         // Create asset manager with the project layer
         let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
             Some(&project_root),
-            &XdgDirectories::new(None).unwrap(),
+            &TskConfig::new(None).unwrap(),
         ));
 
         let manager =
-            DockerTemplateManager::new(asset_manager, Arc::new(XdgDirectories::new(None).unwrap()));
+            DockerTemplateManager::new(asset_manager, Arc::new(TskConfig::new(None).unwrap()));
 
         let project_layer = DockerLayer {
             layer_type: DockerLayerType::Project,

@@ -1,27 +1,22 @@
 use super::{Agent, ClaudeCodeAgent, NoOpAgent};
-use crate::storage::XdgDirectories;
+use crate::context::tsk_config::TskConfig;
 use std::sync::Arc;
 
 /// Provider for creating and managing AI agents
 pub struct AgentProvider;
 
 impl AgentProvider {
-    /// Get an agent by name with XDG directories for configuration
+    /// Get an agent by name with TSK configuration for configuration
     ///
     /// # Arguments
     /// * `name` - The name of the agent to create
-    /// * `xdg_directories` - XDG directories containing environment settings
+    /// * `tsk_config` - TSK configuration containing environment settings
     ///
     /// # Returns
     /// An `Arc<dyn Agent>` for the requested agent type
-    pub fn get_agent(
-        name: &str,
-        xdg_directories: Arc<XdgDirectories>,
-    ) -> anyhow::Result<Arc<dyn Agent>> {
+    pub fn get_agent(name: &str, tsk_config: Arc<TskConfig>) -> anyhow::Result<Arc<dyn Agent>> {
         match name {
-            "claude-code" => Ok(Arc::new(ClaudeCodeAgent::with_xdg_directories(
-                xdg_directories,
-            ))),
+            "claude-code" => Ok(Arc::new(ClaudeCodeAgent::with_tsk_config(tsk_config))),
             "no-op" => Ok(Arc::new(NoOpAgent)),
             _ => Err(anyhow::anyhow!("Unknown agent: {}", name)),
         }
@@ -50,8 +45,8 @@ mod tests {
     #[test]
     fn test_agent_provider_get_agent() {
         // Test getting a valid agent
-        let xdg_directories = Arc::new(XdgDirectories::new(None).unwrap());
-        let agent = AgentProvider::get_agent("claude-code", xdg_directories);
+        let tsk_config = Arc::new(TskConfig::new(None).unwrap());
+        let agent = AgentProvider::get_agent("claude-code", tsk_config);
         assert!(agent.is_ok());
         let agent = agent.unwrap();
         assert_eq!(agent.name(), "claude-code");
@@ -60,8 +55,8 @@ mod tests {
     #[test]
     fn test_agent_provider_get_invalid_agent() {
         // Test getting an invalid agent
-        let xdg_directories = Arc::new(XdgDirectories::new(None).unwrap());
-        let agent = AgentProvider::get_agent("invalid-agent", xdg_directories);
+        let tsk_config = Arc::new(TskConfig::new(None).unwrap());
+        let agent = AgentProvider::get_agent("invalid-agent", tsk_config);
         assert!(agent.is_err());
         let err = agent.err().unwrap();
         assert!(err.to_string().contains("Unknown agent"));
@@ -89,8 +84,8 @@ mod tests {
     #[test]
     fn test_agent_provider_get_no_op_agent() {
         // Test getting the no-op agent
-        let xdg_directories = Arc::new(XdgDirectories::new(None).unwrap());
-        let agent = AgentProvider::get_agent("no-op", xdg_directories);
+        let tsk_config = Arc::new(TskConfig::new(None).unwrap());
+        let agent = AgentProvider::get_agent("no-op", tsk_config);
         assert!(agent.is_ok());
         let agent = agent.unwrap();
         assert_eq!(agent.name(), "no-op");

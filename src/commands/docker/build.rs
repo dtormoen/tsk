@@ -82,14 +82,11 @@ impl Command for DockerBuildCommand {
         // Create image manager
         let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
             project_root.as_deref(),
-            &ctx.xdg_directories(),
+            &ctx.tsk_config(),
         ));
-        let template_manager =
-            DockerTemplateManager::new(asset_manager.clone(), ctx.xdg_directories());
-        let composer = DockerComposer::new(DockerTemplateManager::new(
-            asset_manager,
-            ctx.xdg_directories(),
-        ));
+        let template_manager = DockerTemplateManager::new(asset_manager.clone(), ctx.tsk_config());
+        let composer =
+            DockerComposer::new(DockerTemplateManager::new(asset_manager, ctx.tsk_config()));
         let image_manager =
             DockerImageManager::new(ctx.docker_client(), template_manager, composer);
 

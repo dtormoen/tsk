@@ -1,4 +1,4 @@
-use crate::storage::XdgDirectories;
+use crate::context::tsk_config::TskConfig;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
@@ -15,7 +15,7 @@ pub trait TerminalOperations: Send + Sync {
 pub struct DefaultTerminalOperations {
     state: Mutex<TerminalState>,
     #[allow(dead_code)] // Will be used when terminal operations need config-based customization
-    xdg_directories: Option<Arc<XdgDirectories>>,
+    tsk_config: Option<Arc<TskConfig>>,
 }
 
 struct TerminalState {
@@ -33,33 +33,33 @@ impl DefaultTerminalOperations {
                 supported,
                 original_title: None,
             }),
-            xdg_directories: None,
+            tsk_config: None,
         }
     }
 
-    /// Create a new terminal operations instance with XDG directories
+    /// Create a new terminal operations instance with TSK configuration
     #[allow(dead_code)] // Used in tests and for future config-based terminal customization
-    pub fn with_xdg_directories(xdg_directories: Arc<XdgDirectories>) -> Self {
-        let supported = Self::is_supported(Some(&xdg_directories));
+    pub fn with_tsk_config(tsk_config: Arc<TskConfig>) -> Self {
+        let supported = Self::is_supported(Some(&tsk_config));
 
         Self {
             state: Mutex::new(TerminalState {
                 supported,
                 original_title: None,
             }),
-            xdg_directories: Some(xdg_directories),
+            tsk_config: Some(tsk_config),
         }
     }
 
     /// Check if terminal title updates are supported
-    fn is_supported(xdg_directories: Option<&XdgDirectories>) -> bool {
+    fn is_supported(tsk_config: Option<&TskConfig>) -> bool {
         // Check if we're in a TTY
         if !atty::is(atty::Stream::Stdout) {
             return false;
         }
 
         // Check for common terminal environment variables
-        let term = if let Some(xdg) = xdg_directories {
+        let term = if let Some(xdg) = tsk_config {
             xdg.terminal_type().map(|s| s.to_string())
         } else {
             std::env::var("TERM").ok()
@@ -161,13 +161,13 @@ mod tests {
 
     #[test]
     fn test_terminal_support_detection() {
-        use crate::storage::{XdgConfig, XdgDirectories};
+        use crate::context::tsk_config::{TskConfig, XdgConfig};
 
         // Test with xterm-256color terminal
         let xdg_config_xterm = XdgConfig::builder()
             .with_terminal_type(Some("xterm-256color".to_string()))
             .build();
-        let xdg_xterm = XdgDirectories::new(Some(xdg_config_xterm)).unwrap();
+        let xdg_xterm = TskConfig::new(Some(xdg_config_xterm)).unwrap();
         assert!(
             DefaultTerminalOperations::is_supported(Some(&xdg_xterm))
                 || !atty::is(atty::Stream::Stdout)
@@ -177,17 +177,16 @@ mod tests {
         let xdg_config_dumb = XdgConfig::builder()
             .with_terminal_type(Some("dumb".to_string()))
             .build();
-        let xdg_dumb = XdgDirectories::new(Some(xdg_config_dumb)).unwrap();
+        let xdg_dumb = TskConfig::new(Some(xdg_config_dumb)).unwrap();
         assert!(!DefaultTerminalOperations::is_supported(Some(&xdg_dumb)));
 
         // Test with no terminal type set
         let xdg_config_none = XdgConfig::builder().with_terminal_type(None).build();
-        let xdg_none = XdgDirectories::new(Some(xdg_config_none)).unwrap();
+        let xdg_none = TskConfig::new(Some(xdg_config_none)).unwrap();
         assert!(!DefaultTerminalOperations::is_supported(Some(&xdg_none)));
 
-        // Test terminal operations with XDG directories
-        let terminal_with_xdg =
-            DefaultTerminalOperations::with_xdg_directories(Arc::new(xdg_xterm));
+        // Test terminal operations with TSK configuration
+        let terminal_with_xdg = DefaultTerminalOperations::with_tsk_config(Arc::new(xdg_xterm));
         // Should not panic
         terminal_with_xdg.set_title("Test");
         terminal_with_xdg.restore_title();

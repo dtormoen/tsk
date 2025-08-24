@@ -3,14 +3,14 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum XdgError {
+pub enum TskConfigError {
     #[error("Failed to determine home directory")]
     NoHomeDirectory,
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
 
-/// Configuration for overriding XDG directory paths and environment settings
+/// Configuration for overriding TSK configuration paths and environment settings
 #[derive(Debug, Clone, Default)]
 pub struct XdgConfig {
     /// Override for data directory (XDG_DATA_HOME)
@@ -132,7 +132,7 @@ impl Default for XdgConfigBuilder {
 
 /// Provides access to XDG Base Directory compliant paths for TSK
 #[derive(Debug, Clone)]
-pub struct XdgDirectories {
+pub struct TskConfig {
     data_dir: PathBuf,
     runtime_dir: PathBuf,
     config_dir: PathBuf,
@@ -141,13 +141,13 @@ pub struct XdgDirectories {
     terminal_type: Option<String>,
 }
 
-impl XdgDirectories {
-    /// Create new XDG directories instance with optional configuration overrides
+impl TskConfig {
+    /// Create new TSK configuration instance with optional configuration overrides
     ///
     /// # Arguments
     /// * `config` - Optional configuration to override default XDG paths. If `None`,
     ///   environment variables and defaults will be used.
-    pub fn new(config: Option<XdgConfig>) -> Result<Self, XdgError> {
+    pub fn new(config: Option<XdgConfig>) -> Result<Self, TskConfigError> {
         let config = config.unwrap_or_default();
         let data_dir = Self::resolve_data_dir(&config)?;
         let runtime_dir = Self::resolve_runtime_dir(&config)?;
@@ -223,7 +223,7 @@ impl XdgDirectories {
     }
 
     /// Ensure all required directories exist
-    pub fn ensure_directories(&self) -> Result<(), XdgError> {
+    pub fn ensure_directories(&self) -> Result<(), TskConfigError> {
         std::fs::create_dir_all(&self.data_dir)?;
         std::fs::create_dir_all(self.data_dir.join("tasks"))?;
         std::fs::create_dir_all(&self.runtime_dir)?;
@@ -231,7 +231,7 @@ impl XdgDirectories {
         Ok(())
     }
 
-    fn resolve_data_dir(config: &XdgConfig) -> Result<PathBuf, XdgError> {
+    fn resolve_data_dir(config: &XdgConfig) -> Result<PathBuf, TskConfigError> {
         // Check config override first
         if let Some(ref data_dir) = config.data_dir {
             return Ok(data_dir.join("tsk"));
@@ -245,12 +245,12 @@ impl XdgDirectories {
         // Fall back to ~/.local/share/tsk
         let home = env::var("HOME")
             .or_else(|_| env::var("USERPROFILE"))
-            .map_err(|_| XdgError::NoHomeDirectory)?;
+            .map_err(|_| TskConfigError::NoHomeDirectory)?;
 
         Ok(PathBuf::from(home).join(".local").join("share").join("tsk"))
     }
 
-    fn resolve_runtime_dir(config: &XdgConfig) -> Result<PathBuf, XdgError> {
+    fn resolve_runtime_dir(config: &XdgConfig) -> Result<PathBuf, TskConfigError> {
         // Check config override first
         if let Some(ref runtime_dir) = config.runtime_dir {
             return Ok(runtime_dir.join("tsk"));
@@ -277,7 +277,7 @@ impl XdgDirectories {
         Ok(PathBuf::from("/tmp").join(format!("tsk-{uid}")))
     }
 
-    fn resolve_config_dir(config: &XdgConfig) -> Result<PathBuf, XdgError> {
+    fn resolve_config_dir(config: &XdgConfig) -> Result<PathBuf, TskConfigError> {
         // Check config override first
         if let Some(ref config_dir) = config.config_dir {
             return Ok(config_dir.join("tsk"));
@@ -291,12 +291,12 @@ impl XdgDirectories {
         // Fall back to ~/.config/tsk
         let home = env::var("HOME")
             .or_else(|_| env::var("USERPROFILE"))
-            .map_err(|_| XdgError::NoHomeDirectory)?;
+            .map_err(|_| TskConfigError::NoHomeDirectory)?;
 
         Ok(PathBuf::from(home).join(".config").join("tsk"))
     }
 
-    fn resolve_claude_config_dir(config: &XdgConfig) -> Result<PathBuf, XdgError> {
+    fn resolve_claude_config_dir(config: &XdgConfig) -> Result<PathBuf, TskConfigError> {
         // Check config override first
         if let Some(ref claude_config_dir) = config.claude_config_dir {
             return Ok(claude_config_dir.clone());
@@ -305,7 +305,7 @@ impl XdgDirectories {
         // Fall back to ~/.claude
         let home = env::var("HOME")
             .or_else(|_| env::var("USERPROFILE"))
-            .map_err(|_| XdgError::NoHomeDirectory)?;
+            .map_err(|_| TskConfigError::NoHomeDirectory)?;
 
         Ok(PathBuf::from(home).join(".claude"))
     }
@@ -336,14 +336,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_xdg_directories_with_config() {
+    fn test_tsk_config_with_config() {
         let config = XdgConfig::with_paths(
             PathBuf::from("/custom/data"),
             PathBuf::from("/custom/runtime"),
             PathBuf::from("/custom/config"),
         );
 
-        let dirs = XdgDirectories::new(Some(config)).expect("Failed to create XDG directories");
+        let dirs = TskConfig::new(Some(config)).expect("Failed to create TSK configuration");
 
         assert_eq!(dirs.data_dir(), Path::new("/custom/data/tsk"));
         assert_eq!(dirs.runtime_dir(), Path::new("/custom/runtime/tsk"));
@@ -364,9 +364,9 @@ mod tests {
     }
 
     #[test]
-    fn test_xdg_directories_fallback() {
+    fn test_tsk_config_fallback() {
         // Test that fallback paths work when no config is provided
-        let dirs = XdgDirectories::new(None).expect("Failed to create XDG directories");
+        let dirs = TskConfig::new(None).expect("Failed to create TSK configuration");
 
         // These paths depend on environment variables, so we just verify they contain "tsk"
         assert!(dirs.data_dir().to_string_lossy().contains("tsk"));
@@ -386,7 +386,7 @@ mod tests {
             terminal_type: None,
         };
 
-        let dirs = XdgDirectories::new(Some(config)).expect("Failed to create XDG directories");
+        let dirs = TskConfig::new(Some(config)).expect("Failed to create TSK configuration");
 
         assert_eq!(dirs.data_dir(), Path::new("/override/data/tsk"));
         assert_eq!(dirs.config_dir(), Path::new("/override/config/tsk"));
@@ -407,7 +407,7 @@ mod tests {
             terminal_type: None,
         };
 
-        let dirs = XdgDirectories::new(Some(config)).expect("Failed to create XDG directories");
+        let dirs = TskConfig::new(Some(config)).expect("Failed to create TSK configuration");
 
         // Config should be used as provided
         assert_eq!(dirs.data_dir(), Path::new("/config/data/tsk"));
@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn test_task_dir_generation() {
-        let dirs = XdgDirectories::new(None).expect("Failed to create XDG directories");
+        let dirs = TskConfig::new(None).expect("Failed to create TSK configuration");
         let task_dir = dirs.task_dir("task-123", "repo-abc");
 
         assert!(task_dir.to_string_lossy().contains("repo-abc-task-123"));
@@ -434,7 +434,7 @@ mod tests {
             .with_terminal_type(Some("xterm-256color".to_string()))
             .build();
 
-        let dirs = XdgDirectories::new(Some(config)).expect("Failed to create XDG directories");
+        let dirs = TskConfig::new(Some(config)).expect("Failed to create TSK configuration");
 
         assert_eq!(dirs.claude_config_dir(), Path::new("/test/.claude"));
         assert_eq!(dirs.editor(), "emacs");
@@ -448,7 +448,7 @@ mod tests {
             .with_terminal_type(None)
             .build();
 
-        let dirs = XdgDirectories::new(Some(config)).expect("Failed to create XDG directories");
+        let dirs = TskConfig::new(Some(config)).expect("Failed to create TSK configuration");
 
         assert_eq!(dirs.editor(), "nano");
         assert_eq!(dirs.terminal_type(), None);

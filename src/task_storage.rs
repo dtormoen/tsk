@@ -1,5 +1,5 @@
 use crate::context::file_system::FileSystemOperations;
-use crate::storage::XdgDirectories;
+use crate::context::tsk_config::TskConfig;
 use crate::task::{Task, TaskStatus};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -39,11 +39,8 @@ pub struct JsonTaskStorage {
 }
 
 impl JsonTaskStorage {
-    pub fn new(
-        xdg_directories: Arc<XdgDirectories>,
-        file_system: Arc<dyn FileSystemOperations>,
-    ) -> Self {
-        let file_path = xdg_directories.tasks_file();
+    pub fn new(tsk_config: Arc<TskConfig>, file_system: Arc<dyn FileSystemOperations>) -> Self {
+        let file_path = tsk_config.tasks_file();
 
         Self {
             file_path,
@@ -188,10 +185,10 @@ impl TaskStorage for JsonTaskStorage {
 
 // Factory function for getting task storage
 pub fn get_task_storage(
-    xdg_directories: Arc<XdgDirectories>,
+    tsk_config: Arc<TskConfig>,
     file_system: Arc<dyn FileSystemOperations>,
 ) -> Box<dyn TaskStorage> {
-    let storage = JsonTaskStorage::new(xdg_directories, file_system);
+    let storage = JsonTaskStorage::new(tsk_config, file_system);
     Box::new(storage)
 }
 
@@ -205,16 +202,16 @@ mod tests {
     #[tokio::test]
     async fn test_json_task_storage() {
         let ctx = AppContext::builder().build();
-        let xdg_directories = ctx.xdg_directories();
-        xdg_directories.ensure_directories().unwrap();
+        let tsk_config = ctx.tsk_config();
+        tsk_config.ensure_directories().unwrap();
 
         let file_system = Arc::new(DefaultFileSystem);
-        let storage = JsonTaskStorage::new(xdg_directories.clone(), file_system);
+        let storage = JsonTaskStorage::new(tsk_config.clone(), file_system);
 
         // Test adding a task
         let task = Task::new(
             "abcd1234".to_string(),
-            xdg_directories.data_dir().to_path_buf(),
+            tsk_config.data_dir().to_path_buf(),
             "test-task".to_string(),
             "feature".to_string(),
             "instructions.md".to_string(),
@@ -225,7 +222,7 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            xdg_directories.data_dir().to_path_buf(),
+            tsk_config.data_dir().to_path_buf(),
             false,
         );
 
@@ -256,7 +253,7 @@ mod tests {
         // Test deleting tasks by status
         let task1 = Task::new(
             "efgh5678".to_string(),
-            xdg_directories.data_dir().to_path_buf(),
+            tsk_config.data_dir().to_path_buf(),
             "task1".to_string(),
             "feature".to_string(),
             "instructions.md".to_string(),
@@ -267,12 +264,12 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            xdg_directories.data_dir().to_path_buf(),
+            tsk_config.data_dir().to_path_buf(),
             false,
         );
         let mut task2 = Task::new(
             "ijkl9012".to_string(),
-            xdg_directories.data_dir().to_path_buf(),
+            tsk_config.data_dir().to_path_buf(),
             "task2".to_string(),
             "bug-fix".to_string(),
             "instructions.md".to_string(),
@@ -283,13 +280,13 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            xdg_directories.data_dir().to_path_buf(),
+            tsk_config.data_dir().to_path_buf(),
             false,
         );
         task2.status = TaskStatus::Complete;
         let mut task3 = Task::new(
             "mnop3456".to_string(),
-            xdg_directories.data_dir().to_path_buf(),
+            tsk_config.data_dir().to_path_buf(),
             "task3".to_string(),
             "refactor".to_string(),
             "instructions.md".to_string(),
@@ -300,7 +297,7 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            xdg_directories.data_dir().to_path_buf(),
+            tsk_config.data_dir().to_path_buf(),
             false,
         );
         task3.status = TaskStatus::Failed;
