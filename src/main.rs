@@ -14,6 +14,7 @@ mod repository;
 mod server;
 mod storage;
 mod task;
+mod task_builder;
 mod task_manager;
 mod task_runner;
 mod task_storage;
