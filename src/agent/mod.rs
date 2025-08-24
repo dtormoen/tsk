@@ -19,6 +19,25 @@ pub trait Agent: Send + Sync {
     /// Returns the command to execute the agent with the given instruction file
     fn build_command(&self, instruction_path: &str) -> Vec<String>;
 
+    /// Returns the command for interactive debugging sessions
+    ///
+    /// This command should:
+    /// 1. Echo the normal command that would run non-interactively
+    /// 2. Provide an interactive shell or interface for the user
+    ///
+    /// The default implementation echoes the normal command and drops into bash.
+    fn build_interactive_command(&self, instruction_path: &str) -> Vec<String> {
+        let normal_command = self.build_command(instruction_path);
+        vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            format!(
+                "echo '=== Agent Command ==='; echo '{}'; echo '=== Starting Interactive Session ==='; exec /bin/bash",
+                normal_command.join(" ")
+            ),
+        ]
+    }
+
     /// Returns the volumes to mount for this agent
     /// Format: Vec<(host_path, container_path, options)> where options is like ":ro" for read-only
     fn volumes(&self) -> Vec<(String, String, String)>;
@@ -128,6 +147,14 @@ mod tests {
         assert_eq!(command[0], "sh");
         assert_eq!(command[1], "-c");
         assert!(command[2].contains("cat '/instructions/test.md'"));
+
+        // Test build_interactive_command (should use default implementation)
+        let interactive_command = agent.build_interactive_command("/instructions/test.md");
+        assert_eq!(interactive_command.len(), 3);
+        assert_eq!(interactive_command[0], "sh");
+        assert_eq!(interactive_command[1], "-c");
+        assert!(interactive_command[2].contains("=== Agent Command ==="));
+        assert!(interactive_command[2].contains("=== Starting Interactive Session ==="));
 
         // Test volumes
         let volumes = agent.volumes();

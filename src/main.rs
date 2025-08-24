@@ -150,9 +150,29 @@ enum Commands {
         #[arg(short, long)]
         name: String,
 
+        /// Task type (defaults to 'generic' if not specified)
+        #[arg(short = 't', long, default_value = "generic")]
+        r#type: String,
+
+        /// Detailed description of what needs to be accomplished
+        #[arg(short, long, conflicts_with = "prompt")]
+        description: Option<String>,
+
+        /// Path to prompt file to pass to the agent
+        #[arg(short, long, conflicts_with = "description")]
+        prompt: Option<String>,
+
+        /// Open the prompt file in $EDITOR after creation
+        #[arg(short, long)]
+        edit: bool,
+
         /// Specific agent to use (defaults to claude-code)
         #[arg(short, long)]
         agent: Option<String>,
+
+        /// Task timeout in minutes (0 for no timeout in debug mode)
+        #[arg(long, default_value = "0")]
+        timeout: u32,
 
         /// Technology stack for Docker image (e.g., rust, python, node)
         #[arg(long)]
@@ -326,13 +346,23 @@ async fn main() {
         }),
         Commands::Debug {
             name,
+            r#type,
+            description,
+            prompt,
+            edit,
             agent,
+            timeout,
             tech_stack,
             project,
             repo,
         } => Box::new(DebugCommand {
             name,
+            r#type,
+            description,
+            prompt,
+            edit,
             agent,
+            timeout,
             tech_stack,
             project,
             repo,

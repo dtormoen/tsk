@@ -40,7 +40,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `run`: Execute all queued tasks
 - `quick`: Immediately execute single tasks
 - `list`: Display task status and results
-- `debug`: Launch interactive containers for troubleshooting (uses unified task execution with no-op agent)
+- `debug`: Launch interactive containers for troubleshooting (accepts same arguments as `quick` but always runs interactively)
 - `clean`: Delete all completed tasks
 - `delete <task-id>`: Delete a specific task
 - `retry <task-id>`: Retry a previous task
@@ -104,6 +104,17 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `FileSystemOperations` trait abstracts all file system operations for testability
 - `GitOperations` trait abstracts all git operations for improved testability and separation of concerns
 - `TskConfig` provides TSK configuration and XDG-compliant directory paths for centralized storage
+
+**Agents** (`src/agent/`)
+- `Agent` trait defines the interface for AI agents that execute tasks
+  - `build_command()`: Returns the command to execute for normal task processing
+  - `build_interactive_command()`: Returns the command for interactive debugging sessions (shows instructions and normal command, then provides shell)
+  - `validate()`: Checks agent configuration (e.g., Claude credentials)
+  - `warmup()`: Performs pre-execution setup (e.g., refreshing OAuth tokens)
+- Available agents:
+  - `claude-code`: Claude Code AI agent (default)
+  - `no-op`: Simple agent for testing that displays instructions
+- Interactive debugging uses `build_interactive_command()` to show what would run normally before providing interactive access
 
 **Auto-Detection** (`src/repository.rs`)
 - Automatic detection of technology stack based on repository files:

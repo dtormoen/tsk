@@ -60,6 +60,28 @@ impl Agent for ClaudeCodeAgent {
         ]
     }
 
+    fn build_interactive_command(&self, instruction_path: &str) -> Vec<String> {
+        // Get just the filename from the instruction path
+        let filename = Path::new(instruction_path)
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or("instructions.md");
+
+        let normal_command = format!(
+            "cat /instructions/{} | claude -p --verbose --output-format stream-json --dangerously-skip-permissions",
+            filename
+        );
+
+        vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            format!(
+                r#"echo '=== Task Instructions ==='; cat /instructions/{}; echo; echo '=== Normal Command ==='; echo '{}'; echo; echo '=== Starting Interactive Claude Code Session ==='; echo 'You can now interact with Claude Code directly.'; echo 'Type "exit" or Ctrl+D to end the session.'; echo; exec /bin/bash"#,
+                filename, normal_command
+            ),
+        ]
+    }
+
     fn volumes(&self) -> Vec<(String, String, String)> {
         let claude_config_dir = self.get_claude_config_dir();
         let claude_json_path = claude_config_dir.with_extension("json");
@@ -207,6 +229,30 @@ mod tests {
         // Test with complex path
         let command = agent.build_command("/path/to/task/instructions.txt");
         assert!(command[2].contains("cat /instructions/instructions.txt"));
+    }
+
+    #[test]
+    fn test_claude_code_agent_build_interactive_command() {
+        let tsk_config = Arc::new(TskConfig::new(None).unwrap());
+        let agent = ClaudeCodeAgent::with_tsk_config(tsk_config);
+
+        // Test interactive command
+        let command = agent.build_interactive_command("/tmp/instructions.md");
+        assert_eq!(command.len(), 3);
+        assert_eq!(command[0], "sh");
+        assert_eq!(command[1], "-c");
+
+        // Check that it shows the instructions
+        assert!(command[2].contains("=== Task Instructions ==="));
+        assert!(command[2].contains("cat /instructions/instructions.md"));
+
+        // Check that it shows the normal command
+        assert!(command[2].contains("=== Normal Command ==="));
+        assert!(command[2].contains("claude -p --verbose --output-format stream-json"));
+
+        // Check that it starts an interactive session
+        assert!(command[2].contains("=== Starting Interactive Claude Code Session ==="));
+        assert!(command[2].contains("exec /bin/bash"));
     }
 
     #[tokio::test]
