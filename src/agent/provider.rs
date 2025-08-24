@@ -41,11 +41,13 @@ impl AgentProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::AppContext;
 
     #[test]
     fn test_agent_provider_get_agent() {
         // Test getting a valid agent
-        let tsk_config = Arc::new(TskConfig::new(None).unwrap());
+        let app_context = AppContext::builder().build();
+        let tsk_config = app_context.tsk_config();
         let agent = AgentProvider::get_agent("claude-code", tsk_config);
         assert!(agent.is_ok());
         let agent = agent.unwrap();
@@ -55,7 +57,8 @@ mod tests {
     #[test]
     fn test_agent_provider_get_invalid_agent() {
         // Test getting an invalid agent
-        let tsk_config = Arc::new(TskConfig::new(None).unwrap());
+        let app_context = AppContext::builder().build();
+        let tsk_config = app_context.tsk_config();
         let agent = AgentProvider::get_agent("invalid-agent", tsk_config);
         assert!(agent.is_err());
         let err = agent.err().unwrap();
@@ -84,7 +87,8 @@ mod tests {
     #[test]
     fn test_agent_provider_get_no_op_agent() {
         // Test getting the no-op agent
-        let tsk_config = Arc::new(TskConfig::new(None).unwrap());
+        let app_context = AppContext::builder().build();
+        let tsk_config = app_context.tsk_config();
         let agent = AgentProvider::get_agent("no-op", tsk_config);
         assert!(agent.is_ok());
         let agent = agent.unwrap();

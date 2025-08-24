@@ -241,6 +241,8 @@ mod tests {
             .with_data_dir(temp_dir.path().join("data"))
             .with_runtime_dir(temp_dir.path().join("runtime"))
             .with_config_dir(config_dir)
+            .with_git_user_name("Test User".to_string())
+            .with_git_user_email("test@example.com".to_string())
             .build();
         let tsk_config = TskConfig::new(Some(xdg_config)).unwrap();
 
@@ -368,6 +370,8 @@ mod tests {
             .with_data_dir(temp_dir.path().join("data"))
             .with_runtime_dir(temp_dir.path().join("runtime"))
             .with_config_dir(config_dir)
+            .with_git_user_name("Test User".to_string())
+            .with_git_user_email("test@example.com".to_string())
             .build();
         let tsk_config = TskConfig::new(Some(xdg_config)).unwrap();
 
@@ -428,6 +432,8 @@ mod tests {
             .with_data_dir(temp_dir.path().join("data"))
             .with_runtime_dir(temp_dir.path().join("runtime"))
             .with_config_dir(config_dir)
+            .with_git_user_name("Test User".to_string())
+            .with_git_user_email("test@example.com".to_string())
             .build();
         let tsk_config = TskConfig::new(Some(xdg_config)).unwrap();
 

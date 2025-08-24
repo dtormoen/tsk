@@ -623,7 +623,7 @@ impl DockerManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::tsk_config::TskConfig;
+    use crate::context::AppContext;
     use crate::test_utils::TrackedDockerClient;
 
     #[tokio::test]
@@ -633,7 +633,8 @@ mod tests {
 
         let worktree_path = Path::new("/tmp/test-worktree");
 
-        let tsk_config = Arc::new(TskConfig::new(None).unwrap());
+        let app_context = AppContext::builder().build();
+        let tsk_config = app_context.tsk_config();
         let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(tsk_config);
         let result = manager
             .run_task_container(
@@ -706,7 +707,8 @@ mod tests {
 
         let worktree_path = Path::new("/tmp/test-worktree");
 
-        let tsk_config = Arc::new(TskConfig::new(None).unwrap());
+        let app_context = AppContext::builder().build();
+        let tsk_config = app_context.tsk_config();
         let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(tsk_config);
         let result = manager
             .run_task_container(
@@ -742,7 +744,8 @@ mod tests {
 
         let worktree_path = Path::new("/tmp/test-worktree");
 
-        let tsk_config = Arc::new(TskConfig::new(None).unwrap());
+        let app_context = AppContext::builder().build();
+        let tsk_config = app_context.tsk_config();
         let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(tsk_config);
         let result = manager
             .run_task_container(
@@ -769,7 +772,8 @@ mod tests {
 
         let worktree_path = Path::new("/tmp/test-worktree");
 
-        let tsk_config = Arc::new(TskConfig::new(None).unwrap());
+        let app_context = AppContext::builder().build();
+        let tsk_config = app_context.tsk_config();
         let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(tsk_config);
         let _ = manager
             .run_task_container(
@@ -832,8 +836,9 @@ mod tests {
         let binds = host_config.binds.as_ref().unwrap();
         assert_eq!(binds.len(), 3);
         assert!(binds[0].contains(&format!("/tmp/test-worktree:{CONTAINER_WORKING_DIR}")));
-        assert!(binds[1].ends_with("/.claude:/home/agent/.claude"));
-        assert!(binds[2].ends_with("/.claude.json:/home/agent/.claude.json"));
+        // In test mode, .claude directory is in temp directory
+        assert!(binds[1].contains(":/home/agent/.claude"));
+        assert!(binds[2].contains(":/home/agent/.claude.json"));
 
         // Check proxy environment variables
         let env = config.env.as_ref().unwrap();
@@ -849,7 +854,8 @@ mod tests {
         let worktree_path = Path::new("/tmp/test-worktree");
         let instructions_path = PathBuf::from("/tmp/tsk-test/instructions.txt");
 
-        let tsk_config = Arc::new(TskConfig::new(None).unwrap());
+        let app_context = AppContext::builder().build();
+        let tsk_config = app_context.tsk_config();
         let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(tsk_config);
         let result = manager
             .run_task_container(
@@ -977,7 +983,8 @@ mod tests {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let absolute_path = temp_dir.path().join("test-worktree");
 
-        let tsk_config = Arc::new(TskConfig::new(None).unwrap());
+        let app_context = AppContext::builder().build();
+        let tsk_config = app_context.tsk_config();
         let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(tsk_config);
         let result = manager
             .run_task_container(
@@ -1007,7 +1014,8 @@ mod tests {
 
         // Should also have the claude directory and claude.json mounts
         assert_eq!(binds.len(), 3);
-        assert!(binds[1].ends_with("/.claude:/home/agent/.claude"));
-        assert!(binds[2].ends_with("/.claude.json:/home/agent/.claude.json"));
+        // In test mode, .claude directory is in temp directory
+        assert!(binds[1].contains(":/home/agent/.claude"));
+        assert!(binds[2].contains(":/home/agent/.claude.json"));
     }
 }

@@ -1,5 +1,6 @@
 use std::env;
 use std::path::{Path, PathBuf};
+#[cfg(not(test))]
 use std::process::Command;
 use thiserror::Error;
 
@@ -396,33 +397,50 @@ impl TskConfig {
 
 /// Get git configuration value
 fn get_git_config(key: &str) -> Result<String, TskConfigError> {
-    let output = Command::new("git")
-        .args(["config", "--global", key])
-        .output()
-        .map_err(|e| TskConfigError::GitConfig(format!("Failed to execute git config: {}", e)))?;
-
-    if !output.status.success() {
-        return Err(TskConfigError::GitConfig(format!(
-            "Git config '{}' not set. Please configure git with your name and email:\n\
-             git config --global user.name \"Your Name\"\n\
-             git config --global user.email \"your.email@example.com\"",
+    #[cfg(test)]
+    {
+        Err(TskConfigError::GitConfig(format!(
+            "Git config '{}' should not be accessed directly in tests. \
+             Use AppContext::builder().build() to create a correct test context with tsk_config. \
+             The test AppContext automatically sets git user.name and user.email.",
             key
-        )));
+        )))
     }
 
-    let value = String::from_utf8(output.stdout)
-        .map_err(|_| TskConfigError::GitConfig("Git config output is not valid UTF-8".to_string()))?
-        .trim()
-        .to_string();
+    #[cfg(not(test))]
+    {
+        let output = Command::new("git")
+            .args(["config", "--global", key])
+            .output()
+            .map_err(|e| {
+                TskConfigError::GitConfig(format!("Failed to execute git config: {}", e))
+            })?;
 
-    if value.is_empty() {
-        return Err(TskConfigError::GitConfig(format!(
-            "Git config '{}' is empty. Please configure git with your name and email.",
-            key
-        )));
+        if !output.status.success() {
+            return Err(TskConfigError::GitConfig(format!(
+                "Git config '{}' not set. Please configure git with your name and email:\n\
+                 git config --global user.name \"Your Name\"\n\
+                 git config --global user.email \"your.email@example.com\"",
+                key
+            )));
+        }
+
+        let value = String::from_utf8(output.stdout)
+            .map_err(|_| {
+                TskConfigError::GitConfig("Git config output is not valid UTF-8".to_string())
+            })?
+            .trim()
+            .to_string();
+
+        if value.is_empty() {
+            return Err(TskConfigError::GitConfig(format!(
+                "Git config '{}' is empty. Please configure git with your name and email.",
+                key
+            )));
+        }
+
+        Ok(value)
     }
-
-    Ok(value)
 }
 
 #[cfg(test)]
@@ -431,11 +449,13 @@ mod tests {
 
     #[test]
     fn test_tsk_config_with_config() {
-        let config = XdgConfig::with_paths(
-            PathBuf::from("/custom/data"),
-            PathBuf::from("/custom/runtime"),
-            PathBuf::from("/custom/config"),
-        );
+        let config = XdgConfig::builder()
+            .with_data_dir(PathBuf::from("/custom/data"))
+            .with_runtime_dir(PathBuf::from("/custom/runtime"))
+            .with_config_dir(PathBuf::from("/custom/config"))
+            .with_git_user_name("Test User".to_string())
+            .with_git_user_email("test@example.com".to_string())
+            .build();
 
         let dirs = TskConfig::new(Some(config)).expect("Failed to create TSK configuration");
 
@@ -460,7 +480,12 @@ mod tests {
     #[test]
     fn test_tsk_config_fallback() {
         // Test that fallback paths work when no config is provided
-        let dirs = TskConfig::new(None).expect("Failed to create TSK configuration");
+        // In tests, we need to provide git config
+        let config = XdgConfig::builder()
+            .with_git_user_name("Test User".to_string())
+            .with_git_user_email("test@example.com".to_string())
+            .build();
+        let dirs = TskConfig::new(Some(config)).expect("Failed to create TSK configuration");
 
         // These paths depend on environment variables, so we just verify they contain "tsk"
         assert!(dirs.data_dir().to_string_lossy().contains("tsk"));
@@ -478,8 +503,8 @@ mod tests {
             claude_config_dir: None,
             editor: None,
             terminal_type: None,
-            git_user_name: None,
-            git_user_email: None,
+            git_user_name: Some("Test User".to_string()),
+            git_user_email: Some("test@example.com".to_string()),
         };
 
         let dirs = TskConfig::new(Some(config)).expect("Failed to create TSK configuration");
@@ -501,8 +526,8 @@ mod tests {
             claude_config_dir: None,
             editor: None,
             terminal_type: None,
-            git_user_name: None,
-            git_user_email: None,
+            git_user_name: Some("Test User".to_string()),
+            git_user_email: Some("test@example.com".to_string()),
         };
 
         let dirs = TskConfig::new(Some(config)).expect("Failed to create TSK configuration");
@@ -518,7 +543,11 @@ mod tests {
 
     #[test]
     fn test_task_dir_generation() {
-        let dirs = TskConfig::new(None).expect("Failed to create TSK configuration");
+        let config = XdgConfig::builder()
+            .with_git_user_name("Test User".to_string())
+            .with_git_user_email("test@example.com".to_string())
+            .build();
+        let dirs = TskConfig::new(Some(config)).expect("Failed to create TSK configuration");
         let task_dir = dirs.task_dir("task-123", "repo-abc");
 
         assert!(task_dir.to_string_lossy().contains("repo-abc-task-123"));
@@ -530,6 +559,8 @@ mod tests {
             .with_claude_config_dir(PathBuf::from("/test/.claude"))
             .with_editor("emacs".to_string())
             .with_terminal_type(Some("xterm-256color".to_string()))
+            .with_git_user_name("Test User".to_string())
+            .with_git_user_email("test@example.com".to_string())
             .build();
 
         let dirs = TskConfig::new(Some(config)).expect("Failed to create TSK configuration");
@@ -544,6 +575,8 @@ mod tests {
         let config = XdgConfig::builder()
             .with_editor("nano".to_string())
             .with_terminal_type(None)
+            .with_git_user_name("Test User".to_string())
+            .with_git_user_email("test@example.com".to_string())
             .build();
 
         let dirs = TskConfig::new(Some(config)).expect("Failed to create TSK configuration");

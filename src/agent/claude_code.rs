@@ -183,10 +183,12 @@ impl Agent for ClaudeCodeAgent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::AppContext;
 
     #[test]
     fn test_claude_code_agent_properties() {
-        let tsk_config = Arc::new(TskConfig::new(None).unwrap());
+        let app_context = AppContext::builder().build();
+        let tsk_config = app_context.tsk_config();
         let agent = ClaudeCodeAgent::with_tsk_config(tsk_config);
 
         // Test name
@@ -215,7 +217,8 @@ mod tests {
 
     #[test]
     fn test_claude_code_agent_build_command() {
-        let tsk_config = Arc::new(TskConfig::new(None).unwrap());
+        let app_context = AppContext::builder().build();
+        let tsk_config = app_context.tsk_config();
         let agent = ClaudeCodeAgent::with_tsk_config(tsk_config);
 
         // Test with full path
@@ -233,7 +236,8 @@ mod tests {
 
     #[test]
     fn test_claude_code_agent_build_interactive_command() {
-        let tsk_config = Arc::new(TskConfig::new(None).unwrap());
+        let app_context = AppContext::builder().build();
+        let tsk_config = app_context.tsk_config();
         let agent = ClaudeCodeAgent::with_tsk_config(tsk_config);
 
         // Test interactive command
@@ -259,11 +263,8 @@ mod tests {
     async fn test_claude_code_agent_validate_without_config() {
         // In test mode, validation is skipped so this test just verifies
         // that validate() returns Ok in test environments
-        let temp_dir = tempfile::tempdir().unwrap();
-        let xdg_config = crate::context::tsk_config::XdgConfig::builder()
-            .with_claude_config_dir(temp_dir.path().join(".claude"))
-            .build();
-        let tsk_config = Arc::new(TskConfig::new(Some(xdg_config)).unwrap());
+        let app_context = AppContext::builder().build();
+        let tsk_config = app_context.tsk_config();
         let agent = ClaudeCodeAgent::with_tsk_config(tsk_config);
         let result = agent.validate().await;
 
@@ -273,7 +274,8 @@ mod tests {
 
     #[test]
     fn test_claude_code_agent_create_log_processor() {
-        let tsk_config = Arc::new(TskConfig::new(None).unwrap());
+        let app_context = AppContext::builder().build();
+        let tsk_config = app_context.tsk_config();
         let agent = ClaudeCodeAgent::with_tsk_config(tsk_config);
 
         let log_processor = agent.create_log_processor();
@@ -286,6 +288,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let xdg_config = crate::context::tsk_config::XdgConfig::builder()
             .with_claude_config_dir(temp_dir.path().join(".claude"))
+            .with_git_user_name("Test User".to_string())
+            .with_git_user_email("test@example.com".to_string())
             .build();
         let tsk_config = Arc::new(TskConfig::new(Some(xdg_config)).unwrap());
         let agent_with_config = ClaudeCodeAgent::with_tsk_config(tsk_config);

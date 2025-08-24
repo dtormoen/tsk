@@ -552,13 +552,16 @@ mod tests {
         .unwrap();
 
         // Create asset manager with the project layer
+        // Use AppContext to get test-safe TskConfig
+        let app_context = crate::context::AppContext::builder().build();
+        let tsk_config = app_context.tsk_config();
+
         let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
             Some(&project_root),
-            &TskConfig::new(None).unwrap(),
+            &tsk_config,
         ));
 
-        let manager =
-            DockerTemplateManager::new(asset_manager, Arc::new(TskConfig::new(None).unwrap()));
+        let manager = DockerTemplateManager::new(asset_manager, tsk_config);
 
         let project_layer = DockerLayer {
             layer_type: DockerLayerType::Project,

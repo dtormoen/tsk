@@ -166,6 +166,8 @@ mod tests {
         // Test with xterm-256color terminal
         let xdg_config_xterm = XdgConfig::builder()
             .with_terminal_type(Some("xterm-256color".to_string()))
+            .with_git_user_name("Test User".to_string())
+            .with_git_user_email("test@example.com".to_string())
             .build();
         let config_xterm = TskConfig::new(Some(xdg_config_xterm)).unwrap();
         assert!(
@@ -176,12 +178,18 @@ mod tests {
         // Test with dumb terminal
         let xdg_config_dumb = XdgConfig::builder()
             .with_terminal_type(Some("dumb".to_string()))
+            .with_git_user_name("Test User".to_string())
+            .with_git_user_email("test@example.com".to_string())
             .build();
         let config_dumb = TskConfig::new(Some(xdg_config_dumb)).unwrap();
         assert!(!DefaultTerminalOperations::is_supported(Some(&config_dumb)));
 
         // Test with no terminal type set
-        let xdg_config_none = XdgConfig::builder().with_terminal_type(None).build();
+        let xdg_config_none = XdgConfig::builder()
+            .with_terminal_type(None)
+            .with_git_user_name("Test User".to_string())
+            .with_git_user_email("test@example.com".to_string())
+            .build();
         let config_none = TskConfig::new(Some(xdg_config_none)).unwrap();
         assert!(!DefaultTerminalOperations::is_supported(Some(&config_none)));
 
