@@ -87,8 +87,12 @@ impl Command for DockerBuildCommand {
         let template_manager = DockerTemplateManager::new(asset_manager.clone(), ctx.tsk_config());
         let composer =
             DockerComposer::new(DockerTemplateManager::new(asset_manager, ctx.tsk_config()));
-        let image_manager =
-            DockerImageManager::new(ctx.docker_client(), template_manager, composer);
+        let image_manager = DockerImageManager::new(
+            ctx.docker_client(),
+            template_manager,
+            composer,
+            ctx.tsk_config(),
+        );
 
         // Build the main image (with dry_run flag)
         let image = image_manager

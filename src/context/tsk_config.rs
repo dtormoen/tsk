@@ -1,5 +1,6 @@
 use std::env;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -8,6 +9,8 @@ pub enum TskConfigError {
     NoHomeDirectory,
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Git configuration error: {0}")]
+    GitConfig(String),
 }
 
 /// Configuration for overriding TSK configuration paths and environment settings
@@ -25,6 +28,10 @@ pub struct XdgConfig {
     pub editor: Option<String>,
     /// Override for terminal type (from $TERM)
     pub terminal_type: Option<Option<String>>,
+    /// Override for git user.name (defaults to git config --global user.name)
+    pub git_user_name: Option<String>,
+    /// Override for git user.email (defaults to git config --global user.email)
+    pub git_user_email: Option<String>,
 }
 
 impl XdgConfig {
@@ -40,6 +47,8 @@ impl XdgConfig {
             claude_config_dir: None,
             editor: None,
             terminal_type: None,
+            git_user_name: None,
+            git_user_email: None,
         }
     }
 
@@ -59,6 +68,8 @@ pub struct XdgConfigBuilder {
     claude_config_dir: Option<PathBuf>,
     editor: Option<String>,
     terminal_type: Option<Option<String>>,
+    git_user_name: Option<String>,
+    git_user_email: Option<String>,
 }
 
 #[allow(dead_code)] // Used in tests for creating custom configs  
@@ -72,6 +83,8 @@ impl XdgConfigBuilder {
             claude_config_dir: None,
             editor: None,
             terminal_type: None,
+            git_user_name: None,
+            git_user_email: None,
         }
     }
 
@@ -111,6 +124,18 @@ impl XdgConfigBuilder {
         self
     }
 
+    /// Sets the git user name
+    pub fn with_git_user_name(mut self, name: String) -> Self {
+        self.git_user_name = Some(name);
+        self
+    }
+
+    /// Sets the git user email
+    pub fn with_git_user_email(mut self, email: String) -> Self {
+        self.git_user_email = Some(email);
+        self
+    }
+
     /// Builds the XdgConfig instance
     pub fn build(self) -> XdgConfig {
         XdgConfig {
@@ -120,6 +145,8 @@ impl XdgConfigBuilder {
             claude_config_dir: self.claude_config_dir,
             editor: self.editor,
             terminal_type: self.terminal_type,
+            git_user_name: self.git_user_name,
+            git_user_email: self.git_user_email,
         }
     }
 }
@@ -139,6 +166,8 @@ pub struct TskConfig {
     claude_config_dir: PathBuf,
     editor: String,
     terminal_type: Option<String>,
+    git_user_name: String,
+    git_user_email: String,
 }
 
 impl TskConfig {
@@ -155,6 +184,8 @@ impl TskConfig {
         let claude_config_dir = Self::resolve_claude_config_dir(&config)?;
         let editor = Self::resolve_editor(&config);
         let terminal_type = Self::resolve_terminal_type(&config);
+        let git_user_name = Self::resolve_git_user_name(&config)?;
+        let git_user_email = Self::resolve_git_user_email(&config)?;
 
         Ok(Self {
             data_dir,
@@ -163,6 +194,8 @@ impl TskConfig {
             claude_config_dir,
             editor,
             terminal_type,
+            git_user_name,
+            git_user_email,
         })
     }
 
@@ -198,6 +231,16 @@ impl TskConfig {
     /// Gets the terminal type if set
     pub fn terminal_type(&self) -> Option<&str> {
         self.terminal_type.as_deref()
+    }
+
+    /// Gets the git user name for Docker builds
+    pub fn git_user_name(&self) -> &str {
+        &self.git_user_name
+    }
+
+    /// Gets the git user email for Docker builds
+    pub fn git_user_email(&self) -> &str {
+        &self.git_user_email
     }
 
     /// Get the path to the tasks.json file
@@ -329,6 +372,57 @@ impl TskConfig {
         // Check TERM environment variable
         env::var("TERM").ok()
     }
+
+    fn resolve_git_user_name(config: &XdgConfig) -> Result<String, TskConfigError> {
+        // Check config override first
+        if let Some(ref name) = config.git_user_name {
+            return Ok(name.clone());
+        }
+
+        // Fall back to git config
+        get_git_config("user.name")
+    }
+
+    fn resolve_git_user_email(config: &XdgConfig) -> Result<String, TskConfigError> {
+        // Check config override first
+        if let Some(ref email) = config.git_user_email {
+            return Ok(email.clone());
+        }
+
+        // Fall back to git config
+        get_git_config("user.email")
+    }
+}
+
+/// Get git configuration value
+fn get_git_config(key: &str) -> Result<String, TskConfigError> {
+    let output = Command::new("git")
+        .args(["config", "--global", key])
+        .output()
+        .map_err(|e| TskConfigError::GitConfig(format!("Failed to execute git config: {}", e)))?;
+
+    if !output.status.success() {
+        return Err(TskConfigError::GitConfig(format!(
+            "Git config '{}' not set. Please configure git with your name and email:\n\
+             git config --global user.name \"Your Name\"\n\
+             git config --global user.email \"your.email@example.com\"",
+            key
+        )));
+    }
+
+    let value = String::from_utf8(output.stdout)
+        .map_err(|_| TskConfigError::GitConfig("Git config output is not valid UTF-8".to_string()))?
+        .trim()
+        .to_string();
+
+    if value.is_empty() {
+        return Err(TskConfigError::GitConfig(format!(
+            "Git config '{}' is empty. Please configure git with your name and email.",
+            key
+        )));
+    }
+
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -384,6 +478,8 @@ mod tests {
             claude_config_dir: None,
             editor: None,
             terminal_type: None,
+            git_user_name: None,
+            git_user_email: None,
         };
 
         let dirs = TskConfig::new(Some(config)).expect("Failed to create TSK configuration");
@@ -405,6 +501,8 @@ mod tests {
             claude_config_dir: None,
             editor: None,
             terminal_type: None,
+            git_user_name: None,
+            git_user_email: None,
         };
 
         let dirs = TskConfig::new(Some(config)).expect("Failed to create TSK configuration");
@@ -458,5 +556,39 @@ mod tests {
                 .to_string_lossy()
                 .contains(".claude")
         );
+    }
+
+    #[test]
+    fn test_git_configuration_overrides() {
+        let config = XdgConfig::builder()
+            .with_git_user_name("Override User".to_string())
+            .with_git_user_email("override@example.com".to_string())
+            .build();
+
+        let dirs = TskConfig::new(Some(config)).expect("Failed to create TSK configuration");
+
+        assert_eq!(dirs.git_user_name(), "Override User");
+        assert_eq!(dirs.git_user_email(), "override@example.com");
+    }
+
+    #[test]
+    fn test_git_configuration_partial_override() {
+        // Test that we can override just the name and git email will fall back to git config
+        let config = XdgConfig::builder()
+            .with_git_user_name("Partial Override".to_string())
+            .build();
+
+        // This test may fail if git is not configured on the system
+        match TskConfig::new(Some(config)) {
+            Ok(dirs) => {
+                assert_eq!(dirs.git_user_name(), "Partial Override");
+                // git_user_email will be from git config or will cause error
+                assert!(!dirs.git_user_email().is_empty());
+            }
+            Err(e) => {
+                // Expected if git user.email is not configured
+                assert!(e.to_string().contains("Git config"));
+            }
+        }
     }
 }

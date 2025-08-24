@@ -148,8 +148,12 @@ impl TaskRunner {
                 asset_manager,
                 self.tsk_config.clone(),
             ));
-            let task_image_manager =
-                DockerImageManager::new(self.docker_client.clone(), template_manager, composer);
+            let task_image_manager = DockerImageManager::new(
+                self.docker_client.clone(),
+                template_manager,
+                composer,
+                self.tsk_config.clone(),
+            );
 
             // Ensure the proxy image exists first
             task_image_manager

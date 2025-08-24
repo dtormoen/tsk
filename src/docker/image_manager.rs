@@ -7,9 +7,9 @@
 use anyhow::{Context, Result};
 use bollard::image::BuildImageOptions;
 use std::sync::Arc;
-use tokio::process::Command as ProcessCommand;
 
 use crate::context::docker_client::DockerClient;
+use crate::context::tsk_config::TskConfig;
 use crate::docker::composer::{ComposedDockerfile, DockerComposer};
 use crate::docker::layers::{DockerImageConfig, DockerLayerType};
 use crate::docker::template_manager::DockerTemplateManager;
@@ -28,6 +28,7 @@ pub struct DockerImageManager {
     docker_client: Arc<dyn DockerClient>,
     template_manager: DockerTemplateManager,
     composer: DockerComposer,
+    tsk_config: Arc<TskConfig>,
 }
 
 impl DockerImageManager {
@@ -36,11 +37,13 @@ impl DockerImageManager {
         docker_client: Arc<dyn DockerClient>,
         template_manager: DockerTemplateManager,
         composer: DockerComposer,
+        tsk_config: Arc<TskConfig>,
     ) -> Self {
         Self {
             docker_client,
             template_manager,
             composer,
+            tsk_config,
         }
     }
 
@@ -253,19 +256,15 @@ impl DockerImageManager {
             }
         } else {
             // Normal mode: build the image
-            // Get git configuration for build arguments
-            let git_user_name = get_git_config("user.name")
-                .await
-                .context("Failed to get git user.name")?;
-            let git_user_email = get_git_config("user.email")
-                .await
-                .context("Failed to get git user.email")?;
+            // Get git configuration from TskConfig
+            let git_user_name = self.tsk_config.git_user_name();
+            let git_user_email = self.tsk_config.git_user_email();
 
             // Build the image
             self.build_docker_image(
                 &composed,
-                &git_user_name,
-                &git_user_email,
+                git_user_name,
+                git_user_email,
                 no_cache,
                 build_root,
             )
@@ -503,36 +502,6 @@ impl DockerImageManager {
     }
 }
 
-/// Get git configuration value
-async fn get_git_config(key: &str) -> Result<String> {
-    let output = ProcessCommand::new("git")
-        .args(["config", "--global", key])
-        .output()
-        .await
-        .with_context(|| format!("Failed to execute git config for {key}"))?;
-
-    if !output.status.success() {
-        return Err(anyhow::anyhow!(
-            "Git config '{key}' not set. Please configure git with your name and email:\n\
-             git config --global user.name \"Your Name\"\n\
-             git config --global user.email \"your.email@example.com\""
-        ));
-    }
-
-    let value = String::from_utf8(output.stdout)
-        .context("Git config output is not valid UTF-8")?
-        .trim()
-        .to_string();
-
-    if value.is_empty() {
-        return Err(anyhow::anyhow!(
-            "Git config '{key}' is empty. Please configure git with your name and email."
-        ));
-    }
-
-    Ok(value)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -552,10 +521,10 @@ mod tests {
 
         let composer = DockerComposer::new(DockerTemplateManager::new(
             Arc::new(EmbeddedAssetManager),
-            xdg_dirs,
+            xdg_dirs.clone(),
         ));
 
-        DockerImageManager::new(docker_client, template_manager, composer)
+        DockerImageManager::new(docker_client, template_manager, composer, xdg_dirs)
     }
 
     #[test]
@@ -656,10 +625,11 @@ mod tests {
             DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), xdg_dirs.clone());
         let composer = DockerComposer::new(DockerTemplateManager::new(
             Arc::new(EmbeddedAssetManager),
-            xdg_dirs,
+            xdg_dirs.clone(),
         ));
 
-        let manager = DockerImageManager::new(docker_client.clone(), template_manager, composer);
+        let manager =
+            DockerImageManager::new(docker_client.clone(), template_manager, composer, xdg_dirs);
 
         // Note: This test won't actually build in test mode due to cfg!(test) check
         // but it validates the logic flow
