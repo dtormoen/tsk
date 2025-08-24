@@ -142,10 +142,10 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Use `TestGitRepository` from `test_utils::git_test_utils` for tests requiring git repositories
 - Tests should use temporary directories that are automatically cleaned up
 - Make tests thread safe so they can be run in parallel
-- Use `Config` overrides instead of unsafe `env::set_var` for environment variable testing
-  - Create test configs with `Config::builder()` for custom environment values
-  - Pass config through `AppContext::builder().with_config()` when needed
-- Keep tests simple and concise while still testing core functionality
+- Always use `AppContext::builder()` for test setup rather than creating objects contained in the `AppContext` directly
+  - Exception: Tests in `src/context/*` that are directly testing XdgConfig or TskConfig functionality
+  - `AppContext::builder().build()` automatically sets up test-safe temporary directories and configurations
+- Keep tests simple and concise while still testing core functionality. Improving existing tests is always prefered over adding new ones
 - Avoid using `#[allow(dead_code)]`
 - Limit `#[cfg(test)]` to tests and test utilities
 

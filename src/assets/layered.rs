@@ -227,11 +227,14 @@ mod tests {
 
     #[test]
     fn test_layered_template_resolution_priority() {
-        use crate::context::tsk_config::{TskConfig, XdgConfig};
+        use crate::context::AppContext;
 
-        let temp_dir = TempDir::new().unwrap();
-        let project_dir = temp_dir.path().join("project");
-        let config_dir = temp_dir.path().join("config");
+        // Create app context which sets up test directories automatically
+        let ctx = AppContext::builder().build();
+        let tsk_config = ctx.tsk_config();
+
+        // Use the data dir from AppContext for the project directory
+        let project_dir = tsk_config.data_dir().parent().unwrap().join("project");
 
         // Create project templates
         let project_tsk = project_dir.join(".tsk");
@@ -243,22 +246,12 @@ mod tests {
             ],
         );
 
-        // Create user templates
-        let user_tsk = config_dir.join("tsk");
+        // Create user templates in the TSK config directory
+        let user_tsk = tsk_config.config_dir();
         create_templates(
-            &user_tsk,
+            user_tsk,
             &[("feat", "User feat template"), ("doc", "User doc template")],
         );
-
-        // Create app context with custom config directory
-        let xdg_config = XdgConfig::builder()
-            .with_data_dir(temp_dir.path().join("data"))
-            .with_runtime_dir(temp_dir.path().join("runtime"))
-            .with_config_dir(config_dir)
-            .with_git_user_name("Test User".to_string())
-            .with_git_user_email("test@example.com".to_string())
-            .build();
-        let tsk_config = TskConfig::new(Some(xdg_config)).unwrap();
 
         let manager =
             LayeredAssetManager::new_with_standard_layers(Some(&project_dir), &tsk_config);
@@ -348,27 +341,20 @@ mod tests {
 
     #[test]
     fn test_template_listing_deduplication() {
-        use crate::context::tsk_config::{TskConfig, XdgConfig};
+        use crate::context::AppContext;
 
-        let temp_dir = TempDir::new().unwrap();
-        let project_dir = temp_dir.path().join("project");
-        let config_dir = temp_dir.path().join("config");
+        // Create app context which sets up test directories automatically
+        let ctx = AppContext::builder().build();
+        let tsk_config = ctx.tsk_config();
+
+        let project_dir = tsk_config.data_dir().parent().unwrap().join("project");
 
         // Create project and user templates with overlap
         create_templates(&project_dir.join(".tsk"), &[("feat", "Project feat")]);
         create_templates(
-            &config_dir.join("tsk"),
+            tsk_config.config_dir(),
             &[("feat", "User feat"), ("custom", "User custom")],
         );
-
-        let xdg_config = XdgConfig::builder()
-            .with_data_dir(temp_dir.path().join("data"))
-            .with_runtime_dir(temp_dir.path().join("runtime"))
-            .with_config_dir(config_dir)
-            .with_git_user_name("Test User".to_string())
-            .with_git_user_email("test@example.com".to_string())
-            .build();
-        let tsk_config = TskConfig::new(Some(xdg_config)).unwrap();
 
         let manager =
             LayeredAssetManager::new_with_standard_layers(Some(&project_dir), &tsk_config);
@@ -382,11 +368,13 @@ mod tests {
 
     #[test]
     fn test_dockerfile_layering() {
-        use crate::context::tsk_config::{TskConfig, XdgConfig};
+        use crate::context::AppContext;
 
-        let temp_dir = TempDir::new().unwrap();
-        let project_dir = temp_dir.path().join("project");
-        let config_dir = temp_dir.path().join("config");
+        // Create app context which sets up test directories automatically
+        let ctx = AppContext::builder().build();
+        let tsk_config = ctx.tsk_config();
+
+        let project_dir = tsk_config.data_dir().parent().unwrap().join("project");
 
         // Create project dockerfiles
         create_dockerfiles(
@@ -396,21 +384,12 @@ mod tests {
 
         // Create user dockerfiles
         create_dockerfiles(
-            &config_dir.join("tsk"),
+            tsk_config.config_dir(),
             &[
                 ("project/myapp", "FROM ubuntu:user\n"),
                 ("project/otherapp", "FROM ubuntu:user-only\n"),
             ],
         );
-
-        let xdg_config = XdgConfig::builder()
-            .with_data_dir(temp_dir.path().join("data"))
-            .with_runtime_dir(temp_dir.path().join("runtime"))
-            .with_config_dir(config_dir)
-            .with_git_user_name("Test User".to_string())
-            .with_git_user_email("test@example.com".to_string())
-            .build();
-        let tsk_config = TskConfig::new(Some(xdg_config)).unwrap();
 
         let manager =
             LayeredAssetManager::new_with_standard_layers(Some(&project_dir), &tsk_config);

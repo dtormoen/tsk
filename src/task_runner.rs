@@ -218,7 +218,6 @@ mod tests {
     use super::*;
     use crate::task::{Task, TaskStatus};
     use crate::test_utils::git_test_utils::TestGitRepository;
-    use std::sync::Arc;
 
     #[tokio::test]
     #[ignore = "Test requires Docker to be available for image building"]
@@ -237,31 +236,16 @@ mod tests {
         test_repo.stage_all().unwrap();
         test_repo.commit("Add test files").unwrap();
 
-        // Set up a temporary home directory with a mock .claude.json file
-        let temp_home = tempfile::tempdir().unwrap();
-        let claude_dir = temp_home.path().join(".claude");
-        let claude_json_path = temp_home.path().join(".claude.json");
+        // Create AppContext which automatically sets up test directories
+        let ctx = AppContext::builder().build();
+        let tsk_config = ctx.tsk_config();
+
+        // Set up a mock .claude.json file in the test claude directory
+        let claude_json_path = tsk_config
+            .claude_config_dir()
+            .join("..")
+            .join(".claude.json");
         std::fs::write(&claude_json_path, "{}").unwrap();
-
-        // Create XDG config with the test claude directory
-        use crate::context::tsk_config::XdgConfig;
-
-        // Create test TSK configuration with claude config
-        let temp_xdg = tempfile::tempdir().unwrap();
-        let xdg_config = XdgConfig::builder()
-            .with_data_dir(temp_xdg.path().join("xdg-data"))
-            .with_runtime_dir(temp_xdg.path().join("xdg-runtime"))
-            .with_config_dir(temp_xdg.path().join("xdg-config"))
-            .with_claude_config_dir(claude_dir)
-            .build();
-        let tsk_config =
-            Arc::new(crate::context::tsk_config::TskConfig::new(Some(xdg_config)).unwrap());
-        tsk_config.ensure_directories().unwrap();
-
-        // Create AppContext with special claude config
-        let ctx = AppContext::builder()
-            .with_tsk_config(tsk_config.clone())
-            .build();
 
         let task_runner = TaskRunner::new(&ctx);
 

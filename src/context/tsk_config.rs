@@ -543,11 +543,10 @@ mod tests {
 
     #[test]
     fn test_task_dir_generation() {
-        let config = XdgConfig::builder()
-            .with_git_user_name("Test User".to_string())
-            .with_git_user_email("test@example.com".to_string())
-            .build();
-        let dirs = TskConfig::new(Some(config)).expect("Failed to create TSK configuration");
+        use crate::context::AppContext;
+
+        let ctx = AppContext::builder().build();
+        let dirs = ctx.tsk_config();
         let task_dir = dirs.task_dir("task-123", "repo-abc");
 
         assert!(task_dir.to_string_lossy().contains("repo-abc-task-123"));

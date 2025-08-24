@@ -284,15 +284,10 @@ mod tests {
         // The actual log processor functionality is tested elsewhere
         let _ = log_processor.get_full_log();
 
-        // Also test with custom config
-        let temp_dir = tempfile::tempdir().unwrap();
-        let xdg_config = crate::context::tsk_config::XdgConfig::builder()
-            .with_claude_config_dir(temp_dir.path().join(".claude"))
-            .with_git_user_name("Test User".to_string())
-            .with_git_user_email("test@example.com".to_string())
-            .build();
-        let tsk_config = Arc::new(TskConfig::new(Some(xdg_config)).unwrap());
-        let agent_with_config = ClaudeCodeAgent::with_tsk_config(tsk_config);
+        // Also test with custom config using AppContext
+        use crate::context::AppContext;
+        let ctx = AppContext::builder().build();
+        let agent_with_config = ClaudeCodeAgent::with_tsk_config(ctx.tsk_config());
         let _ = agent_with_config.create_log_processor();
     }
 }
