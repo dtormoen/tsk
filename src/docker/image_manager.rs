@@ -8,8 +8,8 @@ use anyhow::{Context, Result};
 use bollard::image::BuildImageOptions;
 use std::sync::Arc;
 
-use crate::context::docker_client::DockerClient;
-use crate::context::tsk_config::TskConfig;
+use crate::assets::layered::LayeredAssetManager;
+use crate::context::AppContext;
 use crate::docker::composer::{ComposedDockerfile, DockerComposer};
 use crate::docker::layers::{DockerImageConfig, DockerLayerType};
 use crate::docker::template_manager::DockerTemplateManager;
@@ -24,27 +24,91 @@ pub struct DockerImage {
 }
 
 /// Manages Docker images for TSK
+///
+/// This struct provides a high-level interface for managing Docker images,
+/// abstracting away the complexity of template management, layer composition,
+/// and Docker build operations. It uses AppContext for dependency injection,
+/// making it easy to test and configure.
 pub struct DockerImageManager {
-    docker_client: Arc<dyn DockerClient>,
+    ctx: AppContext,
     template_manager: DockerTemplateManager,
     composer: DockerComposer,
-    tsk_config: Arc<TskConfig>,
 }
 
 impl DockerImageManager {
-    /// Creates a new DockerImageManager
-    pub fn new(
-        docker_client: Arc<dyn DockerClient>,
-        template_manager: DockerTemplateManager,
-        composer: DockerComposer,
-        tsk_config: Arc<TskConfig>,
-    ) -> Self {
+    /// Creates a new DockerImageManager from AppContext
+    ///
+    /// # Arguments
+    /// * `ctx` - Application context with all dependencies
+    /// * `project_root` - Optional project root for layered assets
+    pub fn new(ctx: &AppContext, project_root: Option<&std::path::Path>) -> Self {
+        let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
+            project_root,
+            &ctx.tsk_config(),
+        ));
+        let template_manager = DockerTemplateManager::new(asset_manager.clone(), ctx.tsk_config());
+        let composer =
+            DockerComposer::new(DockerTemplateManager::new(asset_manager, ctx.tsk_config()));
+
         Self {
-            docker_client,
+            ctx: ctx.clone(),
             template_manager,
             composer,
-            tsk_config,
         }
+    }
+
+    /// Helper to create DockerImageConfig
+    fn create_config(tech_stack: &str, agent: &str, project: &str) -> DockerImageConfig {
+        DockerImageConfig::new(
+            tech_stack.to_string(),
+            agent.to_string(),
+            project.to_string(),
+        )
+    }
+
+    /// Print dry run output for a composed Dockerfile
+    fn print_dry_run_output(
+        &self,
+        composed: &ComposedDockerfile,
+        tech_stack: &str,
+        agent: &str,
+        project: &str,
+    ) {
+        println!("# Resolved Dockerfile for image: {}", composed.image_tag);
+        println!("# Configuration: tech_stack={tech_stack}, agent={agent}, project={project}");
+        println!();
+        println!("{}", composed.dockerfile_content);
+
+        if !composed.additional_files.is_empty() {
+            println!("\n# Additional files that would be created:");
+            for filename in composed.additional_files.keys() {
+                println!("#   - {filename}");
+            }
+        }
+
+        if !composed.build_args.is_empty() {
+            println!("\n# Build arguments:");
+            for arg in &composed.build_args {
+                println!("#   - {arg}");
+            }
+        }
+    }
+
+    /// Helper to validate layer availability
+    fn validate_layers(
+        &self,
+        config: &DockerImageConfig,
+        project_root: Option<&std::path::Path>,
+    ) -> Vec<crate::docker::layers::DockerLayer> {
+        config
+            .get_layers()
+            .into_iter()
+            .filter(|layer| {
+                self.template_manager
+                    .get_layer_content(layer, project_root)
+                    .is_err()
+            })
+            .collect()
     }
 
     /// Get the appropriate Docker image for the given configuration
@@ -61,43 +125,14 @@ impl DockerImageManager {
         project_root: Option<&std::path::Path>,
     ) -> Result<DockerImage> {
         let project = project.unwrap_or("default");
-
-        // Use agent name directly for dockerfile directories
-        let dockerfile_agent = agent;
-
-        // Create config with the requested layers
-        let config = DockerImageConfig::new(
-            tech_stack.to_string(),
-            dockerfile_agent.to_string(),
-            project.to_string(),
-        );
-
-        // Check if all layers exist
-        let mut missing_layers = Vec::new();
-        for layer in config.get_layers() {
-            if self
-                .template_manager
-                .get_layer_content(&layer, project_root)
-                .is_err()
-            {
-                missing_layers.push(layer);
-            }
-        }
+        let config = Self::create_config(tech_stack, agent, project);
+        let missing_layers = self.validate_layers(&config, project_root);
 
         // If only the project layer is missing and it's not "default", try fallback
         if missing_layers.len() == 1
             && missing_layers[0].layer_type == DockerLayerType::Project
             && project != "default"
         {
-            // Project layer not found, falling back to 'default'
-
-            // Try with default project
-            let _fallback_config = DockerImageConfig::new(
-                tech_stack.to_string(),
-                dockerfile_agent.to_string(),
-                "default".to_string(),
-            );
-
             return Ok(DockerImage {
                 tag: format!("tsk/{tech_stack}/{agent}/default"),
                 used_fallback: true,
@@ -213,15 +248,8 @@ impl DockerImageManager {
             None => println!("Building Docker image without project-specific context"),
         }
 
-        // Use agent name directly for dockerfile directories
-        let dockerfile_agent = agent;
-
         // Create configuration
-        let config = DockerImageConfig::new(
-            tech_stack.to_string(),
-            dockerfile_agent.to_string(),
-            project.to_string(),
-        );
+        let config = Self::create_config(tech_stack, agent, project);
 
         // Compose the Dockerfile
         let composed = self
@@ -235,30 +263,13 @@ impl DockerImageManager {
             .with_context(|| "Dockerfile validation failed")?;
 
         if dry_run {
-            // Dry run mode: print the composed Dockerfile and exit
-            println!("# Resolved Dockerfile for image: {}", composed.image_tag);
-            println!("# Configuration: tech_stack={tech_stack}, agent={agent}, project={project}");
-            println!();
-            println!("{}", composed.dockerfile_content);
-
-            if !composed.additional_files.is_empty() {
-                println!("\n# Additional files that would be created:");
-                for filename in composed.additional_files.keys() {
-                    println!("#   - {filename}");
-                }
-            }
-
-            if !composed.build_args.is_empty() {
-                println!("\n# Build arguments:");
-                for arg in &composed.build_args {
-                    println!("#   - {arg}");
-                }
-            }
+            self.print_dry_run_output(&composed, tech_stack, agent, project);
         } else {
             // Normal mode: build the image
             // Get git configuration from TskConfig
-            let git_user_name = self.tsk_config.git_user_name();
-            let git_user_email = self.tsk_config.git_user_email();
+            let tsk_config = self.ctx.tsk_config();
+            let git_user_name = tsk_config.git_user_name();
+            let git_user_email = tsk_config.git_user_email();
 
             // Build the image
             self.build_docker_image(
@@ -271,14 +282,12 @@ impl DockerImageManager {
             .await?;
         }
 
-        // Check if we used fallback
+        // Check if we used fallback by checking if the project layer exists
+        let project_layer = crate::docker::layers::DockerLayer::project(project);
         let used_fallback = project != "default"
             && self
                 .template_manager
-                .get_layer_content(
-                    &crate::docker::layers::DockerLayer::project(project),
-                    build_root,
-                )
+                .get_layer_content(&project_layer, build_root)
                 .is_err();
 
         Ok(DockerImage {
@@ -345,7 +354,8 @@ impl DockerImageManager {
 
         // Build the image using the DockerClient with streaming output
         let mut build_stream = self
-            .docker_client
+            .ctx
+            .docker_client()
             .build_image(options, tar_archive)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to build proxy image: {e}"))?;
@@ -393,7 +403,8 @@ impl DockerImageManager {
             return Ok(true);
         }
 
-        self.docker_client
+        self.ctx
+            .docker_client()
             .image_exists(tag)
             .await
             .map_err(|e| anyhow::anyhow!(e))
@@ -435,7 +446,8 @@ impl DockerImageManager {
 
         // Build the image using the DockerClient with streaming output
         let mut build_stream = self
-            .docker_client
+            .ctx
+            .docker_client()
             .build_image(options, tar_archive)
             .await
             .map_err(|e| anyhow::anyhow!("Docker build failed: {e}"))?;
@@ -505,26 +517,23 @@ impl DockerImageManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assets::embedded::EmbeddedAssetManager;
     use crate::context::AppContext;
     use crate::test_utils::TrackedDockerClient;
     use std::sync::Arc;
     use tempfile::TempDir;
 
     fn create_test_manager() -> DockerImageManager {
-        let docker_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
-        let xdg_dirs = ctx.tsk_config();
+        DockerImageManager::new(&ctx, None)
+    }
 
-        let template_manager =
-            DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), xdg_dirs.clone());
-
-        let composer = DockerComposer::new(DockerTemplateManager::new(
-            Arc::new(EmbeddedAssetManager),
-            xdg_dirs.clone(),
-        ));
-
-        DockerImageManager::new(docker_client, template_manager, composer, xdg_dirs)
+    fn create_test_manager_with_docker(
+        docker_client: Arc<TrackedDockerClient>,
+    ) -> DockerImageManager {
+        let ctx = AppContext::builder()
+            .with_docker_client(docker_client)
+            .build();
+        DockerImageManager::new(&ctx, None)
     }
 
     #[test]
@@ -612,24 +621,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_ensure_proxy_image_builds_when_missing() {
-        let docker_client = TrackedDockerClient {
+        let docker_client = Arc::new(TrackedDockerClient {
             image_exists_returns: false,
             ..Default::default()
-        };
+        });
 
-        let docker_client = Arc::new(docker_client);
-        let ctx = AppContext::builder().build();
-        let xdg_dirs = ctx.tsk_config();
-
-        let template_manager =
-            DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), xdg_dirs.clone());
-        let composer = DockerComposer::new(DockerTemplateManager::new(
-            Arc::new(EmbeddedAssetManager),
-            xdg_dirs.clone(),
-        ));
-
-        let manager =
-            DockerImageManager::new(docker_client.clone(), template_manager, composer, xdg_dirs);
+        let manager = create_test_manager_with_docker(docker_client);
 
         // Note: This test won't actually build in test mode due to cfg!(test) check
         // but it validates the logic flow
@@ -641,7 +638,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_build_image_dry_run() {
+    async fn test_build_image_modes() {
         let manager = create_test_manager();
 
         // Test build_image with dry_run=true
@@ -653,11 +650,6 @@ mod tests {
         let image = result.unwrap();
         assert_eq!(image.tag, "tsk/default/claude-code/default");
         assert!(!image.used_fallback);
-    }
-
-    #[tokio::test]
-    async fn test_build_image_normal_mode() {
-        let manager = create_test_manager();
 
         // Test build_image with dry_run=false (normal mode)
         let result = manager

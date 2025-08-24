@@ -1,13 +1,9 @@
-use crate::assets::layered::LayeredAssetManager;
 use crate::commands::Command;
 use crate::context::AppContext;
-use crate::docker::composer::DockerComposer;
 use crate::docker::image_manager::DockerImageManager;
-use crate::docker::template_manager::DockerTemplateManager;
 use crate::repo_utils::find_repository_root;
 use async_trait::async_trait;
 use std::error::Error;
-use std::sync::Arc;
 
 /// Command to build TSK Docker images using the templating system
 pub struct DockerBuildCommand {
@@ -79,20 +75,8 @@ impl Command for DockerBuildCommand {
         // Get project root for Docker operations
         let project_root = find_repository_root(std::path::Path::new(".")).ok();
 
-        // Create image manager
-        let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
-            project_root.as_deref(),
-            &ctx.tsk_config(),
-        ));
-        let template_manager = DockerTemplateManager::new(asset_manager.clone(), ctx.tsk_config());
-        let composer =
-            DockerComposer::new(DockerTemplateManager::new(asset_manager, ctx.tsk_config()));
-        let image_manager = DockerImageManager::new(
-            ctx.docker_client(),
-            template_manager,
-            composer,
-            ctx.tsk_config(),
-        );
+        // Create image manager with AppContext
+        let image_manager = DockerImageManager::new(ctx, project_root.as_deref());
 
         // Build the main image (with dry_run flag)
         let image = image_manager

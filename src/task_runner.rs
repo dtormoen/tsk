@@ -1,10 +1,6 @@
 use crate::agent::AgentProvider;
-use crate::assets::layered::LayeredAssetManager;
 use crate::context::AppContext;
-use crate::docker::{
-    DockerManager, composer::DockerComposer, image_manager::DockerImageManager,
-    template_manager::DockerTemplateManager,
-};
+use crate::docker::{DockerManager, image_manager::DockerImageManager};
 use crate::git::RepoManager;
 use crate::task::Task;
 use std::path::PathBuf;
@@ -138,22 +134,11 @@ impl TaskRunner {
         let (output, task_result_from_container) = {
             // Create a task-specific image manager with the copied repository as the project root
             // This ensures that project-specific dockerfiles are found in the copied repository
-            let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
-                Some(&repo_path),
-                &self.tsk_config,
-            ));
-            let template_manager =
-                DockerTemplateManager::new(asset_manager.clone(), self.tsk_config.clone());
-            let composer = DockerComposer::new(DockerTemplateManager::new(
-                asset_manager,
-                self.tsk_config.clone(),
-            ));
-            let task_image_manager = DockerImageManager::new(
-                self.docker_client.clone(),
-                template_manager,
-                composer,
-                self.tsk_config.clone(),
-            );
+            let ctx = AppContext::builder()
+                .with_docker_client(self.docker_client.clone())
+                .with_tsk_config(self.tsk_config.clone())
+                .build();
+            let task_image_manager = DockerImageManager::new(&ctx, Some(&repo_path));
 
             // Ensure the proxy image exists first
             task_image_manager
