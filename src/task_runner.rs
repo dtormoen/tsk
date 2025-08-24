@@ -4,7 +4,6 @@ use crate::docker::{DockerManager, image_manager::DockerImageManager};
 use crate::git::RepoManager;
 use crate::task::Task;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 /// Result of executing a task
 ///
@@ -43,11 +42,9 @@ impl From<String> for TaskExecutionError {
 /// - Repository changes and git operations
 /// - Task completion notifications
 pub struct TaskRunner {
+    ctx: AppContext,
     repo_manager: RepoManager,
     docker_manager: DockerManager,
-    notification_client: Arc<dyn crate::notifications::NotificationClient>,
-    docker_client: Arc<dyn crate::context::docker_client::DockerClient>,
-    tsk_config: Arc<crate::context::tsk_config::TskConfig>,
 }
 
 impl TaskRunner {
@@ -69,11 +66,9 @@ impl TaskRunner {
         let docker_manager = DockerManager::new(ctx.docker_client());
 
         Self {
+            ctx: ctx.clone(),
             repo_manager,
             docker_manager,
-            notification_client: ctx.notification_client(),
-            docker_client: ctx.docker_client(),
-            tsk_config: ctx.tsk_config(),
         }
     }
 
@@ -100,7 +95,7 @@ impl TaskRunner {
         task: &Task,
     ) -> Result<TaskExecutionResult, TaskExecutionError> {
         // Get the agent for this task
-        let agent = AgentProvider::get_agent(&task.agent, self.tsk_config.clone())
+        let agent = AgentProvider::get_agent(&task.agent, self.ctx.tsk_config())
             .map_err(|e| format!("Error getting agent: {e}"))?;
 
         // Validate the agent
@@ -134,11 +129,7 @@ impl TaskRunner {
         let (output, task_result_from_container) = {
             // Create a task-specific image manager with the copied repository as the project root
             // This ensures that project-specific dockerfiles are found in the copied repository
-            let ctx = AppContext::builder()
-                .with_docker_client(self.docker_client.clone())
-                .with_tsk_config(self.tsk_config.clone())
-                .build();
-            let task_image_manager = DockerImageManager::new(&ctx, Some(&repo_path));
+            let task_image_manager = DockerImageManager::new(&self.ctx, Some(&repo_path));
 
             // Ensure the proxy image exists first
             task_image_manager
@@ -214,7 +205,8 @@ impl TaskRunner {
         // Send notification about task completion
         let success = task_result.as_ref().map(|r| r.success).unwrap_or(false);
         let message = task_result.as_ref().map(|r| r.message.as_str());
-        self.notification_client
+        self.ctx
+            .notification_client()
             .notify_task_complete(&task.name, success, message);
 
         Ok(TaskExecutionResult {
