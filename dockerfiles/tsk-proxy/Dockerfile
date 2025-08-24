@@ -2,12 +2,14 @@ FROM alpine:latest
 
 RUN apk add --no-cache squid curl
 
-# Copy our squid configuration
+# Copy our squid configuration and entrypoint script
 COPY squid.conf /etc/squid/squid.conf
+COPY entrypoint.sh /entrypoint.sh
 
 # Create necessary directories with proper permissions
 RUN mkdir -p /var/cache/squid /var/log/squid /var/run/squid && \
-    chown -R squid:squid /var/cache/squid /var/log/squid /var/run/squid
+    chown -R squid:squid /var/cache/squid /var/log/squid /var/run/squid && \
+    chmod +x /entrypoint.sh
 
 # Expose the proxy port
 EXPOSE 3128
@@ -19,4 +21,4 @@ HEALTHCHECK --interval=2s --timeout=3s --start-period=10s --retries=3 \
 
 # Run squid in foreground as squid user
 USER squid
-CMD ["squid", "-N", "-f", "/etc/squid/squid.conf"]
+ENTRYPOINT ["/entrypoint.sh"]
