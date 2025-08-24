@@ -1,5 +1,7 @@
 use async_trait::async_trait;
 
+use super::TaskResult;
+
 /// Trait for processing agent log output
 #[async_trait]
 pub trait LogProcessor: Send {
@@ -14,5 +16,5 @@ pub trait LogProcessor: Send {
     fn get_full_log(&self) -> String;
 
     /// Get the final result of the task execution
-    fn get_final_result(&self) -> Option<&super::TaskResult>;
+    fn get_final_result(&self) -> Option<&TaskResult>;
 }

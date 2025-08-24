@@ -1,5 +1,6 @@
-use super::{LogProcessor, TaskResult};
 use async_trait::async_trait;
+
+use crate::agent::{LogProcessor, TaskResult};
 
 /// A simple log processor for the no-op agent that passes through all lines.
 ///

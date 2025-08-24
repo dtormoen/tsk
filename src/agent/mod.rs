@@ -5,9 +5,11 @@ mod log_processor;
 mod no_op;
 mod no_op_log_processor;
 mod provider;
+mod task_result;
 
 pub use self::log_processor::LogProcessor;
-pub use claude_code::{ClaudeCodeAgent, TaskResult};
+pub use self::task_result::TaskResult;
+pub use claude_code::ClaudeCodeAgent;
 pub use no_op::NoOpAgent;
 pub use provider::AgentProvider;
 
@@ -91,7 +93,7 @@ mod tests {
                     "test log".to_string()
                 }
 
-                fn get_final_result(&self) -> Option<&super::TaskResult> {
+                fn get_final_result(&self) -> Option<&TaskResult> {
                     None
                 }
             }
