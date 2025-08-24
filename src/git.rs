@@ -1,31 +1,23 @@
-use crate::context::file_system::FileSystemOperations;
-use crate::context::git_operations::GitOperations;
-use crate::context::tsk_config::TskConfig;
-use crate::git_sync::GitSyncManager;
+use crate::context::AppContext;
 use chrono::{DateTime, Local};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
+/// Manages repository operations including copying, committing, and fetching changes.
+///
+/// This struct provides high-level repository management functionality, coordinating
+/// between file system operations, git operations, and synchronization management.
 pub struct RepoManager {
-    tsk_config: Arc<TskConfig>,
-    file_system: Arc<dyn FileSystemOperations>,
-    git_operations: Arc<dyn GitOperations>,
-    git_sync_manager: Arc<GitSyncManager>,
+    ctx: AppContext,
 }
 
 impl RepoManager {
-    pub fn new(
-        tsk_config: Arc<TskConfig>,
-        file_system: Arc<dyn FileSystemOperations>,
-        git_operations: Arc<dyn GitOperations>,
-        git_sync_manager: Arc<GitSyncManager>,
-    ) -> Self {
-        Self {
-            tsk_config,
-            file_system,
-            git_operations,
-            git_sync_manager,
-        }
+    /// Creates a new RepoManager from the application context.
+    ///
+    /// # Arguments
+    ///
+    /// * `ctx` - The application context providing all required dependencies
+    pub fn new(ctx: &AppContext) -> Self {
+        Self { ctx: ctx.clone() }
     }
 
     /// Copy repository for a task using the task ID and repository root
@@ -45,17 +37,23 @@ impl RepoManager {
 
         // Create the task directory structure in centralized location
         let repo_hash = crate::storage::get_repo_hash(repo_root);
-        let task_dir = self.tsk_config.task_dir(task_dir_name, &repo_hash);
+        let task_dir = self.ctx.tsk_config().task_dir(task_dir_name, &repo_hash);
         let repo_path = task_dir.join("repo");
 
         // Create directories if they don't exist
-        self.file_system
+        self.ctx
+            .file_system()
             .create_dir(&task_dir)
             .await
             .map_err(|e| format!("Failed to create task directory: {e}"))?;
 
         // Check if the provided path is in a git repository
-        if !self.git_operations.is_git_repository(repo_root).await? {
+        if !self
+            .ctx
+            .git_operations()
+            .is_git_repository(repo_root)
+            .await?
+        {
             return Err("Not in a git repository".to_string());
         }
 
@@ -63,11 +61,16 @@ impl RepoManager {
         let current_dir = repo_root.to_path_buf();
 
         // Get list of tracked files from git
-        let tracked_files = self.git_operations.get_tracked_files(&current_dir).await?;
+        let tracked_files = self
+            .ctx
+            .git_operations()
+            .get_tracked_files(&current_dir)
+            .await?;
 
         // Get list of untracked files that are not ignored
         let untracked_files = self
-            .git_operations
+            .ctx
+            .git_operations()
             .get_untracked_files(&current_dir)
             .await?;
 
@@ -75,12 +78,14 @@ impl RepoManager {
         let git_src = current_dir.join(".git");
         let git_dst = repo_path.join(".git");
         if self
-            .file_system
+            .ctx
+            .file_system()
             .exists(&git_src)
             .await
             .map_err(|e| format!("Failed to check if .git exists: {e}"))?
         {
-            self.file_system
+            self.ctx
+                .file_system()
                 .copy_dir(&git_src, &git_dst)
                 .await
                 .map_err(|e| format!("Failed to copy .git directory: {e}"))?;
@@ -93,14 +98,16 @@ impl RepoManager {
 
             // Create parent directory if it doesn't exist
             if let Some(parent) = dst_path.parent() {
-                self.file_system
+                self.ctx
+                    .file_system()
                     .create_dir(parent)
                     .await
                     .map_err(|e| format!("Failed to create parent directory: {e}"))?;
             }
 
             // Copy the file
-            self.file_system
+            self.ctx
+                .file_system()
                 .copy_file(&src_path, &dst_path)
                 .await
                 .map_err(|e| {
@@ -122,9 +129,10 @@ impl RepoManager {
             let dst_path = repo_path.join(&file_path_clean);
 
             // Check if this is a directory
-            if self.file_system.read_dir(&src_path).await.is_ok() {
+            if self.ctx.file_system().read_dir(&src_path).await.is_ok() {
                 // It's a directory, copy it recursively
-                self.file_system
+                self.ctx
+                    .file_system()
                     .copy_dir(&src_path, &dst_path)
                     .await
                     .map_err(|e| format!("Failed to copy directory {}: {e}", src_path.display()))?;
@@ -132,14 +140,15 @@ impl RepoManager {
                 // It's a file
                 // Create parent directory if it doesn't exist
                 if let Some(parent) = dst_path.parent() {
-                    self.file_system
+                    self.ctx
+                        .file_system()
                         .create_dir(parent)
                         .await
                         .map_err(|e| format!("Failed to create parent directory: {e}"))?;
                 }
 
                 // Copy the file
-                match self.file_system.copy_file(&src_path, &dst_path).await {
+                match self.ctx.file_system().copy_file(&src_path, &dst_path).await {
                     Ok(_) => {}
                     Err(e) => {
                         // If the file doesn't exist in src, it might be because git reported
@@ -160,12 +169,14 @@ impl RepoManager {
         let tsk_src = current_dir.join(".tsk");
         let tsk_dst = repo_path.join(".tsk");
         if self
-            .file_system
+            .ctx
+            .file_system()
             .exists(&tsk_src)
             .await
             .map_err(|e| format!("Failed to check if .tsk exists: {e}"))?
         {
-            self.file_system
+            self.ctx
+                .file_system()
                 .copy_dir(&tsk_src, &tsk_dst)
                 .await
                 .map_err(|e| format!("Failed to copy .tsk directory: {e}"))?;
@@ -175,14 +186,16 @@ impl RepoManager {
         match source_commit {
             Some(commit_sha) => {
                 // Create branch from specific commit
-                self.git_operations
+                self.ctx
+                    .git_operations()
                     .create_branch_from_commit(&repo_path, &branch_name, commit_sha)
                     .await?;
                 println!("Created branch from commit: {commit_sha}");
             }
             None => {
                 // Create branch from HEAD (existing behavior)
-                self.git_operations
+                self.ctx
+                    .git_operations()
                     .create_branch(&repo_path, &branch_name)
                     .await?;
             }
@@ -196,7 +209,7 @@ impl RepoManager {
     /// Commit any uncommitted changes in the repository
     pub async fn commit_changes(&self, repo_path: &Path, message: &str) -> Result<(), String> {
         // Check if there are any changes to commit
-        let status_output = self.git_operations.get_status(repo_path).await?;
+        let status_output = self.ctx.git_operations().get_status(repo_path).await?;
 
         if status_output.trim().is_empty() {
             println!("No changes to commit");
@@ -204,10 +217,10 @@ impl RepoManager {
         }
 
         // Add all changes
-        self.git_operations.add_all(repo_path).await?;
+        self.ctx.git_operations().add_all(repo_path).await?;
 
         // Commit changes
-        self.git_operations.commit(repo_path, message).await?;
+        self.ctx.git_operations().commit(repo_path, message).await?;
 
         println!("Committed changes: {message}");
         Ok(())
@@ -233,28 +246,33 @@ impl RepoManager {
         let remote_name = format!("tsk-temp-{}", now.format("%Y-%m-%d-%H%M%S"));
 
         // Synchronize git operations on the main repository
-        self.git_sync_manager
+        self.ctx
+            .git_sync_manager()
             .with_repo_lock(&main_repo, || async {
-                self.git_operations
+                self.ctx
+                    .git_operations()
                     .add_remote(&main_repo, &remote_name, repo_path_str)
                     .await?;
 
                 // Fetch the specific branch from the remote
                 match self
-                    .git_operations
+                    .ctx
+                    .git_operations()
                     .fetch_branch(&main_repo, &remote_name, branch_name)
                     .await
                 {
                     Ok(_) => {
                         // Remove the temporary remote
-                        self.git_operations
+                        self.ctx
+                            .git_operations()
                             .remove_remote(&main_repo, &remote_name)
                             .await?;
                     }
                     Err(e) => {
                         // Remove the temporary remote before returning error
                         let _ = self
-                            .git_operations
+                            .ctx
+                            .git_operations()
                             .remove_remote(&main_repo, &remote_name)
                             .await;
                         return Err(e);
@@ -266,7 +284,8 @@ impl RepoManager {
 
         // Now check if the fetched branch has any commits not in main
         let has_commits = self
-            .git_operations
+            .ctx
+            .git_operations()
             .has_commits_not_in_base(&main_repo, branch_name, "main")
             .await?;
 
@@ -274,7 +293,8 @@ impl RepoManager {
             println!("No new commits in branch {branch_name} - deleting branch");
             // Delete the branch from the main repository since it has no new commits
             if let Err(e) = self
-                .git_operations
+                .ctx
+                .git_operations()
                 .delete_branch(&main_repo, branch_name)
                 .await
             {
@@ -292,22 +312,17 @@ impl RepoManager {
 mod tests {
     use super::*;
     use crate::context::AppContext;
-    use crate::context::git_operations::DefaultGitOperations;
     use crate::test_utils::TestGitRepository;
 
     #[tokio::test]
     async fn test_copy_repo_not_in_git_repo() {
-        let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
+        let ctx = AppContext::builder().build();
 
         // Create a directory that is not a git repo
         let non_git_repo = TestGitRepository::new().unwrap();
         non_git_repo.setup_non_git_directory().unwrap();
 
-        let git_ops = Arc::new(DefaultGitOperations);
-        let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
-        let git_sync = Arc::new(GitSyncManager::new());
-        let manager = RepoManager::new(tsk_config, fs, git_ops, git_sync);
+        let manager = RepoManager::new(&ctx);
 
         let result = manager
             .copy_repo(
@@ -329,11 +344,7 @@ mod tests {
         test_repo.init_with_commit().unwrap();
 
         let ctx = AppContext::builder().build();
-        let tsk_config = ctx.tsk_config();
-        let git_ops = Arc::new(DefaultGitOperations);
-        let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
-        let git_sync = Arc::new(GitSyncManager::new());
-        let manager = RepoManager::new(tsk_config, fs, git_ops, git_sync);
+        let manager = RepoManager::new(&ctx);
 
         // Test committing when there are no changes
         let result = manager
@@ -355,11 +366,7 @@ mod tests {
             .unwrap();
 
         let ctx = AppContext::builder().build();
-        let tsk_config = ctx.tsk_config();
-        let git_ops = Arc::new(DefaultGitOperations);
-        let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
-        let git_sync = Arc::new(GitSyncManager::new());
-        let manager = RepoManager::new(tsk_config, fs, git_ops, git_sync);
+        let manager = RepoManager::new(&ctx);
 
         let result = manager
             .commit_changes(test_repo.path(), "Test commit")
@@ -370,8 +377,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_changes_no_commits() {
-        let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
+        let ctx = AppContext::builder().build();
 
         // Create main repository
         let main_repo = TestGitRepository::new().unwrap();
@@ -422,11 +428,7 @@ mod tests {
 
         // Don't add any new commits - just the branch
 
-        let git_ops = Arc::new(DefaultGitOperations);
-        let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
-
-        let git_sync = Arc::new(GitSyncManager::new());
-        let manager = RepoManager::new(tsk_config, fs, git_ops, git_sync);
+        let manager = RepoManager::new(&ctx);
 
         // Fetch changes from task repo to main repo (should return false as there are no new commits)
         let result = manager
@@ -446,8 +448,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_changes_with_commits() {
-        let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
+        let ctx = AppContext::builder().build();
 
         // Create main repository
         let main_repo = TestGitRepository::new().unwrap();
@@ -503,11 +504,7 @@ mod tests {
         task_repo.stage_all().unwrap();
         task_repo.commit("Add new feature").unwrap();
 
-        let git_ops = Arc::new(DefaultGitOperations);
-        let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
-
-        let git_sync = Arc::new(GitSyncManager::new());
-        let manager = RepoManager::new(tsk_config, fs, git_ops, git_sync);
+        let manager = RepoManager::new(&ctx);
 
         // Fetch changes from task repo to main repo (should return true as there are new commits)
         let result = manager
@@ -527,8 +524,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_copy_repo_with_source_commit() {
-        let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
+        let ctx = AppContext::builder().build();
 
         // Create a repository with multiple commits
         let test_repo = TestGitRepository::new().unwrap();
@@ -547,11 +543,7 @@ mod tests {
         test_repo.stage_all().unwrap();
         let _latest_commit = test_repo.commit("Add feature2").unwrap();
 
-        let git_ops = Arc::new(DefaultGitOperations);
-        let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
-
-        let git_sync = Arc::new(GitSyncManager::new());
-        let manager = RepoManager::new(tsk_config, fs, git_ops, git_sync);
+        let manager = RepoManager::new(&ctx);
 
         // Copy repo from the first commit
         let task_id = "efgh5678";
@@ -578,8 +570,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_copy_repo_without_source_commit() {
-        let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
+        let ctx = AppContext::builder().build();
 
         // Create a repository with commits
         let test_repo = TestGitRepository::new().unwrap();
@@ -592,11 +583,7 @@ mod tests {
         test_repo.stage_all().unwrap();
         test_repo.commit("Add feature").unwrap();
 
-        let git_ops = Arc::new(DefaultGitOperations);
-        let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
-
-        let git_sync = Arc::new(GitSyncManager::new());
-        let manager = RepoManager::new(tsk_config, fs, git_ops, git_sync);
+        let manager = RepoManager::new(&ctx);
 
         // Copy repo without specifying source commit (should use HEAD)
         let task_id = "ijkl9012";
@@ -620,19 +607,14 @@ mod tests {
     async fn test_copy_repo_separates_tracked_and_untracked_files() {
         use crate::test_utils::create_files_with_gitignore;
 
-        let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
+        let ctx = AppContext::builder().build();
 
         // Create a repository with mixed file types
         let test_repo = TestGitRepository::new().unwrap();
         test_repo.init().unwrap();
         create_files_with_gitignore(&test_repo).unwrap();
 
-        let git_ops = Arc::new(DefaultGitOperations);
-        let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
-
-        let git_sync = Arc::new(GitSyncManager::new());
-        let manager = RepoManager::new(tsk_config, fs, git_ops, git_sync);
+        let manager = RepoManager::new(&ctx);
 
         // Copy the repository
         let task_id = "mnop3456";
@@ -704,8 +686,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_copy_repo_includes_tsk_directory() {
-        let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
+        let ctx = AppContext::builder().build();
 
         // Create a repository with .tsk directory
         let test_repo = TestGitRepository::new().unwrap();
@@ -735,11 +716,7 @@ mod tests {
             .commit("Add .tsk directory and gitignore")
             .unwrap();
 
-        let git_ops = Arc::new(DefaultGitOperations);
-        let fs = Arc::new(crate::context::file_system::DefaultFileSystem);
-
-        let git_sync = Arc::new(GitSyncManager::new());
-        let manager = RepoManager::new(tsk_config, fs, git_ops, git_sync);
+        let manager = RepoManager::new(&ctx);
 
         // Copy the repository
         let task_id = "qrst7890";

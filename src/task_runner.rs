@@ -57,12 +57,7 @@ impl TaskRunner {
     ///
     /// * `ctx` - The application context providing all required dependencies
     pub fn new(ctx: &AppContext) -> Self {
-        let repo_manager = RepoManager::new(
-            ctx.tsk_config(),
-            ctx.file_system(),
-            ctx.git_operations(),
-            ctx.git_sync_manager(),
-        );
+        let repo_manager = RepoManager::new(ctx);
         let docker_manager = DockerManager::new(ctx.docker_client());
 
         Self {

@@ -294,12 +294,7 @@ impl TaskBuilder {
         let branch_name = format!("tsk/{sanitized_task_type}/{sanitized_name}/{id}");
 
         // Copy the repository for the task
-        let repo_manager = RepoManager::new(
-            ctx.tsk_config(),
-            ctx.file_system(),
-            ctx.git_operations(),
-            ctx.git_sync_manager(),
-        );
+        let repo_manager = RepoManager::new(ctx);
 
         let (copied_repo_path, _) = repo_manager
             .copy_repo(
