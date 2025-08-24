@@ -127,88 +127,99 @@ impl AssetManager for LayeredAssetManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assets::{
-        AssetManager, filesystem::FileSystemAssetManager, layered::LayeredAssetManager,
-    };
+    use crate::assets::filesystem::FileSystemAssetManager;
     use crate::context::AppContext;
-    use crate::context::tsk_config::TskConfig;
     use std::fs;
+    use std::path::Path;
     use tempfile::TempDir;
 
-    /// Creates a temporary directory with templates for testing
-    fn create_temp_templates_dir(templates: &[(&str, &str)]) -> TempDir {
-        let temp_dir = TempDir::new().unwrap();
-        let templates_dir = temp_dir.path().join("templates");
+    /// Helper to create templates in a directory
+    fn create_templates(base_path: &Path, templates: &[(&str, &str)]) {
+        let templates_dir = base_path.join("templates");
         fs::create_dir_all(&templates_dir).unwrap();
 
         for (name, content) in templates {
             fs::write(templates_dir.join(format!("{}.md", name)), content).unwrap();
         }
+    }
 
-        temp_dir
+    /// Helper to create dockerfiles in a directory
+    fn create_dockerfiles(base_path: &Path, dockerfiles: &[(&str, &str)]) {
+        for (dockerfile_path, content) in dockerfiles {
+            let full_path = base_path.join("dockerfiles").join(dockerfile_path);
+            fs::create_dir_all(&full_path).unwrap();
+            fs::write(full_path.join("Dockerfile"), content).unwrap();
+        }
     }
 
     #[test]
     fn test_layered_get_template_priority() {
-        // Create first layer with "feature" template
-        let layer1_dir = create_temp_templates_dir(&[("feature", "Layer 1 content")]);
+        let temp_dir = TempDir::new().unwrap();
 
-        // Create second layer with "feature" and "fix" templates
-        let layer2_dir = create_temp_templates_dir(&[
-            ("feature", "Layer 2 content"),
-            ("fix", "Layer 2 fix content"),
+        // Create layers with templates
+        let layer1_dir = temp_dir.path().join("layer1");
+        let layer2_dir = temp_dir.path().join("layer2");
+
+        create_templates(&layer1_dir, &[("feature", "Layer 1 content")]);
+        create_templates(
+            &layer2_dir,
+            &[
+                ("feature", "Layer 2 content"),
+                ("fix", "Layer 2 fix content"),
+            ],
+        );
+
+        let manager = LayeredAssetManager::new(vec![
+            Arc::new(FileSystemAssetManager::new(layer1_dir)),
+            Arc::new(FileSystemAssetManager::new(layer2_dir)),
         ]);
-
-        let layer1 = Arc::new(FileSystemAssetManager::new(layer1_dir.path().to_path_buf()));
-        let layer2 = Arc::new(FileSystemAssetManager::new(layer2_dir.path().to_path_buf()));
-
-        let manager = LayeredAssetManager::new(vec![layer1, layer2]);
 
         // Should get from first layer (higher priority)
         assert_eq!(manager.get_template("feature").unwrap(), "Layer 1 content");
-
         // Should get from second layer since first doesn't have it
         assert_eq!(manager.get_template("fix").unwrap(), "Layer 2 fix content");
-
         // Should fail if not in any layer
         assert!(manager.get_template("nonexistent").is_err());
     }
 
     #[test]
     fn test_layered_list_templates_aggregation() {
-        // Create first layer with "feature" and "fix" templates
-        let layer1_dir =
-            create_temp_templates_dir(&[("feature", "Layer 1 feature"), ("fix", "Layer 1 fix")]);
+        let temp_dir = TempDir::new().unwrap();
 
-        // Create second layer with "fix" and "doc" templates
-        let layer2_dir =
-            create_temp_templates_dir(&[("fix", "Layer 2 fix"), ("doc", "Layer 2 doc")]);
+        let layer1_dir = temp_dir.path().join("layer1");
+        let layer2_dir = temp_dir.path().join("layer2");
 
-        let layer1 = Arc::new(FileSystemAssetManager::new(layer1_dir.path().to_path_buf()));
-        let layer2 = Arc::new(FileSystemAssetManager::new(layer2_dir.path().to_path_buf()));
+        create_templates(
+            &layer1_dir,
+            &[("feature", "Layer 1 feature"), ("fix", "Layer 1 fix")],
+        );
+        create_templates(
+            &layer2_dir,
+            &[("fix", "Layer 2 fix"), ("doc", "Layer 2 doc")],
+        );
 
-        let manager = LayeredAssetManager::new(vec![layer1, layer2]);
-        let templates = manager.list_templates();
+        let manager = LayeredAssetManager::new(vec![
+            Arc::new(FileSystemAssetManager::new(layer1_dir)),
+            Arc::new(FileSystemAssetManager::new(layer2_dir)),
+        ]);
 
         // Should contain all unique templates, sorted alphabetically
-        assert_eq!(templates, vec!["doc", "feature", "fix"]);
+        assert_eq!(manager.list_templates(), vec!["doc", "feature", "fix"]);
     }
 
     #[test]
     fn test_standard_layers_with_project() {
-        use crate::context::AppContext;
-
         let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
-
-        // Create project templates directory in the test temp directory
         let temp_dir = TempDir::new().unwrap();
-        let project_templates = temp_dir.path().join(".tsk").join("templates");
-        fs::create_dir_all(&project_templates).unwrap();
-        fs::write(project_templates.join("feature.md"), "Project template").unwrap();
 
-        let manager =
-            LayeredAssetManager::new_with_standard_layers(Some(temp_dir.path()), &tsk_config);
+        // Create project templates
+        let project_tsk = temp_dir.path().join(".tsk");
+        create_templates(&project_tsk, &[("feature", "Project template")]);
+
+        let manager = LayeredAssetManager::new_with_standard_layers(
+            Some(temp_dir.path()),
+            &app_context.tsk_config(),
+        );
 
         // Should get project template
         assert_eq!(manager.get_template("feature").unwrap(), "Project template");
@@ -216,27 +227,30 @@ mod tests {
 
     #[test]
     fn test_layered_template_resolution_priority() {
-        use crate::context::tsk_config::XdgConfig;
+        use crate::context::tsk_config::{TskConfig, XdgConfig};
 
-        // Create temporary directories
         let temp_dir = TempDir::new().unwrap();
-
-        // Create project directory with .tsk/templates
         let project_dir = temp_dir.path().join("project");
-        let project_templates = project_dir.join(".tsk").join("templates");
-        fs::create_dir_all(&project_templates).unwrap();
-        fs::write(project_templates.join("feat.md"), "Project feat template").unwrap();
-        fs::write(project_templates.join("fix.md"), "Project fix template").unwrap();
-
-        // Create user config directory
         let config_dir = temp_dir.path().join("config");
-        let user_tsk_dir = config_dir.join("tsk");
-        let user_templates = user_tsk_dir.join("templates");
-        fs::create_dir_all(&user_templates).unwrap();
-        fs::write(user_templates.join("feat.md"), "User feat template").unwrap();
-        fs::write(user_templates.join("doc.md"), "User doc template").unwrap();
 
-        // Create XDG config with the custom config directory to use user templates
+        // Create project templates
+        let project_tsk = project_dir.join(".tsk");
+        create_templates(
+            &project_tsk,
+            &[
+                ("feat", "Project feat template"),
+                ("fix", "Project fix template"),
+            ],
+        );
+
+        // Create user templates
+        let user_tsk = config_dir.join("tsk");
+        create_templates(
+            &user_tsk,
+            &[("feat", "User feat template"), ("doc", "User doc template")],
+        );
+
+        // Create app context with custom config directory
         let xdg_config = XdgConfig::builder()
             .with_data_dir(temp_dir.path().join("data"))
             .with_runtime_dir(temp_dir.path().join("runtime"))
@@ -246,7 +260,6 @@ mod tests {
             .build();
         let tsk_config = TskConfig::new(Some(xdg_config)).unwrap();
 
-        // Create layered asset manager
         let manager =
             LayeredAssetManager::new_with_standard_layers(Some(&project_dir), &tsk_config);
 
@@ -258,7 +271,7 @@ mod tests {
         assert_eq!(manager.get_template("fix").unwrap(), "Project fix template");
         assert_eq!(manager.get_template("doc").unwrap(), "User doc template");
 
-        // Test built-in fallback (refactor template should be built-in only)
+        // Test built-in fallback
         assert!(
             manager
                 .get_template("refactor")
@@ -277,44 +290,38 @@ mod tests {
     #[test]
     fn test_filesystem_asset_manager_with_missing_directory() {
         let temp_dir = TempDir::new().unwrap();
-        let nonexistent_dir = temp_dir.path().join("nonexistent");
+        let manager = FileSystemAssetManager::new(temp_dir.path().join("nonexistent"));
 
-        let manager = FileSystemAssetManager::new(nonexistent_dir);
-
-        // Should return error for missing templates
         assert!(manager.get_template("feat").is_err());
-
-        // Should return empty list
         assert!(manager.list_templates().is_empty());
     }
 
     #[test]
     fn test_template_content_validation() {
         let temp_dir = TempDir::new().unwrap();
-        let templates_dir = temp_dir.path().join("templates");
-        fs::create_dir_all(&templates_dir).unwrap();
+        create_templates(
+            temp_dir.path(),
+            &[(
+                "valid",
+                "# Feature Template\n\n{{DESCRIPTION}}\n\n## Best Practices\n- Test your code",
+            )],
+        );
 
-        // Create a valid template with placeholder
-        let valid_content =
-            "# Feature Template\n\n{{DESCRIPTION}}\n\n## Best Practices\n- Test your code";
-        fs::write(templates_dir.join("valid.md"), valid_content).unwrap();
-
-        let manager = FileSystemAssetManager::new(templates_dir);
+        let manager = FileSystemAssetManager::new(temp_dir.path().to_path_buf());
         let template = manager.get_template("valid").unwrap();
 
-        // Verify template contains expected placeholder
         assert!(template.contains("{{DESCRIPTION}}"));
         assert!(template.contains("Best Practices"));
     }
 
     #[tokio::test]
     async fn test_app_context_with_layered_asset_manager() {
-        // Create a temporary git repository
+        let app_context = AppContext::builder().build();
         let temp_dir = TempDir::new().unwrap();
         let repo_dir = temp_dir.path().join("repo");
-        fs::create_dir_all(&repo_dir).unwrap();
 
         // Initialize git repo
+        fs::create_dir_all(&repo_dir).unwrap();
         std::process::Command::new("git")
             .args(["init"])
             .current_dir(&repo_dir)
@@ -322,51 +329,39 @@ mod tests {
             .expect("Failed to init git repo");
 
         // Create project-level template
-        let project_templates = repo_dir.join(".tsk").join("templates");
-        fs::create_dir_all(&project_templates).unwrap();
-        fs::write(
-            project_templates.join("custom.md"),
-            "Custom project template",
-        )
-        .unwrap();
+        let project_tsk = repo_dir.join(".tsk");
+        create_templates(&project_tsk, &[("custom", "Custom project template")]);
 
-        // Build AppContext
-        let app_context = AppContext::builder().build();
-
-        // Create asset manager on-demand
         let asset_manager = LayeredAssetManager::new_with_standard_layers(
             Some(&repo_dir),
             &app_context.tsk_config(),
         );
 
         // Verify it can access the custom template
-        let template = asset_manager.get_template("custom");
-        assert!(template.is_ok());
-        assert_eq!(template.unwrap(), "Custom project template");
-
+        assert_eq!(
+            asset_manager.get_template("custom").unwrap(),
+            "Custom project template"
+        );
         // Verify it still has access to built-in templates
         assert!(asset_manager.get_template("feat").is_ok());
     }
 
     #[test]
     fn test_template_listing_deduplication() {
+        use crate::context::tsk_config::{TskConfig, XdgConfig};
+
         let temp_dir = TempDir::new().unwrap();
-
-        // Create project directory
         let project_dir = temp_dir.path().join("project");
-        let project_templates = project_dir.join(".tsk").join("templates");
-        fs::create_dir_all(&project_templates).unwrap();
-        fs::write(project_templates.join("feat.md"), "Project feat").unwrap();
-
-        // Create user config directory
         let config_dir = temp_dir.path().join("config");
-        let user_tsk_dir = config_dir.join("tsk");
-        let user_templates = user_tsk_dir.join("templates");
-        fs::create_dir_all(&user_templates).unwrap();
-        fs::write(user_templates.join("feat.md"), "User feat").unwrap();
-        fs::write(user_templates.join("custom.md"), "User custom").unwrap();
 
-        let xdg_config = crate::context::tsk_config::XdgConfig::builder()
+        // Create project and user templates with overlap
+        create_templates(&project_dir.join(".tsk"), &[("feat", "Project feat")]);
+        create_templates(
+            &config_dir.join("tsk"),
+            &[("feat", "User feat"), ("custom", "User custom")],
+        );
+
+        let xdg_config = XdgConfig::builder()
             .with_data_dir(temp_dir.path().join("data"))
             .with_runtime_dir(temp_dir.path().join("runtime"))
             .with_config_dir(config_dir)
@@ -377,58 +372,38 @@ mod tests {
 
         let manager =
             LayeredAssetManager::new_with_standard_layers(Some(&project_dir), &tsk_config);
-
         let templates = manager.list_templates();
 
         // Should only have one "feat" entry (deduplicated)
-        let feat_count = templates.iter().filter(|t| t == &"feat").count();
-        assert_eq!(feat_count, 1);
-
+        assert_eq!(templates.iter().filter(|t| t == &"feat").count(), 1);
         // Should have custom template
         assert!(templates.contains(&"custom".to_string()));
     }
 
     #[test]
     fn test_dockerfile_layering() {
+        use crate::context::tsk_config::{TskConfig, XdgConfig};
+
         let temp_dir = TempDir::new().unwrap();
-
-        // Create project directory with project-specific dockerfiles
         let project_dir = temp_dir.path().join("project");
-        let project_dockerfiles = project_dir
-            .join(".tsk")
-            .join("dockerfiles")
-            .join("project")
-            .join("myapp");
-        fs::create_dir_all(&project_dockerfiles).unwrap();
-        fs::write(
-            project_dockerfiles.join("Dockerfile"),
-            "FROM ubuntu:project\n",
-        )
-        .unwrap();
-
-        // Create user config directory with project-specific dockerfiles
         let config_dir = temp_dir.path().join("config");
-        let user_tsk_dir = config_dir.join("tsk");
-        let user_dockerfiles = user_tsk_dir
-            .join("dockerfiles")
-            .join("project")
-            .join("myapp");
-        fs::create_dir_all(&user_dockerfiles).unwrap();
-        fs::write(user_dockerfiles.join("Dockerfile"), "FROM ubuntu:user\n").unwrap();
 
-        // Create another dockerfile in user config that doesn't exist in project
-        let user_only_dockerfiles = user_tsk_dir
-            .join("dockerfiles")
-            .join("project")
-            .join("otherapp");
-        fs::create_dir_all(&user_only_dockerfiles).unwrap();
-        fs::write(
-            user_only_dockerfiles.join("Dockerfile"),
-            "FROM ubuntu:user-only\n",
-        )
-        .unwrap();
+        // Create project dockerfiles
+        create_dockerfiles(
+            &project_dir.join(".tsk"),
+            &[("project/myapp", "FROM ubuntu:project\n")],
+        );
 
-        let xdg_config = crate::context::tsk_config::XdgConfig::builder()
+        // Create user dockerfiles
+        create_dockerfiles(
+            &config_dir.join("tsk"),
+            &[
+                ("project/myapp", "FROM ubuntu:user\n"),
+                ("project/otherapp", "FROM ubuntu:user-only\n"),
+            ],
+        );
+
+        let xdg_config = XdgConfig::builder()
             .with_data_dir(temp_dir.path().join("data"))
             .with_runtime_dir(temp_dir.path().join("runtime"))
             .with_config_dir(config_dir)
@@ -441,14 +416,14 @@ mod tests {
             LayeredAssetManager::new_with_standard_layers(Some(&project_dir), &tsk_config);
 
         // Test that project dockerfile takes precedence
-        let myapp_dockerfile = manager.get_dockerfile("project/myapp").unwrap();
-        let content = String::from_utf8(myapp_dockerfile).unwrap();
-        assert!(content.contains("FROM ubuntu:project"));
+        let myapp_content =
+            String::from_utf8(manager.get_dockerfile("project/myapp").unwrap()).unwrap();
+        assert!(myapp_content.contains("FROM ubuntu:project"));
 
         // Test that user-only dockerfile is accessible
-        let otherapp_dockerfile = manager.get_dockerfile("project/otherapp").unwrap();
-        let content = String::from_utf8(otherapp_dockerfile).unwrap();
-        assert!(content.contains("FROM ubuntu:user-only"));
+        let otherapp_content =
+            String::from_utf8(manager.get_dockerfile("project/otherapp").unwrap()).unwrap();
+        assert!(otherapp_content.contains("FROM ubuntu:user-only"));
 
         // Test listing dockerfiles - should show both
         let dockerfiles = manager.list_dockerfiles();
