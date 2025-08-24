@@ -64,6 +64,15 @@ pub trait DockerClient: Send + Sync {
     /// # Returns
     /// True if the image exists, false otherwise
     async fn image_exists(&self, tag: &str) -> Result<bool, String>;
+
+    /// Inspect a container to get its details
+    ///
+    /// # Arguments
+    /// * `id` - Container ID or name
+    ///
+    /// # Returns
+    /// Container inspection data as a JSON string
+    async fn inspect_container(&self, id: &str) -> Result<String, String>;
 }
 
 #[derive(Clone)]
@@ -265,5 +274,16 @@ impl DockerClient for DefaultDockerClient {
             .map_err(|e| format!("Failed to list images: {e}"))?;
 
         Ok(!images.is_empty())
+    }
+
+    async fn inspect_container(&self, id: &str) -> Result<String, String> {
+        let container = self
+            .docker
+            .inspect_container(id, None)
+            .await
+            .map_err(|e| format!("Failed to inspect container: {e}"))?;
+
+        serde_json::to_string(&container)
+            .map_err(|e| format!("Failed to serialize container info: {e}"))
     }
 }

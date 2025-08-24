@@ -78,6 +78,10 @@ impl DockerClient for NoOpDockerClient {
     async fn image_exists(&self, _tag: &str) -> Result<bool, String> {
         Ok(true)
     }
+
+    async fn inspect_container(&self, _id: &str) -> Result<String, String> {
+        Ok(r#"{"State": {"Health": {"Status": "healthy"}}}"#.to_string())
+    }
 }
 
 #[derive(Clone)]
@@ -183,6 +187,10 @@ impl DockerClient for FixedResponseDockerClient {
     async fn image_exists(&self, _tag: &str) -> Result<bool, String> {
         Ok(true)
     }
+
+    async fn inspect_container(&self, _id: &str) -> Result<String, String> {
+        Ok(r#"{"State": {"Health": {"Status": "healthy"}}}"#.to_string())
+    }
 }
 
 type CreateContainerCall = (Option<CreateContainerOptions<String>>, Config<String>);
@@ -202,6 +210,7 @@ pub struct TrackedDockerClient {
     pub network_exists: bool,
     pub create_network_error: Option<String>,
     pub image_exists_returns: bool,
+    pub inspect_container_response: String,
 }
 
 impl Default for TrackedDockerClient {
@@ -217,6 +226,8 @@ impl Default for TrackedDockerClient {
             network_exists: true,
             create_network_error: None,
             image_exists_returns: true,
+            inspect_container_response: r#"{"State": {"Health": {"Status": "healthy"}}}"#
+                .to_string(),
         }
     }
 }
@@ -338,5 +349,9 @@ impl DockerClient for TrackedDockerClient {
 
     async fn image_exists(&self, _tag: &str) -> Result<bool, String> {
         Ok(self.image_exists_returns)
+    }
+
+    async fn inspect_container(&self, _id: &str) -> Result<String, String> {
+        Ok(self.inspect_container_response.clone())
     }
 }
