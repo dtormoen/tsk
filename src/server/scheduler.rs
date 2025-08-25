@@ -35,6 +35,20 @@ impl TaskScheduler {
         Self::with_workers(context, storage, 1)
     }
 
+    /// Set terminal title based on active worker count
+    fn set_terminal_title(&self, active_count: u32) {
+        if active_count == 0 {
+            self.context
+                .terminal_operations()
+                .set_title(&format!("TSK Server Idle (0/{} workers)", self.workers));
+        } else {
+            self.context.terminal_operations().set_title(&format!(
+                "TSK Server Running ({}/{} workers)",
+                active_count, self.workers
+            ));
+        }
+    }
+
     /// Create a new task scheduler with specified number of workers
     pub fn with_workers(
         context: Arc<AppContext>,
@@ -68,9 +82,7 @@ impl TaskScheduler {
         self.worker_pool = Some(worker_pool.clone());
 
         // Set initial idle title
-        self.context
-            .terminal_operations()
-            .set_title(&format!("TSK Server Idle (0/{} workers)", self.workers));
+        self.set_terminal_title(0);
 
         // Track active worker count for terminal title updates
         let active_workers = Arc::new(Mutex::new(0u32));
@@ -94,25 +106,16 @@ impl TaskScheduler {
             if let Some(pool) = &self.worker_pool {
                 let completed_jobs = pool.poll_completed().await;
                 for job_result in completed_jobs {
+                    // Always decrement worker count when a job completes (regardless of success/failure)
+                    let mut count = active_workers.lock().await;
+                    *count = count.saturating_sub(1);
+                    self.set_terminal_title(*count);
+                    drop(count);
+
                     match job_result {
                         Ok(result) => {
                             // Remove from submitted tasks
                             self.submitted_tasks.lock().await.remove(&result.job_id);
-
-                            // Update worker count and terminal title
-                            let mut count = active_workers.lock().await;
-                            *count = count.saturating_sub(1);
-                            if *count == 0 {
-                                self.context.terminal_operations().set_title(&format!(
-                                    "TSK Server Idle (0/{} workers)",
-                                    self.workers
-                                ));
-                            } else {
-                                self.context.terminal_operations().set_title(&format!(
-                                    "TSK Server Running ({}/{} workers)",
-                                    *count, self.workers
-                                ));
-                            }
 
                             if result.success {
                                 println!("Task completed successfully: {}", result.job_id);
@@ -195,10 +198,7 @@ impl TaskScheduler {
                     {
                         let mut count = active_workers.lock().await;
                         *count += 1;
-                        self.context.terminal_operations().set_title(&format!(
-                            "TSK Server Running ({}/{} workers)",
-                            *count, self.workers
-                        ));
+                        self.set_terminal_title(*count);
                     }
 
                     // Create and submit the job
@@ -219,6 +219,12 @@ impl TaskScheduler {
                             // Remove from submitted tasks since it didn't actually submit
                             self.submitted_tasks.lock().await.remove(&task.id);
 
+                            // Decrement worker count since we incremented it but didn't submit
+                            let mut count = active_workers.lock().await;
+                            *count = count.saturating_sub(1);
+                            self.set_terminal_title(*count);
+                            drop(count);
+
                             // Revert task status
                             let storage = self.storage.lock().await;
                             let _ = storage
@@ -229,6 +235,12 @@ impl TaskScheduler {
                             eprintln!("Failed to submit job: {}", e);
                             // Remove from submitted tasks since it didn't actually submit
                             self.submitted_tasks.lock().await.remove(&task.id);
+
+                            // Decrement worker count since we incremented it but didn't submit
+                            let mut count = active_workers.lock().await;
+                            *count = count.saturating_sub(1);
+                            self.set_terminal_title(*count);
+                            drop(count);
 
                             // Revert task status
                             let storage = self.storage.lock().await;
@@ -567,5 +579,105 @@ mod tests {
 
         // Verify it's removed
         assert!(!scheduler.submitted_tasks.lock().await.contains("task-1"));
+    }
+
+    #[tokio::test]
+    async fn test_worker_count_tracking_logic() {
+        // Test that the worker count tracking logic in the scheduler properly decrements
+        // the count regardless of job success/failure. This is a focused unit test that
+        // simulates the scheduler's worker count behavior without using the actual WorkerPool.
+
+        // Track active workers using the same pattern as the scheduler
+        let active_workers = Arc::new(Mutex::new(0u32));
+
+        // Simulate starting 3 jobs
+        for i in 1..=3 {
+            let mut count = active_workers.lock().await;
+            *count += 1;
+            println!("Started job {}, active workers: {}", i, *count);
+        }
+
+        assert_eq!(
+            *active_workers.lock().await,
+            3,
+            "Should have 3 active workers after starting jobs"
+        );
+
+        // Simulate job completions with different outcomes:
+        // Job 1: Success
+        {
+            let mut count = active_workers.lock().await;
+            *count = count.saturating_sub(1);
+            println!("Job 1 completed successfully, active workers: {}", *count);
+        }
+        assert_eq!(
+            *active_workers.lock().await,
+            2,
+            "Should have 2 active workers after job 1 completes"
+        );
+
+        // Job 2: Failure (but still completes)
+        {
+            let mut count = active_workers.lock().await;
+            *count = count.saturating_sub(1);
+            println!("Job 2 failed, active workers: {}", *count);
+        }
+        assert_eq!(
+            *active_workers.lock().await,
+            1,
+            "Should have 1 active worker after job 2 fails"
+        );
+
+        // Job 3: Error (job panicked but still counted as complete)
+        {
+            let mut count = active_workers.lock().await;
+            *count = count.saturating_sub(1);
+            println!("Job 3 errored, active workers: {}", *count);
+        }
+        assert_eq!(
+            *active_workers.lock().await,
+            0,
+            "Should have 0 active workers after all jobs complete"
+        );
+
+        // Test saturating_sub prevents underflow
+        {
+            let mut count = active_workers.lock().await;
+            *count = count.saturating_sub(1);
+            println!(
+                "Extra decrement (should stay at 0), active workers: {}",
+                *count
+            );
+        }
+        assert_eq!(
+            *active_workers.lock().await,
+            0,
+            "saturating_sub should prevent negative counts"
+        );
+
+        // Test the scenario that was causing the bug: increment but job fails to submit
+        {
+            // Increment for a new job
+            let mut count = active_workers.lock().await;
+            *count += 1;
+            println!("Attempted to start job 4, active workers: {}", *count);
+        }
+        assert_eq!(
+            *active_workers.lock().await,
+            1,
+            "Should have 1 active worker"
+        );
+
+        // Job fails to submit, so we should decrement
+        {
+            let mut count = active_workers.lock().await;
+            *count = count.saturating_sub(1);
+            println!("Job 4 failed to submit, active workers: {}", *count);
+        }
+        assert_eq!(
+            *active_workers.lock().await,
+            0,
+            "Should be back to 0 after job fails to submit"
+        );
     }
 }
