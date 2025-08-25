@@ -7,6 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/dtormoen/tsk/compare/v0.3.2...v0.4.0) - 2025-08-25
+
+This release is largely focused on refactoring which will help create a solid foundation
+for future planned changes. Some notable improvements are:
+- Fix that ensures proxy can be restarted (requires a `tsk docker build`)
+- Fixed `tsk debug` so now you can start an interactive session with Claude in a docker 
+  container or debug issues with the project docker containers you've created
+- tsk checks if claude code is working before launching a container. If this step fails, 
+  it typically means you've used up your subscription limits. `tsk` will now retry the 
+  task once each hour rather than fail it outright. This can be used for example to 
+  queue up a lot of work overnight and tsk will wait until your limit is refilled
+- Unit tests are faster, no longer flaky, and are easier to properly isolate to run
+  in parallel
+
+### Added
+
+- [**breaking**] fix debug command and add interactive agent support
+- [**breaking**] add is_interactive field to Task for controlling execution mode
+- add automatic retry for agent warmup failures in server mode
+
+### Fixed
+
+- flaky tests
+- add delay to interactive commands to prevent missing initial output
+- handle stale PID file in proxy container for clean restarts
+- add health check to proxy container and wait for readiness
+- correct Claude Code log parser to handle TodoWrite output format
+- update Claude Code log processor for new JSON format
+- clean up temporary instruction file when task creation is cancelled
+- update justfile to better reflect CI linting behavior
+- optimize warmup failure wait behavior test to run in <1 second
+- remove flaky test
+
+### Other
+
+- enable ignored tests using AppContext and mock docker clients
+- use Bollard for interactive containers instead of docker CLI
+- use AppContext::builder() for test setup instead of XdgConfig::builder()
+- simplify layered asset tests using DRY principles and AppContext
+- prevent git config access in tests and use AppContext for test isolation
+- update dependencies
+- rename xdg variable names to better reflect TskConfig usage
+- simplify RepoManager by using AppContext directly
+- store AppContext in TaskRunner instead of rebuilding it
+- simplify DockerImageManager using AppContext and DRY principles
+- make executor tests deterministic and remove redundancy
+- move git configuration from DockerImageManager to TskConfig
+- extract TaskBuilder to separate module for better code organization
+- rename XdgDirectories to TskConfig throughout codebase
+- replace XdgConfig::with_paths with AppContext in all tests
+- simplify test setup by leveraging AppContext's test defaults
+- consolidate Config into XdgDirectories and add test-safe context creation
+- replace MockAssetManager with FileSystemAssetManager in layered asset tests
+- simplify debug command to use TaskManager for unified task execution
+- simplify TaskRunner constructor to accept AppContext
+- use copied_repo_path from Task struct to determine task directories
+- consolidate TaskManager constructors into single new() method
+- remove deprecated new() constructor from ClaudeCodeAgent
+- pass Config through AgentProvider to eliminate direct env var access
+- configure clippy to disallow env variable setting or removing
+- add Config struct to centralize environment variable access
+- convert RepositoryContext from trait to stateless functions
+- add guidance on testing
+- fix flaky warmup failure wait behavior test
+- stronger wording around fixing just precommit issues
+- remove MockFileSystem from file_system module
+- replace MockFileSystem with temporary directories in tests
+- replace MockFileSystem with temporary directories in tests
+- replace MockFileSystem with temporary directories in tests
+- remove repository dependency from tsk list command
+- update to rust 1.89
+
 ## [0.3.2](https://github.com/dtormoen/tsk/compare/v0.3.1...v0.3.2) - 2025-08-05
 
 ### Added
