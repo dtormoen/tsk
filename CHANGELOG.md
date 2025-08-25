@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.0](https://github.com/dtormoen/tsk/compare/v0.3.2...v0.4.0) - 2025-08-25
 
+This release is largely focused on refactoring which will help create a solid foundation
+for future planned changes. Some notable improvements are:
+- Fix that ensures proxy can be restarted (requires a `tsk docker build`)
+- Fixed `tsk debug` so now you can start an interactive session with Claude in a docker 
+  container or debug issues with the project docker containers you've created
+- tsk checks if claude code is working before launching a container. If this step fails, 
+  it typically means you've used up your subscription limits. `tsk` will now retry the 
+  task once each hour rather than fail it outright. This can be used for example to 
+  queue up a lot of work overnight and tsk will wait until your limit is refilled
+- Unit tests are faster, no longer flaky, and are easier to properly isolate to run
+  in parallel
+
 ### Added
 
 - [**breaking**] fix debug command and add interactive agent support
