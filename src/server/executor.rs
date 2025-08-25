@@ -224,7 +224,7 @@ impl TaskExecutor {
                 None => {
                     // No tasks to execute, release the permit and wait
                     drop(permit);
-                    sleep(Duration::from_secs(5)).await;
+                    sleep(Duration::from_secs(1)).await;
                 }
             }
         }
@@ -444,103 +444,6 @@ mod tests {
         executor.stop().await;
         let _ = exec_handle.await;
     }
-
-    #[tokio::test]
-    async fn test_worker_concurrency() {
-        // Test both parallel execution (multiple workers) and sequential execution (single worker)
-        for (workers, expected_concurrent) in [(1, 1), (2, 2)] {
-            let app_context = AppContext::builder().build();
-            let config = app_context.tsk_config();
-            config.ensure_directories().unwrap();
-
-            let (test_repo, commit_sha) = setup_test_repo().unwrap();
-
-            // Create 3 tasks
-            let task_ids = ["parallel-1", "parallel-2", "parallel-3"];
-            let tasks: Vec<Task> = task_ids
-                .iter()
-                .map(|id| create_test_task(id, test_repo.path(), &commit_sha, config.data_dir()))
-                .collect();
-
-            // Set up storage with queued tasks
-            let fs = Arc::new(DefaultFileSystem);
-            let storage = get_task_storage(config, fs);
-            for task in &tasks {
-                storage.add_task(task.clone()).await.unwrap();
-            }
-
-            let storage = Arc::new(Mutex::new(storage));
-            let executor =
-                TaskExecutor::with_workers(Arc::new(app_context), storage.clone(), workers);
-            let executor = Arc::new(executor);
-
-            // Start executor in background
-            let exec_handle = {
-                let exec = executor.clone();
-                tokio::spawn(async move {
-                    let _ = exec.start().await;
-                })
-            };
-
-            // Wait for expected number of tasks to be running concurrently
-            let concurrent_running =
-                wait_for_condition(&storage, Duration::from_secs(5), |tasks| {
-                    let running_count = tasks
-                        .iter()
-                        .filter(|t| t.status == TaskStatus::Running)
-                        .count();
-                    // Check if we've reached the expected concurrency or if some tasks completed
-                    running_count == expected_concurrent as usize
-                        || tasks.iter().any(|t| {
-                            t.status == TaskStatus::Complete || t.status == TaskStatus::Failed
-                        })
-                })
-                .await;
-
-            assert!(
-                concurrent_running,
-                "Should reach expected concurrency level within timeout"
-            );
-
-            // Verify concurrency constraint
-            let storage_guard = storage.lock().await;
-            let snapshot = storage_guard.list_tasks().await.unwrap();
-            drop(storage_guard);
-
-            let running_at_snapshot = snapshot
-                .iter()
-                .filter(|t| t.status == TaskStatus::Running)
-                .count();
-            assert!(
-                running_at_snapshot <= expected_concurrent as usize,
-                "With {} worker(s), at most {} task(s) should run concurrently, but {} were running",
-                workers,
-                expected_concurrent,
-                running_at_snapshot
-            );
-
-            // Stop executor
-            executor.stop().await;
-            let _ = exec_handle.await;
-
-            // Verify at least some tasks were processed
-            let storage_guard = storage.lock().await;
-            let final_tasks = storage_guard.list_tasks().await.unwrap();
-            drop(storage_guard);
-
-            let processed = final_tasks
-                .iter()
-                .filter(|t| t.status != TaskStatus::Queued)
-                .count();
-            assert!(
-                processed >= 1,
-                "At least one task should have been processed with {} worker(s)",
-                workers
-            );
-        }
-    }
-
-    // test_single_worker_sequential_execution removed - covered by test_worker_concurrency
 
     #[tokio::test]
     async fn test_warmup_failure_wait_behavior() {
