@@ -96,11 +96,6 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `AppContext` provides centralized resource management with builder pattern
 - Traits in the `AppContext` should be accessed via the `AppContext`
 - Factory pattern prevents accidental operations in tests
-- `Config` struct centralizes environment variable access for thread-safe testing
-  - Provides overrides for `HOME/.claude`, `EDITOR`, and `TERM` environment variables
-  - Eliminates unsafe `env::set_var` operations in tests
-  - Accessed via `AppContext::config()` method
-  - Passed to agents via `AgentProvider::get_agent()` for proper configuration
 - `FileSystemOperations` trait abstracts all file system operations for testability
 - `GitOperations` trait abstracts all git operations for improved testability and separation of concerns
 - `TskConfig` provides TSK configuration and XDG-compliant directory paths for centralized storage
@@ -144,8 +139,8 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Make tests thread safe so they can be run in parallel
 - Always use `AppContext::builder()` for test setup rather than creating objects contained in the `AppContext` directly
   - Exception: Tests in `src/context/*` that are directly testing XdgConfig or TskConfig functionality
-  - `AppContext::builder().build()` automatically sets up test-safe temporary directories and configurations
-- Keep tests simple and concise while still testing core functionality. Improving existing tests is always prefered over adding new ones
+  - Use `let ctx = AppContext::builder().build();` to automatically set up test-safe temporary directories and configurations
+- Keep tests simple and concise while still testing core functionality. Improving existing tests is always preferred over adding new ones
 - Avoid using `#[allow(dead_code)]`
 - Limit `#[cfg(test)]` to tests and test utilities
 
