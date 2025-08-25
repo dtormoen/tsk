@@ -80,6 +80,11 @@ impl DockerClient for NoOpDockerClient {
     async fn inspect_container(&self, _id: &str) -> Result<String, String> {
         Ok(r#"{"State": {"Health": {"Status": "healthy"}}}"#.to_string())
     }
+
+    async fn attach_container(&self, _id: &str) -> Result<(), String> {
+        // No-op for tests - interactive sessions are not supported in test environment
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
@@ -184,6 +189,11 @@ impl DockerClient for FixedResponseDockerClient {
 
     async fn inspect_container(&self, _id: &str) -> Result<String, String> {
         Ok(r#"{"State": {"Health": {"Status": "healthy"}}}"#.to_string())
+    }
+
+    async fn attach_container(&self, _id: &str) -> Result<(), String> {
+        // No-op for tests - interactive sessions are not supported in test environment
+        Ok(())
     }
 }
 
@@ -347,5 +357,10 @@ impl DockerClient for TrackedDockerClient {
 
     async fn inspect_container(&self, _id: &str) -> Result<String, String> {
         Ok(self.inspect_container_response.clone())
+    }
+
+    async fn attach_container(&self, _id: &str) -> Result<(), String> {
+        // No-op for tests - interactive sessions are not supported in test environment
+        Ok(())
     }
 }

@@ -74,6 +74,24 @@ pub trait DockerClient: Send + Sync {
     /// # Returns
     /// Container inspection data as a JSON string
     async fn inspect_container(&self, id: &str) -> Result<String, String>;
+
+    /// Attach to a container for interactive sessions
+    ///
+    /// Attaches to a running container's TTY for interactive input/output.
+    /// This method handles stdin, stdout, and stderr streams for containers
+    /// configured with TTY and attach options.
+    ///
+    /// # Arguments
+    /// * `id` - Container ID or name to attach to
+    ///
+    /// # Returns
+    /// * `Ok(())` - When the interactive session completes successfully
+    /// * `Err(String)` - Error message if attachment fails
+    ///
+    /// # Note
+    /// The container must be created with `tty: true` and appropriate attach options
+    /// for this method to work properly.
+    async fn attach_container(&self, id: &str) -> Result<(), String>;
 }
 
 #[derive(Clone)]
@@ -294,5 +312,120 @@ impl DockerClient for DefaultDockerClient {
 
         serde_json::to_string(&container)
             .map_err(|e| format!("Failed to serialize container info: {e}"))
+    }
+
+    async fn attach_container(&self, id: &str) -> Result<(), String> {
+        use bollard::query_parameters::AttachContainerOptionsBuilder;
+        use futures_util::StreamExt;
+        use tokio::io::AsyncWriteExt;
+
+        // Check if the terminal is a TTY
+        let is_tty = atty::is(atty::Stream::Stdin);
+        if !is_tty {
+            return Err(
+                "Interactive containers require a TTY. Please run in a terminal.".to_string(),
+            );
+        }
+
+        // Attach to the container
+        let attach_options = AttachContainerOptionsBuilder::default()
+            .stdout(true)
+            .stderr(true)
+            .stdin(true)
+            .stream(true)
+            .build();
+
+        let bollard::container::AttachContainerResults {
+            mut output,
+            mut input,
+        } = self
+            .docker
+            .attach_container(id, Some(attach_options))
+            .await
+            .map_err(|e| format!("Failed to attach to container: {e}"))?;
+
+        // Set up raw mode for the terminal
+        #[cfg(not(windows))]
+        {
+            use std::io::{Read, Write, stdout};
+            use termion::raw::IntoRawMode;
+
+            // Spawn a task to pipe stdin to the container
+            let input_handle = tokio::spawn(async move {
+                use std::io::BufReader;
+                use termion::async_stdin;
+                let stdin = async_stdin();
+                let mut stdin = BufReader::new(stdin).bytes();
+                loop {
+                    if let Some(Ok(byte)) = stdin.next() {
+                        if input.write_all(&[byte]).await.is_err() {
+                            break;
+                        }
+                    } else {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                    }
+                }
+            });
+
+            // Create a channel for output bytes
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+
+            // Spawn a task to read from the container output
+            let output_handle = tokio::spawn(async move {
+                while let Some(result) = output.next().await {
+                    match result {
+                        Ok(data) => {
+                            if tx.send(data.into_bytes().to_vec()).is_err() {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error reading container output: {e}");
+                            break;
+                        }
+                    }
+                }
+            });
+
+            // Process output in a blocking task to handle raw terminal mode
+            let write_handle = tokio::task::spawn_blocking(move || {
+                // Set stdout to raw mode
+                let stdout = stdout();
+                let mut stdout = stdout
+                    .lock()
+                    .into_raw_mode()
+                    .map_err(|e| format!("Failed to set raw mode: {e}"))?;
+
+                // Use blocking recv to write output
+                while let Some(data) = rx.blocking_recv() {
+                    if stdout.write_all(&data).is_err() {
+                        break;
+                    }
+                    if stdout.flush().is_err() {
+                        break;
+                    }
+                }
+
+                Ok::<(), String>(())
+            });
+
+            // Wait for the output task to complete
+            let _ = output_handle.await;
+
+            // Abort the input task
+            input_handle.abort();
+
+            // Wait for the write task to complete
+            write_handle
+                .await
+                .map_err(|e| format!("Failed to process output: {e}"))??;
+        }
+
+        #[cfg(windows)]
+        {
+            return Err("Interactive containers are not yet supported on Windows".to_string());
+        }
+
+        Ok(())
     }
 }

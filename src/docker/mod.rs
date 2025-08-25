@@ -194,6 +194,21 @@ impl DockerManager {
         Ok(absolute_path)
     }
 
+    /// Create a container configuration for both interactive and non-interactive modes.
+    ///
+    /// This function builds a unified container configuration that can be used for
+    /// both interactive (TTY-attached) and non-interactive (log-streaming) containers.
+    ///
+    /// # Arguments
+    /// * `image` - The Docker image to use
+    /// * `worktree_path_str` - The absolute path to the work directory to mount
+    /// * `command` - Optional command to run in the container
+    /// * `interactive` - Whether to configure for interactive (TTY) mode
+    /// * `instructions_file_path` - Optional path to instructions file to mount
+    /// * `agent` - Optional agent to get volumes and environment variables from
+    ///
+    /// # Returns
+    /// A `ContainerCreateBody` configured with appropriate settings for the mode
     fn create_base_container_config(
         image: &str,
         worktree_path_str: &str,
@@ -353,41 +368,65 @@ impl DockerManager {
             }
         };
 
-        if is_interactive {
-            // For interactive mode, use docker run -it directly for proper TTY handling
-            let container_name = format!("tsk-interactive-{task_id}");
-            self.run_interactive_container(
-                image,
-                worktree_path_str,
-                command,
-                instructions_file_path,
-                agent,
-                &container_name,
-            )
-            .await?;
+        // Create container configuration - shared for both modes
+        let mut config = Self::create_base_container_config(
+            image,
+            worktree_path_str,
+            command,
+            is_interactive,
+            instructions_file_path,
+            Some(agent),
+        );
 
-            // Return empty output and no task result for interactive sessions
+        // Add open_stdin for interactive mode
+        if is_interactive {
+            config.open_stdin = Some(true);
+        }
+
+        // Create container name
+        let container_name = if is_interactive {
+            format!("tsk-interactive-{task_id}")
+        } else {
+            format!("tsk-{task_id}")
+        };
+
+        let options = bollard::query_parameters::CreateContainerOptionsBuilder::default()
+            .name(&container_name)
+            .build();
+
+        // Create the container
+        let container_id = self.client.create_container(Some(options), config).await?;
+
+        if is_interactive {
+            // Interactive mode: start, attach, and cleanup
+            println!("\nStarting interactive session...");
+            self.client.start_container(&container_id).await?;
+
+            // Attach to the container for interactive session
+            let attach_result = self.client.attach_container(&container_id).await;
+
+            // Clean up the container after the session ends
+            let _ = self
+                .client
+                .remove_container(
+                    &container_id,
+                    Some(RemoveContainerOptions {
+                        force: true,
+                        ..Default::default()
+                    }),
+                )
+                .await;
+
+            if let Err(e) = attach_result {
+                eprintln!("Interactive session ended with error: {e}");
+                return Err(e);
+            }
+
+            println!("\nInteractive session ended");
             Ok((String::new(), None))
         } else {
-            // For non-interactive mode, use the existing create/start/logs flow
-            let config = Self::create_base_container_config(
-                image,
-                worktree_path_str,
-                command,
-                false, // not interactive
-                instructions_file_path,
-                Some(agent),
-            );
-
-            let container_name = format!("tsk-{task_id}");
-            let options = bollard::query_parameters::CreateContainerOptionsBuilder::default()
-                .name(&container_name)
-                .build();
-
-            let container_id = self.client.create_container(Some(options), config).await?;
-
+            // Non-interactive mode: start, stream logs, process results
             println!("Starting agent sand box container: {container_id}");
-
             self.client.start_container(&container_id).await?;
 
             // Stream logs and process them
@@ -412,124 +451,6 @@ impl DockerManager {
 
             Ok((output, task_result))
         }
-    }
-
-    /// Run an interactive container using docker run -it for proper TTY handling
-    async fn run_interactive_container(
-        &self,
-        image: &str,
-        worktree_path_str: &str,
-        command: Option<Vec<String>>,
-        instructions_file_path: Option<&PathBuf>,
-        agent: &dyn Agent,
-        container_name: &str,
-    ) -> Result<(), String> {
-        println!("\nStarting interactive Docker container...");
-        println!("Container name: {container_name}");
-
-        // Build docker run command with all the necessary arguments
-        let mut docker_args = vec![
-            "run".to_string(),
-            "-it".to_string(),  // Interactive with TTY
-            "--rm".to_string(), // Remove container after exit
-            "--name".to_string(),
-            container_name.to_string(),
-            "--network".to_string(),
-            TSK_NETWORK_NAME.to_string(),
-            "--user".to_string(),
-            CONTAINER_USER.to_string(),
-            "--workdir".to_string(),
-            CONTAINER_WORKING_DIR.to_string(),
-            // Resource limits
-            "--memory".to_string(),
-            format!("{}b", CONTAINER_MEMORY_LIMIT),
-            "--cpus".to_string(),
-            "4".to_string(), // CPU quota of 400000 = 4 CPUs
-        ];
-
-        // Add capability drops for security
-        for cap in [
-            "NET_ADMIN",
-            "NET_RAW",
-            "SETPCAP",
-            "SYS_ADMIN",
-            "SYS_PTRACE",
-            "DAC_OVERRIDE",
-            "AUDIT_WRITE",
-            "SETUID",
-            "SETGID",
-        ] {
-            docker_args.push("--cap-drop".to_string());
-            docker_args.push(cap.to_string());
-        }
-
-        // Add volume mounts
-        docker_args.push("-v".to_string());
-        docker_args.push(format!("{worktree_path_str}:{CONTAINER_WORKING_DIR}"));
-
-        // Add agent-specific volumes
-        for (host_path, container_path, options) in agent.volumes() {
-            docker_args.push("-v".to_string());
-            if options.is_empty() {
-                docker_args.push(format!("{host_path}:{container_path}"));
-            } else {
-                docker_args.push(format!("{host_path}:{container_path}:{options}"));
-            }
-        }
-
-        // Add instructions directory mount if provided
-        if let Some(inst_path) = instructions_file_path
-            && let Some(parent) = inst_path.parent()
-        {
-            let abs_parent = parent
-                .canonicalize()
-                .unwrap_or_else(|_| parent.to_path_buf());
-            docker_args.push("-v".to_string());
-            docker_args.push(format!("{}:/instructions:ro", abs_parent.to_str().unwrap()));
-        }
-
-        // Add environment variables
-        // Proxy settings
-        for (key, value) in [
-            ("HTTP_PROXY", "http://tsk-proxy:3128"),
-            ("HTTPS_PROXY", "http://tsk-proxy:3128"),
-            ("http_proxy", "http://tsk-proxy:3128"),
-            ("https_proxy", "http://tsk-proxy:3128"),
-            ("NO_PROXY", "localhost,127.0.0.1"),
-            ("no_proxy", "localhost,127.0.0.1"),
-        ] {
-            docker_args.push("-e".to_string());
-            docker_args.push(format!("{key}={value}"));
-        }
-
-        // Add agent-specific environment variables
-        for (key, value) in agent.environment() {
-            docker_args.push("-e".to_string());
-            docker_args.push(format!("{key}={value}"));
-        }
-
-        // Add the image
-        docker_args.push(image.to_string());
-
-        // Add the command if provided
-        if let Some(cmd) = command {
-            docker_args.extend(cmd);
-        }
-
-        println!("\nStarting interactive session...");
-
-        // Use docker run command for proper TTY handling
-        let status = std::process::Command::new("docker")
-            .args(&docker_args)
-            .status()
-            .map_err(|e| format!("Failed to execute docker run: {e}"))?;
-
-        if !status.success() {
-            eprintln!("Interactive session exited with non-zero status");
-        }
-
-        println!("\nInteractive session ended");
-        Ok(())
     }
 
     /// Stream container logs and process them through the log processor
@@ -688,15 +609,59 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "Interactive mode requires docker run which doesn't work in test environment"]
     async fn test_run_task_container_interactive() {
-        // This test is ignored because interactive mode now uses docker run directly
-        // which cannot be easily mocked. The functionality is tested through integration tests.
+        // Test interactive mode with mock client
+        let mock_client = Arc::new(TrackedDockerClient::default());
+        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
 
-        // The interactive flow now:
-        // 1. Ensures network and proxy are running
-        // 2. Calls run_interactive_container which uses `docker run -it`
-        // 3. Returns empty output and no task result
+        let worktree_path = Path::new("/tmp/test-worktree");
+        let app_context = AppContext::builder().build();
+        let tsk_config = app_context.tsk_config();
+        let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(tsk_config);
+
+        let result = manager
+            .run_task_container(
+                "tsk/base",
+                worktree_path,
+                None,
+                &agent,
+                true, // interactive mode
+                "test-task-id",
+            )
+            .await;
+
+        // Interactive mode should succeed with mock client
+        assert!(result.is_ok());
+        let (output, task_result) = result.unwrap();
+        // Interactive mode returns empty output and no task result
+        assert_eq!(output, "");
+        assert!(task_result.is_none());
+
+        let create_calls = mock_client.create_container_calls.lock().unwrap();
+        assert_eq!(create_calls.len(), 2); // One for proxy, one for task container
+
+        // Check task container config for interactive mode
+        let (options, config) = &create_calls[1];
+        assert_eq!(
+            options.as_ref().unwrap().name,
+            Some("tsk-interactive-test-task-id".to_string())
+        );
+
+        // Check interactive-specific settings
+        assert_eq!(config.attach_stdin, Some(true));
+        assert_eq!(config.attach_stdout, Some(true));
+        assert_eq!(config.attach_stderr, Some(true));
+        assert_eq!(config.tty, Some(true));
+        assert_eq!(config.open_stdin, Some(true));
+
+        // Verify attach_container was called (indirectly through start_container_calls)
+        let start_calls = mock_client.start_container_calls.lock().unwrap();
+        assert_eq!(start_calls.len(), 2); // One for proxy, one for task container
+
+        // Verify cleanup happened
+        let remove_calls = mock_client.remove_container_calls.lock().unwrap();
+        assert_eq!(remove_calls.len(), 1); // Task container should be removed
+        assert_eq!(remove_calls[0].0, "test-container-id-1");
     }
 
     #[tokio::test]
