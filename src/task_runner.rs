@@ -218,11 +218,12 @@ mod tests {
     use super::*;
     use crate::task::{Task, TaskStatus};
     use crate::test_utils::git_test_utils::TestGitRepository;
+    use std::sync::Arc;
 
     #[tokio::test]
-    #[ignore = "Test requires Docker to be available for image building"]
     async fn test_execute_task_success() {
         use crate::context::AppContext;
+        use crate::test_utils::FixedResponseDockerClient;
 
         // Create a test git repository
         let test_repo = TestGitRepository::new().unwrap();
@@ -236,8 +237,16 @@ mod tests {
         test_repo.stage_all().unwrap();
         test_repo.commit("Add test files").unwrap();
 
-        // Create AppContext which automatically sets up test directories
-        let ctx = AppContext::builder().build();
+        // Create a mock docker client with the expected output
+        let docker_client = Arc::new(FixedResponseDockerClient {
+            logs_output: "Test output".to_string(),
+            ..Default::default()
+        });
+
+        // Create AppContext with mock docker client and test directories
+        let ctx = AppContext::builder()
+            .with_docker_client(docker_client)
+            .build();
         let tsk_config = ctx.tsk_config();
 
         // Set up a mock .claude.json file in the test claude directory
@@ -245,6 +254,10 @@ mod tests {
             .claude_config_dir()
             .join("..")
             .join(".claude.json");
+        // Ensure parent directory exists
+        if let Some(parent) = claude_json_path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
         std::fs::write(&claude_json_path, "{}").unwrap();
 
         let task_runner = TaskRunner::new(&ctx);
