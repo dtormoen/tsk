@@ -76,7 +76,7 @@ impl Agent for ClaudeCodeAgent {
             "sh".to_string(),
             "-c".to_string(),
             format!(
-                r#"echo '=== Task Instructions ==='; cat /instructions/{}; echo; echo '=== Normal Command ==='; echo '{}'; echo; echo '=== Starting Interactive Claude Code Session ==='; echo 'You can now interact with Claude Code directly.'; echo 'Type "exit" or Ctrl+D to end the session.'; echo; exec /bin/bash"#,
+                r#"sleep 0.5; echo '=== Task Instructions ==='; cat /instructions/{}; echo; echo '=== Normal Command ==='; echo '{}'; echo; echo '=== Starting Interactive Claude Code Session ==='; echo 'You can now interact with Claude Code directly.'; echo 'Type "exit" or Ctrl+D to end the session.'; echo; exec /bin/bash"#,
                 filename, normal_command
             ),
         ]
@@ -245,6 +245,9 @@ mod tests {
         assert_eq!(command.len(), 3);
         assert_eq!(command[0], "sh");
         assert_eq!(command[1], "-c");
+
+        // Check that it has a sleep to allow attach to be ready
+        assert!(command[2].starts_with("sleep 0.5;"));
 
         // Check that it shows the instructions
         assert!(command[2].contains("=== Task Instructions ==="));

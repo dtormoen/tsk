@@ -25,14 +25,15 @@ pub trait Agent: Send + Sync {
     /// 1. Echo the normal command that would run non-interactively
     /// 2. Provide an interactive shell or interface for the user
     ///
-    /// The default implementation echoes the normal command and drops into bash.
+    /// The default implementation includes a small delay to ensure the attach
+    /// operation is ready, then echoes the normal command and drops into bash.
     fn build_interactive_command(&self, instruction_path: &str) -> Vec<String> {
         let normal_command = self.build_command(instruction_path);
         vec![
             "sh".to_string(),
             "-c".to_string(),
             format!(
-                "echo '=== Agent Command ==='; echo '{}'; echo '=== Starting Interactive Session ==='; exec /bin/bash",
+                "sleep 0.5; echo '=== Agent Command ==='; echo '{}'; echo '=== Starting Interactive Session ==='; exec /bin/bash",
                 normal_command.join(" ")
             ),
         ]
@@ -153,6 +154,7 @@ mod tests {
         assert_eq!(interactive_command.len(), 3);
         assert_eq!(interactive_command[0], "sh");
         assert_eq!(interactive_command[1], "-c");
+        assert!(interactive_command[2].starts_with("sleep 0.5;"));
         assert!(interactive_command[2].contains("=== Agent Command ==="));
         assert!(interactive_command[2].contains("=== Starting Interactive Session ==="));
 
