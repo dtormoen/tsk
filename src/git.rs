@@ -96,23 +96,80 @@ impl RepoManager {
             let src_path = current_dir.join(&file_path);
             let dst_path = repo_path.join(&file_path);
 
-            // Create parent directory if it doesn't exist
-            if let Some(parent) = dst_path.parent() {
+            // Check if this is a directory (not following symlinks)
+            // Use symlink_metadata to check the actual entry type
+            let metadata = tokio::fs::symlink_metadata(&src_path)
+                .await
+                .map_err(|e| format!("Failed to get metadata for {}: {}", src_path.display(), e))?;
+
+            if metadata.is_dir() {
+                // It's an actual directory (not a symlink), copy it recursively
                 self.ctx
                     .file_system()
-                    .create_dir(parent)
+                    .copy_dir(&src_path, &dst_path)
                     .await
-                    .map_err(|e| format!("Failed to create parent directory: {e}"))?;
-            }
+                    .map_err(|e| {
+                        format!(
+                            "Failed to copy tracked directory {}: {}",
+                            file_path.display(),
+                            e
+                        )
+                    })?;
+            } else if metadata.is_symlink() {
+                // It's a symlink - need special handling
+                // Create parent directory if it doesn't exist
+                if let Some(parent) = dst_path.parent() {
+                    self.ctx
+                        .file_system()
+                        .create_dir(parent)
+                        .await
+                        .map_err(|e| format!("Failed to create parent directory: {e}"))?;
+                }
 
-            // Copy the file
-            self.ctx
-                .file_system()
-                .copy_file(&src_path, &dst_path)
-                .await
-                .map_err(|e| {
-                    format!("Failed to copy tracked file {}: {}", file_path.display(), e)
+                // Read the symlink target and recreate it
+                let target = tokio::fs::read_link(&src_path)
+                    .await
+                    .map_err(|e| format!("Failed to read symlink {}: {}", src_path.display(), e))?;
+
+                #[cfg(unix)]
+                tokio::fs::symlink(&target, &dst_path).await.map_err(|e| {
+                    format!("Failed to create symlink {}: {}", dst_path.display(), e)
                 })?;
+
+                #[cfg(windows)]
+                {
+                    // On Windows, determine if it's a file or directory symlink
+                    if let Ok(target_meta) = tokio::fs::metadata(&src_path).await {
+                        if target_meta.is_dir() {
+                            tokio::fs::symlink_dir(&target, &dst_path).await?;
+                        } else {
+                            tokio::fs::symlink_file(&target, &dst_path).await?;
+                        }
+                    } else {
+                        // Default to file symlink if we can't determine
+                        tokio::fs::symlink_file(&target, &dst_path).await?;
+                    }
+                }
+            } else {
+                // It's a regular file
+                // Create parent directory if it doesn't exist
+                if let Some(parent) = dst_path.parent() {
+                    self.ctx
+                        .file_system()
+                        .create_dir(parent)
+                        .await
+                        .map_err(|e| format!("Failed to create parent directory: {e}"))?;
+                }
+
+                // Copy the file
+                self.ctx
+                    .file_system()
+                    .copy_file(&src_path, &dst_path)
+                    .await
+                    .map_err(|e| {
+                        format!("Failed to copy tracked file {}: {}", file_path.display(), e)
+                    })?;
+            }
         }
 
         // Copy all untracked files (not ignored)
@@ -128,39 +185,112 @@ impl RepoManager {
             let src_path = current_dir.join(&file_path_clean);
             let dst_path = repo_path.join(&file_path_clean);
 
-            // Check if this is a directory
-            if self.ctx.file_system().read_dir(&src_path).await.is_ok() {
-                // It's a directory, copy it recursively
-                self.ctx
-                    .file_system()
-                    .copy_dir(&src_path, &dst_path)
-                    .await
-                    .map_err(|e| format!("Failed to copy directory {}: {e}", src_path.display()))?;
-            } else {
-                // It's a file
-                // Create parent directory if it doesn't exist
-                if let Some(parent) = dst_path.parent() {
-                    self.ctx
-                        .file_system()
-                        .create_dir(parent)
-                        .await
-                        .map_err(|e| format!("Failed to create parent directory: {e}"))?;
-                }
-
-                // Copy the file
-                match self.ctx.file_system().copy_file(&src_path, &dst_path).await {
-                    Ok(_) => {}
-                    Err(e) => {
-                        // If the file doesn't exist in src, it might be because git reported
-                        // a directory with a trailing slash. Skip it.
-                        if !e.to_string().contains("Source file not found") {
-                            return Err(format!(
-                                "Failed to copy untracked file {}: {}",
-                                file_path.display(),
-                                e
-                            ));
+            // Get metadata to check the actual entry type (not following symlinks)
+            match tokio::fs::symlink_metadata(&src_path).await {
+                Ok(metadata) => {
+                    if metadata.is_dir() {
+                        // It's an actual directory, copy it recursively
+                        self.ctx
+                            .file_system()
+                            .copy_dir(&src_path, &dst_path)
+                            .await
+                            .map_err(|e| {
+                                format!(
+                                    "Failed to copy untracked directory {}: {e}",
+                                    src_path.display()
+                                )
+                            })?;
+                    } else if metadata.is_symlink() {
+                        // It's a symlink - need special handling
+                        // Create parent directory if it doesn't exist
+                        if let Some(parent) = dst_path.parent() {
+                            self.ctx
+                                .file_system()
+                                .create_dir(parent)
+                                .await
+                                .map_err(|e| format!("Failed to create parent directory: {e}"))?;
                         }
+
+                        // Read the symlink target and recreate it
+                        let target = tokio::fs::read_link(&src_path).await.map_err(|e| {
+                            format!("Failed to read symlink {}: {}", src_path.display(), e)
+                        })?;
+
+                        #[cfg(unix)]
+                        tokio::fs::symlink(&target, &dst_path).await.map_err(|e| {
+                            format!("Failed to create symlink {}: {}", dst_path.display(), e)
+                        })?;
+
+                        #[cfg(windows)]
+                        {
+                            // On Windows, determine if it's a file or directory symlink
+                            if let Ok(target_meta) = tokio::fs::metadata(&src_path).await {
+                                if target_meta.is_dir() {
+                                    tokio::fs::symlink_dir(&target, &dst_path).await.map_err(
+                                        |e| {
+                                            format!(
+                                                "Failed to create directory symlink {}: {}",
+                                                dst_path.display(),
+                                                e
+                                            )
+                                        },
+                                    )?;
+                                } else {
+                                    tokio::fs::symlink_file(&target, &dst_path).await.map_err(
+                                        |e| {
+                                            format!(
+                                                "Failed to create file symlink {}: {}",
+                                                dst_path.display(),
+                                                e
+                                            )
+                                        },
+                                    )?;
+                                }
+                            } else {
+                                // Default to file symlink if we can't determine
+                                tokio::fs::symlink_file(&target, &dst_path)
+                                    .await
+                                    .map_err(|e| {
+                                        format!(
+                                            "Failed to create symlink {}: {}",
+                                            dst_path.display(),
+                                            e
+                                        )
+                                    })?;
+                            }
+                        }
+                    } else {
+                        // It's a regular file
+                        // Create parent directory if it doesn't exist
+                        if let Some(parent) = dst_path.parent() {
+                            self.ctx
+                                .file_system()
+                                .create_dir(parent)
+                                .await
+                                .map_err(|e| format!("Failed to create parent directory: {e}"))?;
+                        }
+
+                        // Copy the file
+                        self.ctx
+                            .file_system()
+                            .copy_file(&src_path, &dst_path)
+                            .await
+                            .map_err(|e| {
+                                format!("Failed to copy untracked file {}: {e}", src_path.display())
+                            })?;
                     }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    // File doesn't exist - might be because git reported a directory with trailing slash
+                    // that we already processed. Skip it.
+                    continue;
+                }
+                Err(e) => {
+                    return Err(format!(
+                        "Failed to get metadata for {}: {}",
+                        src_path.display(),
+                        e
+                    ));
                 }
             }
         }
@@ -681,8 +811,167 @@ mod tests {
         );
     }
 
-    // This test is redundant with test_copy_repo_separates_tracked_and_untracked_files
-    // and has been removed as per the implementation plan
+    #[tokio::test]
+    async fn test_copy_repo_with_symlinks() {
+        let ctx = AppContext::builder().build();
+
+        // Create a repository with symlinks
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init().unwrap();
+
+        // Create some regular files and directories
+        test_repo
+            .create_file("README.md", "# Test Repository\n")
+            .unwrap();
+        test_repo
+            .create_file("src/main.rs", "fn main() {}")
+            .unwrap();
+        std::fs::create_dir_all(test_repo.path().join("docs")).unwrap();
+        test_repo
+            .create_file("docs/guide.md", "# User Guide\n")
+            .unwrap();
+
+        // Create symlinks
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs as unix_fs;
+
+            // Create a symlink to a file
+            unix_fs::symlink("README.md", test_repo.path().join("README_LINK.md")).unwrap();
+
+            // Create a symlink to a directory
+            unix_fs::symlink("docs", test_repo.path().join("documentation")).unwrap();
+
+            // Create an absolute symlink to a file within the repo
+            let readme_abs = test_repo.path().join("README.md");
+            unix_fs::symlink(&readme_abs, test_repo.path().join("README_ABS.md")).unwrap();
+
+            // Create a nested symlink (symlink inside a directory)
+            unix_fs::symlink("../README.md", test_repo.path().join("docs/README_LINK.md")).unwrap();
+        }
+
+        #[cfg(windows)]
+        {
+            // On Windows, create file and directory symlinks
+            std::fs::symlink_file("README.md", test_repo.path().join("README_LINK.md")).unwrap();
+
+            std::fs::symlink_dir("docs", test_repo.path().join("documentation")).unwrap();
+        }
+
+        // Stage and commit all files including symlinks
+        test_repo.stage_all().unwrap();
+        test_repo.commit("Initial commit with symlinks").unwrap();
+
+        // Also add an untracked symlink
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs as unix_fs;
+            unix_fs::symlink("src/main.rs", test_repo.path().join("main_link.rs")).unwrap();
+        }
+
+        #[cfg(windows)]
+        {
+            std::fs::symlink_file("src/main.rs", test_repo.path().join("main_link.rs")).unwrap();
+        }
+
+        let manager = RepoManager::new(&ctx);
+
+        // Copy the repository
+        let task_id = "symlink123";
+        let branch_name = "tsk/test/symlinks/symlink123";
+        let result = manager
+            .copy_repo(task_id, test_repo.path(), None, branch_name)
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "Failed to copy repo with symlinks: {:?}",
+            result
+        );
+        let (copied_path, _) = result.unwrap();
+
+        // Verify regular files were copied
+        assert!(copied_path.join("README.md").exists());
+        assert!(copied_path.join("src/main.rs").exists());
+        assert!(copied_path.join("docs/guide.md").exists());
+
+        // Verify symlinks were preserved as symlinks
+        #[cfg(unix)]
+        {
+            use std::fs;
+
+            // Check tracked symlinks
+            let readme_link_meta =
+                fs::symlink_metadata(copied_path.join("README_LINK.md")).unwrap();
+            assert!(
+                readme_link_meta.is_symlink(),
+                "README_LINK.md should be a symlink"
+            );
+
+            let docs_link_meta = fs::symlink_metadata(copied_path.join("documentation")).unwrap();
+            assert!(
+                docs_link_meta.is_symlink(),
+                "documentation should be a symlink"
+            );
+
+            let readme_abs_meta = fs::symlink_metadata(copied_path.join("README_ABS.md")).unwrap();
+            assert!(
+                readme_abs_meta.is_symlink(),
+                "README_ABS.md should be a symlink"
+            );
+
+            let nested_link_meta =
+                fs::symlink_metadata(copied_path.join("docs/README_LINK.md")).unwrap();
+            assert!(
+                nested_link_meta.is_symlink(),
+                "docs/README_LINK.md should be a symlink"
+            );
+
+            // Check untracked symlink
+            let untracked_link_meta =
+                fs::symlink_metadata(copied_path.join("main_link.rs")).unwrap();
+            assert!(
+                untracked_link_meta.is_symlink(),
+                "main_link.rs should be a symlink"
+            );
+
+            // Verify symlink targets are correct
+            let readme_target = fs::read_link(copied_path.join("README_LINK.md")).unwrap();
+            assert_eq!(readme_target.to_string_lossy(), "README.md");
+
+            let docs_target = fs::read_link(copied_path.join("documentation")).unwrap();
+            assert_eq!(docs_target.to_string_lossy(), "docs");
+
+            let nested_target = fs::read_link(copied_path.join("docs/README_LINK.md")).unwrap();
+            assert_eq!(nested_target.to_string_lossy(), "../README.md");
+        }
+
+        #[cfg(windows)]
+        {
+            use std::fs;
+
+            // Check symlinks on Windows
+            let readme_link_meta =
+                fs::symlink_metadata(copied_path.join("README_LINK.md")).unwrap();
+            assert!(
+                readme_link_meta.is_symlink(),
+                "README_LINK.md should be a symlink"
+            );
+
+            let docs_link_meta = fs::symlink_metadata(copied_path.join("documentation")).unwrap();
+            assert!(
+                docs_link_meta.is_symlink(),
+                "documentation should be a symlink"
+            );
+
+            let untracked_link_meta =
+                fs::symlink_metadata(copied_path.join("main_link.rs")).unwrap();
+            assert!(
+                untracked_link_meta.is_symlink(),
+                "main_link.rs should be a symlink"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn test_copy_repo_includes_tsk_directory() {

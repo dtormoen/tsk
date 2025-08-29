@@ -31,6 +31,7 @@ pub trait FileSystemOperations: Send + Sync {
     async fn copy_file(&self, from: &Path, to: &Path) -> Result<()>;
 
     /// Lists all entries in a directory.
+    #[cfg(test)]
     async fn read_dir(&self, path: &Path) -> Result<Vec<std::path::PathBuf>>;
 }
 
@@ -53,7 +54,34 @@ impl FileSystemOperations for DefaultFileSystem {
             let relative_path = path.strip_prefix(from)?;
             let dst_path = to.join(relative_path);
 
-            if entry.file_type().await?.is_dir() {
+            // Get metadata without following symlinks to check if it's a symlink
+            let metadata = tokio::fs::symlink_metadata(&path).await?;
+
+            if metadata.is_symlink() {
+                // Preserve symlinks by reading the target and creating a new symlink
+                let target = tokio::fs::read_link(&path).await?;
+                if let Some(parent) = dst_path.parent() {
+                    self.create_dir(parent).await?;
+                }
+                // Create symlink at destination pointing to the same target
+                #[cfg(unix)]
+                tokio::fs::symlink(&target, &dst_path).await?;
+                #[cfg(windows)]
+                {
+                    // On Windows, we need to determine if it's a file or directory symlink
+                    // Try to get the target metadata to determine the type
+                    if let Ok(target_metadata) = tokio::fs::metadata(&path).await {
+                        if target_metadata.is_dir() {
+                            tokio::fs::symlink_dir(&target, &dst_path).await?;
+                        } else {
+                            tokio::fs::symlink_file(&target, &dst_path).await?;
+                        }
+                    } else {
+                        // If we can't determine the type, try as a file symlink
+                        tokio::fs::symlink_file(&target, &dst_path).await?;
+                    }
+                }
+            } else if metadata.is_dir() {
                 self.copy_dir(&path, &dst_path).await?;
             } else {
                 if let Some(parent) = dst_path.parent() {
@@ -98,6 +126,7 @@ impl FileSystemOperations for DefaultFileSystem {
         Ok(())
     }
 
+    #[cfg(test)]
     async fn read_dir(&self, path: &Path) -> Result<Vec<std::path::PathBuf>> {
         let mut entries = tokio::fs::read_dir(path).await?;
         let mut paths = Vec::new();
@@ -212,6 +241,159 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(content2, "content2");
+    }
+
+    #[tokio::test]
+    async fn test_default_file_system_copy_dir_with_symlinks() {
+        let temp_dir = TempDir::new().unwrap();
+        let fs = DefaultFileSystem;
+
+        let source_dir = temp_dir.path().join("source_dir");
+        let dest_dir = temp_dir.path().join("dest_dir");
+        let target_dir = temp_dir.path().join("target_dir");
+
+        // Create source directory structure
+        fs.create_dir(&source_dir).await.unwrap();
+        fs.write_file(&source_dir.join("regular_file.txt"), "regular content")
+            .await
+            .unwrap();
+
+        // Create a target directory and file that symlinks will point to
+        fs.create_dir(&target_dir).await.unwrap();
+        fs.write_file(&target_dir.join("target_file.txt"), "target content")
+            .await
+            .unwrap();
+        fs.create_dir(&target_dir.join("target_subdir"))
+            .await
+            .unwrap();
+        fs.write_file(
+            &target_dir.join("target_subdir").join("nested.txt"),
+            "nested content",
+        )
+        .await
+        .unwrap();
+
+        // Create symlinks in source directory
+        #[cfg(unix)]
+        {
+            // Symlink to a file
+            tokio::fs::symlink(
+                &target_dir.join("target_file.txt"),
+                &source_dir.join("symlink_to_file"),
+            )
+            .await
+            .unwrap();
+
+            // Symlink to a directory
+            tokio::fs::symlink(
+                &target_dir.join("target_subdir"),
+                &source_dir.join("symlink_to_dir"),
+            )
+            .await
+            .unwrap();
+
+            // Relative symlink
+            tokio::fs::symlink(
+                "../target_dir/target_file.txt",
+                &source_dir.join("relative_symlink"),
+            )
+            .await
+            .unwrap();
+        }
+
+        #[cfg(windows)]
+        {
+            // On Windows, we need to specify file vs directory symlinks
+            tokio::fs::symlink_file(
+                &target_dir.join("target_file.txt"),
+                &source_dir.join("symlink_to_file"),
+            )
+            .await
+            .unwrap();
+
+            tokio::fs::symlink_dir(
+                &target_dir.join("target_subdir"),
+                &source_dir.join("symlink_to_dir"),
+            )
+            .await
+            .unwrap();
+
+            tokio::fs::symlink_file(
+                "../target_dir/target_file.txt",
+                &source_dir.join("relative_symlink"),
+            )
+            .await
+            .unwrap();
+        }
+
+        // Copy directory with symlinks
+        fs.copy_dir(&source_dir, &dest_dir).await.unwrap();
+
+        // Verify regular file was copied
+        assert!(fs.exists(&dest_dir.join("regular_file.txt")).await.unwrap());
+        let content = fs
+            .read_file(&dest_dir.join("regular_file.txt"))
+            .await
+            .unwrap();
+        assert_eq!(content, "regular content");
+
+        // Verify symlinks were preserved as symlinks (not dereferenced)
+        #[cfg(unix)]
+        {
+            // Check file symlink
+            let symlink_metadata = tokio::fs::symlink_metadata(&dest_dir.join("symlink_to_file"))
+                .await
+                .unwrap();
+            assert!(symlink_metadata.is_symlink());
+
+            // Check directory symlink
+            let dir_symlink_metadata =
+                tokio::fs::symlink_metadata(&dest_dir.join("symlink_to_dir"))
+                    .await
+                    .unwrap();
+            assert!(dir_symlink_metadata.is_symlink());
+
+            // Check relative symlink
+            let rel_symlink_metadata =
+                tokio::fs::symlink_metadata(&dest_dir.join("relative_symlink"))
+                    .await
+                    .unwrap();
+            assert!(rel_symlink_metadata.is_symlink());
+
+            // Verify symlink targets are preserved
+            let link_target = tokio::fs::read_link(&dest_dir.join("symlink_to_file"))
+                .await
+                .unwrap();
+            assert_eq!(link_target, target_dir.join("target_file.txt"));
+
+            let dir_link_target = tokio::fs::read_link(&dest_dir.join("symlink_to_dir"))
+                .await
+                .unwrap();
+            assert_eq!(dir_link_target, target_dir.join("target_subdir"));
+
+            let rel_link_target = tokio::fs::read_link(&dest_dir.join("relative_symlink"))
+                .await
+                .unwrap();
+            assert_eq!(
+                rel_link_target.to_string_lossy(),
+                "../target_dir/target_file.txt"
+            );
+        }
+
+        #[cfg(windows)]
+        {
+            // On Windows, check that symlinks exist and point to correct targets
+            let symlink_metadata = tokio::fs::symlink_metadata(&dest_dir.join("symlink_to_file"))
+                .await
+                .unwrap();
+            assert!(symlink_metadata.is_symlink());
+
+            let dir_symlink_metadata =
+                tokio::fs::symlink_metadata(&dest_dir.join("symlink_to_dir"))
+                    .await
+                    .unwrap();
+            assert!(dir_symlink_metadata.is_symlink());
+        }
     }
 
     #[tokio::test]
