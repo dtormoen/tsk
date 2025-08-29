@@ -80,9 +80,15 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `TskClient`: Client for communicating with server
 - Unix socket-based IPC protocol
 - Parallel task execution with configurable workers (default: 1)
-- `TaskExecutor`: Manages parallel execution with semaphore-based worker pool
+- `TaskScheduler`: Manages task scheduling and worker count tracking
+  - Polls for completed jobs and updates worker counts
+  - Schedules queued tasks when workers are available
+  - Updates terminal title with active/total worker counts
   - Automatic retry for agent warmup failures with 1-hour wait period
   - Tasks that fail during warmup are reset to queued status and retried after wait
+- `WorkerPool`: Generic async job execution pool with semaphore-based concurrency control
+  - Tracks active jobs in JoinSet for polling completed results
+  - Provides `poll_completed()` for retrieving finished job results
 
 **Git Operations** (`src/git.rs`, `src/git_sync.rs`)
 - Repository copying to centralized task directories (includes .tsk directory for Docker configurations)

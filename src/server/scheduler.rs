@@ -680,4 +680,56 @@ mod tests {
             "Should be back to 0 after job fails to submit"
         );
     }
+
+    #[tokio::test]
+    async fn test_worker_pool_returns_completed_jobs() {
+        // Test that the WorkerPool properly returns completed jobs via poll_completed
+        use crate::server::worker_pool::{AsyncJob, JobError, JobResult, WorkerPool};
+        use std::time::Duration;
+        use tokio::time::sleep;
+
+        struct TestJob {
+            id: String,
+            duration_ms: u64,
+        }
+
+        impl AsyncJob for TestJob {
+            async fn execute(self) -> Result<JobResult, JobError> {
+                sleep(Duration::from_millis(self.duration_ms)).await;
+                Ok(JobResult {
+                    job_id: self.id.clone(),
+                    success: true,
+                    message: Some(format!("Job {} completed", self.id)),
+                })
+            }
+
+            fn job_id(&self) -> String {
+                self.id.clone()
+            }
+        }
+
+        let pool = WorkerPool::new(2);
+
+        // Submit a job using try_submit
+        let job = TestJob {
+            id: "test-job-1".to_string(),
+            duration_ms: 50,
+        };
+        let handle = pool.try_submit(job).await.unwrap();
+        assert!(handle.is_some(), "Should be able to submit job");
+
+        // Wait for job to complete
+        sleep(Duration::from_millis(100)).await;
+
+        // Poll for completed jobs
+        let completed = pool.poll_completed().await;
+        assert_eq!(completed.len(), 1, "Should have 1 completed job");
+
+        if let Ok(result) = &completed[0] {
+            assert_eq!(result.job_id, "test-job-1");
+            assert!(result.success);
+        } else {
+            panic!("Job should have completed successfully");
+        }
+    }
 }
