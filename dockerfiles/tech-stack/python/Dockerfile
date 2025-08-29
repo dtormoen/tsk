@@ -3,29 +3,47 @@
 # Already running as agent user from base layer
 WORKDIR /home/agent
 
-# Python3 and pip are already installed in base layer
-# Upgrade pip and install common Python development tools
-RUN python3 -m pip install --user --upgrade pip setuptools wheel && \
-    python3 -m pip install --user pipx && \
-    python3 -m pipx ensurepath
-
-# Add pipx binaries to PATH
-ENV PATH="/home/agent/.local/bin:${PATH}"
-
-# Install common Python tools via pipx for isolation
-RUN pipx install poetry && \
-    pipx install black && \
-    pipx install ruff && \
-    pipx install mypy && \
-    pipx install pytest && \
-    pipx install ipython
-
 # Install uv for fast Python package management
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
+# Add uv to PATH
+ENV PATH="/home/agent/.local/bin:${PATH}"
+
+# Create a virtual environment outside of workspace using uv
+# This avoids conflicts with workspace files and keeps the environment clean
+RUN uv venv /home/agent/.venv
+
+# Activate the virtual environment by updating PATH and setting VIRTUAL_ENV
+ENV VIRTUAL_ENV=/home/agent/.venv
+ENV PATH="/home/agent/.venv/bin:${PATH}"
+
+# Install common Python development dependencies using uv
+# These are commonly needed tools for Python development
+RUN uv pip install \
+    pytest \
+    pytest-cov \
+    pytest-asyncio \
+    pytest-mock \
+    black \
+    ruff \
+    mypy \
+    ipython \
+    ipdb \
+    requests \
+    httpx \
+    pydantic \
+    typing-extensions \
+    python-dotenv \
+    rich \
+    click \
+    tqdm
+
+# Install Poetry separately as it's a package manager that some projects might use
+RUN uv pip install poetry
+
 # Set Python environment variables
 ENV PYTHONPATH="/workspace:${PYTHONPATH}"
-ENV PIP_USER=1
+ENV PYTHONUNBUFFERED=1
 
 # Switch back to workspace directory
 WORKDIR /workspace
