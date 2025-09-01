@@ -1,8 +1,5 @@
 # Python tech stack layer
 
-# Already running as agent user from base layer
-WORKDIR /home/agent
-
 # Install uv for fast Python package management
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
@@ -44,6 +41,3 @@ RUN uv pip install poetry
 # Set Python environment variables
 ENV PYTHONPATH="/workspace:${PYTHONPATH}"
 ENV PYTHONUNBUFFERED=1
-
-# Switch back to workspace directory
-WORKDIR /workspace

@@ -52,9 +52,9 @@ impl AssetManager for EmbeddedAssetManager {
         // Try new structure first
         // Map old paths to new structure
         let new_path = match dockerfile_name {
-            "base" => "dockerfiles/base/default.dockerfile".to_string(),
-            path if path.starts_with("tech-stack/") => {
-                let name = path.strip_prefix("tech-stack/").unwrap();
+            "base" | "base/default" => "dockerfiles/base/default.dockerfile".to_string(),
+            path if path.starts_with("stack/") => {
+                let name = path.strip_prefix("stack/").unwrap();
                 format!("dockerfiles/stack/{name}.dockerfile")
             }
             path if path.starts_with("agent/") => {

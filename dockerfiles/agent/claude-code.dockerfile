@@ -1,20 +1,25 @@
 # Claude agent layer
 
-# Switch to root to install Node.js and Claude Code
+# Switch to root temporarily for system package installation
 USER root
 
 # Install Node.js 20.x (required by Claude Code)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs
 
-# Install Claude Code CLI
-RUN npm install -g @anthropic-ai/claude-code
-
 # Switch back to agent user
 USER agent
 
-# Add local bin to PATH for claude
-ENV PATH="/home/agent/.local/bin:${PATH}"
+# Create npm global directory for agent user and configure npm
+RUN mkdir -p /home/agent/.npm-global && \
+    npm config set prefix "/home/agent/.npm-global" && \
+    echo 'export PATH=/home/agent/.npm-global/bin:$PATH' >> /home/agent/.bashrc
+
+# Install Claude Code CLI to agent's global directory
+RUN npm install -g @anthropic-ai/claude-code
+
+# Add npm global binaries and local bin to PATH
+ENV PATH="/home/agent/.npm-global/bin:/home/agent/.local/bin:${PATH}"
 
 # Claude-specific environment
 ENV HOME="/home/agent"

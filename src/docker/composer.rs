@@ -1,53 +1,56 @@
 //! Docker layer composition engine
 //!
 //! This module handles the composition of multiple Docker layers into a single
-//! Dockerfile, managing build arguments, environment variables, and layer ordering.
+//! Dockerfile using template rendering.
 
 use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::Arc;
 
+use crate::assets::AssetManager;
 use crate::docker::layers::DockerImageConfig;
-use crate::docker::template_manager::DockerTemplateManager;
+use crate::docker::template_engine::DockerTemplateEngine;
 
 /// Composes multiple Docker layers into a complete Dockerfile
 pub struct DockerComposer {
-    template_manager: DockerTemplateManager,
+    asset_manager: Arc<dyn AssetManager>,
 }
 
 impl DockerComposer {
     /// Creates a new DockerComposer
-    pub fn new(template_manager: DockerTemplateManager) -> Self {
-        Self { template_manager }
+    pub fn new(asset_manager: Arc<dyn AssetManager>) -> Self {
+        Self { asset_manager }
     }
 
     /// Compose a complete Dockerfile and associated files from the given configuration
     pub fn compose(
         &self,
         config: &DockerImageConfig,
-        project_root: Option<&Path>,
+        _project_root: Option<&Path>,
     ) -> Result<ComposedDockerfile> {
-        // Get the composed Dockerfile content
-        let dockerfile_content = self
-            .template_manager
-            .compose_dockerfile(config, project_root)?;
+        // Get the base template
+        let base_dockerfile = self
+            .asset_manager
+            .get_dockerfile("base/default")
+            .context("Failed to get base dockerfile")?;
+        let base_template = String::from_utf8(base_dockerfile)
+            .context("Failed to decode base dockerfile as UTF-8")?;
 
-        // Collect all additional files from layers
-        let mut additional_files = HashMap::new();
-        let layers = config.get_layers();
-
-        for layer in &layers {
-            if let Ok(layer_content) = self.template_manager.get_layer_content(layer, project_root)
-            {
-                for (filename, content) in layer_content.additional_files {
-                    // Later layers override earlier ones for the same filename
-                    additional_files.insert(filename, content);
-                }
-            }
-        }
+        // Create template engine and render the Dockerfile
+        let template_engine = DockerTemplateEngine::new(&*self.asset_manager);
+        let dockerfile_content = template_engine.render_dockerfile(
+            &base_template,
+            Some(&config.stack),
+            Some(&config.agent),
+            Some(&config.project),
+        )?;
 
         // Extract build arguments from the composed Dockerfile
         let build_args = self.extract_build_args(&dockerfile_content)?;
+
+        // Additional files are no longer needed with the simplified structure
+        let additional_files = HashMap::new();
 
         Ok(ComposedDockerfile {
             dockerfile_content,
@@ -177,18 +180,11 @@ pub struct ComposedDockerfile {
 mod tests {
     use super::*;
     use crate::assets::embedded::EmbeddedAssetManager;
-    use crate::context::AppContext;
     use std::sync::Arc;
     use tempfile::TempDir;
 
     fn create_test_composer() -> DockerComposer {
-        let ctx = AppContext::builder().build();
-        let tsk_config = ctx.tsk_config();
-
-        let template_manager =
-            DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), tsk_config);
-
-        DockerComposer::new(template_manager)
+        DockerComposer::new(Arc::new(EmbeddedAssetManager::new()))
     }
 
     #[test]

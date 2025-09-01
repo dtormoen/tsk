@@ -143,12 +143,14 @@ mod tests {
         }
     }
 
-    /// Helper to create dockerfiles in a directory
+    /// Helper to create dockerfiles in a directory 
     fn create_dockerfiles(base_path: &Path, dockerfiles: &[(&str, &str)]) {
         for (dockerfile_path, content) in dockerfiles {
-            let full_path = base_path.join("dockerfiles").join(dockerfile_path);
-            fs::create_dir_all(&full_path).unwrap();
-            fs::write(full_path.join("Dockerfile"), content).unwrap();
+            if let Some((layer_type, name)) = dockerfile_path.split_once('/') {
+                let layer_dir = base_path.join("dockerfiles").join(layer_type);
+                fs::create_dir_all(&layer_dir).unwrap();
+                fs::write(layer_dir.join(format!("{}.dockerfile", name)), content).unwrap();
+            }
         }
     }
 

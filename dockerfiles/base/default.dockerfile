@@ -42,6 +42,20 @@ USER agent
 RUN git config --global user.name "$GIT_USER_NAME" && \
     git config --global user.email "$GIT_USER_EMAIL"
 
+# Stack layer
+{{{STACK}}}
+# End of Stack layer
+
+# Agent layer
+{{{AGENT}}}
+# End of Agent layer
+
+# Project layer
+{{{PROJECT}}}
+# End of Project layer
+
+USER agent
+
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 

@@ -39,21 +39,24 @@ impl AssetManager for FileSystemAssetManager {
     }
 
     fn get_dockerfile(&self, dockerfile_name: &str) -> Result<Vec<u8>> {
-        let dockerfile_path = self
-            .base_path
-            .join("dockerfiles")
-            .join(dockerfile_name)
-            .join("Dockerfile");
+        if let Some((layer_type, name)) = dockerfile_name.split_once('/') {
+            let dockerfile_path = self
+                .base_path
+                .join("dockerfiles")
+                .join(layer_type)
+                .join(format!("{}.dockerfile", name));
 
-        if !dockerfile_path.exists() {
-            return Err(anyhow::anyhow!(
-                "Dockerfile '{}' not found",
-                dockerfile_name
-            ));
+            if dockerfile_path.exists() {
+                return std::fs::read(&dockerfile_path).with_context(|| {
+                    format!("Failed to read dockerfile: {}", dockerfile_path.display())
+                });
+            }
         }
 
-        std::fs::read(&dockerfile_path)
-            .with_context(|| format!("Failed to read dockerfile: {}", dockerfile_path.display()))
+        Err(anyhow::anyhow!(
+            "Dockerfile '{}' not found",
+            dockerfile_name
+        ))
     }
 
     fn get_dockerfile_file(&self, dockerfile_name: &str, file_path: &str) -> Result<Vec<u8>> {
@@ -125,20 +128,19 @@ impl AssetManager for FileSystemAssetManager {
             for entry in entries.flatten() {
                 if let Ok(file_type) = entry.file_type()
                     && file_type.is_dir()
-                    && let Some(dir_name) = entry.file_name().to_str()
+                    && let Some(layer_type) = entry.file_name().to_str()
                 {
-                    // Check if this directory contains subdirectories with Dockerfiles
-                    let layer_dir = dockerfiles_dir.join(dir_name);
+                    // New structure: dockerfiles/{layer_type}/{name}.dockerfile
+                    let layer_dir = dockerfiles_dir.join(layer_type);
                     if let Ok(layer_entries) = std::fs::read_dir(&layer_dir) {
                         for layer_entry in layer_entries.flatten() {
                             if let Ok(layer_file_type) = layer_entry.file_type()
-                                && layer_file_type.is_dir()
-                                && let Some(layer_name) = layer_entry.file_name().to_str()
+                                && layer_file_type.is_file()
+                                && let Some(file_name) = layer_entry.file_name().to_str()
+                                && file_name.ends_with(".dockerfile")
+                                && let Some(name) = file_name.strip_suffix(".dockerfile")
                             {
-                                let dockerfile_path = layer_dir.join(layer_name).join("Dockerfile");
-                                if dockerfile_path.exists() {
-                                    dockerfiles.push(format!("{dir_name}/{layer_name}"));
-                                }
+                                dockerfiles.push(format!("{layer_type}/{name}"));
                             }
                         }
                     }

@@ -1,22 +1,24 @@
 # Java tech stack layer
 
-# Already running as agent user from base layer
-WORKDIR /home/agent
+# Switch to root temporarily for system package installation
+USER root
 
 # Install OpenJDK 17 (LTS) and Maven
-RUN sudo apt-get update && \
-    sudo apt-get install -y openjdk-17-jdk maven gradle && \
-    sudo rm -rf /var/lib/apt/lists/*
+RUN apt-get update && \
+    apt-get install -y openjdk-17-jdk maven gradle && \
+    rm -rf /var/lib/apt/lists/*
+
+# Switch back to agent user
+USER agent
 
 # Set JAVA_HOME
 ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
 # Install SDKMAN for managing Java tools
-RUN curl -s "https://get.sdkman.io" | bash
-
-# Source SDKMAN and install additional tools
-RUN bash -c "source $HOME/.sdkman/bin/sdkman-init.sh && \
+RUN export SDKMAN_DIR="/home/agent/.sdkman" && \
+    curl -s "https://get.sdkman.io" | bash && \
+    bash -c "source /home/agent/.sdkman/bin/sdkman-init.sh && \
     sdk install kotlin && \
     sdk install groovy"
 
@@ -28,6 +30,3 @@ ENV MAVEN_OPTS="-Xmx1024m -XX:MaxPermSize=256m"
 
 # Create directories for Maven and Gradle caches
 RUN mkdir -p ~/.m2 ~/.gradle
-
-# Switch back to workspace directory
-WORKDIR /workspace

@@ -89,6 +89,7 @@ impl fmt::Display for DockerLayer {
 
 /// Represents the content of a Docker layer
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields are used via public API by template_manager
 pub struct DockerLayerContent {
     /// The Dockerfile fragment for this layer
     pub dockerfile_content: String,

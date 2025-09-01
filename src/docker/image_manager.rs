@@ -46,8 +46,7 @@ impl DockerImageManager {
             &ctx.tsk_config(),
         ));
         let template_manager = DockerTemplateManager::new(asset_manager.clone(), ctx.tsk_config());
-        let composer =
-            DockerComposer::new(DockerTemplateManager::new(asset_manager, ctx.tsk_config()));
+        let composer = DockerComposer::new(asset_manager);
 
         Self {
             ctx: ctx.clone(),
@@ -560,7 +559,7 @@ mod tests {
             .build_image("default", "claude-code", Some("default"), None, false, true)
             .await;
 
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Dry run failed: {:?}", result.err());
         let image = result.unwrap();
         assert_eq!(image.tag, "tsk/default/claude-code/default");
         assert!(!image.used_fallback);

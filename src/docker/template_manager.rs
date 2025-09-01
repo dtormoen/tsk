@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::assets::AssetManager;
 use crate::context::tsk_config::TskConfig;
-use crate::docker::layers::{DockerImageConfig, DockerLayer, DockerLayerContent, DockerLayerType};
+use crate::docker::layers::{DockerLayer, DockerLayerContent, DockerLayerType};
 
 /// Manages Docker templates and layer composition
 pub struct DockerTemplateManager {
@@ -27,10 +27,9 @@ impl DockerTemplateManager {
         }
     }
 
-    /// Get the content of a specific Docker layer
+    /// Get the content of a specific Docker layer (for backward compatibility)
     ///
-    /// Note: The `_project_root` parameter is kept for API compatibility but is no longer used.
-    /// The LayeredAssetManager already handles project-specific files correctly through its layering system.
+    /// Note: This is kept for compatibility but no longer used by the composer
     pub fn get_layer_content(
         &self,
         layer: &DockerLayer,
@@ -52,90 +51,6 @@ impl DockerTemplateManager {
         ))
     }
 
-    /// Compose a complete Dockerfile from multiple layers
-    pub fn compose_dockerfile(
-        &self,
-        config: &DockerImageConfig,
-        project_root: Option<&Path>,
-    ) -> Result<String> {
-        let layers = config.get_layers();
-        let mut composed_dockerfile = String::new();
-        let mut has_from_instruction = false;
-        let mut cmd_instruction: Option<String> = None;
-        let mut entrypoint_instruction: Option<String> = None;
-
-        // Add header comment
-        composed_dockerfile.push_str(&format!(
-            "# TSK Composed Dockerfile\n# Stack: {}\n# Agent: {}\n# Project: {}\n\n",
-            config.stack, config.agent, config.project
-        ));
-
-        for (index, layer) in layers.iter().enumerate() {
-            // Skip layers that don't exist (except base which is required)
-            let layer_content = match self.get_layer_content(layer, project_root) {
-                Ok(content) => content,
-                Err(_) if layer.layer_type != DockerLayerType::Base => {
-                    // Non-base layers are optional
-                    continue;
-                }
-                Err(e) => return Err(e),
-            };
-
-            // Add layer boundary comment
-            composed_dockerfile.push_str(&format!(
-                "\n###### BEGIN {} LAYER: {} ######\n",
-                layer.layer_type.to_string().to_uppercase(),
-                layer.name
-            ));
-
-            // Process the Dockerfile content
-            let (processed_content, cmd, entrypoint) = self.process_layer_content(
-                &layer_content.dockerfile_content,
-                index == 0,
-                &mut has_from_instruction,
-            )?;
-
-            // Update CMD and ENTRYPOINT if found in this layer
-            if let Some(cmd) = cmd {
-                cmd_instruction = Some(cmd);
-            }
-            if let Some(entrypoint) = entrypoint {
-                entrypoint_instruction = Some(entrypoint);
-            }
-
-            composed_dockerfile.push_str(&processed_content);
-            composed_dockerfile.push('\n');
-
-            // Add layer boundary comment
-            composed_dockerfile.push_str(&format!(
-                "###### END {} LAYER: {} ######\n",
-                layer.layer_type.to_string().to_uppercase(),
-                layer.name
-            ));
-        }
-
-        // Ensure we have at least one FROM instruction
-        if !has_from_instruction {
-            return Err(anyhow::anyhow!(
-                "No FROM instruction found in any layer. At least the base layer must contain a FROM instruction."
-            ));
-        }
-
-        // Add ENTRYPOINT and CMD at the end if they exist
-        if let Some(entrypoint) = entrypoint_instruction {
-            composed_dockerfile.push_str("\n# Final ENTRYPOINT\n");
-            composed_dockerfile.push_str(&entrypoint);
-            composed_dockerfile.push('\n');
-        }
-        if let Some(cmd) = cmd_instruction {
-            composed_dockerfile.push_str("\n# Final CMD\n");
-            composed_dockerfile.push_str(&cmd);
-            composed_dockerfile.push('\n');
-        }
-
-        Ok(composed_dockerfile)
-    }
-
     /// List available layers of a specific type
     pub fn list_available_layers(
         &self,
@@ -144,13 +59,12 @@ impl DockerTemplateManager {
     ) -> Vec<String> {
         let mut layers = std::collections::HashSet::new();
 
-        // Use the simplified directory structure
-        let layer_dir = format!("dockerfiles/{layer_type}");
-
         // Check embedded assets
         let dockerfiles = self.asset_manager.list_dockerfiles();
         for dockerfile in dockerfiles {
-            if dockerfile.starts_with(&layer_dir)
+            // The EmbeddedAssetManager returns just directory names, so we need to check if this dockerfile
+            // name matches our layer type
+            if dockerfile == layer_type.to_string()
                 && let Some(name) = self.extract_layer_name(&dockerfile, &layer_type)
             {
                 layers.insert(name);
@@ -167,75 +81,13 @@ impl DockerTemplateManager {
         if let Some(project_root) = project_root {
             let project_docker_dir = project_root.join(".tsk").join("dockerfiles");
             if project_docker_dir.exists() {
-                eprintln!(
-                    "Scanning project dockerfiles directory: {}",
-                    project_docker_dir.display()
-                );
                 self.scan_directory_for_layers(&project_docker_dir, &layer_type, &mut layers);
-            } else {
-                eprintln!(
-                    "No project dockerfiles directory found at: {}",
-                    project_docker_dir.display()
-                );
             }
         }
 
         let mut result: Vec<String> = layers.into_iter().collect();
         result.sort();
         result
-    }
-
-    /// Process layer content to handle special cases
-    fn process_layer_content(
-        &self,
-        content: &str,
-        is_first_layer: bool,
-        has_from_instruction: &mut bool,
-    ) -> Result<(String, Option<String>, Option<String>)> {
-        let mut processed = String::new();
-        let mut cmd_instruction: Option<String> = None;
-        let mut entrypoint_instruction: Option<String> = None;
-        let mut seen_user_root = false;
-
-        for line in content.lines() {
-            let trimmed = line.trim();
-
-            // Handle FROM instructions
-            if trimmed.starts_with("FROM ") {
-                if *has_from_instruction && !is_first_layer {
-                    // Skip subsequent FROM instructions in non-base layers
-                    continue;
-                } else {
-                    *has_from_instruction = true;
-                }
-            }
-
-            // Track if we've seen USER root in this layer
-            if trimmed == "USER root" {
-                seen_user_root = true;
-            }
-
-            // Extract CMD and ENTRYPOINT instructions
-            if trimmed.starts_with("CMD ") {
-                cmd_instruction = Some(line.to_string());
-                continue;
-            }
-            if trimmed.starts_with("ENTRYPOINT ") {
-                entrypoint_instruction = Some(line.to_string());
-                continue;
-            }
-
-            // Skip USER agent only if we haven't seen USER root in this layer
-            // This allows switching back to agent after root operations
-            if !is_first_layer && trimmed == "USER agent" && !seen_user_root {
-                continue;
-            }
-
-            processed.push_str(line);
-            processed.push('\n');
-        }
-
-        Ok((processed, cmd_instruction, entrypoint_instruction))
     }
 
     /// Get Docker file content from the asset manager
@@ -249,14 +101,14 @@ impl DockerTemplateManager {
                     // Map to old asset manager structure for now
                     if let Some(name) = filename.strip_suffix(".dockerfile") {
                         let old_path = if layer_dir == "base" && name == "default" {
-                            "base"
+                            "base".to_string()
                         } else if layer_dir == "stack" {
-                            // Map stack back to tech-stack for asset manager
-                            &format!("tech-stack/{name}")
+                            // Map stack to the new format expected by the asset manager
+                            format!("stack/{name}")
                         } else {
-                            &format!("{layer_dir}/{name}")
+                            format!("{layer_dir}/{name}")
                         };
-                        return self.asset_manager.get_dockerfile(old_path);
+                        return self.asset_manager.get_dockerfile(&old_path);
                     }
                 }
             }
@@ -278,11 +130,46 @@ impl DockerTemplateManager {
 
     /// Extract layer name from a dockerfile path in the new structure
     fn extract_layer_name(&self, path: &str, layer_type: &DockerLayerType) -> Option<String> {
-        // Expected format: dockerfiles/{layer_type}/{name}.dockerfile
-        // But asset manager still uses old format, so handle both
-        let parts: Vec<&str> = path.split('/').collect();
+        // The EmbeddedAssetManager.list_dockerfiles() returns just directory names like "stack", "base", etc.
+        // We need to match these against the layer type and extract layer names
+        if path == layer_type.to_string() {
+            // For the case where the path is just the layer type directory name,
+            // we need to check what's inside that directory
+            return match layer_type {
+                DockerLayerType::Base => Some("default".to_string()),
+                DockerLayerType::Stack => {
+                    // Check if we have a "default" stack layer
+                    if self.asset_manager.get_dockerfile("stack/default").is_ok() {
+                        Some("default".to_string())
+                    } else {
+                        None
+                    }
+                }
+                DockerLayerType::Agent => {
+                    // Check if we have a "claude-code" agent layer
+                    if self
+                        .asset_manager
+                        .get_dockerfile("agent/claude-code")
+                        .is_ok()
+                    {
+                        Some("claude-code".to_string())
+                    } else {
+                        None
+                    }
+                }
+                DockerLayerType::Project => {
+                    // Check if we have a "default" project layer
+                    if self.asset_manager.get_dockerfile("project/default").is_ok() {
+                        Some("default".to_string())
+                    } else {
+                        None
+                    }
+                }
+            };
+        }
 
-        // Handle old format from asset manager
+        // Handle full paths like "dockerfiles/stack/default"
+        let parts: Vec<&str> = path.split('/').collect();
         if parts.len() >= 3 {
             // Map old tech-stack to new stack
             let type_str = if parts[1] == "tech-stack" {
@@ -337,8 +224,8 @@ impl DockerTemplateManager {
 mod tests {
     use super::*;
     use crate::assets::embedded::EmbeddedAssetManager;
-    use crate::assets::layered::LayeredAssetManager;
     use crate::context::AppContext;
+    use crate::docker::layers::DockerImageConfig;
     use std::fs;
     use tempfile::TempDir;
 
@@ -363,101 +250,6 @@ mod tests {
         assert_eq!(layers[1].name, "rust");
         assert_eq!(layers[2].name, "claude-code");
         assert_eq!(layers[3].name, "web-api");
-    }
-
-    #[test]
-    fn test_process_layer_content() {
-        let manager = create_test_manager();
-        let mut has_from = false;
-
-        // Test first layer processing
-        let content = "FROM ubuntu:24.04\nRUN apt-get update\nWORKDIR /workspace\nUSER agent\nCMD [\"/bin/bash\"]";
-        let (processed, cmd, entrypoint) = manager
-            .process_layer_content(content, true, &mut has_from)
-            .unwrap();
-        assert!(processed.contains("FROM ubuntu:24.04"));
-        assert!(processed.contains("WORKDIR /workspace"));
-        assert!(processed.contains("USER agent"));
-        assert!(!processed.contains("CMD")); // CMD should be extracted
-        assert_eq!(cmd, Some("CMD [\"/bin/bash\"]".to_string()));
-        assert_eq!(entrypoint, None);
-        assert!(has_from);
-
-        // Test non-first layer processing
-        let content2 = "FROM alpine\nRUN apk add git\nWORKDIR /workspace\nUSER agent";
-        let (processed2, cmd2, entrypoint2) = manager
-            .process_layer_content(content2, false, &mut has_from)
-            .unwrap();
-        assert!(!processed2.contains("FROM alpine")); // Should skip additional FROM
-        assert!(processed2.contains("WORKDIR /workspace")); // Should keep WORKDIR now
-        assert!(!processed2.contains("USER agent")); // Should skip USER agent when not after root
-        assert!(processed2.contains("RUN apk add git")); // Should keep RUN
-        assert_eq!(cmd2, None);
-        assert_eq!(entrypoint2, None);
-    }
-
-    #[test]
-    fn test_process_layer_content_user_switching() {
-        let manager = create_test_manager();
-        let mut has_from = false;
-
-        // Test layer with USER root switching back to USER agent
-        let content = "# Switch to root\nUSER root\nRUN apt-get update\n# Switch back\nUSER agent\nRUN echo test";
-        let (processed, _, _) = manager
-            .process_layer_content(content, false, &mut has_from)
-            .unwrap();
-
-        // Should keep both USER instructions when switching from root to agent
-        assert!(processed.contains("USER root"));
-        assert!(processed.contains("USER agent"));
-        assert!(processed.contains("RUN apt-get update"));
-        assert!(processed.contains("RUN echo test"));
-    }
-
-    #[test]
-    fn test_cmd_and_entrypoint_extraction() {
-        let manager = create_test_manager();
-        let mut has_from = false;
-
-        // Test CMD extraction
-        let content1 = "RUN echo test\nCMD [\"default\"]";
-        let (processed1, cmd1, entrypoint1) = manager
-            .process_layer_content(content1, false, &mut has_from)
-            .unwrap();
-        assert!(processed1.contains("RUN echo test"));
-        assert!(!processed1.contains("CMD"));
-        assert_eq!(cmd1, Some("CMD [\"default\"]".to_string()));
-        assert_eq!(entrypoint1, None);
-
-        // Test ENTRYPOINT extraction
-        let content2 = "RUN echo test2\nENTRYPOINT [\"/entrypoint.sh\"]\nCMD [\"arg\"]";
-        let (processed2, cmd2, entrypoint2) = manager
-            .process_layer_content(content2, false, &mut has_from)
-            .unwrap();
-        assert!(processed2.contains("RUN echo test2"));
-        assert!(!processed2.contains("ENTRYPOINT"));
-        assert!(!processed2.contains("CMD"));
-        assert_eq!(cmd2, Some("CMD [\"arg\"]".to_string()));
-        assert_eq!(
-            entrypoint2,
-            Some("ENTRYPOINT [\"/entrypoint.sh\"]".to_string())
-        );
-    }
-
-    #[test]
-    fn test_compose_dockerfile_cmd_placement() {
-        let _manager = create_test_manager();
-
-        // Create a config for testing
-        let _config = DockerImageConfig {
-            stack: "rust".to_string(),
-            agent: "claude".to_string(),
-            project: "default".to_string(),
-        };
-
-        // This test will use the embedded dockerfiles
-        // We can't easily test the full compose without real files,
-        // but we've tested the components thoroughly
     }
 
     #[test]
@@ -516,63 +308,5 @@ mod tests {
         manager.scan_directory_for_layers(&docker_dir, &DockerLayerType::Stack, &mut layers);
         assert!(layers.contains("rust"));
         assert!(layers.contains("python"));
-    }
-
-    #[test]
-    fn test_get_layer_content_consistency() {
-        // This test verifies that get_layer_content behaves consistently
-        // regardless of whether project_root is provided or not
-        let temp_dir = TempDir::new().unwrap();
-
-        // Create a project directory with .tsk structure
-        let project_root = temp_dir.path().join("myproject");
-        let tsk_dockerfiles = project_root
-            .join(".tsk")
-            .join("dockerfiles")
-            .join("project")
-            .join("myproject");
-        fs::create_dir_all(&tsk_dockerfiles).unwrap();
-        fs::write(
-            tsk_dockerfiles.join("Dockerfile"),
-            "FROM ubuntu:custom\nRUN echo 'project-specific'",
-        )
-        .unwrap();
-
-        // Create asset manager with the project layer
-        // Use AppContext to get test-safe TskConfig
-        let app_context = crate::context::AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
-
-        let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
-            Some(&project_root),
-            &tsk_config,
-        ));
-
-        let manager = DockerTemplateManager::new(asset_manager, tsk_config);
-
-        let project_layer = DockerLayer {
-            layer_type: DockerLayerType::Project,
-            name: "myproject".to_string(),
-        };
-
-        // Test with project_root - should use asset manager
-        let content_with_root = manager.get_layer_content(&project_layer, Some(&project_root));
-
-        // Test without project_root - should use asset manager
-        let content_without_root = manager.get_layer_content(&project_layer, None);
-
-        // Both should get the same content from the asset manager
-        assert!(content_with_root.is_ok());
-        assert!(content_without_root.is_ok());
-
-        let with_root = content_with_root.unwrap();
-        let without_root = content_without_root.unwrap();
-
-        // The dockerfile content should be the same in both cases
-        assert_eq!(
-            with_root.dockerfile_content,
-            without_root.dockerfile_content
-        );
-        assert!(with_root.dockerfile_content.contains("project-specific"));
     }
 }

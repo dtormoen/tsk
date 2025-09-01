@@ -1,12 +1,20 @@
 # Node.js tech stack layer
 
-# Already running as agent user from base layer
-WORKDIR /home/agent
+# Switch to root temporarily for system package installation
+USER root
 
 # Install Node.js via NodeSource repository (LTS version)
-RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - && \
-    sudo apt-get install -y nodejs && \
-    sudo rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+# Switch back to agent user
+USER agent
+
+# Create npm global directory for agent user and configure npm
+RUN mkdir -p /home/agent/.npm-global && \
+    npm config set prefix "/home/agent/.npm-global" && \
+    echo 'export PATH=/home/agent/.npm-global/bin:$PATH' >> /home/agent/.bashrc
 
 # Install pnpm globally for faster package management
 RUN npm install -g pnpm@latest
@@ -22,16 +30,8 @@ RUN npm install -g \
     jest \
     npm-check-updates
 
-# Create npm global directory for agent user
-RUN mkdir -p ~/.npm-global && \
-    npm config set prefix '~/.npm-global' && \
-    echo 'export PATH=$HOME/.npm-global/bin:$PATH' >> ~/.bashrc
-
 # Add npm global binaries to PATH
 ENV PATH="/home/agent/.npm-global/bin:${PATH}"
 
 # Set Node environment variables
 ENV NODE_ENV=development
-
-# Switch back to workspace directory
-WORKDIR /workspace
