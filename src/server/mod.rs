@@ -1,12 +1,13 @@
-pub mod executor;
 pub mod lifecycle;
 pub mod protocol;
+pub mod scheduler;
+pub mod worker_pool;
 
 use crate::context::AppContext;
 use crate::task_storage::{TaskStorage, get_task_storage};
-use executor::TaskExecutor;
 use lifecycle::ServerLifecycle;
 use protocol::{Request, Response};
+use scheduler::TaskScheduler;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -19,8 +20,9 @@ pub struct TskServer {
     storage: Arc<Mutex<Box<dyn TaskStorage>>>,
     socket_path: PathBuf,
     shutdown_signal: Arc<Mutex<bool>>,
-    executor: Arc<TaskExecutor>,
+    scheduler: Arc<Mutex<TaskScheduler>>,
     lifecycle: ServerLifecycle,
+    workers: u32,
 }
 
 impl TskServer {
@@ -31,11 +33,10 @@ impl TskServer {
         let storage = get_task_storage(tsk_config.clone(), app_context.file_system());
         let storage = Arc::new(Mutex::new(storage));
 
-        let executor = Arc::new(TaskExecutor::with_workers(
+        let scheduler = Arc::new(Mutex::new(TaskScheduler::new(
             app_context.clone(),
             storage.clone(),
-            workers,
-        ));
+        )));
         let lifecycle = ServerLifecycle::new(tsk_config);
 
         Self {
@@ -43,8 +44,9 @@ impl TskServer {
             storage,
             socket_path,
             shutdown_signal: Arc::new(Mutex::new(false)),
-            executor,
+            scheduler,
             lifecycle,
+            workers,
         }
     }
 
@@ -67,11 +69,12 @@ impl TskServer {
         let listener = UnixListener::bind(&self.socket_path)?;
         println!("TSK Server listening on: {:?}", self.socket_path);
 
-        // Start the task executor in the background
-        let executor = self.executor.clone();
-        let executor_handle = tokio::spawn(async move {
-            if let Err(e) = executor.start().await {
-                eprintln!("Executor error: {e}");
+        // Start the task scheduler in the background
+        let scheduler = self.scheduler.clone();
+        let workers = self.workers;
+        let scheduler_handle = tokio::spawn(async move {
+            if let Err(e) = scheduler.lock().await.start(workers).await {
+                eprintln!("Scheduler error: {e}");
             }
         });
 
@@ -104,9 +107,9 @@ impl TskServer {
             }
         }
 
-        // Stop the executor
-        self.executor.stop().await;
-        executor_handle.await?;
+        // Stop the scheduler
+        self.scheduler.lock().await.stop().await;
+        scheduler_handle.await?;
 
         // Clean up server resources
         self.lifecycle.cleanup()?;
