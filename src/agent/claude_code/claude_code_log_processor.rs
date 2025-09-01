@@ -70,9 +70,14 @@ struct TodoItem {
 /// - Assistant reasoning and conversation
 /// - Summary messages
 /// - Cost calculations from token usage
+///
+/// The processor handles non-JSON output gracefully:
+/// - Initially prints non-JSON lines as-is (for misconfiguration messages)
+/// - Switches to JSON-only mode after the first valid JSON line
 pub struct ClaudeCodeLogProcessor {
     full_log: Vec<String>,
     final_result: Option<TaskResult>,
+    json_mode_active: bool,
 }
 
 impl ClaudeCodeLogProcessor {
@@ -81,6 +86,7 @@ impl ClaudeCodeLogProcessor {
         Self {
             full_log: Vec::new(),
             final_result: None,
+            json_mode_active: false,
         }
     }
 
@@ -563,10 +569,22 @@ impl LogProcessor for ClaudeCodeLogProcessor {
 
         // Try to parse as JSON
         match serde_json::from_str::<ClaudeMessage>(line) {
-            Ok(msg) => self.format_message(msg),
+            Ok(msg) => {
+                // Successfully parsed JSON - activate JSON mode if not already active
+                if !self.json_mode_active {
+                    self.json_mode_active = true;
+                }
+                self.format_message(msg)
+            }
             Err(_) => {
-                // If it's not JSON, return a parsing error indicator
-                Some("‼️ parsing error".to_string())
+                if self.json_mode_active {
+                    // In JSON mode, show parsing error for non-JSON lines
+                    Some("‼️ parsing error".to_string())
+                } else {
+                    // Before JSON mode is active, pass through non-JSON lines as-is
+                    // This allows misconfiguration messages to be displayed
+                    Some(line.to_string())
+                }
             }
         }
     }
@@ -764,10 +782,51 @@ mod tests {
     }
 
     #[test]
-    fn test_non_json_input() {
+    fn test_non_json_before_json_mode() {
         let mut processor = ClaudeCodeLogProcessor::new();
 
+        // Before JSON mode is active, non-JSON lines should be passed through as-is
+        let result = processor.process_line("Error: Claude Code is misconfigured");
+        assert_eq!(
+            result,
+            Some("Error: Claude Code is misconfigured".to_string())
+        );
+
+        let result = processor.process_line("Please run 'claude login' to authenticate");
+        assert_eq!(
+            result,
+            Some("Please run 'claude login' to authenticate".to_string())
+        );
+
+        // Now process a valid JSON line to activate JSON mode
+        let json =
+            r#"{"type": "assistant", "message": {"content": [{"type": "text", "text": "Hello"}]}}"#;
+        let result = processor.process_line(json);
+        assert_eq!(result, Some("🤖 Hello".to_string()));
+
+        // After JSON mode is active, non-JSON lines should show parsing error
         let result = processor.process_line("This is not JSON");
+        assert_eq!(result, Some("‼️ parsing error".to_string()));
+    }
+
+    #[test]
+    fn test_json_mode_transition() {
+        let mut processor = ClaudeCodeLogProcessor::new();
+
+        // Initially not in JSON mode
+        assert!(!processor.json_mode_active);
+
+        // Non-JSON lines pass through
+        processor.process_line("Configuration warning: API key missing");
+        assert!(!processor.json_mode_active);
+
+        // First valid JSON activates JSON mode
+        let json = r#"{"type": "summary", "summary": "Task started"}"#;
+        processor.process_line(json);
+        assert!(processor.json_mode_active);
+
+        // Subsequent non-JSON lines show error
+        let result = processor.process_line("random text");
         assert_eq!(result, Some("‼️ parsing error".to_string()));
     }
 
