@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::path::Path;
 
-/// Detects the technology stack based on repository files
+/// Detects the stack based on repository files
 ///
 /// Checks for language-specific marker files in priority order:
 /// - Rust: `Cargo.toml` → "rust"
@@ -11,9 +11,9 @@ use std::path::Path;
 /// - Java: `pom.xml`, `build.gradle`, `build.gradle.kts` → "java"
 /// - Lua: `rockspec`, `.luacheckrc`, `init.lua` → "lua"
 /// - Default: "default" (when no specific files found)
-pub async fn detect_tech_stack(repo_path: &Path) -> Result<String> {
+pub async fn detect_stack(repo_path: &Path) -> Result<String> {
     // Check for language-specific files in priority order
-    let tech_stack = if file_exists(repo_path, "Cargo.toml").await {
+    let stack = if file_exists(repo_path, "Cargo.toml").await {
         "rust"
     } else if file_exists(repo_path, "pyproject.toml").await
         || file_exists(repo_path, "requirements.txt").await
@@ -38,7 +38,7 @@ pub async fn detect_tech_stack(repo_path: &Path) -> Result<String> {
         "default"
     };
 
-    Ok(tech_stack.to_string())
+    Ok(stack.to_string())
 }
 
 /// Detects the project name from the repository path
@@ -123,7 +123,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = detect_tech_stack(temp_dir.path()).await.unwrap();
+        let result = detect_stack(temp_dir.path()).await.unwrap();
         assert_eq!(result, "rust");
     }
 
@@ -136,7 +136,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = detect_tech_stack(temp_dir.path()).await.unwrap();
+        let result = detect_stack(temp_dir.path()).await.unwrap();
         assert_eq!(result, "python");
     }
 
@@ -149,7 +149,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = detect_tech_stack(temp_dir.path()).await.unwrap();
+        let result = detect_stack(temp_dir.path()).await.unwrap();
         assert_eq!(result, "python");
     }
 
@@ -162,7 +162,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = detect_tech_stack(temp_dir.path()).await.unwrap();
+        let result = detect_stack(temp_dir.path()).await.unwrap();
         assert_eq!(result, "node");
     }
 
@@ -175,7 +175,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = detect_tech_stack(temp_dir.path()).await.unwrap();
+        let result = detect_stack(temp_dir.path()).await.unwrap();
         assert_eq!(result, "go");
     }
 
@@ -188,7 +188,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = detect_tech_stack(temp_dir.path()).await.unwrap();
+        let result = detect_stack(temp_dir.path()).await.unwrap();
         assert_eq!(result, "java");
     }
 
@@ -201,7 +201,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = detect_tech_stack(temp_dir.path()).await.unwrap();
+        let result = detect_stack(temp_dir.path()).await.unwrap();
         assert_eq!(result, "lua");
     }
 
@@ -214,7 +214,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = detect_tech_stack(temp_dir.path()).await.unwrap();
+        let result = detect_stack(temp_dir.path()).await.unwrap();
         assert_eq!(result, "lua");
     }
 
@@ -227,7 +227,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = detect_tech_stack(temp_dir.path()).await.unwrap();
+        let result = detect_stack(temp_dir.path()).await.unwrap();
         assert_eq!(result, "lua");
     }
 
@@ -236,7 +236,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
 
         // No special files created
-        let result = detect_tech_stack(temp_dir.path()).await.unwrap();
+        let result = detect_stack(temp_dir.path()).await.unwrap();
         assert_eq!(result, "default");
     }
 

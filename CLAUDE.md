@@ -119,7 +119,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Interactive debugging uses `build_interactive_command()` to show what would run normally before providing interactive access
 
 **Auto-Detection** (`src/repository.rs`)
-- Automatic detection of technology stack based on repository files:
+- Automatic detection of stack based on repository files:
   - Rust: `Cargo.toml` → "rust"
   - Python: `pyproject.toml`, `requirements.txt`, `setup.py` → "python"
   - Node.js: `package.json` → "node"
@@ -128,7 +128,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Lua: `rockspec`, `.luacheckrc`, `init.lua` → "lua"
   - Default: "default" (when no specific files found)
 - Automatic project name detection from repository directory name with cleaning for Docker compatibility
-- Used by `TaskBuilder`, `DockerBuildCommand`, and `DebugCommand` when `--tech-stack` and `--project` flags are not provided
+- Used by `TaskBuilder`, `DockerBuildCommand`, and `DebugCommand` when `--stack` and `--project` flags are not provided
 - Provides user feedback when auto-detection is used vs. explicit flags
 
 ### Development Conventions
@@ -159,11 +159,11 @@ TSK implements a command pattern with dependency injection for testability. The 
 ### Docker Infrastructure
 
 - **Layered Images**: Four-layer system for flexible customization
-  - Base layer: Ubuntu 24.04 base OS and common tools
-  - Tech-stack layer: Language-specific toolchains (default, rust, python, node, go, java, lua)
-  - Agent layer: AI agent installations (claude, etc.)
-  - Project layer: Project-specific dependencies (optional, falls back to default)
-- **Custom Project Dockerfiles**: Place project-specific Dockerfiles in `.tsk/dockerfiles/project/{project-name}/Dockerfile`
+  - Base layer: Ubuntu 24.04 base OS and common tools (stored as `dockerfiles/base/default.dockerfile`)
+  - Stack layer: Language-specific toolchains (stored as `dockerfiles/stack/{name}.dockerfile` for rust, python, node, go, java, lua, etc.)
+  - Agent layer: AI agent installations (stored as `dockerfiles/agent/{name}.dockerfile` for claude-code, etc.)
+  - Project layer: Project-specific dependencies (stored as `dockerfiles/project/{name}.dockerfile`, optional, falls back to default)
+- **Custom Project Dockerfiles**: Place project-specific Dockerfiles in `.tsk/dockerfiles/project/{project-name}.dockerfile`
 - **Proxy Image** (`dockerfiles/tsk-proxy/`): Squid proxy for controlled network access
 - Git configuration inherited via Docker build args from host user
 - Automatic image rebuilding when missing during task execution

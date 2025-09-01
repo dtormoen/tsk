@@ -44,7 +44,7 @@ mod tests {
         // Test that DockerBuildCommand can be instantiated
         let _cmd = docker::DockerBuildCommand {
             no_cache: false,
-            tech_stack: None,
+            stack: None,
             agent: None,
             project: None,
             dry_run: false,

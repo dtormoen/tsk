@@ -9,8 +9,8 @@ use std::error::Error;
 pub struct DockerBuildCommand {
     /// Whether to build without using Docker's cache
     pub no_cache: bool,
-    /// Technology stack (defaults to "default")
-    pub tech_stack: Option<String>,
+    /// Stack (defaults to "default")
+    pub stack: Option<String>,
     /// Agent (defaults to "claude")
     pub agent: Option<String>,
     /// Project (defaults to "default")
@@ -22,10 +22,10 @@ pub struct DockerBuildCommand {
 #[async_trait]
 impl Command for DockerBuildCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
-        // Auto-detect tech_stack if not provided
-        let tech_stack = match &self.tech_stack {
+        // Auto-detect stack if not provided
+        let stack = match &self.stack {
             Some(ts) => {
-                println!("Using tech stack: {ts}");
+                println!("Using stack: {ts}");
                 ts.clone()
             }
             None => {
@@ -33,13 +33,13 @@ impl Command for DockerBuildCommand {
                 let repo_root = find_repository_root(std::path::Path::new("."))
                     .unwrap_or_else(|_| std::path::PathBuf::from("."));
 
-                match crate::repository::detect_tech_stack(&repo_root).await {
+                match crate::repository::detect_stack(&repo_root).await {
                     Ok(detected) => {
-                        println!("Auto-detected tech stack: {detected}");
+                        println!("Auto-detected stack: {detected}");
                         detected
                     }
                     Err(e) => {
-                        eprintln!("Warning: Failed to detect tech stack: {e}. Using default.");
+                        eprintln!("Warning: Failed to detect stack: {e}. Using default.");
                         "default".to_string()
                     }
                 }
@@ -81,7 +81,7 @@ impl Command for DockerBuildCommand {
         // Build the main image (with dry_run flag)
         let image = image_manager
             .build_image(
-                &tech_stack,
+                &stack,
                 agent,
                 project.as_deref(),
                 project_root.as_deref(),
@@ -120,7 +120,7 @@ mod tests {
         // Test that DockerBuildCommand can be instantiated
         let _command = DockerBuildCommand {
             no_cache: false,
-            tech_stack: None,
+            stack: None,
             agent: None,
             project: None,
             dry_run: false,
@@ -132,7 +132,7 @@ mod tests {
         // Test that DockerBuildCommand can be instantiated with all options
         let _command = DockerBuildCommand {
             no_cache: true,
-            tech_stack: Some("rust".to_string()),
+            stack: Some("rust".to_string()),
             agent: Some("claude".to_string()),
             project: Some("web-api".to_string()),
             dry_run: false,
@@ -144,7 +144,7 @@ mod tests {
         // Test that DockerBuildCommand can be instantiated with dry_run
         let _command = DockerBuildCommand {
             no_cache: false,
-            tech_stack: Some("python".to_string()),
+            stack: Some("python".to_string()),
             agent: Some("claude".to_string()),
             project: Some("test-project".to_string()),
             dry_run: true,

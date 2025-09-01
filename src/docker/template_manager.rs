@@ -36,33 +36,15 @@ impl DockerTemplateManager {
         layer: &DockerLayer,
         _project_root: Option<&Path>,
     ) -> Result<DockerLayerContent> {
-        let layer_path = format!("dockerfiles/{}", layer.asset_path());
-
-        // Always use asset manager for consistency
-        // The LayeredAssetManager already handles project-specific files correctly
-        let dockerfile_path = format!("{layer_path}/Dockerfile");
+        // Use the new dockerfile_path method for the simplified structure
+        #[allow(deprecated)]
+        let dockerfile_path = format!("dockerfiles/{}", layer.dockerfile_path());
         let dockerfile_content = self
             .get_docker_file_content(&dockerfile_path)
             .with_context(|| format!("Failed to get Dockerfile for layer {layer}"))?;
 
-        // Try to get additional files if they exist
-        let mut additional_files = Vec::new();
-
-        // Check for common additional files (this could be extended or made configurable)
-        let potential_files = vec![
-            "requirements.txt",
-            "package.json",
-            "Cargo.toml",
-            "config.json",
-        ];
-
-        // Always use asset manager for consistency
-        for file_name in potential_files {
-            let file_path = format!("{layer_path}/{file_name}");
-            if let Ok(content) = self.get_docker_file_content(&file_path) {
-                additional_files.push((file_name.to_string(), content));
-            }
-        }
+        // Additional files are no longer stored alongside dockerfiles in the new structure
+        let additional_files = Vec::new();
 
         Ok(DockerLayerContent::with_files(
             String::from_utf8(dockerfile_content)?,
@@ -84,8 +66,8 @@ impl DockerTemplateManager {
 
         // Add header comment
         composed_dockerfile.push_str(&format!(
-            "# TSK Composed Dockerfile\n# Tech Stack: {}\n# Agent: {}\n# Project: {}\n\n",
-            config.tech_stack, config.agent, config.project
+            "# TSK Composed Dockerfile\n# Stack: {}\n# Agent: {}\n# Project: {}\n\n",
+            config.stack, config.agent, config.project
         ));
 
         for (index, layer) in layers.iter().enumerate() {
@@ -162,10 +144,8 @@ impl DockerTemplateManager {
     ) -> Vec<String> {
         let mut layers = std::collections::HashSet::new();
 
-        let layer_dir = match layer_type {
-            DockerLayerType::Base => "dockerfiles/base".to_string(),
-            _ => format!("dockerfiles/{layer_type}"),
-        };
+        // Use the simplified directory structure
+        let layer_dir = format!("dockerfiles/{layer_type}");
 
         // Check embedded assets
         let dockerfiles = self.asset_manager.list_dockerfiles();
@@ -260,69 +240,89 @@ impl DockerTemplateManager {
 
     /// Get Docker file content from the asset manager
     fn get_docker_file_content(&self, path: &str) -> Result<Vec<u8>> {
-        // For now, we'll use the existing dockerfile methods
-        // In the future, this could be extended to support the new layer structure
-        if let Some(dockerfile_name) = path.strip_prefix("dockerfiles/") {
-            if let Some((name, file_path)) = dockerfile_name.split_once('/') {
+        // Support both old and new dockerfile paths
+        if let Some(dockerfile_path) = path.strip_prefix("dockerfiles/") {
+            // Try new format first: {layer_type}/{name}.dockerfile
+            if dockerfile_path.ends_with(".dockerfile") {
+                // Extract components for the new structure
+                if let Some((layer_dir, filename)) = dockerfile_path.rsplit_once('/') {
+                    // Map to old asset manager structure for now
+                    if let Some(name) = filename.strip_suffix(".dockerfile") {
+                        let old_path = if layer_dir == "base" && name == "default" {
+                            "base"
+                        } else if layer_dir == "stack" {
+                            // Map stack back to tech-stack for asset manager
+                            &format!("tech-stack/{name}")
+                        } else {
+                            &format!("{layer_dir}/{name}")
+                        };
+                        return self.asset_manager.get_dockerfile(old_path);
+                    }
+                }
+            }
+
+            // Fall back to old format handling
+            if let Some((name, file_path)) = dockerfile_path.split_once('/') {
                 if file_path == "Dockerfile" {
                     self.asset_manager.get_dockerfile(name)
                 } else {
                     self.asset_manager.get_dockerfile_file(name, file_path)
                 }
             } else {
-                self.asset_manager.get_dockerfile(dockerfile_name)
+                self.asset_manager.get_dockerfile(dockerfile_path)
             }
         } else {
             Err(anyhow::anyhow!("Invalid dockerfile path: {}", path))
         }
     }
 
-    /// Extract layer name from a dockerfile path
+    /// Extract layer name from a dockerfile path in the new structure
     fn extract_layer_name(&self, path: &str, layer_type: &DockerLayerType) -> Option<String> {
+        // Expected format: dockerfiles/{layer_type}/{name}.dockerfile
+        // But asset manager still uses old format, so handle both
         let parts: Vec<&str> = path.split('/').collect();
-        match layer_type {
-            DockerLayerType::Base => {
-                if parts.len() >= 2 && parts[1] == "base" {
-                    Some("base".to_string())
-                } else {
-                    None
+
+        // Handle old format from asset manager
+        if parts.len() >= 3 {
+            // Map old tech-stack to new stack
+            let type_str = if parts[1] == "tech-stack" {
+                "stack"
+            } else {
+                parts[1]
+            };
+
+            if type_str == layer_type.to_string() {
+                // For base layer, special case
+                if layer_type == &DockerLayerType::Base && parts[1] == "base" {
+                    return Some("default".to_string());
                 }
+                return Some(parts[2].to_string());
             }
-            _ => {
-                if parts.len() >= 3 && parts[1] == layer_type.to_string() {
-                    Some(parts[2].to_string())
-                } else {
-                    None
-                }
-            }
+        } else if parts.len() == 2 && parts[1] == "base" && layer_type == &DockerLayerType::Base {
+            // Handle "dockerfiles/base" -> default
+            return Some("default".to_string());
         }
+
+        None
     }
 
-    /// Scan a directory for layers of a specific type
+    /// Scan a directory for layers of a specific type using the new structure
     fn scan_directory_for_layers(
         &self,
         dir: &Path,
         layer_type: &DockerLayerType,
         layers: &mut std::collections::HashSet<String>,
     ) {
-        let layer_dir = match layer_type {
-            DockerLayerType::Base => dir.join("base"),
-            _ => dir.join(layer_type.to_string()),
-        };
+        let layer_dir = dir.join(layer_type.to_string());
 
         if layer_dir.exists() {
-            if layer_type == &DockerLayerType::Base {
-                // Base layer is a special case - just check if Dockerfile exists
-                if layer_dir.join("Dockerfile").exists() {
-                    layers.insert("base".to_string());
-                }
-            } else {
-                // For other layer types, each subdirectory is a layer
-                if let Ok(entries) = std::fs::read_dir(&layer_dir) {
-                    for entry in entries.flatten() {
-                        if entry.path().is_dir()
-                            && let Some(name) = entry.file_name().to_str()
-                            && entry.path().join("Dockerfile").exists()
+            // In the new structure, dockerfiles are directly in the layer directory
+            if let Ok(entries) = std::fs::read_dir(&layer_dir) {
+                for entry in entries.flatten() {
+                    if let Some(filename) = entry.file_name().to_str() {
+                        // Look for .dockerfile files
+                        if filename.ends_with(".dockerfile")
+                            && let Some(name) = filename.strip_suffix(".dockerfile")
                         {
                             layers.insert(name.to_string());
                         }
@@ -359,7 +359,7 @@ mod tests {
 
         let layers = config.get_layers();
         assert_eq!(layers.len(), 4);
-        assert_eq!(layers[0].name, "base");
+        assert_eq!(layers[0].name, "default");
         assert_eq!(layers[1].name, "rust");
         assert_eq!(layers[2].name, "claude-code");
         assert_eq!(layers[3].name, "web-api");
@@ -450,7 +450,7 @@ mod tests {
 
         // Create a config for testing
         let _config = DockerImageConfig {
-            tech_stack: "rust".to_string(),
+            stack: "rust".to_string(),
             agent: "claude".to_string(),
             project: "default".to_string(),
         };
@@ -464,32 +464,24 @@ mod tests {
     fn test_extract_layer_name() {
         let manager = create_test_manager();
 
+        // Test extraction with old format (from asset manager)
         assert_eq!(
-            manager.extract_layer_name("dockerfiles/base/Dockerfile", &DockerLayerType::Base),
-            Some("base".to_string())
+            manager.extract_layer_name("dockerfiles/base", &DockerLayerType::Base),
+            Some("default".to_string())
         );
 
         assert_eq!(
-            manager.extract_layer_name(
-                "dockerfiles/tech-stack/rust/Dockerfile",
-                &DockerLayerType::TechStack
-            ),
+            manager.extract_layer_name("dockerfiles/tech-stack/rust", &DockerLayerType::Stack),
             Some("rust".to_string())
         );
 
         assert_eq!(
-            manager.extract_layer_name(
-                "dockerfiles/agent/claude-code/Dockerfile",
-                &DockerLayerType::Agent
-            ),
+            manager.extract_layer_name("dockerfiles/agent/claude-code", &DockerLayerType::Agent),
             Some("claude-code".to_string())
         );
 
         assert_eq!(
-            manager.extract_layer_name(
-                "dockerfiles/project/web-api/Dockerfile",
-                &DockerLayerType::Project
-            ),
+            manager.extract_layer_name("dockerfiles/project/web-api", &DockerLayerType::Project),
             Some("web-api".to_string())
         );
     }
@@ -499,20 +491,15 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let docker_dir = temp_dir.path().join("dockerfiles");
 
-        // Create test layer directories
+        // Create test layer directories with new structure
         fs::create_dir_all(docker_dir.join("base")).unwrap();
-        fs::write(docker_dir.join("base/Dockerfile"), "FROM ubuntu").unwrap();
+        fs::write(docker_dir.join("base/default.dockerfile"), "FROM ubuntu").unwrap();
 
-        fs::create_dir_all(docker_dir.join("tech-stack/rust")).unwrap();
-        fs::write(
-            docker_dir.join("tech-stack/rust/Dockerfile"),
-            "RUN install rust",
-        )
-        .unwrap();
+        fs::create_dir_all(docker_dir.join("stack")).unwrap();
+        fs::write(docker_dir.join("stack/rust.dockerfile"), "RUN install rust").unwrap();
 
-        fs::create_dir_all(docker_dir.join("tech-stack/python")).unwrap();
         fs::write(
-            docker_dir.join("tech-stack/python/Dockerfile"),
+            docker_dir.join("stack/python.dockerfile"),
             "RUN install python",
         )
         .unwrap();
@@ -522,11 +509,11 @@ mod tests {
 
         // Test base layer scanning
         manager.scan_directory_for_layers(&docker_dir, &DockerLayerType::Base, &mut layers);
-        assert!(layers.contains("base"));
+        assert!(layers.contains("default"));
         layers.clear();
 
-        // Test tech-stack layer scanning
-        manager.scan_directory_for_layers(&docker_dir, &DockerLayerType::TechStack, &mut layers);
+        // Test stack layer scanning
+        manager.scan_directory_for_layers(&docker_dir, &DockerLayerType::Stack, &mut layers);
         assert!(layers.contains("rust"));
         assert!(layers.contains("python"));
     }

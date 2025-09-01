@@ -20,7 +20,7 @@ pub struct DebugCommand {
     pub edit: bool,
     pub agent: Option<String>,
     pub timeout: u32,
-    pub tech_stack: Option<String>,
+    pub stack: Option<String>,
     pub project: Option<String>,
     pub repo: Option<String>,
 }
@@ -45,7 +45,7 @@ impl Command for DebugCommand {
             .edit(self.edit)
             .agent(self.agent.clone())
             .timeout(self.timeout)
-            .tech_stack(self.tech_stack.clone())
+            .stack(self.stack.clone())
             .project(self.project.clone())
             .with_interactive(true) // Debug sessions are always interactive
             .build(ctx)
@@ -90,7 +90,7 @@ mod tests {
             edit: false,
             agent: Some("claude-code".to_string()),
             timeout: 0,
-            tech_stack: None,
+            stack: None,
             project: None,
             repo: None,
         };
@@ -103,7 +103,7 @@ mod tests {
         assert!(!cmd.edit);
         assert_eq!(cmd.agent, Some("claude-code".to_string()));
         assert_eq!(cmd.timeout, 0);
-        assert_eq!(cmd.tech_stack, None);
+        assert_eq!(cmd.stack, None);
         assert_eq!(cmd.project, None);
         assert_eq!(cmd.repo, None);
     }

@@ -57,24 +57,20 @@ impl DockerImageManager {
     }
 
     /// Helper to create DockerImageConfig
-    fn create_config(tech_stack: &str, agent: &str, project: &str) -> DockerImageConfig {
-        DockerImageConfig::new(
-            tech_stack.to_string(),
-            agent.to_string(),
-            project.to_string(),
-        )
+    fn create_config(stack: &str, agent: &str, project: &str) -> DockerImageConfig {
+        DockerImageConfig::new(stack.to_string(), agent.to_string(), project.to_string())
     }
 
     /// Print dry run output for a composed Dockerfile
     fn print_dry_run_output(
         &self,
         composed: &ComposedDockerfile,
-        tech_stack: &str,
+        stack: &str,
         agent: &str,
         project: &str,
     ) {
         println!("# Resolved Dockerfile for image: {}", composed.image_tag);
-        println!("# Configuration: tech_stack={tech_stack}, agent={agent}, project={project}");
+        println!("# Configuration: stack={stack}, agent={agent}, project={project}");
         println!();
         println!("{}", composed.dockerfile_content);
 
@@ -115,16 +111,16 @@ impl DockerImageManager {
     /// This method implements intelligent fallback:
     /// - If the project-specific layer doesn't exist and project != "default",
     ///   it will try again with project="default"
-    /// - Returns error if tech_stack or agent layers are missing
+    /// - Returns error if stack or agent layers are missing
     pub fn get_image(
         &self,
-        tech_stack: &str,
+        stack: &str,
         agent: &str,
         project: Option<&str>,
         project_root: Option<&std::path::Path>,
     ) -> Result<DockerImage> {
         let project = project.unwrap_or("default");
-        let config = Self::create_config(tech_stack, agent, project);
+        let config = Self::create_config(stack, agent, project);
         let missing_layers = self.validate_layers(&config, project_root);
 
         // If only the project layer is missing and it's not "default", try fallback
@@ -133,7 +129,7 @@ impl DockerImageManager {
             && project != "default"
         {
             return Ok(DockerImage {
-                tag: format!("tsk/{tech_stack}/{agent}/default"),
+                tag: format!("tsk/{stack}/{agent}/default"),
                 used_fallback: true,
             });
         }
@@ -146,11 +142,11 @@ impl DockerImageManager {
                         "Base layer is missing. This is a critical error - please reinstall TSK."
                     ));
                 }
-                DockerLayerType::TechStack => {
+                DockerLayerType::Stack => {
                     return Err(anyhow::anyhow!(
-                        "Technology stack '{tech_stack}' not found. Available tech stacks: {:?}",
+                        "Stack '{stack}' not found. Available stacks: {:?}",
                         self.template_manager
-                            .list_available_layers(DockerLayerType::TechStack, project_root)
+                            .list_available_layers(DockerLayerType::Stack, project_root)
                     ));
                 }
                 DockerLayerType::Agent => {
@@ -170,7 +166,7 @@ impl DockerImageManager {
         }
 
         Ok(DockerImage {
-            tag: format!("tsk/{tech_stack}/{agent}/{project}"),
+            tag: format!("tsk/{stack}/{agent}/{project}"),
             used_fallback: false,
         })
     }
@@ -183,14 +179,14 @@ impl DockerImageManager {
     /// - Returns the DockerImage information
     pub async fn ensure_image(
         &self,
-        tech_stack: &str,
+        stack: &str,
         agent: &str,
         project: Option<&str>,
         build_root: Option<&std::path::Path>,
         force_rebuild: bool,
     ) -> Result<DockerImage> {
         // Get the image configuration (with fallback if needed)
-        let image = self.get_image(tech_stack, agent, project, build_root)?;
+        let image = self.get_image(stack, agent, project, build_root)?;
 
         // Check if image exists unless force rebuild
         if !force_rebuild && self.image_exists(&image.tag).await? {
@@ -208,15 +204,8 @@ impl DockerImageManager {
             project.unwrap_or("default")
         };
 
-        self.build_image(
-            tech_stack,
-            agent,
-            Some(actual_project),
-            build_root,
-            false,
-            false,
-        )
-        .await?;
+        self.build_image(stack, agent, Some(actual_project), build_root, false, false)
+            .await?;
 
         Ok(image)
     }
@@ -224,7 +213,7 @@ impl DockerImageManager {
     /// Build a Docker image for the given configuration
     ///
     /// # Arguments
-    /// * `tech_stack` - The technology stack layer (e.g., "rust", "python", "default")
+    /// * `stack` - The stack layer (e.g., "rust", "python", "default")
     /// * `agent` - The agent layer (e.g., "claude-code")
     /// * `project` - Optional project layer (defaults to "default")
     /// * `build_root` - Optional build root directory for project-specific context
@@ -232,7 +221,7 @@ impl DockerImageManager {
     /// * `dry_run` - If true, only prints the composed Dockerfile without building
     pub async fn build_image(
         &self,
-        tech_stack: &str,
+        stack: &str,
         agent: &str,
         project: Option<&str>,
         build_root: Option<&std::path::Path>,
@@ -248,7 +237,7 @@ impl DockerImageManager {
         }
 
         // Create configuration
-        let config = Self::create_config(tech_stack, agent, project);
+        let config = Self::create_config(stack, agent, project);
 
         // Compose the Dockerfile
         let composed = self
@@ -262,7 +251,7 @@ impl DockerImageManager {
             .with_context(|| "Dockerfile validation failed")?;
 
         if dry_run {
-            self.print_dry_run_output(&composed, tech_stack, agent, project);
+            self.print_dry_run_output(&composed, stack, agent, project);
         } else {
             // Normal mode: build the image
             // Get git configuration from TskConfig
@@ -290,7 +279,7 @@ impl DockerImageManager {
                 .is_err();
 
         Ok(DockerImage {
-            tag: format!("tsk/{tech_stack}/{agent}/{project}"),
+            tag: format!("tsk/{stack}/{agent}/{project}"),
             used_fallback,
         })
     }
@@ -561,7 +550,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_image_missing_tech_stack() {
+    fn test_get_image_missing_stack() {
         let manager = create_test_manager();
 
         // Test with non-existent tech stack (should fail)
@@ -571,7 +560,7 @@ mod tests {
         let err = result.unwrap_err();
         assert!(
             err.to_string()
-                .contains("Technology stack 'non-existent-stack' not found")
+                .contains("Stack 'non-existent-stack' not found")
         );
     }
 

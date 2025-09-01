@@ -19,3 +19,4 @@ RUN cargo build
 # Remove dummy source files
 # The actual source code will be mounted at runtime
 RUN rm -rf src
+

@@ -49,9 +49,32 @@ impl AssetManager for EmbeddedAssetManager {
     }
 
     fn get_dockerfile(&self, dockerfile_name: &str) -> Result<Vec<u8>> {
-        let path = format!("dockerfiles/{dockerfile_name}/Dockerfile");
+        // Try new structure first
+        // Map old paths to new structure
+        let new_path = match dockerfile_name {
+            "base" => "dockerfiles/base/default.dockerfile".to_string(),
+            path if path.starts_with("tech-stack/") => {
+                let name = path.strip_prefix("tech-stack/").unwrap();
+                format!("dockerfiles/stack/{name}.dockerfile")
+            }
+            path if path.starts_with("agent/") => {
+                let name = path.strip_prefix("agent/").unwrap();
+                format!("dockerfiles/agent/{name}.dockerfile")
+            }
+            path if path.starts_with("project/") => {
+                let name = path.strip_prefix("project/").unwrap();
+                format!("dockerfiles/project/{name}.dockerfile")
+            }
+            // Fall back to old structure for other paths
+            _ => format!("dockerfiles/{dockerfile_name}/Dockerfile"),
+        };
 
-        Dockerfiles::get(&path)
+        Dockerfiles::get(&new_path)
+            .or_else(|| {
+                // Fall back to old structure
+                let old_path = format!("dockerfiles/{dockerfile_name}/Dockerfile");
+                Dockerfiles::get(&old_path)
+            })
             .ok_or_else(|| anyhow!("Dockerfile '{dockerfile_name}' not found"))
             .map(|file| file.data.to_vec())
     }

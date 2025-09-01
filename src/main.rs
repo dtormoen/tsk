@@ -82,9 +82,9 @@ enum Commands {
         #[arg(long, default_value = "30")]
         timeout: u32,
 
-        /// Technology stack for Docker image (e.g., rust, python, node)
+        /// Stack for Docker image (e.g., rust, python, node)
         #[arg(long)]
-        tech_stack: Option<String>,
+        stack: Option<String>,
 
         /// Project name for Docker image
         #[arg(long)]
@@ -132,9 +132,9 @@ enum Commands {
         #[arg(long, default_value = "30")]
         timeout: u32,
 
-        /// Technology stack for Docker image (e.g., rust, python, node)
+        /// Stack for Docker image (e.g., rust, python, node)
         #[arg(long)]
-        tech_stack: Option<String>,
+        stack: Option<String>,
 
         /// Project name for Docker image
         #[arg(long)]
@@ -174,9 +174,9 @@ enum Commands {
         #[arg(long, default_value = "0")]
         timeout: u32,
 
-        /// Technology stack for Docker image (e.g., rust, python, node)
-        #[arg(long)]
-        tech_stack: Option<String>,
+        /// Stack for Docker image (e.g., rust, python, node)
+        #[arg(long, alias = "tech-stack")]
+        stack: Option<String>,
 
         /// Project name for Docker image
         #[arg(long)]
@@ -246,9 +246,9 @@ enum DockerCommands {
         #[arg(long)]
         no_cache: bool,
 
-        /// Technology stack (e.g., rust, python, node)
+        /// Stack (e.g., rust, python, node)
         #[arg(long)]
-        tech_stack: Option<String>,
+        stack: Option<String>,
 
         /// Agent (e.g., claude-code, aider)
         #[arg(long)]
@@ -306,7 +306,7 @@ async fn main() {
             edit,
             agent,
             timeout,
-            tech_stack,
+            stack,
             project,
             repo,
         } => Box::new(AddCommand {
@@ -317,7 +317,7 @@ async fn main() {
             edit,
             agent,
             timeout,
-            tech_stack,
+            stack,
             project,
             repo,
         }),
@@ -329,7 +329,7 @@ async fn main() {
             edit,
             agent,
             timeout,
-            tech_stack,
+            stack,
             project,
             repo,
         } => Box::new(QuickCommand {
@@ -340,7 +340,7 @@ async fn main() {
             edit,
             agent,
             timeout,
-            tech_stack,
+            stack,
             project,
             repo,
         }),
@@ -352,7 +352,7 @@ async fn main() {
             edit,
             agent,
             timeout,
-            tech_stack,
+            stack,
             project,
             repo,
         } => Box::new(DebugCommand {
@@ -363,7 +363,7 @@ async fn main() {
             edit,
             agent,
             timeout,
-            tech_stack,
+            stack,
             project,
             repo,
         }),
@@ -382,13 +382,13 @@ async fn main() {
         Commands::Docker(docker_args) => match docker_args.command {
             DockerCommands::Build {
                 no_cache,
-                tech_stack,
+                stack,
                 agent,
                 project,
                 dry_run,
             } => Box::new(DockerBuildCommand {
                 no_cache,
-                tech_stack,
+                stack,
                 agent,
                 project,
                 dry_run,

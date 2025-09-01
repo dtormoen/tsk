@@ -135,7 +135,7 @@ impl TaskRunner {
             // Ensure the Docker image exists - always rebuild to pick up any changes
             let docker_image = task_image_manager
                 .ensure_image(
-                    &task.tech_stack,
+                    &task.stack,
                     &task.agent,
                     Some(&task.project),
                     Some(&repo_path),
@@ -290,7 +290,7 @@ mod tests {
             branch_name: "tsk/feature/test-task/test-task-123".to_string(),
             error_message: None,
             source_commit: test_repo.get_current_commit().unwrap(),
-            tech_stack: "default".to_string(),
+            stack: "default".to_string(),
             project: "default".to_string(),
             copied_repo_path: task_copy_dir,
             is_interactive: false,

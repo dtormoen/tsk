@@ -15,7 +15,7 @@ pub struct QuickCommand {
     pub edit: bool,
     pub agent: Option<String>,
     pub timeout: u32,
-    pub tech_stack: Option<String>,
+    pub stack: Option<String>,
     pub project: Option<String>,
     pub repo: Option<String>,
 }
@@ -40,7 +40,7 @@ impl Command for QuickCommand {
             .edit(self.edit)
             .agent(self.agent.clone())
             .timeout(self.timeout)
-            .tech_stack(self.tech_stack.clone())
+            .stack(self.stack.clone())
             .project(self.project.clone())
             .build(ctx)
             .await?;
@@ -95,7 +95,7 @@ mod tests {
             edit: false,
             agent: None,
             timeout: 30,
-            tech_stack: None,
+            stack: None,
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
         };
@@ -137,7 +137,7 @@ mod tests {
             edit: false,
             agent: None,
             timeout: 30,
-            tech_stack: None,
+            stack: None,
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
         };

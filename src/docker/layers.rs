@@ -9,7 +9,7 @@ pub enum DockerLayerType {
     /// Base OS and essential development tools
     Base,
     /// Technology stack (e.g., rust, python, node)
-    TechStack,
+    Stack,
     /// AI agent setup (e.g., claude, aider)
     Agent,
     /// Project-specific configuration
@@ -20,7 +20,7 @@ impl fmt::Display for DockerLayerType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             DockerLayerType::Base => write!(f, "base"),
-            DockerLayerType::TechStack => write!(f, "tech-stack"),
+            DockerLayerType::Stack => write!(f, "stack"),
             DockerLayerType::Agent => write!(f, "agent"),
             DockerLayerType::Project => write!(f, "project"),
         }
@@ -37,18 +37,23 @@ pub struct DockerLayer {
 }
 
 impl DockerLayer {
-    /// Creates a base layer
+    /// Creates a base layer with the default name
     pub fn base() -> Self {
+        Self::base_with_name("default")
+    }
+
+    /// Creates a base layer with a specific name
+    pub fn base_with_name(name: impl Into<String>) -> Self {
         Self {
             layer_type: DockerLayerType::Base,
-            name: "base".to_string(),
+            name: name.into(),
         }
     }
 
-    /// Creates a tech stack layer
-    pub fn tech_stack(name: impl Into<String>) -> Self {
+    /// Creates a stack layer
+    pub fn stack(name: impl Into<String>) -> Self {
         Self {
-            layer_type: DockerLayerType::TechStack,
+            layer_type: DockerLayerType::Stack,
             name: name.into(),
         }
     }
@@ -69,12 +74,10 @@ impl DockerLayer {
         }
     }
 
-    /// Get the directory path for this layer in the asset structure
-    pub fn asset_path(&self) -> String {
-        match self.layer_type {
-            DockerLayerType::Base => "base".to_string(),
-            _ => format!("{}/{}", self.layer_type, self.name),
-        }
+    /// Get the file path for this layer's dockerfile in the new structure
+    /// Returns the path relative to the dockerfiles directory
+    pub fn dockerfile_path(&self) -> String {
+        format!("{}/{}.dockerfile", self.layer_type, self.name)
     }
 }
 
@@ -97,7 +100,8 @@ impl DockerLayerContent {
     /// Creates a new DockerLayerContent with just Dockerfile content
     ///
     /// Used in tests and potentially useful for creating simple layer content
-    #[allow(dead_code)] // Used in tests
+    /// Used in tests
+    #[allow(dead_code)]
     pub fn new(dockerfile_content: String) -> Self {
         Self {
             dockerfile_content,
@@ -120,8 +124,8 @@ impl DockerLayerContent {
 /// Configuration for Docker image composition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DockerImageConfig {
-    /// Technology stack name (e.g., "rust", "python", "node")
-    pub tech_stack: String,
+    /// Stack name (e.g., "rust", "python", "node")
+    pub stack: String,
     /// Agent name (e.g., "claude", "aider")
     pub agent: String,
     /// Project name (e.g., "web-api", "cli-tool")
@@ -130,9 +134,9 @@ pub struct DockerImageConfig {
 
 impl DockerImageConfig {
     /// Creates a new DockerImageConfig
-    pub fn new(tech_stack: String, agent: String, project: String) -> Self {
+    pub fn new(stack: String, agent: String, project: String) -> Self {
         Self {
-            tech_stack,
+            stack,
             agent,
             project,
         }
@@ -140,14 +144,14 @@ impl DockerImageConfig {
 
     /// Generate the Docker image tag from the configuration
     pub fn image_tag(&self) -> String {
-        format!("tsk/{}/{}/{}", self.tech_stack, self.agent, self.project)
+        format!("tsk/{}/{}/{}", self.stack, self.agent, self.project)
     }
 
     /// Get all layers needed for this configuration in order
     pub fn get_layers(&self) -> Vec<DockerLayer> {
         vec![
             DockerLayer::base(),
-            DockerLayer::tech_stack(&self.tech_stack),
+            DockerLayer::stack(&self.stack),
             DockerLayer::agent(&self.agent),
             DockerLayer::project(&self.project),
         ]
@@ -162,10 +166,10 @@ mod tests {
     fn test_docker_layer_creation() {
         let base = DockerLayer::base();
         assert_eq!(base.layer_type, DockerLayerType::Base);
-        assert_eq!(base.name, "base");
+        assert_eq!(base.name, "default");
 
-        let rust = DockerLayer::tech_stack("rust");
-        assert_eq!(rust.layer_type, DockerLayerType::TechStack);
+        let rust = DockerLayer::stack("rust");
+        assert_eq!(rust.layer_type, DockerLayerType::Stack);
         assert_eq!(rust.name, "rust");
 
         let claude = DockerLayer::agent("claude-code");
@@ -178,19 +182,22 @@ mod tests {
     }
 
     #[test]
-    fn test_docker_layer_asset_path() {
-        assert_eq!(DockerLayer::base().asset_path(), "base");
+    fn test_docker_layer_dockerfile_path() {
         assert_eq!(
-            DockerLayer::tech_stack("rust").asset_path(),
-            "tech-stack/rust"
+            DockerLayer::base().dockerfile_path(),
+            "base/default.dockerfile"
         );
         assert_eq!(
-            DockerLayer::agent("claude-code").asset_path(),
-            "agent/claude-code"
+            DockerLayer::stack("rust").dockerfile_path(),
+            "stack/rust.dockerfile"
         );
         assert_eq!(
-            DockerLayer::project("web-api").asset_path(),
-            "project/web-api"
+            DockerLayer::agent("claude-code").dockerfile_path(),
+            "agent/claude-code.dockerfile"
+        );
+        assert_eq!(
+            DockerLayer::project("web-api").dockerfile_path(),
+            "project/web-api.dockerfile"
         );
     }
 
@@ -207,7 +214,7 @@ mod tests {
         let layers = config.get_layers();
         assert_eq!(layers.len(), 4);
         assert_eq!(layers[0].layer_type, DockerLayerType::Base);
-        assert_eq!(layers[1].layer_type, DockerLayerType::TechStack);
+        assert_eq!(layers[1].layer_type, DockerLayerType::Stack);
         assert_eq!(layers[2].layer_type, DockerLayerType::Agent);
         assert_eq!(layers[3].layer_type, DockerLayerType::Project);
     }
@@ -215,11 +222,11 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = DockerImageConfig {
-            tech_stack: "default".to_string(),
+            stack: "default".to_string(),
             agent: "claude-code".to_string(),
             project: "default".to_string(),
         };
-        assert_eq!(config.tech_stack, "default");
+        assert_eq!(config.stack, "default");
         assert_eq!(config.agent, "claude-code");
         assert_eq!(config.project, "default");
         assert_eq!(config.image_tag(), "tsk/default/claude-code/default");

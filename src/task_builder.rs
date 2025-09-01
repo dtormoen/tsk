@@ -19,7 +19,7 @@ pub struct TaskBuilder {
     edit: bool,
     agent: Option<String>,
     timeout: Option<u32>,
-    tech_stack: Option<String>,
+    stack: Option<String>,
     project: Option<String>,
     copied_repo_path: Option<PathBuf>,
     is_interactive: bool,
@@ -37,7 +37,7 @@ impl TaskBuilder {
             edit: false,
             agent: None,
             timeout: None,
-            tech_stack: None,
+            stack: None,
             project: None,
             copied_repo_path: None,
             is_interactive: false,
@@ -52,7 +52,7 @@ impl TaskBuilder {
         builder.task_type = Some(task.task_type.clone());
         builder.agent = Some(task.agent.clone());
         builder.timeout = Some(task.timeout);
-        builder.tech_stack = Some(task.tech_stack.clone());
+        builder.stack = Some(task.stack.clone());
         builder.project = Some(task.project.clone());
         builder.copied_repo_path = Some(task.copied_repo_path.clone());
         builder.is_interactive = task.is_interactive;
@@ -111,9 +111,9 @@ impl TaskBuilder {
         self
     }
 
-    /// Sets the technology stack for Docker image selection
-    pub fn tech_stack(mut self, tech_stack: Option<String>) -> Self {
-        self.tech_stack = tech_stack;
+    /// Sets the stack for Docker image selection
+    pub fn stack(mut self, stack: Option<String>) -> Self {
+        self.stack = stack;
         self
     }
 
@@ -253,19 +253,19 @@ impl TaskBuilder {
             }
         };
 
-        // Auto-detect tech_stack and project if not provided
-        let tech_stack = match self.tech_stack {
+        // Auto-detect stack and project if not provided
+        let stack = match self.stack {
             Some(ts) => {
-                println!("Using tech stack: {ts}");
+                println!("Using stack: {ts}");
                 ts
             }
-            None => match crate::repository::detect_tech_stack(&repo_root).await {
+            None => match crate::repository::detect_stack(&repo_root).await {
                 Ok(detected) => {
-                    println!("Auto-detected tech stack: {detected}");
+                    println!("Auto-detected stack: {detected}");
                     detected
                 }
                 Err(e) => {
-                    eprintln!("Warning: Failed to detect tech stack: {e}. Using default.");
+                    eprintln!("Warning: Failed to detect stack: {e}. Using default.");
                     "default".to_string()
                 }
             },
@@ -317,7 +317,7 @@ impl TaskBuilder {
             timeout,
             branch_name,
             source_commit,
-            tech_stack,
+            stack,
             project,
             created_at,
             copied_repo_path,
@@ -504,7 +504,7 @@ mod tests {
             .task_type("feat".to_string())
             .description(Some("Custom description".to_string()))
             .timeout(60)
-            .tech_stack(Some("rust".to_string()))
+            .stack(Some("rust".to_string()))
             .project(Some("web-api".to_string()))
             .build(&ctx)
             .await
@@ -513,7 +513,7 @@ mod tests {
         assert_eq!(task.name, "custom-task");
         assert_eq!(task.task_type, "feat");
         assert_eq!(task.timeout, 60);
-        assert_eq!(task.tech_stack, "rust");
+        assert_eq!(task.stack, "rust");
         assert_eq!(task.project, "web-api");
     }
 

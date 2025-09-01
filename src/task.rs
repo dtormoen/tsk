@@ -50,8 +50,9 @@ pub struct Task {
     pub error_message: Option<String>,
     /// Git commit SHA from which the task was created
     pub source_commit: String,
-    /// Technology stack for Docker image selection (e.g., "rust", "python", "default")
-    pub tech_stack: String,
+    /// Stack for Docker image selection (e.g., "rust", "python", "default")
+    #[serde(alias = "tech_stack")]
+    pub stack: String,
     /// Project name for Docker image selection (defaults to "default")
     pub project: String,
     /// Path to the copied repository for this task
@@ -74,7 +75,7 @@ impl Task {
         timeout: u32,
         branch_name: String,
         source_commit: String,
-        tech_stack: String,
+        stack: String,
         project: String,
         created_at: DateTime<Local>,
         copied_repo_path: PathBuf,
@@ -95,7 +96,7 @@ impl Task {
             branch_name,
             error_message: None,
             source_commit,
-            tech_stack,
+            stack,
             project,
             copied_repo_path,
             is_interactive,
