@@ -64,6 +64,8 @@ TSK implements a command pattern with dependency injection for testability. The 
 
 **Docker Integration** (`src/docker/`)
 - `DockerImageManager`: Centralized Docker image management with intelligent layering
+- `ProxyManager`: Dedicated proxy lifecycle management (build, start, health checks, stop)
+- `DockerManager`: Container execution with unified support for interactive and non-interactive modes
 - Security-first containers with dropped capabilities
 - Network isolation via proxy (Squid) for API-only access
 - Volume mounting for repository copies and agent config

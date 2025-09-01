@@ -324,8 +324,14 @@ impl DockerClient for TrackedDockerClient {
         self.remove_container_calls
             .lock()
             .unwrap()
-            .push((id.to_string(), options));
-        Ok(())
+            .push((id.to_string(), options.clone()));
+
+        // Simulate "No such container" error for testing
+        if id == "non-existent-container" {
+            Err("No such container".to_string())
+        } else {
+            Ok(())
+        }
     }
 
     async fn create_network(&self, _name: &str) -> Result<String, String> {

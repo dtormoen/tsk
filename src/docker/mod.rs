@@ -1,14 +1,16 @@
 pub mod composer;
 pub mod image_manager;
 pub mod layers;
+pub mod proxy_manager;
+pub mod template_engine;
 pub mod template_manager;
 
 use crate::agent::{Agent, LogProcessor};
 use crate::context::docker_client::DockerClient;
+use crate::docker::proxy_manager::ProxyManager;
 use bollard::models::{ContainerCreateBody, HostConfig};
 use bollard::query_parameters::{LogsOptions, RemoveContainerOptions};
 use futures_util::stream::StreamExt;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -17,9 +19,6 @@ const CONTAINER_MEMORY_LIMIT: i64 = 4 * 1024 * 1024 * 1024; // 2GB
 const CONTAINER_CPU_QUOTA: i64 = 400000; // 4 CPUs
 const CONTAINER_WORKING_DIR: &str = "/workspace";
 const CONTAINER_USER: &str = "agent";
-const TSK_NETWORK_NAME: &str = "tsk-network";
-const PROXY_CONTAINER_NAME: &str = "tsk-proxy";
-const PROXY_IMAGE: &str = "tsk/proxy";
 
 pub struct DockerManager {
     client: Arc<dyn DockerClient>,
@@ -28,158 +27,6 @@ pub struct DockerManager {
 impl DockerManager {
     pub fn new(client: Arc<dyn DockerClient>) -> Self {
         Self { client }
-    }
-
-    pub async fn stop_proxy(&self) -> Result<(), String> {
-        // Try to stop and remove the proxy container
-        match self
-            .client
-            .remove_container(
-                PROXY_CONTAINER_NAME,
-                Some(RemoveContainerOptions {
-                    force: true,
-                    ..Default::default()
-                }),
-            )
-            .await
-        {
-            Ok(_) => Ok(()),
-            Err(e) if e.contains("No such container") => Ok(()),
-            Err(e) => Err(format!("Failed to stop proxy container: {e}")),
-        }
-    }
-
-    async fn ensure_network(&self) -> Result<(), String> {
-        if !self.client.network_exists(TSK_NETWORK_NAME).await? {
-            self.client.create_network(TSK_NETWORK_NAME).await?;
-        }
-        Ok(())
-    }
-
-    async fn ensure_proxy(&self) -> Result<(), String> {
-        // Check if proxy container exists
-        let proxy_config = ContainerCreateBody {
-            image: Some(PROXY_IMAGE.to_string()),
-            exposed_ports: Some(
-                vec![("3128/tcp".to_string(), HashMap::new())]
-                    .into_iter()
-                    .collect(),
-            ),
-            host_config: Some(HostConfig {
-                network_mode: Some(TSK_NETWORK_NAME.to_string()),
-                restart_policy: Some(bollard::models::RestartPolicy {
-                    name: Some(bollard::models::RestartPolicyNameEnum::UNLESS_STOPPED),
-                    maximum_retry_count: None,
-                }),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-
-        let create_options = bollard::query_parameters::CreateContainerOptionsBuilder::default()
-            .name(PROXY_CONTAINER_NAME)
-            .build();
-
-        // Try to create the container (this will fail if it already exists)
-        match self
-            .client
-            .create_container(Some(create_options), proxy_config)
-            .await
-        {
-            Ok(_) => {
-                // New container created, start it
-                self.client.start_container(PROXY_CONTAINER_NAME).await?;
-            }
-            Err(e) => {
-                // Container might already exist, try to start it
-                if e.contains("already in use") {
-                    // Try to start existing container
-                    match self.client.start_container(PROXY_CONTAINER_NAME).await {
-                        Ok(_) => (),
-                        Err(e) if e.contains("already started") => (),
-                        Err(e) => return Err(e),
-                    }
-                } else {
-                    return Err(e);
-                }
-            }
-        }
-
-        // Wait for proxy to be healthy
-        self.wait_for_proxy_health().await?;
-
-        Ok(())
-    }
-
-    async fn wait_for_proxy_health(&self) -> Result<(), String> {
-        const MAX_RETRIES: u32 = 30; // 30 retries with 1 second delay = 30 seconds max wait
-        const RETRY_DELAY_MS: u64 = 1000;
-
-        for attempt in 1..=MAX_RETRIES {
-            match self.client.inspect_container(PROXY_CONTAINER_NAME).await {
-                Ok(json_data) => {
-                    // Parse the JSON to check health status
-                    if let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_data) {
-                        // Check if container has a health check
-                        if let Some(state) = data.get("State") {
-                            // Check if container is running
-                            if let Some(running) = state.get("Running").and_then(|v| v.as_bool())
-                                && !running
-                            {
-                                return Err("Proxy container is not running".to_string());
-                            }
-
-                            // Check health status if it exists
-                            if let Some(health) = state.get("Health") {
-                                if let Some(status) = health.get("Status").and_then(|v| v.as_str())
-                                {
-                                    match status {
-                                        "healthy" => {
-                                            println!("Proxy container is healthy");
-                                            return Ok(());
-                                        }
-                                        "unhealthy" => {
-                                            return Err("Proxy container is unhealthy".to_string());
-                                        }
-                                        "starting" => {
-                                            // Still starting, continue waiting
-                                            if attempt == 1 {
-                                                println!(
-                                                    "Waiting for proxy container to become healthy..."
-                                                );
-                                            }
-                                        }
-                                        _ => {
-                                            // Unknown status, continue waiting
-                                        }
-                                    }
-                                }
-                            } else {
-                                // No health check configured, just verify it's running
-                                // This is for backward compatibility
-                                println!("Proxy container is running (no health check configured)");
-                                return Ok(());
-                            }
-                        }
-                    }
-                }
-                Err(e) if e.contains("No such container") => {
-                    return Err("Proxy container not found".to_string());
-                }
-                Err(_) => {
-                    // Ignore other errors and retry
-                }
-            }
-
-            if attempt < MAX_RETRIES {
-                tokio::time::sleep(tokio::time::Duration::from_millis(RETRY_DELAY_MS)).await;
-            }
-        }
-
-        Err(format!(
-            "Proxy container failed to become healthy after {} seconds",
-            MAX_RETRIES
-        ))
     }
 
     fn prepare_worktree_path(worktree_path: &Path) -> Result<PathBuf, String> {
@@ -206,6 +53,7 @@ impl DockerManager {
     /// * `interactive` - Whether to configure for interactive (TTY) mode
     /// * `instructions_file_path` - Optional path to instructions file to mount
     /// * `agent` - Optional agent to get volumes and environment variables from
+    /// * `proxy_manager` - ProxyManager for network and proxy configuration
     ///
     /// # Returns
     /// A `ContainerCreateBody` configured with appropriate settings for the mode
@@ -216,6 +64,7 @@ impl DockerManager {
         interactive: bool,
         instructions_file_path: Option<&PathBuf>,
         agent: Option<&dyn Agent>,
+        proxy_manager: &ProxyManager,
     ) -> ContainerCreateBody {
         // Build binds vector starting with workspace
         let mut binds = vec![format!("{worktree_path_str}:{CONTAINER_WORKING_DIR}")];
@@ -246,10 +95,10 @@ impl DockerManager {
         // Build environment variables
         let mut env_vars = vec![
             // Configure proxy settings
-            "HTTP_PROXY=http://tsk-proxy:3128".to_string(),
-            "HTTPS_PROXY=http://tsk-proxy:3128".to_string(),
-            "http_proxy=http://tsk-proxy:3128".to_string(),
-            "https_proxy=http://tsk-proxy:3128".to_string(),
+            format!("HTTP_PROXY={}", proxy_manager.proxy_url()),
+            format!("HTTPS_PROXY={}", proxy_manager.proxy_url()),
+            format!("http_proxy={}", proxy_manager.proxy_url()),
+            format!("https_proxy={}", proxy_manager.proxy_url()),
             // Don't proxy localhost
             "NO_PROXY=localhost,127.0.0.1".to_string(),
             "no_proxy=localhost,127.0.0.1".to_string(),
@@ -273,7 +122,7 @@ impl DockerManager {
             cmd: command,
             host_config: Some(HostConfig {
                 binds: Some(binds),
-                network_mode: Some(TSK_NETWORK_NAME.to_string()),
+                network_mode: Some(proxy_manager.network_name().to_string()),
                 memory: Some(CONTAINER_MEMORY_LIMIT),
                 cpu_quota: Some(CONTAINER_CPU_QUOTA),
                 // No capabilities needed since we're not running iptables
@@ -322,13 +171,17 @@ impl DockerManager {
         is_interactive: bool,
         task_id: &str,
     ) -> Result<(String, Option<crate::agent::TaskResult>), String> {
-        // Ensure network and proxy are running
-        self.ensure_network().await?;
+        // Use ProxyManager to ensure proxy is running and healthy
+        use crate::context::AppContext;
+        let ctx = AppContext::builder()
+            .with_docker_client(self.client.clone())
+            .build();
+        let proxy_manager = ProxyManager::new(&ctx);
 
         // Try to ensure proxy is running and healthy
         // If proxy fails to start or become healthy, return an error
         // This will cause the task to fail and can be retried later
-        if let Err(e) = self.ensure_proxy().await {
+        if let Err(e) = proxy_manager.ensure_proxy().await {
             return Err(format!(
                 "Failed to ensure proxy is running and healthy: {e}. \
                 The task should be retried later when the proxy is available. \
@@ -376,6 +229,7 @@ impl DockerManager {
             is_interactive,
             instructions_file_path,
             Some(agent),
+            &proxy_manager,
         );
 
         // Add open_stdin for interactive mode
@@ -734,7 +588,14 @@ mod tests {
             .await;
 
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "Docker daemon not running");
+        let error_msg = result.unwrap_err();
+        // The error message should indicate proxy startup failure
+        assert!(error_msg.contains("Failed to ensure proxy is running and healthy"));
+        // The error chain should include the network creation failure
+        assert!(
+            error_msg.contains("Failed to ensure network exists")
+                || error_msg.contains("Failed to create network")
+        );
 
         let start_calls = mock_client.start_container_calls.lock().unwrap();
         assert_eq!(start_calls.len(), 0);
@@ -764,13 +625,12 @@ mod tests {
         let create_calls = mock_client.create_container_calls.lock().unwrap();
         assert_eq!(create_calls.len(), 2); // One for proxy, one for task container
 
-        // Check proxy container config
-        let (proxy_options, proxy_config) = &create_calls[0];
+        // Check proxy container config (proxy manager creates this)
+        let (proxy_options, _proxy_config) = &create_calls[0];
         assert_eq!(
             proxy_options.as_ref().unwrap().name,
-            Some(PROXY_CONTAINER_NAME.to_string())
+            Some("tsk-proxy".to_string())
         );
-        assert_eq!(proxy_config.image, Some(PROXY_IMAGE.to_string()));
 
         // Check task container config
         let (options, config) = &create_calls[1];
@@ -804,7 +664,7 @@ mod tests {
         assert!(config.entrypoint.is_none());
 
         let host_config = config.host_config.as_ref().unwrap();
-        assert_eq!(host_config.network_mode, Some(TSK_NETWORK_NAME.to_string()));
+        assert_eq!(host_config.network_mode, Some("tsk-network".to_string()));
         assert_eq!(host_config.memory, Some(CONTAINER_MEMORY_LIMIT));
         assert_eq!(host_config.cpu_quota, Some(CONTAINER_CPU_QUOTA));
 
@@ -854,99 +714,6 @@ mod tests {
         let binds = host_config.binds.as_ref().unwrap();
         assert_eq!(binds.len(), 4); // workspace, claude dir, claude.json, and instructions
         assert!(binds[3].contains("/tmp/tsk-test:/instructions:ro"));
-    }
-
-    #[tokio::test]
-    async fn test_wait_for_proxy_health_success() {
-        use serde_json::json;
-
-        // Create a mock client that returns healthy status
-        let mock_client = Arc::new(TrackedDockerClient {
-            inspect_container_response: json!({
-                "State": {
-                    "Running": true,
-                    "Health": {
-                        "Status": "healthy"
-                    }
-                }
-            })
-            .to_string(),
-            ..Default::default()
-        });
-
-        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
-
-        let result = manager.wait_for_proxy_health().await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_wait_for_proxy_health_unhealthy() {
-        use serde_json::json;
-
-        // Create a mock client that returns unhealthy status
-        let mock_client = Arc::new(TrackedDockerClient {
-            inspect_container_response: json!({
-                "State": {
-                    "Running": true,
-                    "Health": {
-                        "Status": "unhealthy"
-                    }
-                }
-            })
-            .to_string(),
-            ..Default::default()
-        });
-
-        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
-
-        let result = manager.wait_for_proxy_health().await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("unhealthy"));
-    }
-
-    #[tokio::test]
-    async fn test_wait_for_proxy_health_no_health_check() {
-        use serde_json::json;
-
-        // Create a mock client that returns running status without health check
-        let mock_client = Arc::new(TrackedDockerClient {
-            inspect_container_response: json!({
-                "State": {
-                    "Running": true
-                }
-            })
-            .to_string(),
-            ..Default::default()
-        });
-
-        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
-
-        // Should succeed for backward compatibility
-        let result = manager.wait_for_proxy_health().await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_wait_for_proxy_health_not_running() {
-        use serde_json::json;
-
-        // Create a mock client that returns not running status
-        let mock_client = Arc::new(TrackedDockerClient {
-            inspect_container_response: json!({
-                "State": {
-                    "Running": false
-                }
-            })
-            .to_string(),
-            ..Default::default()
-        });
-
-        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
-
-        let result = manager.wait_for_proxy_health().await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("not running"));
     }
 
     #[tokio::test]

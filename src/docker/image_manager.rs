@@ -286,10 +286,10 @@ impl DockerImageManager {
 
     /// Build the proxy image
     pub async fn build_proxy_image(&self, no_cache: bool) -> Result<DockerImage> {
-        println!("Building proxy image: tsk/proxy");
+        use crate::docker::proxy_manager::ProxyManager;
 
-        // Build the proxy image using the new approach
-        self.build_proxy_image_internal(no_cache).await?;
+        let proxy_manager = ProxyManager::new(&self.ctx);
+        proxy_manager.build_proxy(no_cache).await?;
 
         Ok(DockerImage {
             tag: "tsk/proxy".to_string(),
@@ -299,88 +299,16 @@ impl DockerImageManager {
 
     /// Ensure the proxy image exists, building it if necessary
     pub async fn ensure_proxy_image(&self) -> Result<DockerImage> {
-        let proxy_tag = "tsk/proxy";
+        use crate::docker::proxy_manager::ProxyManager;
 
-        // Check if proxy image exists
-        if self.image_exists(proxy_tag).await? {
-            return Ok(DockerImage {
-                tag: proxy_tag.to_string(),
-                used_fallback: false,
-            });
-        }
+        let proxy_manager = ProxyManager::new(&self.ctx);
+        // The ensure_proxy method will build the image if needed
+        proxy_manager.ensure_proxy().await?;
 
-        // Image doesn't exist, build it
-        println!("Proxy image not found, building it...");
-        self.build_proxy_image(false).await
-    }
-
-    /// Internal method to build the proxy image using DockerClient
-    async fn build_proxy_image_internal(&self, no_cache: bool) -> Result<()> {
-        use crate::assets::embedded::EmbeddedAssetManager;
-        use crate::assets::utils::extract_dockerfile_to_temp;
-
-        // Extract dockerfile to temporary directory
-        let asset_manager = EmbeddedAssetManager;
-        let dockerfile_dir = extract_dockerfile_to_temp(&asset_manager, "tsk-proxy")
-            .context("Failed to extract proxy Dockerfile")?;
-
-        // Create tar archive from the proxy dockerfile directory
-        let tar_archive = self
-            .create_tar_archive_from_directory(&dockerfile_dir)
-            .context("Failed to create tar archive for proxy build")?;
-
-        // Clean up the temporary directory
-        let _ = std::fs::remove_dir_all(&dockerfile_dir);
-
-        // Build options for proxy
-        let mut options_builder = bollard::query_parameters::BuildImageOptionsBuilder::default();
-        options_builder = options_builder.dockerfile("Dockerfile");
-        options_builder = options_builder.t("tsk/proxy");
-        options_builder = options_builder.nocache(no_cache);
-        let options = options_builder.build();
-
-        // Build the image using the DockerClient with streaming output
-        let mut build_stream = self
-            .ctx
-            .docker_client()
-            .build_image(options, tar_archive)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to build proxy image: {e}"))?;
-
-        // Stream build output for real-time visibility
-        use futures_util::StreamExt;
-        while let Some(result) = build_stream.next().await {
-            match result {
-                Ok(line) => {
-                    print!("{line}");
-                    // Ensure output is flushed immediately
-                    use std::io::Write;
-                    std::io::stdout().flush().unwrap_or(());
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!("Failed to build proxy image: {e}"));
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Create a tar archive from a directory
-    fn create_tar_archive_from_directory(&self, dir_path: &std::path::Path) -> Result<Vec<u8>> {
-        use tar::Builder;
-
-        let mut tar_data = Vec::new();
-        {
-            let mut builder = Builder::new(&mut tar_data);
-
-            // Add all files from the directory to the tar archive
-            builder.append_dir_all(".", dir_path)?;
-
-            builder.finish()?;
-        }
-
-        Ok(tar_data)
+        Ok(DockerImage {
+            tag: "tsk/proxy".to_string(),
+            used_fallback: false,
+        })
     }
 
     /// Check if a Docker image exists
