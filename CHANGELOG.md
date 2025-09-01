@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1](https://github.com/dtormoen/tsk/compare/v0.4.0...v0.4.1) - 2025-09-01
+
+### Fixed
+
+- handle non-JSON output gracefully in Claude Code log processor
+- rework Python tech-stack to use UV with proper virtual environment
+- add support for symlinks in git repository copy operations
+
 ## [0.4.0](https://github.com/dtormoen/tsk/compare/v0.3.2...v0.4.0) - 2025-08-25
 
 This release is largely focused on refactoring which will help create a solid foundation
