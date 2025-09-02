@@ -3,6 +3,14 @@
 # Switch to root temporarily for system package installation
 USER root
 
+# Install Neovim (latest stable version)
+RUN apt-get update && \
+    apt-get install -y software-properties-common && \
+    add-apt-repository ppa:neovim-ppa/stable && \
+    apt-get update && \
+    apt-get install -y neovim && \
+    rm -rf /var/lib/apt/lists/*
+
 # Install LuaJIT (preferred for Neovim) and development tools
 RUN apt-get update && \
     apt-get install -y \
@@ -14,12 +22,18 @@ RUN apt-get update && \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
+# Switch back to agent user
+USER agent
+
 # Configure LuaRocks for agent user
 RUN mkdir -p /home/agent/.luarocks
 
 # Install Rust and cargo for stylua (for agent user)
-RUN curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+RUN curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
 RUN . /home/agent/.cargo/env && cargo install stylua
+
+# Add Rust to PATH
+ENV PATH="/home/agent/.cargo/bin:${PATH}"
 
 # Install Neovim plugin development tools using luarocks for agent user
 RUN luarocks --local install luacheck && \
@@ -31,19 +45,8 @@ RUN luarocks --local install luacheck && \
     luarocks --local install inspect && \
     luarocks --local install nlua
 
-# Install Neovim (latest stable version)
-RUN apt-get update && \
-    apt-get install -y software-properties-common && \
-    add-apt-repository ppa:neovim-ppa/stable && \
-    apt-get update && \
-    apt-get install -y neovim && \
-    rm -rf /var/lib/apt/lists/*
-
-# Switch back to agent user
-USER agent
-
 # Set up LuaRocks paths for agent user
-ENV PATH="/home/agent/.cargo/bin:/home/agent/.luarocks/bin:${PATH}"
-ENV LUA_PATH="/home/agent/.luarocks/share/lua/5.1/?.lua;/home/agent/.luarocks/share/lua/5.1/?/init.lua;;"
-ENV LUA_CPATH="/home/agent/.luarocks/lib/lua/5.1/?.so;;"
+ENV LUA_PATH="./?.lua;/usr/local/share/lua/5.1/?.lua;/usr/local/share/lua/5.1/?/init.lua;/usr/local/lib/lua/5.1/?.lua;/usr/local/lib/lua/5.1/?/init.lua;/usr/share/lua/5.1/?.lua;/usr/share/lua/5.1/?/init.lua;/home/agent/.luarocks/share/lua/5.1/?.lua;/home/agent/.luarocks/share/lua/5.1/?/init.lua;;"
+ENV LUA_CPATH="./?.so;/usr/local/lib/lua/5.1/?.so;/usr/lib/aarch64-linux-gnu/lua/5.1/?.so;/usr/lib/lua/5.1/?.so;/usr/local/lib/lua/5.1/loadall.so;/home/agent/.luarocks/lib/lua/5.1/?.so;;"
+ENV PATH="/home/agent/.luarocks/bin:${PATH}"
 
