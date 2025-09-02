@@ -76,37 +76,55 @@ async fn file_exists(repo_path: &Path, file_name: &str) -> bool {
 }
 
 /// Cleans a project name to be suitable for Docker tags
+///
+/// Docker image names must be lowercase and can contain:
+/// - Lowercase letters (a-z)
+/// - Digits (0-9)
+/// - Periods (.)
+/// - Underscores (_)
+/// - Hyphens (-)
+///
+/// Cannot start or end with a separator (period, underscore, or hyphen)
 fn clean_project_name(name: &str) -> String {
-    // Remove special characters and convert to lowercase
+    // Convert to lowercase and map characters
     let cleaned: String = name
         .chars()
         .map(|c| {
-            if c.is_alphanumeric() || c == '-' {
-                c
+            if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c.to_ascii_lowercase()
             } else {
                 '-'
             }
         })
-        .collect::<String>()
-        .to_lowercase();
+        .collect();
 
-    // Collapse consecutive dashes into a single dash
+    // Collapse consecutive separators (except for valid patterns like __)
     let mut result = String::new();
-    let mut prev_dash = false;
+    let mut prev_sep = false;
+    let mut prev_char = '\0';
+
     for c in cleaned.chars() {
-        if c == '-' {
-            if !prev_dash {
-                result.push(c);
+        let is_separator = c == '-' || c == '_' || c == '.';
+
+        if is_separator {
+            // Allow double underscore but not other consecutive separators
+            if prev_sep && !(prev_char == '_' && c == '_') {
+                continue;
             }
-            prev_dash = true;
-        } else {
+            prev_sep = is_separator;
+            prev_char = c;
             result.push(c);
-            prev_dash = false;
+        } else {
+            prev_sep = false;
+            prev_char = c;
+            result.push(c);
         }
     }
 
-    // Trim dashes from both ends
-    result.trim_matches('-').to_string()
+    // Trim separators from both ends
+    result
+        .trim_matches(|c| c == '-' || c == '_' || c == '.')
+        .to_string()
 }
 
 #[cfg(test)]
@@ -259,7 +277,51 @@ mod tests {
         tokio::fs::create_dir(&project_dir).await.unwrap();
 
         let result = detect_project_name(&project_dir).await.unwrap();
-        assert_eq!(result, "my-awesome-project");
+        assert_eq!(result, "my_awesome-project");
+    }
+
+    #[tokio::test]
+    async fn test_project_name_with_dots() {
+        // Test that dots are preserved (e.g., test.nvim)
+        let temp_base = TempDir::new().unwrap();
+        let project_dir = temp_base.path().join("test.nvim");
+        tokio::fs::create_dir(&project_dir).await.unwrap();
+
+        let result = detect_project_name(&project_dir).await.unwrap();
+        assert_eq!(result, "test.nvim");
+    }
+
+    #[tokio::test]
+    async fn test_project_name_with_underscores() {
+        // Test that underscores are preserved
+        let temp_base = TempDir::new().unwrap();
+        let project_dir = temp_base.path().join("my_cool_project");
+        tokio::fs::create_dir(&project_dir).await.unwrap();
+
+        let result = detect_project_name(&project_dir).await.unwrap();
+        assert_eq!(result, "my_cool_project");
+    }
+
+    #[tokio::test]
+    async fn test_project_name_with_spaces() {
+        // Test that spaces are converted to hyphens
+        let temp_base = TempDir::new().unwrap();
+        let project_dir = temp_base.path().join("my code project");
+        tokio::fs::create_dir(&project_dir).await.unwrap();
+
+        let result = detect_project_name(&project_dir).await.unwrap();
+        assert_eq!(result, "my-code-project");
+    }
+
+    #[tokio::test]
+    async fn test_project_name_mixed_separators() {
+        // Test mixed separators
+        let temp_base = TempDir::new().unwrap();
+        let project_dir = temp_base.path().join("test.nvim-plugin_v2");
+        tokio::fs::create_dir(&project_dir).await.unwrap();
+
+        let result = detect_project_name(&project_dir).await.unwrap();
+        assert_eq!(result, "test.nvim-plugin_v2");
     }
 
     #[tokio::test]

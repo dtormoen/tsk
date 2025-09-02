@@ -80,11 +80,10 @@ Create custom Dockerfiles in your repository under `.tsk/dockerfiles/`:
 .tsk/
 └── dockerfiles/
     └── project/
-        └── {project-name}/
-            └── Dockerfile
+        └── {project-name}.dockerfile
 ```
 
-Example for a Rust project (`.tsk/dockerfiles/project/my-rust-app/Dockerfile`):
+Example for a Rust project (`.tsk/dockerfiles/project/my-rust-app.dockerfile`):
 
 ```dockerfile
 # Pre-build dependencies for faster subsequent builds
@@ -94,7 +93,7 @@ RUN cargo build --release
 RUN rm -rf src
 ```
 
-Example for a Node.js project (`.tsk/dockerfiles/project/my-node-app/Dockerfile`):
+Example for a Node.js project (`.tsk/dockerfiles/project/my-node-app.dockerfile`):
 
 ```dockerfile
 # Install dependencies
@@ -232,7 +231,7 @@ git config --global user.email "your@email.com"
 ```bash
 # List all available Docker templates
 ls ~/.config/tsk/dockerfiles/tech-stack/
-ls .tsk/dockerfiles/tech-stack/
+ls .tsk/dockerfiles/stack/
 ```
 
 #### 3. Build Failures
@@ -275,7 +274,7 @@ docker logs tsk-proxy
 
 ### Caching Python Dependencies
 
-`.tsk/dockerfiles/project/my-python-app/Dockerfile`:
+`.tsk/dockerfiles/project/my-python-app.dockerfile`:
 ```dockerfile
 # Install Python dependencies
 COPY requirements.txt ./
@@ -288,7 +287,7 @@ RUN poetry install --no-dev
 
 ### Pre-compiling Java Dependencies
 
-`.tsk/dockerfiles/project/my-java-app/Dockerfile`:
+`.tsk/dockerfiles/project/my-java-app.dockerfile`:
 ```dockerfile
 # For Maven projects
 COPY pom.xml ./
@@ -301,7 +300,7 @@ RUN gradle dependencies
 
 ### Installing Additional Tools
 
-User-level customization in `~/.config/tsk/dockerfiles/tech-stack/python/Dockerfile`:
+User-level customization in `~/.config/tsk/dockerfiles/stack/python.dockerfile`:
 ```dockerfile
 # Add after the embedded Python layer
 RUN pip install ipython black flake8 mypy
@@ -310,7 +309,7 @@ RUN apt-get update && apt-get install -y postgresql-client
 
 ### Custom Environment Variables
 
-Project-specific environment in `.tsk/dockerfiles/project/my-app/Dockerfile`:
+Project-specific environment in `.tsk/dockerfiles/project/my-app.dockerfile`:
 ```dockerfile
 ENV DATABASE_URL=postgresql://localhost/myapp_dev
 ENV REDIS_URL=redis://localhost:6379

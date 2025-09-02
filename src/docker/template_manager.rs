@@ -309,4 +309,67 @@ mod tests {
         assert!(layers.contains("rust"));
         assert!(layers.contains("python"));
     }
+
+    #[test]
+    fn test_scan_project_layers_with_dots() {
+        let temp_dir = TempDir::new().unwrap();
+        let docker_dir = temp_dir.path().join("dockerfiles");
+
+        // Create test project layer directories with dots in names
+        fs::create_dir_all(docker_dir.join("project")).unwrap();
+        fs::write(
+            docker_dir.join("project/test.nvim.dockerfile"),
+            "FROM ubuntu\nRUN echo test.nvim",
+        )
+        .unwrap();
+        fs::write(
+            docker_dir.join("project/my.project.dockerfile"),
+            "FROM ubuntu\nRUN echo my.project",
+        )
+        .unwrap();
+        fs::write(
+            docker_dir.join("project/simple-name.dockerfile"),
+            "FROM ubuntu\nRUN echo simple",
+        )
+        .unwrap();
+
+        let manager = create_test_manager();
+        let mut layers = std::collections::HashSet::new();
+
+        // Test project layer scanning with dots
+        manager.scan_directory_for_layers(&docker_dir, &DockerLayerType::Project, &mut layers);
+        assert!(layers.contains("test.nvim"), "Should find test.nvim");
+        assert!(layers.contains("my.project"), "Should find my.project");
+        assert!(layers.contains("simple-name"), "Should find simple-name");
+    }
+
+    #[test]
+    fn test_scan_project_layers_with_underscores() {
+        let temp_dir = TempDir::new().unwrap();
+        let docker_dir = temp_dir.path().join("dockerfiles");
+
+        // Create test project layer directories with underscores
+        fs::create_dir_all(docker_dir.join("project")).unwrap();
+        fs::write(
+            docker_dir.join("project/my_project.dockerfile"),
+            "FROM ubuntu\nRUN echo my_project",
+        )
+        .unwrap();
+        fs::write(
+            docker_dir.join("project/test__special.dockerfile"),
+            "FROM ubuntu\nRUN echo test__special",
+        )
+        .unwrap();
+
+        let manager = create_test_manager();
+        let mut layers = std::collections::HashSet::new();
+
+        // Test project layer scanning with underscores
+        manager.scan_directory_for_layers(&docker_dir, &DockerLayerType::Project, &mut layers);
+        assert!(layers.contains("my_project"), "Should find my_project");
+        assert!(
+            layers.contains("test__special"),
+            "Should find test__special with double underscore"
+        );
+    }
 }

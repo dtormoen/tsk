@@ -29,7 +29,7 @@ Your Dockerfile should:
    - What dependencies need to be installed
    - What build tools or pre-compilation would be beneficial
 
-2. Create a Dockerfile at `.tsk/dockerfiles/project/{project-name}/Dockerfile` where `{project-name}` is the directory this repository is in (lowercase, hyphens allowed).
+2. Create a Dockerfile at `.tsk/dockerfiles/project/{project-name}.dockerfile` where `{project-name}` is the directory this repository is in (lowercase, with dots, underscores, and hyphens allowed as valid Docker name characters).
 
 3. The Dockerfile should follow this general pattern:
    ```dockerfile

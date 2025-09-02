@@ -143,7 +143,7 @@ mod tests {
         }
     }
 
-    /// Helper to create dockerfiles in a directory 
+    /// Helper to create dockerfiles in a directory
     fn create_dockerfiles(base_path: &Path, dockerfiles: &[(&str, &str)]) {
         for (dockerfile_path, content) in dockerfiles {
             if let Some((layer_type, name)) = dockerfile_path.split_once('/') {
