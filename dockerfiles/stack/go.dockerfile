@@ -4,7 +4,7 @@
 USER root
 
 # Install Go
-ENV GO_VERSION=1.23.4
+ENV GO_VERSION=1.25.0
 RUN curl -fsSL https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz | tar -xz -C /usr/local && \
     ln -s /usr/local/go/bin/go /usr/local/bin/go && \
     ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt
