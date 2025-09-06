@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 // Container resource limits
-const CONTAINER_MEMORY_LIMIT: i64 = 4 * 1024 * 1024 * 1024; // 2GB
-const CONTAINER_CPU_QUOTA: i64 = 400000; // 4 CPUs
+const CONTAINER_MEMORY_LIMIT: i64 = 12 * 1024 * 1024 * 1024; // 12GB
+const CONTAINER_CPU_QUOTA: i64 = 800000; // 8 CPUs
 const CONTAINER_WORKING_DIR: &str = "/workspace";
 const CONTAINER_USER: &str = "agent";
 
