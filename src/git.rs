@@ -21,8 +21,16 @@ impl RepoManager {
     }
 
     /// Copy repository for a task using the task ID and repository root
-    /// Copies git-tracked files, untracked files (not ignored), the .git directory, and the .tsk directory
+    ///
+    /// Copies all non-ignored files from the working directory including:
+    /// - Tracked files with their current working directory content (including unstaged changes)
+    /// - Staged files (newly added files in the index)
+    /// - Untracked files (not ignored)
+    /// - The .git directory for full repository state
+    /// - The .tsk directory for project-specific configurations
+    ///
     /// This captures the complete state of the repository as shown by `git status`
+    ///
     /// Returns the path to the copied repository and the branch name
     pub async fn copy_repo(
         &self,
@@ -60,18 +68,14 @@ impl RepoManager {
         // Use the provided repository root
         let current_dir = repo_root.to_path_buf();
 
-        // Get list of tracked files from git
-        let tracked_files = self
+        // Get list of all files that should be copied:
+        // 1. All tracked files (from working directory, including unstaged changes)
+        // 2. All staged files (including newly added files in the index)
+        // 3. All untracked files (not ignored)
+        let all_files_to_copy = self
             .ctx
             .git_operations()
-            .get_tracked_files(&current_dir)
-            .await?;
-
-        // Get list of untracked files that are not ignored
-        let untracked_files = self
-            .ctx
-            .git_operations()
-            .get_untracked_files(&current_dir)
+            .get_all_non_ignored_files(&current_dir)
             .await?;
 
         // Copy .git directory first
@@ -91,89 +95,30 @@ impl RepoManager {
                 .map_err(|e| format!("Failed to copy .git directory: {e}"))?;
         }
 
-        // Copy all tracked files
-        for file_path in tracked_files {
-            let src_path = current_dir.join(&file_path);
-            let dst_path = repo_path.join(&file_path);
-
-            // Check if this is a directory (not following symlinks)
-            // Use symlink_metadata to check the actual entry type
-            let metadata = tokio::fs::symlink_metadata(&src_path)
-                .await
-                .map_err(|e| format!("Failed to get metadata for {}: {}", src_path.display(), e))?;
-
-            if metadata.is_dir() {
-                // It's an actual directory (not a symlink), copy it recursively
+        // Create a new branch in the copied repository BEFORE copying files
+        // This ensures that when source_commit is provided, the checkout doesn't
+        // overwrite the working directory files we're about to copy
+        match source_commit {
+            Some(commit_sha) => {
+                // Create branch from specific commit
                 self.ctx
-                    .file_system()
-                    .copy_dir(&src_path, &dst_path)
-                    .await
-                    .map_err(|e| {
-                        format!(
-                            "Failed to copy tracked directory {}: {}",
-                            file_path.display(),
-                            e
-                        )
-                    })?;
-            } else if metadata.is_symlink() {
-                // It's a symlink - need special handling
-                // Create parent directory if it doesn't exist
-                if let Some(parent) = dst_path.parent() {
-                    self.ctx
-                        .file_system()
-                        .create_dir(parent)
-                        .await
-                        .map_err(|e| format!("Failed to create parent directory: {e}"))?;
-                }
-
-                // Read the symlink target and recreate it
-                let target = tokio::fs::read_link(&src_path)
-                    .await
-                    .map_err(|e| format!("Failed to read symlink {}: {}", src_path.display(), e))?;
-
-                #[cfg(unix)]
-                tokio::fs::symlink(&target, &dst_path).await.map_err(|e| {
-                    format!("Failed to create symlink {}: {}", dst_path.display(), e)
-                })?;
-
-                #[cfg(windows)]
-                {
-                    // On Windows, determine if it's a file or directory symlink
-                    if let Ok(target_meta) = tokio::fs::metadata(&src_path).await {
-                        if target_meta.is_dir() {
-                            tokio::fs::symlink_dir(&target, &dst_path).await?;
-                        } else {
-                            tokio::fs::symlink_file(&target, &dst_path).await?;
-                        }
-                    } else {
-                        // Default to file symlink if we can't determine
-                        tokio::fs::symlink_file(&target, &dst_path).await?;
-                    }
-                }
-            } else {
-                // It's a regular file
-                // Create parent directory if it doesn't exist
-                if let Some(parent) = dst_path.parent() {
-                    self.ctx
-                        .file_system()
-                        .create_dir(parent)
-                        .await
-                        .map_err(|e| format!("Failed to create parent directory: {e}"))?;
-                }
-
-                // Copy the file
+                    .git_operations()
+                    .create_branch_from_commit(&repo_path, &branch_name, commit_sha)
+                    .await?;
+                println!("Created branch from commit: {commit_sha}");
+            }
+            None => {
+                // Create branch from HEAD (existing behavior)
                 self.ctx
-                    .file_system()
-                    .copy_file(&src_path, &dst_path)
-                    .await
-                    .map_err(|e| {
-                        format!("Failed to copy tracked file {}: {}", file_path.display(), e)
-                    })?;
+                    .git_operations()
+                    .create_branch(&repo_path, &branch_name)
+                    .await?;
             }
         }
 
-        // Copy all untracked files (not ignored)
-        for file_path in untracked_files {
+        // Copy all non-ignored files from the working directory
+        // This happens AFTER branch creation to preserve unstaged changes
+        for file_path in all_files_to_copy {
             // Remove trailing slash if present (git adds it for directories)
             let file_path_str = file_path.to_string_lossy();
             let file_path_clean = if let Some(stripped) = file_path_str.strip_suffix('/') {
@@ -310,25 +255,6 @@ impl RepoManager {
                 .copy_dir(&tsk_src, &tsk_dst)
                 .await
                 .map_err(|e| format!("Failed to copy .tsk directory: {e}"))?;
-        }
-
-        // Create a new branch in the copied repository
-        match source_commit {
-            Some(commit_sha) => {
-                // Create branch from specific commit
-                self.ctx
-                    .git_operations()
-                    .create_branch_from_commit(&repo_path, &branch_name, commit_sha)
-                    .await?;
-                println!("Created branch from commit: {commit_sha}");
-            }
-            None => {
-                // Create branch from HEAD (existing behavior)
-                self.ctx
-                    .git_operations()
-                    .create_branch(&repo_path, &branch_name)
-                    .await?;
-            }
         }
 
         println!("Created repository copy at: {}", repo_path.display());
@@ -688,14 +614,32 @@ mod tests {
         assert_eq!(returned_branch_name, branch_name);
         assert!(copied_path.exists());
 
-        // Verify the copied repo is at the first commit (should not have feature1 or feature2)
+        // Verify the working directory contains all current files (preserving working directory state)
+        // even though the branch was created from the first commit
+        assert!(
+            copied_path.join("feature1.rs").exists(),
+            "Working directory files should be preserved"
+        );
+        assert!(
+            copied_path.join("feature2.rs").exists(),
+            "Working directory files should be preserved"
+        );
+        assert!(
+            copied_path.join("README.md").exists(),
+            "Original files should be preserved"
+        );
+
+        // Verify the branch was created from the first commit by checking git history
         let copied_repo = TestGitRepository::new().unwrap();
         let _ = std::fs::remove_dir_all(copied_repo.path());
         std::fs::rename(&copied_path, copied_repo.path()).unwrap();
 
-        assert!(!copied_repo.path().join("feature1.rs").exists());
-        assert!(!copied_repo.path().join("feature2.rs").exists());
-        assert!(copied_repo.path().join("README.md").exists());
+        // The HEAD commit should be the first_commit (since we created branch from it)
+        let head_commit = copied_repo.get_head_commit().unwrap();
+        assert_eq!(
+            head_commit, first_commit,
+            "Branch should be created from the specified commit"
+        );
     }
 
     #[tokio::test]
@@ -1035,6 +979,71 @@ mod tests {
                 .join(".tsk/dockerfiles/project/myproject/Dockerfile")
                 .exists(),
             ".tsk/dockerfiles should be copied"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_copy_repo_includes_unstaged_changes() {
+        let ctx = AppContext::builder().build();
+
+        // Create a repository with committed files
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+
+        // Create and commit a file with initial content
+        test_repo
+            .create_file("tracked.txt", "initial content")
+            .unwrap();
+        test_repo.stage_all().unwrap();
+        test_repo.commit("Add tracked file").unwrap();
+
+        // Modify the tracked file (unstaged change)
+        test_repo
+            .create_file("tracked.txt", "modified content - unstaged")
+            .unwrap();
+
+        // Create another file and stage it (staged change)
+        test_repo
+            .create_file("staged.txt", "staged content")
+            .unwrap();
+        test_repo.run_git_command(&["add", "staged.txt"]).unwrap();
+
+        // Create an untracked file
+        test_repo
+            .create_file("untracked.txt", "untracked content")
+            .unwrap();
+
+        let manager = RepoManager::new(&ctx);
+
+        // Copy the repository
+        let task_id = "unstaged123";
+        let branch_name = "tsk/test/unstaged-changes/unstaged123";
+        let result = manager
+            .copy_repo(task_id, test_repo.path(), None, branch_name)
+            .await;
+
+        assert!(result.is_ok());
+        let (copied_path, _) = result.unwrap();
+
+        // Verify the unstaged changes are included (working directory version)
+        let tracked_content = std::fs::read_to_string(copied_path.join("tracked.txt")).unwrap();
+        assert_eq!(
+            tracked_content, "modified content - unstaged",
+            "Unstaged changes should be copied (working directory version)"
+        );
+
+        // Verify staged file is copied
+        let staged_content = std::fs::read_to_string(copied_path.join("staged.txt")).unwrap();
+        assert_eq!(
+            staged_content, "staged content",
+            "Staged files should be copied"
+        );
+
+        // Verify untracked file is copied
+        let untracked_content = std::fs::read_to_string(copied_path.join("untracked.txt")).unwrap();
+        assert_eq!(
+            untracked_content, "untracked content",
+            "Untracked files should be copied"
         );
     }
 }

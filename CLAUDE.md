@@ -54,7 +54,13 @@ TSK implements a command pattern with dependency injection for testability. The 
 
 **Task Management** (`src/task.rs`, `src/task_storage.rs`, `src/task_manager.rs`)
 - `TaskBuilder` provides consistent task creation with builder pattern
-- Repository is copied at task creation time (including all tracked files, untracked non-ignored files, and dirty files), ensuring all tasks have a valid repository copy that matches `git status`
+- Repository is copied at task creation time, capturing the complete working directory state including:
+  - All tracked files with their current working directory content (including unstaged changes)
+  - All staged files (newly added files in the index)
+  - All untracked non-ignored files
+  - The `.git` directory for full repository state
+  - The `.tsk` directory for project-specific configurations
+  - This ensures all tasks have a valid repository copy that exactly matches what `git status` shows
 - `TaskStorage` trait abstracts storage with JSON-based implementation
   - Thread-safe with mutex locking for file access
   - Optimized `update_task_status` method for atomic status updates

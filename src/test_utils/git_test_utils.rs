@@ -105,6 +105,11 @@ impl TestGitRepository {
         Ok(output.trim().to_string())
     }
 
+    /// Gets the SHA of the HEAD commit (alias for get_current_commit).
+    pub fn get_head_commit(&self) -> Result<String> {
+        self.get_current_commit()
+    }
+
     /// Gets the name of the current branch.
     pub fn current_branch(&self) -> Result<String> {
         let output = self

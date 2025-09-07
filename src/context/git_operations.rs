@@ -53,11 +53,9 @@ pub trait GitOperations: Send + Sync {
         commit_sha: &str,
     ) -> Result<(), String>;
 
-    /// Get list of tracked files in the repository
-    async fn get_tracked_files(&self, repo_path: &Path) -> Result<Vec<PathBuf>, String>;
-
-    /// Get list of untracked files that are not ignored
-    async fn get_untracked_files(&self, repo_path: &Path) -> Result<Vec<PathBuf>, String>;
+    /// Get list of all non-ignored files in the working directory
+    /// This includes tracked files (with or without modifications), staged files, and untracked files
+    async fn get_all_non_ignored_files(&self, repo_path: &Path) -> Result<Vec<PathBuf>, String>;
 }
 
 pub struct DefaultGitOperations;
@@ -456,44 +454,7 @@ impl GitOperations for DefaultGitOperations {
         .map_err(|e| format!("Task join error: {e}"))?
     }
 
-    async fn get_tracked_files(&self, repo_path: &Path) -> Result<Vec<PathBuf>, String> {
-        tokio::task::spawn_blocking({
-            let repo_path = repo_path.to_owned();
-            move || -> Result<Vec<PathBuf>, String> {
-                let repo = Repository::open(&repo_path)
-                    .map_err(|e| format!("Failed to open repository: {e}"))?;
-
-                let head = repo
-                    .head()
-                    .map_err(|e| format!("Failed to get HEAD: {e}"))?;
-
-                let tree = head
-                    .peel_to_tree()
-                    .map_err(|e| format!("Failed to get tree from HEAD: {e}"))?;
-
-                let mut tracked_files = Vec::new();
-
-                tree.walk(git2::TreeWalkMode::PreOrder, |path, entry| {
-                    if entry.kind() == Some(git2::ObjectType::Blob) {
-                        let file_path = if path.is_empty() {
-                            PathBuf::from(entry.name().unwrap_or(""))
-                        } else {
-                            PathBuf::from(path).join(entry.name().unwrap_or(""))
-                        };
-                        tracked_files.push(file_path);
-                    }
-                    git2::TreeWalkResult::Ok
-                })
-                .map_err(|e| format!("Failed to walk tree: {e}"))?;
-
-                Ok(tracked_files)
-            }
-        })
-        .await
-        .map_err(|e| format!("Task join error: {e}"))?
-    }
-
-    async fn get_untracked_files(&self, repo_path: &Path) -> Result<Vec<PathBuf>, String> {
+    async fn get_all_non_ignored_files(&self, repo_path: &Path) -> Result<Vec<PathBuf>, String> {
         tokio::task::spawn_blocking({
             let repo_path = repo_path.to_owned();
             move || -> Result<Vec<PathBuf>, String> {
@@ -501,25 +462,26 @@ impl GitOperations for DefaultGitOperations {
                     .map_err(|e| format!("Failed to open repository: {e}"))?;
 
                 let mut opts = git2::StatusOptions::new();
-                opts.include_untracked(true).include_ignored(false);
+                opts.include_untracked(true)
+                    .include_ignored(false)
+                    .include_unmodified(true);
 
                 let statuses = repo
                     .statuses(Some(&mut opts))
                     .map_err(|e| format!("Failed to get repository status: {e}"))?;
 
-                let mut untracked_files = Vec::new();
+                let mut files = Vec::new();
 
                 for entry in statuses.iter() {
                     let status = entry.status();
-                    // Check if file is untracked (not in index)
-                    if status.is_wt_new()
-                        && let Some(path) = entry.path()
+                    if let Some(path) = entry.path()
+                        && !status.is_ignored()
                     {
-                        untracked_files.push(PathBuf::from(path));
+                        files.push(PathBuf::from(path));
                     }
                 }
 
-                Ok(untracked_files)
+                Ok(files)
             }
         })
         .await
@@ -708,53 +670,5 @@ mod integration_tests {
         // Verify the second file doesn't exist in the working directory
         assert!(!repo_path.join("file2.txt").exists());
         assert!(repo_path.join("file1.txt").exists());
-    }
-
-    #[tokio::test]
-    async fn test_get_untracked_files() {
-        let git_ops = DefaultGitOperations;
-        let temp_dir = TempDir::new().unwrap();
-        let repo_path = temp_dir.path();
-
-        // Initialize a real git repository
-        let repo = git2::Repository::init(repo_path).unwrap();
-
-        // Configure git user for commit
-        let mut config = repo.config().unwrap();
-        config.set_str("user.name", "Test User").unwrap();
-        config.set_str("user.email", "test@example.com").unwrap();
-
-        // Create and add some tracked files
-        std::fs::write(repo_path.join("tracked.txt"), "tracked content").unwrap();
-        git_ops.add_all(repo_path).await.unwrap();
-        git_ops.commit(repo_path, "Initial commit").await.unwrap();
-
-        // Create untracked files
-        std::fs::write(repo_path.join("untracked1.txt"), "untracked content 1").unwrap();
-        std::fs::write(repo_path.join("untracked2.txt"), "untracked content 2").unwrap();
-        std::fs::create_dir(repo_path.join("untracked_dir")).unwrap();
-        std::fs::write(
-            repo_path.join("untracked_dir/nested.txt"),
-            "nested untracked content",
-        )
-        .unwrap();
-
-        // Create a .gitignore file
-        std::fs::write(repo_path.join(".gitignore"), "ignored.txt\n").unwrap();
-
-        // Create an ignored file
-        std::fs::write(repo_path.join("ignored.txt"), "ignored content").unwrap();
-
-        // Get untracked files
-        let untracked_files = git_ops.get_untracked_files(repo_path).await.unwrap();
-
-        // Should include untracked files but not ignored ones
-        assert!(untracked_files.contains(&PathBuf::from("untracked1.txt")));
-        assert!(untracked_files.contains(&PathBuf::from("untracked2.txt")));
-        // Git reports the directory, not individual files within it
-        assert!(untracked_files.contains(&PathBuf::from("untracked_dir/")));
-        assert!(untracked_files.contains(&PathBuf::from(".gitignore")));
-        assert!(!untracked_files.contains(&PathBuf::from("ignored.txt")));
-        assert!(!untracked_files.contains(&PathBuf::from("tracked.txt")));
     }
 }
