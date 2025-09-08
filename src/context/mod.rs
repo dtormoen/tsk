@@ -6,6 +6,7 @@ pub mod tsk_client;
 pub mod tsk_config;
 
 use crate::context::tsk_config::TskConfig;
+use crate::docker::build_lock_manager::DockerBuildLockManager;
 use crate::git_sync::GitSyncManager;
 use crate::notifications::NotificationClient;
 use docker_client::DockerClient;
@@ -27,6 +28,7 @@ pub use terminal::TerminalOperations as TerminalOperationsTrait;
 
 #[derive(Clone)]
 pub struct AppContext {
+    docker_build_lock_manager: Arc<DockerBuildLockManager>,
     docker_client: Arc<dyn DockerClient>,
     file_system: Arc<dyn FileSystemOperations>,
     git_operations: Arc<dyn GitOperations>,
@@ -42,6 +44,10 @@ pub struct AppContext {
 impl AppContext {
     pub fn builder() -> AppContextBuilder {
         AppContextBuilder::new()
+    }
+
+    pub fn docker_build_lock_manager(&self) -> Arc<DockerBuildLockManager> {
+        Arc::clone(&self.docker_build_lock_manager)
     }
 
     pub fn docker_client(&self) -> Arc<dyn DockerClient> {
@@ -78,6 +84,7 @@ impl AppContext {
 }
 
 pub struct AppContextBuilder {
+    docker_build_lock_manager: Option<Arc<DockerBuildLockManager>>,
     docker_client: Option<Arc<dyn DockerClient>>,
     file_system: Option<Arc<dyn FileSystemOperations>>,
     git_operations: Option<Arc<dyn GitOperations>>,
@@ -98,6 +105,7 @@ impl Default for AppContextBuilder {
 impl AppContextBuilder {
     pub fn new() -> Self {
         Self {
+            docker_build_lock_manager: None,
             docker_client: None,
             file_system: None,
             git_operations: None,
@@ -107,6 +115,17 @@ impl AppContextBuilder {
             tsk_client: None,
             tsk_config: None,
         }
+    }
+
+    /// Configure the Docker build lock manager for this context
+    ///
+    /// Used in tests to provide custom lock manager implementations
+    pub fn with_docker_build_lock_manager(
+        mut self,
+        docker_build_lock_manager: Arc<DockerBuildLockManager>,
+    ) -> Self {
+        self.docker_build_lock_manager = Some(docker_build_lock_manager);
+        self
     }
 
     /// Configure the Docker client for this context
@@ -200,6 +219,9 @@ impl AppContextBuilder {
                 .unwrap_or_else(|| Arc::new(file_system::DefaultFileSystem));
 
             AppContext {
+                docker_build_lock_manager: self
+                    .docker_build_lock_manager
+                    .unwrap_or_else(|| Arc::new(DockerBuildLockManager::new())),
                 docker_client,
                 file_system,
                 git_operations: self
@@ -244,6 +266,9 @@ impl AppContextBuilder {
                 .unwrap_or_else(|| Arc::new(file_system::DefaultFileSystem));
 
             AppContext {
+                docker_build_lock_manager: self
+                    .docker_build_lock_manager
+                    .unwrap_or_else(|| Arc::new(DockerBuildLockManager::new())),
                 docker_client,
                 file_system,
                 git_operations: self

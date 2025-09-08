@@ -1,3 +1,4 @@
+pub mod build_lock_manager;
 pub mod composer;
 pub mod image_manager;
 pub mod layers;

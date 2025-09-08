@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use crate::assets::layered::LayeredAssetManager;
 use crate::context::AppContext;
+use crate::docker::build_lock_manager::DockerBuildLockManager;
 use crate::docker::composer::{ComposedDockerfile, DockerComposer};
 use crate::docker::layers::{DockerImageConfig, DockerLayerType};
 use crate::docker::template_manager::DockerTemplateManager;
@@ -30,6 +31,7 @@ pub struct DockerImage {
 /// making it easy to test and configure.
 pub struct DockerImageManager {
     ctx: AppContext,
+    docker_build_lock_manager: Arc<DockerBuildLockManager>,
     template_manager: DockerTemplateManager,
     composer: DockerComposer,
 }
@@ -50,6 +52,7 @@ impl DockerImageManager {
 
         Self {
             ctx: ctx.clone(),
+            docker_build_lock_manager: ctx.docker_build_lock_manager(),
             template_manager,
             composer,
         }
@@ -174,7 +177,7 @@ impl DockerImageManager {
     ///
     /// This method:
     /// - Checks if the image exists in the Docker daemon
-    /// - If missing or force_rebuild is true, builds the image
+    /// - If missing or force_rebuild is true, builds the image with locking
     /// - Returns the DockerImage information
     pub async fn ensure_image(
         &self,
@@ -192,6 +195,12 @@ impl DockerImageManager {
             // Image already exists
             return Ok(image);
         }
+
+        // Acquire build lock for this image
+        let _lock = self
+            .docker_build_lock_manager
+            .acquire_build_lock(&image.tag)
+            .await;
 
         // Build the image
         println!("Building Docker image: {}", image.tag);
@@ -309,6 +318,12 @@ impl DockerImageManager {
     /// Ensure the proxy image exists, building it if necessary
     pub async fn ensure_proxy_image(&self) -> Result<DockerImage> {
         use crate::docker::proxy_manager::ProxyManager;
+
+        // Acquire build lock for the proxy image
+        let _lock = self
+            .docker_build_lock_manager
+            .acquire_build_lock("tsk/proxy")
+            .await;
 
         let proxy_manager = ProxyManager::new(&self.ctx);
         // The ensure_proxy method will build the image if needed
@@ -733,5 +748,102 @@ mod tests {
 
         // In a real build (not dry-run), the agent version would be passed to Docker
         // This test validates that the code path compiles and executes
+    }
+
+    #[tokio::test]
+    async fn test_build_lock_manager_integration() {
+        use crate::docker::build_lock_manager::DockerBuildLockManager;
+        use std::time::Duration;
+        use tokio::time::sleep;
+
+        // Create a shared lock manager
+        let lock_manager = Arc::new(DockerBuildLockManager::new());
+
+        // Test the lock manager directly since ensure_image won't actually build in test mode
+        let lock1 = Arc::clone(&lock_manager);
+        let lock2 = Arc::clone(&lock_manager);
+
+        // Track execution order
+        let order = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let order1 = Arc::clone(&order);
+        let order2 = Arc::clone(&order);
+
+        // Launch two concurrent tasks that try to acquire the same lock
+        let task1 = tokio::spawn(async move {
+            let _guard = lock1.acquire_build_lock("test-image").await;
+            order1.lock().unwrap().push(1);
+            // Hold lock for a bit
+            sleep(Duration::from_millis(50)).await;
+            order1.lock().unwrap().push(2);
+            "task1_done"
+        });
+
+        let task2 = tokio::spawn(async move {
+            // Small delay to ensure task 1 gets lock first
+            sleep(Duration::from_millis(10)).await;
+            let _guard = lock2.acquire_build_lock("test-image").await;
+            order2.lock().unwrap().push(3);
+            sleep(Duration::from_millis(10)).await;
+            order2.lock().unwrap().push(4);
+            "task2_done"
+        });
+
+        // Wait for both tasks
+        let (result1, result2) = tokio::join!(task1, task2);
+
+        assert_eq!(result1.unwrap(), "task1_done");
+        assert_eq!(result2.unwrap(), "task2_done");
+
+        // Check execution order - should be 1, 2, 3, 4 due to locking
+        let final_order = order.lock().unwrap();
+        assert_eq!(
+            *final_order,
+            vec![1, 2, 3, 4],
+            "Tasks should execute serially due to lock"
+        );
+    }
+    #[tokio::test]
+    async fn test_parallel_ensure_image_different_images() {
+        use crate::docker::build_lock_manager::DockerBuildLockManager;
+
+        // Create a shared lock manager
+        let lock_manager = Arc::new(DockerBuildLockManager::new());
+
+        // Create managers with the same lock manager
+        let ctx1 = AppContext::builder()
+            .with_docker_build_lock_manager(lock_manager.clone())
+            .build();
+        let manager1 = DockerImageManager::new(&ctx1, None);
+
+        let ctx2 = AppContext::builder()
+            .with_docker_build_lock_manager(lock_manager.clone())
+            .build();
+        let manager2 = DockerImageManager::new(&ctx2, None);
+
+        // Launch two concurrent ensure_image tasks for different images
+        let task1 = tokio::spawn(async move {
+            manager1
+                .ensure_image("rust", "claude-code", Some("project1"), None, false)
+                .await
+        });
+
+        let task2 = tokio::spawn(async move {
+            manager2
+                .ensure_image("python", "claude-code", Some("project2"), None, false)
+                .await
+        });
+
+        // Both should complete without blocking each other
+        let (result1, result2) = tokio::join!(task1, task2);
+
+        assert!(result1.is_ok());
+        assert!(result2.is_ok());
+
+        // Get the images
+        let image1 = result1.unwrap().unwrap();
+        let image2 = result2.unwrap().unwrap();
+
+        // They should have different tags
+        assert_ne!(image1.tag, image2.tag);
     }
 }
