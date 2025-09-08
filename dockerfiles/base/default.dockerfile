@@ -46,6 +46,9 @@ RUN git config --global user.name "$GIT_USER_NAME" && \
 {{{STACK}}}
 # End of Stack layer
 
+# Agent version ARG to invalidate cache when agent updates
+ARG TSK_AGENT_VERSION
+
 # Agent layer
 {{{AGENT}}}
 # End of Agent layer

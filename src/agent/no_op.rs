@@ -49,4 +49,9 @@ impl Agent for NoOpAgent {
         // No warmup needed for no-op agent
         Ok(())
     }
+
+    fn version(&self) -> String {
+        // Static version for no-op agent since it doesn't change
+        "1.0.0".to_string()
+    }
 }

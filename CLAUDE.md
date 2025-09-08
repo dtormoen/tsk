@@ -121,8 +121,9 @@ TSK implements a command pattern with dependency injection for testability. The 
   - `build_interactive_command()`: Returns the command for interactive debugging sessions (shows instructions and normal command, then provides shell)
   - `validate()`: Checks agent configuration (e.g., Claude credentials)
   - `warmup()`: Performs pre-execution setup (e.g., refreshing OAuth tokens)
+  - `version()`: Returns the agent's version string (used to trigger Docker rebuilds when agents are upgraded)
 - Available agents:
-  - `claude-code`: Claude Code AI agent (default)
+  - `claude-code`: Claude Code AI agent (default) - automatically detects version from `claude --version`
   - `no-op`: Simple agent for testing that displays instructions
 - Interactive debugging uses `build_interactive_command()` to show what would run normally before providing interactive access
 
@@ -175,3 +176,4 @@ TSK implements a command pattern with dependency injection for testability. The 
 - **Proxy Image** (`dockerfiles/tsk-proxy/`): Squid proxy for controlled network access
 - Git configuration inherited via Docker build args from host user
 - Automatic image rebuilding when missing during task execution
+- Agent version tracking: Docker images are rebuilt when agent versions change (via `TSK_AGENT_VERSION` ARG)

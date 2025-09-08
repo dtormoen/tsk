@@ -67,6 +67,18 @@ pub trait Agent: Send + Sync {
     async fn warmup(&self) -> Result<(), String> {
         Ok(())
     }
+
+    /// Returns the version string for this agent
+    ///
+    /// This version is used to determine when Docker images need to be rebuilt.
+    /// When an agent's version changes, Docker will rebuild the image from the agent
+    /// layer onwards, ensuring users always have the latest agent version.
+    ///
+    /// The default implementation returns "unknown" for backward compatibility.
+    /// Agents should override this to return their actual version string.
+    fn version(&self) -> String {
+        "unknown".to_string()
+    }
 }
 
 #[cfg(test)]
@@ -124,6 +136,10 @@ mod tests {
         fn name(&self) -> &str {
             &self.name
         }
+
+        fn version(&self) -> String {
+            "test-1.0.0".to_string()
+        }
     }
 
     #[test]
@@ -171,6 +187,9 @@ mod tests {
 
         // Test warmup (should always succeed)
         assert!(agent.warmup().await.is_ok());
+
+        // Test version (should return "1.0.0" for no-op agent)
+        assert_eq!(agent.version(), "1.0.0");
     }
 
     #[test]

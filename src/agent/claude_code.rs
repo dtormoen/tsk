@@ -3,7 +3,7 @@ use crate::context::tsk_config::TskConfig;
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 mod claude_code_log_processor;
 use claude_code_log_processor::ClaudeCodeLogProcessor;
@@ -11,6 +11,7 @@ use claude_code_log_processor::ClaudeCodeLogProcessor;
 /// Claude Code AI agent implementation
 pub struct ClaudeCodeAgent {
     tsk_config: Option<Arc<TskConfig>>,
+    version_cache: OnceLock<String>,
 }
 
 impl ClaudeCodeAgent {
@@ -21,6 +22,7 @@ impl ClaudeCodeAgent {
     pub fn with_tsk_config(tsk_config: Arc<TskConfig>) -> Self {
         Self {
             tsk_config: Some(tsk_config),
+            version_cache: OnceLock::new(),
         }
     }
 
@@ -178,6 +180,41 @@ impl Agent for ClaudeCodeAgent {
         println!("Claude Code warmup completed successfully");
         Ok(())
     }
+
+    fn version(&self) -> String {
+        self.version_cache
+            .get_or_init(|| {
+                // Skip version detection in test environments
+                if cfg!(test) {
+                    return "test-claude-1.0.0".to_string();
+                }
+
+                // Try to get Claude version from CLI
+                match Command::new("claude").arg("--version").output() {
+                    Ok(output) if output.status.success() => {
+                        let version_str = String::from_utf8_lossy(&output.stdout);
+                        // Parse version string, typically in format "claude 0.3.0" or similar
+                        // Clean up the version string to remove extra whitespace and newlines
+                        let cleaned = version_str.trim().to_string();
+                        if cleaned.is_empty() {
+                            "unknown".to_string()
+                        } else {
+                            // Replace spaces with hyphens for Docker compatibility
+                            cleaned.replace(' ', "-").replace('\n', "")
+                        }
+                    }
+                    Ok(_) => {
+                        eprintln!("Warning: Failed to get Claude version (command failed)");
+                        "unknown".to_string()
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: Failed to run claude --version: {}", e);
+                        "unknown".to_string()
+                    }
+                }
+            })
+            .clone()
+    }
 }
 
 #[cfg(test)]
@@ -292,5 +329,20 @@ mod tests {
         let ctx = AppContext::builder().build();
         let agent_with_config = ClaudeCodeAgent::with_tsk_config(ctx.tsk_config());
         let _ = agent_with_config.create_log_processor();
+    }
+
+    #[test]
+    fn test_claude_code_agent_version() {
+        let app_context = AppContext::builder().build();
+        let tsk_config = app_context.tsk_config();
+        let agent = ClaudeCodeAgent::with_tsk_config(tsk_config);
+
+        // In test mode, should return test version
+        let version = agent.version();
+        assert_eq!(version, "test-claude-1.0.0");
+
+        // Test that calling version multiple times returns the same cached value
+        let version2 = agent.version();
+        assert_eq!(version, version2);
     }
 }

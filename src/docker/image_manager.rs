@@ -258,11 +258,21 @@ impl DockerImageManager {
             let git_user_name = tsk_config.git_user_name();
             let git_user_email = tsk_config.git_user_email();
 
+            // Get agent version if available
+            let agent_version = if let Ok(agent_instance) =
+                crate::agent::AgentProvider::get_agent(agent, self.ctx.tsk_config())
+            {
+                Some(agent_instance.version())
+            } else {
+                None
+            };
+
             // Build the image
             self.build_docker_image(
                 &composed,
                 git_user_name,
                 git_user_email,
+                agent_version.as_deref(),
                 no_cache,
                 build_root,
             )
@@ -330,6 +340,7 @@ impl DockerImageManager {
         composed: &ComposedDockerfile,
         git_user_name: &str,
         git_user_email: &str,
+        agent_version: Option<&str>,
         no_cache: bool,
         build_root: Option<&std::path::Path>,
     ) -> Result<()> {
@@ -348,6 +359,13 @@ impl DockerImageManager {
 
         if composed.build_args.contains("GIT_USER_EMAIL") {
             build_args.insert("GIT_USER_EMAIL".to_string(), git_user_email.to_string());
+        }
+
+        // Add agent version if provided and if ARG exists in Dockerfile
+        if let Some(version) = agent_version
+            && composed.build_args.contains("TSK_AGENT_VERSION")
+        {
+            build_args.insert("TSK_AGENT_VERSION".to_string(), version.to_string());
         }
 
         let mut options_builder = bollard::query_parameters::BuildImageOptionsBuilder::default();
@@ -673,5 +691,47 @@ mod tests {
             project_content.contains("FROM node:18"),
             "Project Dockerfile has wrong content"
         );
+    }
+
+    #[tokio::test]
+    async fn test_agent_version_in_build_args() {
+        let manager = create_test_manager();
+
+        // Compose the Dockerfile to check if TSK_AGENT_VERSION is included
+        let config = DockerImageConfig::new(
+            "default".to_string(),
+            "claude-code".to_string(),
+            "default".to_string(),
+        );
+        let composed = manager.composer.compose(&config, None).unwrap();
+
+        // Check that TSK_AGENT_VERSION is in build args
+        assert!(
+            composed.build_args.contains("TSK_AGENT_VERSION"),
+            "TSK_AGENT_VERSION should be in build args"
+        );
+
+        // Check that the base Dockerfile contains the ARG
+        assert!(
+            composed
+                .dockerfile_content
+                .contains("ARG TSK_AGENT_VERSION"),
+            "Dockerfile should contain ARG TSK_AGENT_VERSION"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_build_image_includes_agent_version() {
+        let manager = create_test_manager();
+
+        // Build image in dry-run mode to avoid actual Docker calls
+        let result = manager
+            .build_image("default", "claude-code", Some("default"), None, false, true)
+            .await;
+
+        assert!(result.is_ok(), "Build should succeed with agent version");
+
+        // In a real build (not dry-run), the agent version would be passed to Docker
+        // This test validates that the code path compiles and executes
     }
 }
