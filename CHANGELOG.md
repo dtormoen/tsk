@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/dtormoen/tsk/compare/v0.4.1...v0.5.0) - 2025-09-08
+
+### Added
+
+- add Docker build lock manager to prevent concurrent image builds
+- implement agent version tracking for automatic Docker rebuilds
+- increase CPU and memory limits to 8 CPUs and 12gb
+- [**breaking**] simplify Docker image generation with Handlebars templating
+
+### Fixed
+
+- copy working directory versions of files including unstaged changes
+- improve lua stack snippet
+- allow dots and underscores in project names for Docker layer matching
+
+### Other
+
+- upgrade go version in docker snippet
+- extract proxy management into dedicated ProxyManager module
+- simplify Docker asset directory structure
+- *(server)* replace TaskExecutor with TaskScheduler and WorkerPool
+
 ## [0.4.1](https://github.com/dtormoen/tsk/compare/v0.4.0...v0.4.1) - 2025-09-01
 
 ### Fixed
