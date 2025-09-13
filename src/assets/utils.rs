@@ -18,7 +18,7 @@ use std::path::PathBuf;
 /// # Arguments
 ///
 /// * `asset_manager` - The asset manager to use for retrieving dockerfile files
-/// * `dockerfile_name` - The name of the dockerfile (e.g., "tsk-base", "tsk-proxy")
+/// * `dockerfile_name` - The name of the dockerfile (e.g., "base/default", "tsk-proxy")
 ///
 /// # Returns
 ///
@@ -69,8 +69,8 @@ mod tests {
     fn test_asset_extraction() {
         let manager = EmbeddedAssetManager::new();
 
-        // Test extracting tsk-base dockerfile
-        let result = extract_dockerfile_to_temp(&manager, "tsk-base");
+        // Test extracting base/default dockerfile
+        let result = extract_dockerfile_to_temp(&manager, "base/default");
         assert!(result.is_ok());
 
         let temp_dir = result.unwrap();

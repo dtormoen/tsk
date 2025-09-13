@@ -173,8 +173,8 @@ mod tests {
     fn test_get_dockerfile_success() {
         let manager = EmbeddedAssetManager::new();
 
-        // Test getting the tsk-base Dockerfile
-        let result = manager.get_dockerfile("tsk-base");
+        // Test getting the base/default Dockerfile
+        let result = manager.get_dockerfile("base/default");
         assert!(result.is_ok());
         let content = result.unwrap();
         assert!(!content.is_empty());
@@ -202,7 +202,7 @@ mod tests {
         assert!(!dockerfiles.is_empty());
 
         // Check that known dockerfiles are included
-        assert!(dockerfiles.contains(&"tsk-base".to_string()));
+        assert!(dockerfiles.contains(&"base".to_string()));
         assert!(dockerfiles.contains(&"tsk-proxy".to_string()));
     }
 
@@ -226,7 +226,7 @@ mod tests {
         let manager = EmbeddedAssetManager::new();
 
         // Test getting a non-existent file
-        let result = manager.get_dockerfile_file("tsk-base", "nonexistent.txt");
+        let result = manager.get_dockerfile_file("base/default", "nonexistent.txt");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
     }
