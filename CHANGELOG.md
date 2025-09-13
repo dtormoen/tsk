@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.0](https://github.com/dtormoen/tsk/compare/v0.4.1...v0.5.0) - 2025-09-08
 
+This release should make Docker builds more reliable overall, but it does introduce a
+breaking change where docker layer snippets for projects, agents, and stacks which
+previously would be stored in e.g. `.tsk/dockerfiles/project/<project_name>/Dockerfile`
+are now stored in `.tsk/dockerfiles/project/<project_name>.dockerfile`. See the `.tsk`
+or `dockerfiles` directory in `tsk` for examples of how to structure Dockerfile snippets.
+
 ### Added
 
 - add Docker build lock manager to prevent concurrent image builds
