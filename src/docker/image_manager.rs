@@ -76,13 +76,6 @@ impl DockerImageManager {
         println!();
         println!("{}", composed.dockerfile_content);
 
-        if !composed.additional_files.is_empty() {
-            println!("\n# Additional files that would be created:");
-            for filename in composed.additional_files.keys() {
-                println!("#   - {filename}");
-            }
-        }
-
         if !composed.build_args.is_empty() {
             println!("\n# Build arguments:");
             for arg in &composed.build_args {
@@ -250,7 +243,7 @@ impl DockerImageManager {
         // Compose the Dockerfile
         let composed = self
             .composer
-            .compose(&config, build_root)
+            .compose(&config)
             .with_context(|| format!("Failed to compose Dockerfile for {}", config.image_tag()))?;
 
         // Validate the composed Dockerfile
@@ -438,16 +431,6 @@ impl DockerImageManager {
             header.set_cksum();
             builder.append(&header, dockerfile_bytes)?;
 
-            // Add additional files
-            for (filename, content) in &composed.additional_files {
-                let mut header = tar::Header::new_gnu();
-                header.set_path(filename)?;
-                header.set_size(content.len() as u64);
-                header.set_mode(0o644);
-                header.set_cksum();
-                builder.append(&header, content.as_slice())?;
-            }
-
             // Add build_root files if provided
             if let Some(build_root) = build_root {
                 builder.append_dir_all(".", build_root)?;
@@ -618,7 +601,6 @@ mod tests {
         let manager = create_test_manager();
         let composed = ComposedDockerfile {
             dockerfile_content: "FROM ubuntu:24.04\nRUN echo 'test'".to_string(),
-            additional_files: std::collections::HashMap::new(),
             build_args: std::collections::HashSet::new(),
             image_tag: "tsk/test/test/test".to_string(),
         };
@@ -653,7 +635,6 @@ mod tests {
 
         let composed = ComposedDockerfile {
             dockerfile_content: "FROM ubuntu:24.04\nRUN echo 'tsk'".to_string(),
-            additional_files: std::collections::HashMap::new(),
             build_args: std::collections::HashSet::new(),
             image_tag: "tsk/test/test/test".to_string(),
         };
@@ -718,7 +699,7 @@ mod tests {
             "claude-code".to_string(),
             "default".to_string(),
         );
-        let composed = manager.composer.compose(&config, None).unwrap();
+        let composed = manager.composer.compose(&config).unwrap();
 
         // Check that TSK_AGENT_VERSION is in build args
         assert!(

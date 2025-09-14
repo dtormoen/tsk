@@ -4,8 +4,7 @@
 //! Dockerfile using template rendering.
 
 use anyhow::{Context, Result};
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::assets::AssetManager;
@@ -24,11 +23,7 @@ impl DockerComposer {
     }
 
     /// Compose a complete Dockerfile and associated files from the given configuration
-    pub fn compose(
-        &self,
-        config: &DockerImageConfig,
-        _project_root: Option<&Path>,
-    ) -> Result<ComposedDockerfile> {
+    pub fn compose(&self, config: &DockerImageConfig) -> Result<ComposedDockerfile> {
         // Get the base template
         let base_dockerfile = self
             .asset_manager
@@ -49,12 +44,8 @@ impl DockerComposer {
         // Extract build arguments from the composed Dockerfile
         let build_args = self.extract_build_args(&dockerfile_content)?;
 
-        // Additional files are no longer needed with the simplified structure
-        let additional_files = HashMap::new();
-
         Ok(ComposedDockerfile {
             dockerfile_content,
-            additional_files,
             build_args,
             image_tag: config.image_tag(),
         })
@@ -123,44 +114,6 @@ impl DockerComposer {
 
         Ok(())
     }
-
-    /// Write composed Dockerfile and associated files to a directory
-    ///
-    /// This method is useful for debugging, testing, and exporting Dockerfiles.
-    /// It writes the composed Dockerfile and all associated files to the specified directory.
-    ///
-    /// Used in tests and potentially useful for debugging Docker build issues
-    #[allow(dead_code)] // Used in tests
-    pub fn write_to_directory(
-        &self,
-        composed: &ComposedDockerfile,
-        output_dir: &Path,
-    ) -> Result<()> {
-        // Ensure directory exists
-        std::fs::create_dir_all(output_dir)
-            .with_context(|| format!("Failed to create output directory: {output_dir:?}"))?;
-
-        // Write Dockerfile
-        let dockerfile_path = output_dir.join("Dockerfile");
-        std::fs::write(&dockerfile_path, &composed.dockerfile_content)
-            .with_context(|| format!("Failed to write Dockerfile to {dockerfile_path:?}"))?;
-
-        // Write additional files
-        for (filename, content) in &composed.additional_files {
-            let file_path = output_dir.join(filename);
-
-            // Create parent directories if needed
-            if let Some(parent) = file_path.parent() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("Failed to create directory for {file_path:?}"))?;
-            }
-
-            std::fs::write(&file_path, content)
-                .with_context(|| format!("Failed to write file {file_path:?}"))?;
-        }
-
-        Ok(())
-    }
 }
 
 /// Result of composing Docker layers
@@ -168,8 +121,6 @@ impl DockerComposer {
 pub struct ComposedDockerfile {
     /// The complete Dockerfile content
     pub dockerfile_content: String,
-    /// Additional files to be placed alongside the Dockerfile
-    pub additional_files: HashMap<String, Vec<u8>>,
     /// Build arguments extracted from the Dockerfile
     pub build_args: HashSet<String>,
     /// The Docker image tag for this composition
@@ -181,7 +132,6 @@ mod tests {
     use super::*;
     use crate::assets::embedded::EmbeddedAssetManager;
     use std::sync::Arc;
-    use tempfile::TempDir;
 
     fn create_test_composer() -> DockerComposer {
         DockerComposer::new(Arc::new(EmbeddedAssetManager::new()))
@@ -242,44 +192,5 @@ WORKDIR /workspace
 RUN echo "Hello"
 "#;
         assert!(composer.validate_dockerfile(no_user).is_err());
-    }
-
-    #[test]
-    fn test_write_to_directory() {
-        let composer = create_test_composer();
-        let temp_dir = TempDir::new().unwrap();
-
-        let composed = ComposedDockerfile {
-            dockerfile_content: "FROM ubuntu:24.04\nRUN echo 'test'".to_string(),
-            additional_files: {
-                let mut files = HashMap::new();
-                files.insert("requirements.txt".to_string(), b"pytest==7.0.0\n".to_vec());
-                files.insert("config/app.json".to_string(), b"{\"test\": true}".to_vec());
-                files
-            },
-            build_args: HashSet::new(),
-            image_tag: "tsk/test/test/test".to_string(),
-        };
-
-        composer
-            .write_to_directory(&composed, temp_dir.path())
-            .unwrap();
-
-        // Check Dockerfile was written
-        let dockerfile_path = temp_dir.path().join("Dockerfile");
-        assert!(dockerfile_path.exists());
-        let content = std::fs::read_to_string(&dockerfile_path).unwrap();
-        assert!(content.contains("FROM ubuntu:24.04"));
-
-        // Check additional files were written
-        let requirements_path = temp_dir.path().join("requirements.txt");
-        assert!(requirements_path.exists());
-        let requirements = std::fs::read_to_string(&requirements_path).unwrap();
-        assert_eq!(requirements, "pytest==7.0.0\n");
-
-        let config_path = temp_dir.path().join("config/app.json");
-        assert!(config_path.exists());
-        let config = std::fs::read_to_string(&config_path).unwrap();
-        assert_eq!(config, "{\"test\": true}");
     }
 }
