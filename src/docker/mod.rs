@@ -153,25 +153,25 @@ impl DockerManager {
     /// Run a task container with unified support for both interactive and non-interactive modes.
     ///
     /// # Arguments
-    /// * `image` - Docker image to use
-    /// * `worktree_path` - Path to the work directory to mount
-    /// * `instructions_file_path` - Optional path to instructions file
+    /// * `docker_image_tag` - Docker image tag to use
+    /// * `task` - The task to execute
     /// * `agent` - The agent to use for the task
-    /// * `is_interactive` - Whether to run in interactive mode
-    /// * `task_id` - Task ID to use for container naming
     ///
     /// # Returns
     /// * `Ok((output, task_result))` - The container output and optional task result
     /// * `Err(String)` - Error message if container execution fails
     pub async fn run_task_container(
         &self,
-        image: &str,
-        worktree_path: &Path,
-        instructions_file_path: Option<&PathBuf>,
+        docker_image_tag: &str,
+        task: &crate::task::Task,
         agent: &dyn Agent,
-        is_interactive: bool,
-        task_id: &str,
     ) -> Result<(String, Option<crate::agent::TaskResult>), String> {
+        // Extract necessary values from the task
+        let worktree_path = &task.copied_repo_path;
+        let task_id = &task.id;
+        let is_interactive = task.is_interactive;
+        let instructions_file_path = PathBuf::from(&task.instructions_file);
+
         // Use ProxyManager to ensure proxy is running and healthy
         use crate::context::AppContext;
         let ctx = AppContext::builder()
@@ -199,9 +199,7 @@ impl DockerManager {
         let command = if is_interactive {
             // For interactive mode, use the agent's interactive command
             let agent_command = agent.build_interactive_command(
-                instructions_file_path
-                    .and_then(|p| p.to_str())
-                    .unwrap_or("instructions.md"),
+                instructions_file_path.to_str().unwrap_or("instructions.md"),
             );
             if agent_command.is_empty() {
                 None
@@ -210,11 +208,8 @@ impl DockerManager {
             }
         } else {
             // For non-interactive mode, just run the agent command
-            let agent_command = agent.build_command(
-                instructions_file_path
-                    .and_then(|p| p.to_str())
-                    .unwrap_or("instructions.md"),
-            );
+            let agent_command =
+                agent.build_command(instructions_file_path.to_str().unwrap_or("instructions.md"));
             if agent_command.is_empty() {
                 None
             } else {
@@ -224,11 +219,11 @@ impl DockerManager {
 
         // Create container configuration - shared for both modes
         let mut config = Self::create_base_container_config(
-            image,
+            docker_image_tag,
             worktree_path_str,
             command,
             is_interactive,
-            instructions_file_path,
+            Some(&instructions_file_path),
             Some(agent),
             &proxy_manager,
         );
@@ -400,28 +395,44 @@ impl DockerManager {
 mod tests {
     use super::*;
     use crate::context::AppContext;
+    use crate::task::{Task, TaskStatus};
     use crate::test_utils::TrackedDockerClient;
+
+    fn create_test_task(is_interactive: bool) -> Task {
+        let worktree_path = PathBuf::from("/tmp/test-worktree");
+        Task {
+            id: "test-task-id".to_string(),
+            repo_root: worktree_path.clone(),
+            name: "test-task".to_string(),
+            task_type: "feature".to_string(),
+            instructions_file: "/tmp/test-worktree/.tsk/tasks/instructions.md".to_string(),
+            agent: "claude-code".to_string(),
+            timeout: 30,
+            status: TaskStatus::Running,
+            created_at: chrono::Local::now(),
+            started_at: Some(chrono::Utc::now()),
+            completed_at: None,
+            branch_name: "tsk/feature/test-task/test-task-id".to_string(),
+            error_message: None,
+            source_commit: "abc123".to_string(),
+            stack: "default".to_string(),
+            project: "default".to_string(),
+            copied_repo_path: worktree_path,
+            is_interactive,
+        }
+    }
 
     #[tokio::test]
     async fn test_run_task_container_success() {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
 
-        let worktree_path = Path::new("/tmp/test-worktree");
+        let task = create_test_task(false);
 
         let app_context = AppContext::builder().build();
         let tsk_config = app_context.tsk_config();
         let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(tsk_config);
-        let result = manager
-            .run_task_container(
-                "tsk/base",
-                worktree_path,
-                None,
-                &agent,
-                false, // not interactive
-                "test-task-id",
-            )
-            .await;
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
         let (output, task_result) = result.unwrap();
@@ -469,21 +480,12 @@ mod tests {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
 
-        let worktree_path = Path::new("/tmp/test-worktree");
+        let task = create_test_task(true);
         let app_context = AppContext::builder().build();
         let tsk_config = app_context.tsk_config();
         let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(tsk_config);
 
-        let result = manager
-            .run_task_container(
-                "tsk/base",
-                worktree_path,
-                None,
-                &agent,
-                true, // interactive mode
-                "test-task-id",
-            )
-            .await;
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         // Interactive mode should succeed with mock client
         assert!(result.is_ok());
@@ -528,7 +530,7 @@ mod tests {
         });
         let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
 
-        let worktree_path = Path::new("/tmp/test-worktree");
+        let task = create_test_task(false);
 
         // Use AppContext builder to create test-safe directories and configs
         let app_context = AppContext::builder()
@@ -538,16 +540,7 @@ mod tests {
         let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(tsk_config);
 
         // Run the task container
-        let result = manager
-            .run_task_container(
-                "tsk/base",
-                worktree_path,
-                None,
-                &agent,
-                false, // not interactive
-                "test-task-id",
-            )
-            .await;
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         // With the new behavior, the container logs are returned even with non-zero exit
         // The error handling is now done by the agent's log processor
@@ -572,21 +565,12 @@ mod tests {
         let mock_client = Arc::new(mock_client);
         let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
 
-        let worktree_path = Path::new("/tmp/test-worktree");
+        let task = create_test_task(false);
 
         let app_context = AppContext::builder().build();
         let tsk_config = app_context.tsk_config();
         let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(tsk_config);
-        let result = manager
-            .run_task_container(
-                "tsk/base",
-                worktree_path,
-                None,
-                &agent,
-                false, // not interactive
-                "test-task-id",
-            )
-            .await;
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err();
@@ -607,21 +591,12 @@ mod tests {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
 
-        let worktree_path = Path::new("/tmp/test-worktree");
+        let task = create_test_task(false);
 
         let app_context = AppContext::builder().build();
         let tsk_config = app_context.tsk_config();
         let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(tsk_config);
-        let _ = manager
-            .run_task_container(
-                "tsk/base",
-                worktree_path,
-                None,
-                &agent,
-                false, // not interactive
-                "test-task-id",
-            )
-            .await;
+        let _ = manager.run_task_container("tsk/base", &task, &agent).await;
 
         let create_calls = mock_client.create_container_calls.lock().unwrap();
         assert_eq!(create_calls.len(), 2); // One for proxy, one for task container
@@ -670,11 +645,12 @@ mod tests {
         assert_eq!(host_config.cpu_quota, Some(CONTAINER_CPU_QUOTA));
 
         let binds = host_config.binds.as_ref().unwrap();
-        assert_eq!(binds.len(), 3);
+        assert_eq!(binds.len(), 4); // workspace, claude dir, claude.json, and instructions
         assert!(binds[0].contains(&format!("/tmp/test-worktree:{CONTAINER_WORKING_DIR}")));
         // In test mode, .claude directory is in temp directory
         assert!(binds[1].contains(":/home/agent/.claude"));
         assert!(binds[2].contains(":/home/agent/.claude.json"));
+        assert!(binds[3].contains(":/instructions:ro"));
 
         // Check proxy environment variables
         let env = config.env.as_ref().unwrap();
@@ -687,22 +663,13 @@ mod tests {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
 
-        let worktree_path = Path::new("/tmp/test-worktree");
-        let instructions_path = PathBuf::from("/tmp/tsk-test/instructions.txt");
+        let mut task = create_test_task(false);
+        task.instructions_file = "/tmp/tsk-test/instructions.txt".to_string();
 
         let app_context = AppContext::builder().build();
         let tsk_config = app_context.tsk_config();
         let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(tsk_config);
-        let result = manager
-            .run_task_container(
-                "tsk/base",
-                worktree_path,
-                Some(&instructions_path),
-                &agent,
-                false, // not interactive
-                "test-task-id",
-            )
-            .await;
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
 
@@ -726,19 +693,13 @@ mod tests {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let absolute_path = temp_dir.path().join("test-worktree");
 
+        let mut task = create_test_task(false);
+        task.copied_repo_path = absolute_path.clone();
+
         let app_context = AppContext::builder().build();
         let tsk_config = app_context.tsk_config();
         let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(tsk_config);
-        let result = manager
-            .run_task_container(
-                "tsk/base",
-                &absolute_path,
-                None,
-                &agent,
-                false, // not interactive
-                "test-task-id",
-            )
-            .await;
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
 
@@ -755,10 +716,11 @@ mod tests {
         assert!(worktree_bind.contains("test-worktree"));
         assert!(worktree_bind.ends_with(&format!(":{CONTAINER_WORKING_DIR}")));
 
-        // Should also have the claude directory and claude.json mounts
-        assert_eq!(binds.len(), 3);
+        // Should also have the claude directory, claude.json, and instructions mounts
+        assert_eq!(binds.len(), 4); // workspace, claude dir, claude.json, and instructions
         // In test mode, .claude directory is in temp directory
         assert!(binds[1].contains(":/home/agent/.claude"));
         assert!(binds[2].contains(":/home/agent/.claude.json"));
+        assert!(binds[3].contains(":/instructions:ro"));
     }
 }

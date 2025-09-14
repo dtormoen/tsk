@@ -1,21 +1,17 @@
 use crate::agent::AgentProvider;
 use crate::context::AppContext;
-use crate::docker::{DockerManager, image_manager::DockerImageManager};
+use crate::docker::{
+    DockerManager, image_manager::DockerImageManager, proxy_manager::ProxyManager,
+};
 use crate::git::RepoManager;
 use crate::task::Task;
-use std::path::PathBuf;
 
 /// Result of executing a task
 ///
-/// Contains information about the executed task including the repository path,
-/// branch name, execution output, and task-specific results. All fields are
-/// public for use by callers, including tests and future functionality.
+/// Contains information about the executed task including the branch name
+/// and task-specific results.
 pub struct TaskExecutionResult {
-    #[allow(dead_code)] // Available for future use by callers
-    pub repo_path: PathBuf,
     pub branch_name: String,
-    #[allow(dead_code)] // Available for future use by callers
-    pub output: String,
     pub task_result: Option<crate::agent::TaskResult>,
 }
 
@@ -99,6 +95,39 @@ impl TaskRunner {
             .await
             .map_err(|e| format!("Agent validation failed: {e}"))?;
 
+        // Use the pre-copied repository path
+        let repo_path = &task.copied_repo_path;
+        let branch_name = task.branch_name.clone();
+
+        println!("Using repository copy at: {}", repo_path.display());
+
+        // Launch Docker container
+        println!("Launching Docker container with {} agent...", agent.name());
+        println!("\n{}", "=".repeat(60));
+
+        // Ensure the proxy is running first
+        let proxy_manager = ProxyManager::new(&self.ctx);
+        proxy_manager
+            .ensure_proxy()
+            .await
+            .map_err(|e| format!("Error ensuring proxy: {e}"))?;
+
+        // Create a task-specific image manager with the copied repository as the project root
+        // This ensures that project-specific dockerfiles are found in the copied repository
+        let task_image_manager = DockerImageManager::new(&self.ctx, Some(repo_path));
+
+        // Ensure the Docker image exists - always rebuild to pick up any changes
+        let docker_image_tag = task_image_manager
+            .ensure_image(
+                &task.stack,
+                &task.agent,
+                Some(&task.project),
+                Some(repo_path),
+                true,
+            )
+            .await
+            .map_err(|e| format!("Error ensuring Docker image: {e}"))?;
+
         // Run agent warmup
         if let Err(e) = agent.warmup().await {
             return Err(TaskExecutionError {
@@ -107,62 +136,12 @@ impl TaskRunner {
             });
         }
 
-        // Use the pre-copied repository path
-        let repo_path = task.copied_repo_path.clone();
-
-        let branch_name = task.branch_name.clone();
-
-        println!("Using repository copy at: {}", repo_path.display());
-
-        // Get the instructions file path
-        let instructions_file_path = PathBuf::from(&task.instructions_file);
-
-        // Launch Docker container
-        println!("Launching Docker container with {} agent...", agent.name());
-        println!("\n{}", "=".repeat(60));
-
-        let (output, task_result_from_container) = {
-            // Create a task-specific image manager with the copied repository as the project root
-            // This ensures that project-specific dockerfiles are found in the copied repository
-            let task_image_manager = DockerImageManager::new(&self.ctx, Some(&repo_path));
-
-            // Ensure the proxy image exists first
-            task_image_manager
-                .ensure_proxy_image()
-                .await
-                .map_err(|e| format!("Error ensuring proxy image: {e}"))?;
-
-            // Ensure the Docker image exists - always rebuild to pick up any changes
-            let docker_image = task_image_manager
-                .ensure_image(
-                    &task.stack,
-                    &task.agent,
-                    Some(&task.project),
-                    Some(&repo_path),
-                    true,
-                )
-                .await
-                .map_err(|e| format!("Error ensuring Docker image: {e}"))?;
-
-            if docker_image.used_fallback {
-                println!(
-                    "Note: Using default project layer as project-specific layer was not found"
-                );
-            }
-
-            // Run the container using the unified method
-            self.docker_manager
-                .run_task_container(
-                    &docker_image.tag,
-                    &repo_path,
-                    Some(&instructions_file_path),
-                    agent.as_ref(),
-                    task.is_interactive,
-                    &task.id,
-                )
-                .await
-                .map_err(|e| format!("Error running container: {e}"))?
-        };
+        // Run the container using the unified method
+        let (_output, task_result_from_container) = self
+            .docker_manager
+            .run_task_container(&docker_image_tag, task, agent.as_ref())
+            .await
+            .map_err(|e| format!("Error running container: {e}"))?;
 
         println!("\n{}", "=".repeat(60));
         println!("Container execution completed successfully");
@@ -171,7 +150,7 @@ impl TaskRunner {
         let commit_message = format!("TSK automated changes for task: {}", task.name);
         if let Err(e) = self
             .repo_manager
-            .commit_changes(&repo_path, &commit_message)
+            .commit_changes(repo_path, &commit_message)
             .await
         {
             eprintln!("Error committing changes: {e}");
@@ -180,7 +159,7 @@ impl TaskRunner {
         // Fetch changes back to main repository
         match self
             .repo_manager
-            .fetch_changes(&repo_path, &branch_name, &task.repo_root)
+            .fetch_changes(repo_path, &branch_name, &task.repo_root)
             .await
         {
             Ok(true) => {
@@ -205,9 +184,7 @@ impl TaskRunner {
             .notify_task_complete(&task.name, success, message);
 
         Ok(TaskExecutionResult {
-            repo_path,
             branch_name,
-            output,
             task_result,
         })
     }
@@ -300,7 +277,6 @@ mod tests {
 
         assert!(result.is_ok(), "Error: {:?}", result.as_ref().err());
         let execution_result = result.unwrap();
-        assert_eq!(execution_result.output, "Test output");
         assert!(execution_result.branch_name.contains("test-task"));
     }
 }

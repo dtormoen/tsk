@@ -79,7 +79,7 @@ impl Command for DockerBuildCommand {
         let image_manager = DockerImageManager::new(ctx, project_root.as_deref());
 
         // Build the main image (with dry_run flag)
-        let image = image_manager
+        let image_tag = image_manager
             .build_image(
                 &stack,
                 agent,
@@ -91,18 +91,14 @@ impl Command for DockerBuildCommand {
             .await?;
 
         if !self.dry_run {
-            println!("Successfully built Docker image: {}", image.tag);
-
-            if image.used_fallback {
-                println!(
-                    "Note: Used default project layer as project-specific layer was not found"
-                );
-            }
+            println!("Successfully built Docker image: {}", image_tag);
 
             // Always build proxy image as it's still needed
             println!("\nBuilding tsk/proxy image...");
-            let proxy_image = image_manager.build_proxy_image(self.no_cache).await?;
-            println!("Successfully built Docker image: {}", proxy_image.tag);
+            use crate::docker::proxy_manager::ProxyManager;
+            let proxy_manager = ProxyManager::new(ctx);
+            proxy_manager.build_proxy(self.no_cache).await?;
+            println!("Successfully built Docker image: tsk/proxy");
 
             println!("\nAll Docker images built successfully!");
         }

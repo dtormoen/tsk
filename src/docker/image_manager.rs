@@ -14,15 +14,6 @@ use crate::docker::composer::{ComposedDockerfile, DockerComposer};
 use crate::docker::layers::{DockerImageConfig, DockerLayerType};
 use crate::docker::template_manager::DockerTemplateManager;
 
-/// Information about a Docker image
-#[derive(Debug, Clone)]
-pub struct DockerImage {
-    /// The full image tag (e.g., "tsk/rust/claude/web-api")
-    pub tag: String,
-    /// Whether this image used fallback (project layer was missing)
-    pub used_fallback: bool,
-}
-
 /// Manages Docker images for TSK
 ///
 /// This struct provides a high-level interface for managing Docker images,
@@ -101,19 +92,22 @@ impl DockerImageManager {
             .collect()
     }
 
-    /// Get the appropriate Docker image for the given configuration
+    /// Get the appropriate Docker image tag for the given configuration
     ///
     /// This method implements intelligent fallback:
     /// - If the project-specific layer doesn't exist and project != "default",
     ///   it will try again with project="default"
     /// - Returns error if stack or agent layers are missing
-    pub fn get_image(
+    ///
+    /// # Returns
+    /// A tuple of (image_tag, used_fallback) where used_fallback indicates if default was used
+    fn get_image_tag(
         &self,
         stack: &str,
         agent: &str,
         project: Option<&str>,
         project_root: Option<&std::path::Path>,
-    ) -> Result<DockerImage> {
+    ) -> Result<(String, bool)> {
         let project = project.unwrap_or("default");
         let config = Self::create_config(stack, agent, project);
         let missing_layers = self.validate_layers(&config, project_root);
@@ -123,10 +117,8 @@ impl DockerImageManager {
             && missing_layers[0].layer_type == DockerLayerType::Project
             && project != "default"
         {
-            return Ok(DockerImage {
-                tag: format!("tsk/{stack}/{agent}/default"),
-                used_fallback: true,
-            });
+            println!("Note: Using default project layer as project-specific layer was not found");
+            return Ok((format!("tsk/{stack}/{agent}/default"), true));
         }
 
         // Check for required layers - if we get here, there are missing layers
@@ -160,10 +152,7 @@ impl DockerImageManager {
             }
         }
 
-        Ok(DockerImage {
-            tag: format!("tsk/{stack}/{agent}/{project}"),
-            used_fallback: false,
-        })
+        Ok((format!("tsk/{stack}/{agent}/{project}"), false))
     }
 
     /// Ensure a Docker image exists, rebuilding if necessary
@@ -171,7 +160,10 @@ impl DockerImageManager {
     /// This method:
     /// - Checks if the image exists in the Docker daemon
     /// - If missing or force_rebuild is true, builds the image with locking
-    /// - Returns the DockerImage information
+    /// - Returns the Docker image tag
+    ///
+    /// # Returns
+    /// The Docker image tag (e.g., "tsk/rust/claude/web-api")
     pub async fn ensure_image(
         &self,
         stack: &str,
@@ -179,27 +171,27 @@ impl DockerImageManager {
         project: Option<&str>,
         build_root: Option<&std::path::Path>,
         force_rebuild: bool,
-    ) -> Result<DockerImage> {
-        // Get the image configuration (with fallback if needed)
-        let image = self.get_image(stack, agent, project, build_root)?;
+    ) -> Result<String> {
+        // Get the image tag (with fallback if needed)
+        let (tag, used_fallback) = self.get_image_tag(stack, agent, project, build_root)?;
 
         // Check if image exists unless force rebuild
-        if !force_rebuild && self.image_exists(&image.tag).await? {
+        if !force_rebuild && self.image_exists(&tag).await? {
             // Image already exists
-            return Ok(image);
+            return Ok(tag);
         }
 
         // Acquire build lock for this image
         let _lock = self
             .docker_build_lock_manager
-            .acquire_build_lock(&image.tag)
+            .acquire_build_lock(&tag)
             .await;
 
         // Build the image
-        println!("Building Docker image: {}", image.tag);
+        println!("Building Docker image: {}", tag);
 
         // Determine actual project to use (considering fallback)
-        let actual_project = if image.used_fallback {
+        let actual_project = if used_fallback {
             "default"
         } else {
             project.unwrap_or("default")
@@ -208,7 +200,7 @@ impl DockerImageManager {
         self.build_image(stack, agent, Some(actual_project), build_root, false, false)
             .await?;
 
-        Ok(image)
+        Ok(tag)
     }
 
     /// Build a Docker image for the given configuration
@@ -220,6 +212,9 @@ impl DockerImageManager {
     /// * `build_root` - Optional build root directory for project-specific context
     /// * `no_cache` - Whether to build without using Docker's cache
     /// * `dry_run` - If true, only prints the composed Dockerfile without building
+    ///
+    /// # Returns
+    /// The Docker image tag (e.g., "tsk/rust/claude/web-api")
     pub async fn build_image(
         &self,
         stack: &str,
@@ -228,7 +223,7 @@ impl DockerImageManager {
         build_root: Option<&std::path::Path>,
         no_cache: bool,
         dry_run: bool,
-    ) -> Result<DockerImage> {
+    ) -> Result<String> {
         let project = project.unwrap_or("default");
 
         // Log which repository context is being used
@@ -281,51 +276,7 @@ impl DockerImageManager {
             .await?;
         }
 
-        // Check if we used fallback by checking if the project layer exists
-        let project_layer = crate::docker::layers::DockerLayer::project(project);
-        let used_fallback = project != "default"
-            && self
-                .template_manager
-                .get_layer_content(&project_layer, build_root)
-                .is_err();
-
-        Ok(DockerImage {
-            tag: format!("tsk/{stack}/{agent}/{project}"),
-            used_fallback,
-        })
-    }
-
-    /// Build the proxy image
-    pub async fn build_proxy_image(&self, no_cache: bool) -> Result<DockerImage> {
-        use crate::docker::proxy_manager::ProxyManager;
-
-        let proxy_manager = ProxyManager::new(&self.ctx);
-        proxy_manager.build_proxy(no_cache).await?;
-
-        Ok(DockerImage {
-            tag: "tsk/proxy".to_string(),
-            used_fallback: false,
-        })
-    }
-
-    /// Ensure the proxy image exists, building it if necessary
-    pub async fn ensure_proxy_image(&self) -> Result<DockerImage> {
-        use crate::docker::proxy_manager::ProxyManager;
-
-        // Acquire build lock for the proxy image
-        let _lock = self
-            .docker_build_lock_manager
-            .acquire_build_lock("tsk/proxy")
-            .await;
-
-        let proxy_manager = ProxyManager::new(&self.ctx);
-        // The ensure_proxy method will build the image if needed
-        proxy_manager.ensure_proxy().await?;
-
-        Ok(DockerImage {
-            tag: "tsk/proxy".to_string(),
-            used_fallback: false,
-        })
+        Ok(format!("tsk/{stack}/{agent}/{project}"))
     }
 
     /// Check if a Docker image exists
@@ -447,7 +398,6 @@ impl DockerImageManager {
 mod tests {
     use super::*;
     use crate::context::AppContext;
-    use crate::test_utils::TrackedDockerClient;
     use std::sync::Arc;
     use tempfile::TempDir;
 
@@ -456,48 +406,40 @@ mod tests {
         DockerImageManager::new(&ctx, None)
     }
 
-    fn create_test_manager_with_docker(
-        docker_client: Arc<TrackedDockerClient>,
-    ) -> DockerImageManager {
-        let ctx = AppContext::builder()
-            .with_docker_client(docker_client)
-            .build();
-        DockerImageManager::new(&ctx, None)
-    }
-
     #[test]
-    fn test_get_image_success() {
+    fn test_get_image_tag_success() {
         let manager = create_test_manager();
 
         // Test with all default layers (should exist in embedded assets)
-        let result = manager.get_image("default", "claude-code", Some("default"), None);
+        let result = manager.get_image_tag("default", "claude-code", Some("default"), None);
         assert!(result.is_ok());
 
-        let image = result.unwrap();
-        assert_eq!(image.tag, "tsk/default/claude-code/default");
-        assert!(!image.used_fallback);
+        let (tag, used_fallback) = result.unwrap();
+        assert_eq!(tag, "tsk/default/claude-code/default");
+        assert!(!used_fallback);
     }
 
     #[test]
-    fn test_get_image_fallback() {
+    fn test_get_image_tag_fallback() {
         let manager = create_test_manager();
 
         // Test with non-existent project layer (should fall back to default)
         let result =
-            manager.get_image("default", "claude-code", Some("non-existent-project"), None);
+            manager.get_image_tag("default", "claude-code", Some("non-existent-project"), None);
         assert!(result.is_ok());
 
-        let image = result.unwrap();
-        assert_eq!(image.tag, "tsk/default/claude-code/default");
-        assert!(image.used_fallback);
+        let (tag, used_fallback) = result.unwrap();
+        assert_eq!(tag, "tsk/default/claude-code/default");
+        assert!(used_fallback);
     }
 
     #[test]
-    fn test_get_image_missing_stack() {
+    fn test_get_image_tag_missing_stack() {
         let manager = create_test_manager();
 
         // Test with non-existent tech stack (should fail)
-        let result = manager.get_image("non-existent-stack", "claude-code", Some("default"), None);
+        let result =
+            manager.get_image_tag("non-existent-stack", "claude-code", Some("default"), None);
         assert!(result.is_err());
 
         let err = result.unwrap_err();
@@ -508,11 +450,11 @@ mod tests {
     }
 
     #[test]
-    fn test_get_image_missing_agent() {
+    fn test_get_image_tag_missing_agent() {
         let manager = create_test_manager();
 
         // Test with non-existent agent (should fail)
-        let result = manager.get_image("default", "non-existent-agent", Some("default"), None);
+        let result = manager.get_image_tag("default", "non-existent-agent", Some("default"), None);
         assert!(result.is_err());
 
         let err = result.unwrap_err();
@@ -523,47 +465,16 @@ mod tests {
     }
 
     #[test]
-    fn test_get_image_with_none_project() {
+    fn test_get_image_tag_with_none_project() {
         let manager = create_test_manager();
 
         // Test with None project (should use "default")
-        let result = manager.get_image("default", "claude-code", None, None);
+        let result = manager.get_image_tag("default", "claude-code", None, None);
         assert!(result.is_ok());
 
-        let image = result.unwrap();
-        assert_eq!(image.tag, "tsk/default/claude-code/default");
-        assert!(!image.used_fallback);
-    }
-
-    #[tokio::test]
-    async fn test_ensure_proxy_image_exists() {
-        let manager = create_test_manager();
-
-        // In test mode, image_exists always returns true
-        let result = manager.ensure_proxy_image().await;
-        assert!(result.is_ok());
-
-        let image = result.unwrap();
-        assert_eq!(image.tag, "tsk/proxy");
-        assert!(!image.used_fallback);
-    }
-
-    #[tokio::test]
-    async fn test_ensure_proxy_image_builds_when_missing() {
-        let docker_client = Arc::new(TrackedDockerClient {
-            image_exists_returns: false,
-            ..Default::default()
-        });
-
-        let manager = create_test_manager_with_docker(docker_client);
-
-        // Note: This test won't actually build in test mode due to cfg!(test) check
-        // but it validates the logic flow
-        let result = manager.ensure_proxy_image().await;
-        assert!(result.is_ok());
-
-        let image = result.unwrap();
-        assert_eq!(image.tag, "tsk/proxy");
+        let (tag, used_fallback) = result.unwrap();
+        assert_eq!(tag, "tsk/default/claude-code/default");
+        assert!(!used_fallback);
     }
 
     #[tokio::test]
@@ -576,9 +487,8 @@ mod tests {
             .await;
 
         assert!(result.is_ok(), "Dry run failed: {:?}", result.err());
-        let image = result.unwrap();
-        assert_eq!(image.tag, "tsk/default/claude-code/default");
-        assert!(!image.used_fallback);
+        let tag = result.unwrap();
+        assert_eq!(tag, "tsk/default/claude-code/default");
 
         // Test build_image with dry_run=false (normal mode)
         let result = manager
@@ -592,8 +502,8 @@ mod tests {
             )
             .await;
 
-        let image = result.unwrap();
-        assert_eq!(image.tag, "tsk/default/claude-code/default");
+        let tag = result.unwrap();
+        assert_eq!(tag, "tsk/default/claude-code/default");
     }
 
     #[test]
@@ -820,11 +730,11 @@ mod tests {
         assert!(result1.is_ok());
         assert!(result2.is_ok());
 
-        // Get the images
+        // Get the image tags
         let image1 = result1.unwrap().unwrap();
         let image2 = result2.unwrap().unwrap();
 
         // They should have different tags
-        assert_ne!(image1.tag, image2.tag);
+        assert_ne!(image1, image2);
     }
 }
