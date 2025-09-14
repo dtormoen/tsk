@@ -58,26 +58,6 @@ impl DockerManager {
         ]
     }
 
-    /// Build command for container based on mode (interactive or non-interactive)
-    fn build_container_command(
-        &self,
-        agent: &dyn Agent,
-        instructions_file: &str,
-        is_interactive: bool,
-    ) -> Option<Vec<String>> {
-        let agent_command = if is_interactive {
-            agent.build_interactive_command(instructions_file)
-        } else {
-            agent.build_command(instructions_file)
-        };
-
-        if agent_command.is_empty() {
-            None
-        } else {
-            Some(agent_command)
-        }
-    }
-
     /// Remove a container with force option
     async fn remove_container(&self, container_id: &str) -> Result<(), String> {
         self.ctx
@@ -159,11 +139,16 @@ impl DockerManager {
             env_vars.push(format!("{key}={value}"));
         }
 
-        let command = self.build_container_command(
-            agent,
+        let agent_command = agent.build_command(
             instructions_file_path.to_str().unwrap_or("instructions.md"),
             task.is_interactive,
         );
+
+        let command = if agent_command.is_empty() {
+            None
+        } else {
+            Some(agent_command)
+        };
 
         ContainerCreateBody {
             image: Some(image.to_string()),

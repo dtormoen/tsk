@@ -45,43 +45,37 @@ impl Default for ClaudeCodeAgent {
 
 #[async_trait]
 impl Agent for ClaudeCodeAgent {
-    fn build_command(&self, instruction_path: &str) -> Vec<String> {
+    fn build_command(&self, instruction_path: &str, is_interactive: bool) -> Vec<String> {
         // Get just the filename from the instruction path
         let filename = Path::new(instruction_path)
             .file_name()
             .and_then(|f| f.to_str())
             .unwrap_or("instructions.md");
 
-        vec![
-            "sh".to_string(),
-            "-c".to_string(),
-            format!(
+        if is_interactive {
+            let normal_command = format!(
                 "cat /instructions/{} | claude -p --verbose --output-format stream-json --dangerously-skip-permissions",
                 filename
-            ),
-        ]
-    }
+            );
 
-    fn build_interactive_command(&self, instruction_path: &str) -> Vec<String> {
-        // Get just the filename from the instruction path
-        let filename = Path::new(instruction_path)
-            .file_name()
-            .and_then(|f| f.to_str())
-            .unwrap_or("instructions.md");
-
-        let normal_command = format!(
-            "cat /instructions/{} | claude -p --verbose --output-format stream-json --dangerously-skip-permissions",
-            filename
-        );
-
-        vec![
-            "sh".to_string(),
-            "-c".to_string(),
-            format!(
-                r#"sleep 0.5; echo '=== Task Instructions ==='; cat /instructions/{}; echo; echo '=== Normal Command ==='; echo '{}'; echo; echo '=== Starting Interactive Claude Code Session ==='; echo 'You can now interact with Claude Code directly.'; echo 'Type "exit" or Ctrl+D to end the session.'; echo; exec /bin/bash"#,
-                filename, normal_command
-            ),
-        ]
+            vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                format!(
+                    r#"sleep 0.5; echo '=== Task Instructions ==='; cat /instructions/{}; echo; echo '=== Normal Command ==='; echo '{}'; echo; echo '=== Starting Interactive Claude Code Session ==='; echo 'You can now interact with Claude Code directly.'; echo 'Type "exit" or Ctrl+D to end the session.'; echo; exec /bin/bash"#,
+                    filename, normal_command
+                ),
+            ]
+        } else {
+            vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                format!(
+                    "cat /instructions/{} | claude -p --verbose --output-format stream-json --dangerously-skip-permissions",
+                    filename
+                ),
+            ]
+        }
     }
 
     fn volumes(&self) -> Vec<(String, String, String)> {
@@ -258,27 +252,20 @@ mod tests {
         let tsk_config = app_context.tsk_config();
         let agent = ClaudeCodeAgent::with_tsk_config(tsk_config);
 
-        // Test with full path
-        let command = agent.build_command("/tmp/instructions.md");
+        // Test non-interactive mode with full path
+        let command = agent.build_command("/tmp/instructions.md", false);
         assert_eq!(command.len(), 3);
         assert_eq!(command[0], "sh");
         assert_eq!(command[1], "-c");
         assert!(command[2].contains("cat /instructions/instructions.md"));
         assert!(command[2].contains("claude -p --verbose --output-format stream-json"));
 
-        // Test with complex path
-        let command = agent.build_command("/path/to/task/instructions.txt");
+        // Test non-interactive mode with complex path
+        let command = agent.build_command("/path/to/task/instructions.txt", false);
         assert!(command[2].contains("cat /instructions/instructions.txt"));
-    }
 
-    #[test]
-    fn test_claude_code_agent_build_interactive_command() {
-        let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
-        let agent = ClaudeCodeAgent::with_tsk_config(tsk_config);
-
-        // Test interactive command
-        let command = agent.build_interactive_command("/tmp/instructions.md");
+        // Test interactive mode
+        let command = agent.build_command("/tmp/instructions.md", true);
         assert_eq!(command.len(), 3);
         assert_eq!(command[0], "sh");
         assert_eq!(command[1], "-c");

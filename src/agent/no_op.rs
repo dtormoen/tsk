@@ -10,16 +10,28 @@ pub struct NoOpAgent;
 
 #[async_trait]
 impl Agent for NoOpAgent {
-    fn build_command(&self, instructions_path: &str) -> Vec<String> {
-        // Simple command to output the instructions and exit
-        vec![
-            "sh".to_string(),
-            "-c".to_string(),
-            format!(
-                "echo '=== Task Instructions ==='; cat '{}'; echo; echo '=== End Instructions ==='",
-                instructions_path
-            ),
-        ]
+    fn build_command(&self, instructions_path: &str, is_interactive: bool) -> Vec<String> {
+        if is_interactive {
+            // Interactive mode: show instructions, then provide bash shell
+            vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                format!(
+                    "sleep 0.5; echo '=== Task Instructions ==='; cat '{}'; echo; echo '=== Starting Interactive Session ==='; exec /bin/bash",
+                    instructions_path
+                ),
+            ]
+        } else {
+            // Non-interactive mode: just output the instructions
+            vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                format!(
+                    "echo '=== Task Instructions ==='; cat '{}'; echo; echo '=== End Instructions ==='",
+                    instructions_path
+                ),
+            ]
+        }
     }
 
     fn volumes(&self) -> Vec<(String, String, String)> {

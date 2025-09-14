@@ -117,15 +117,14 @@ TSK implements a command pattern with dependency injection for testability. The 
 
 **Agents** (`src/agent/`)
 - `Agent` trait defines the interface for AI agents that execute tasks
-  - `build_command()`: Returns the command to execute for normal task processing
-  - `build_interactive_command()`: Returns the command for interactive debugging sessions (shows instructions and normal command, then provides shell)
+  - `build_command(instruction_path, is_interactive)`: Returns the command to execute (handles both normal and interactive modes)
   - `validate()`: Checks agent configuration (e.g., Claude credentials)
   - `warmup()`: Performs pre-execution setup (e.g., refreshing OAuth tokens)
   - `version()`: Returns the agent's version string (used to trigger Docker rebuilds when agents are upgraded)
 - Available agents:
   - `claude-code`: Claude Code AI agent (default) - automatically detects version from `claude --version`
   - `no-op`: Simple agent for testing that displays instructions
-- Interactive debugging uses `build_interactive_command()` to show what would run normally before providing interactive access
+- Interactive debugging mode shows task instructions and the normal command before providing shell access
 
 **Auto-Detection** (`src/repository.rs`)
 - Automatic detection of stack based on repository files:
