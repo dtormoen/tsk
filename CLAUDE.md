@@ -174,6 +174,8 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Project layer: Project-specific dependencies (stored as `dockerfiles/project/{name}.dockerfile`, optional, falls back to default)
 - **Custom Project Dockerfiles**: Place project-specific Dockerfiles in `.tsk/dockerfiles/project/{project-name}.dockerfile`
 - **Proxy Image** (`dockerfiles/tsk-proxy/`): Squid proxy for controlled network access
+  - Custom proxy configuration: Place a `squid.conf` file in the TSK config directory (`~/.config/tsk/squid.conf` by default) to override the default proxy configuration
+  - The custom configuration will be used when building/rebuilding the proxy image
 - Git configuration inherited via Docker build args from host user
 - Automatic image rebuilding when missing during task execution
 - Agent version tracking: Docker images are rebuilt when agent versions change (via `TSK_AGENT_VERSION` ARG)

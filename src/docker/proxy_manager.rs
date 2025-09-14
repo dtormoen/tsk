@@ -5,10 +5,12 @@
 
 use crate::context::AppContext;
 use crate::context::docker_client::DockerClient;
+use crate::context::tsk_config::TskConfig;
 use anyhow::{Context, Result};
 use bollard::models::{ContainerCreateBody, HostConfig};
 use bollard::query_parameters::RemoveContainerOptions;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 /// Network name for TSK containers
@@ -25,8 +27,13 @@ const PROXY_PORT: &str = "3128/tcp";
 /// This struct provides a high-level interface for managing the proxy container
 /// that provides controlled network access for TSK task containers. It handles
 /// proxy image building, container creation, health monitoring, and cleanup.
+///
+/// The proxy manager supports custom Squid configuration by checking for a
+/// `squid.conf` file in the TSK config directory. If found, it will use that
+/// configuration instead of the default embedded one.
 pub struct ProxyManager {
     docker_client: Arc<dyn DockerClient>,
+    tsk_config: Arc<TskConfig>,
 }
 
 impl ProxyManager {
@@ -37,6 +44,7 @@ impl ProxyManager {
     pub fn new(ctx: &AppContext) -> Self {
         Self {
             docker_client: ctx.docker_client(),
+            tsk_config: ctx.tsk_config(),
         }
     }
 
@@ -77,6 +85,9 @@ impl ProxyManager {
 
     /// Builds the proxy Docker image
     ///
+    /// This method will check for a custom squid.conf file in the TSK config directory.
+    /// If found, it will use that configuration instead of the default embedded one.
+    ///
     /// # Arguments
     /// * `no_cache` - Whether to build without using Docker's cache
     ///
@@ -93,6 +104,19 @@ impl ProxyManager {
         let asset_manager = EmbeddedAssetManager;
         let dockerfile_dir = extract_dockerfile_to_temp(&asset_manager, "tsk-proxy")
             .context("Failed to extract proxy Dockerfile")?;
+
+        // Check for custom squid.conf in config directory
+        let custom_squid_conf_path = self.tsk_config.config_dir().join("squid.conf");
+        if custom_squid_conf_path.exists() {
+            println!(
+                "Using custom squid.conf from {}",
+                custom_squid_conf_path.display()
+            );
+            // Copy the custom squid.conf to the build directory, replacing the default one
+            let dest_squid_conf = dockerfile_dir.join("squid.conf");
+            std::fs::copy(&custom_squid_conf_path, &dest_squid_conf)
+                .context("Failed to copy custom squid.conf")?;
+        }
 
         // Create tar archive from the proxy dockerfile directory
         let tar_archive = self
@@ -340,7 +364,7 @@ impl ProxyManager {
     }
 
     /// Creates a tar archive from a directory
-    fn create_tar_archive_from_directory(&self, dir_path: &std::path::Path) -> Result<Vec<u8>> {
+    fn create_tar_archive_from_directory(&self, dir_path: &Path) -> Result<Vec<u8>> {
         use tar::Builder;
 
         let mut tar_data = Vec::new();
@@ -643,5 +667,191 @@ mod tests {
 
         assert_eq!(manager.proxy_url(), "http://tsk-proxy:3128");
         assert_eq!(manager.network_name(), "tsk-network");
+    }
+
+    #[tokio::test]
+    async fn test_build_proxy_with_custom_squid_conf() {
+        use crate::context::tsk_config::{TskConfig, XdgConfig};
+        use tempfile::TempDir;
+
+        // Create a temporary directory for config
+        let temp_dir = TempDir::new().unwrap();
+        let config_dir = temp_dir.path().join("config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+
+        // Create a custom squid.conf file
+        let custom_squid_conf = config_dir.join("tsk").join("squid.conf");
+        std::fs::create_dir_all(custom_squid_conf.parent().unwrap()).unwrap();
+        std::fs::write(
+            &custom_squid_conf,
+            "# Custom squid configuration\nhttp_port 3128\n",
+        )
+        .unwrap();
+
+        // Create TskConfig with the custom config directory
+        let xdg_config = XdgConfig::builder()
+            .with_config_dir(config_dir.clone())
+            .with_data_dir(temp_dir.path().join("data"))
+            .with_runtime_dir(temp_dir.path().join("runtime"))
+            .with_git_user_name("Test User".to_string())
+            .with_git_user_email("test@example.com".to_string())
+            .build();
+
+        let tsk_config = Arc::new(TskConfig::new(Some(xdg_config)).unwrap());
+        tsk_config.ensure_directories().unwrap();
+
+        // Create a mock docker client that captures the build tar archive
+        use crate::context::docker_client::DockerClient;
+        use async_trait::async_trait;
+        use bollard::models::ContainerCreateBody;
+        use bollard::query_parameters::*;
+        use futures_util::Stream;
+        use std::sync::Mutex;
+
+        struct CaptureDockerClient {
+            tar_archive: Mutex<Option<Vec<u8>>>,
+        }
+
+        #[async_trait]
+        impl DockerClient for CaptureDockerClient {
+            #[cfg(test)]
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+
+            async fn build_image(
+                &self,
+                _options: BuildImageOptions,
+                tar_archive: Vec<u8>,
+            ) -> Result<Box<dyn Stream<Item = Result<String, String>> + Send + Unpin>, String>
+            {
+                *self.tar_archive.lock().unwrap() = Some(tar_archive);
+                use futures_util::stream;
+                let stream = stream::once(async { Ok("Building...".to_string()) });
+                Ok(Box::new(Box::pin(stream)))
+            }
+
+            async fn image_exists(&self, _tag: &str) -> Result<bool, String> {
+                Ok(false) // Force rebuild
+            }
+
+            async fn remove_container(
+                &self,
+                _id: &str,
+                _options: Option<RemoveContainerOptions>,
+            ) -> Result<(), String> {
+                Ok(())
+            }
+
+            async fn create_container(
+                &self,
+                _options: Option<CreateContainerOptions>,
+                _config: ContainerCreateBody,
+            ) -> Result<String, String> {
+                Ok("test-id".to_string())
+            }
+
+            async fn start_container(&self, _id: &str) -> Result<(), String> {
+                Ok(())
+            }
+
+            async fn wait_container(&self, _id: &str) -> Result<i64, String> {
+                Ok(0)
+            }
+
+            async fn logs(
+                &self,
+                _id: &str,
+                _options: Option<LogsOptions>,
+            ) -> Result<String, String> {
+                Ok("".to_string())
+            }
+
+            async fn logs_stream(
+                &self,
+                _id: &str,
+                _options: Option<LogsOptions>,
+            ) -> Result<Box<dyn Stream<Item = Result<String, String>> + Send + Unpin>, String>
+            {
+                use futures_util::stream;
+                let stream = stream::once(async { Ok("".to_string()) });
+                Ok(Box::new(Box::pin(stream)))
+            }
+
+            async fn create_network(&self, _name: &str) -> Result<String, String> {
+                Ok("network-id".to_string())
+            }
+
+            async fn network_exists(&self, _name: &str) -> Result<bool, String> {
+                Ok(true)
+            }
+
+            async fn inspect_container(&self, _id: &str) -> Result<String, String> {
+                Ok(r#"{"State": {"Health": {"Status": "healthy"}}}"#.to_string())
+            }
+
+            async fn attach_container(&self, _id: &str) -> Result<(), String> {
+                Ok(())
+            }
+        }
+
+        let docker_client = Arc::new(CaptureDockerClient {
+            tar_archive: Mutex::new(None),
+        });
+
+        let ctx = AppContext::builder()
+            .with_docker_client(docker_client.clone())
+            .with_tsk_config(tsk_config)
+            .build();
+
+        let manager = ProxyManager::new(&ctx);
+        let result = manager.build_proxy(false).await;
+
+        assert!(result.is_ok());
+
+        // Verify that the tar archive was created and contains the custom squid.conf
+        let tar_data = docker_client.tar_archive.lock().unwrap();
+        assert!(tar_data.is_some());
+
+        // Extract and verify the tar archive contains our custom squid.conf
+        use tar::Archive;
+        let tar_bytes = tar_data.as_ref().unwrap();
+        let mut archive = Archive::new(&tar_bytes[..]);
+
+        let mut found_custom_squid = false;
+        for entry in archive.entries().unwrap() {
+            let mut entry = entry.unwrap();
+            let path = entry.path().unwrap();
+            if path.to_str().unwrap().ends_with("squid.conf") {
+                let mut content = String::new();
+                use std::io::Read;
+                entry.read_to_string(&mut content).unwrap();
+                if content.contains("# Custom squid configuration") {
+                    found_custom_squid = true;
+                    break;
+                }
+            }
+        }
+
+        assert!(
+            found_custom_squid,
+            "Custom squid.conf should be in the tar archive"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_build_proxy_without_custom_squid_conf() {
+        // Test that default squid.conf is used when no custom one exists
+        let mock_client = Arc::new(TrackedDockerClient::default());
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .build();
+
+        let manager = ProxyManager::new(&ctx);
+
+        // Just verify it doesn't error and uses default configuration
+        // The TrackedDockerClient will return Ok for image_exists so build won't actually happen
+        let result = manager.ensure_proxy_image().await;
+        assert!(result.is_ok());
     }
 }
