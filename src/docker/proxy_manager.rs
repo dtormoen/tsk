@@ -671,35 +671,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_proxy_with_custom_squid_conf() {
-        use crate::context::tsk_config::{TskConfig, XdgConfig};
-        use tempfile::TempDir;
-
-        // Create a temporary directory for config
-        let temp_dir = TempDir::new().unwrap();
-        let config_dir = temp_dir.path().join("config");
-        std::fs::create_dir_all(&config_dir).unwrap();
-
-        // Create a custom squid.conf file
-        let custom_squid_conf = config_dir.join("tsk").join("squid.conf");
-        std::fs::create_dir_all(custom_squid_conf.parent().unwrap()).unwrap();
-        std::fs::write(
-            &custom_squid_conf,
-            "# Custom squid configuration\nhttp_port 3128\n",
-        )
-        .unwrap();
-
-        // Create TskConfig with the custom config directory
-        let xdg_config = XdgConfig::builder()
-            .with_config_dir(config_dir.clone())
-            .with_data_dir(temp_dir.path().join("data"))
-            .with_runtime_dir(temp_dir.path().join("runtime"))
-            .with_git_user_name("Test User".to_string())
-            .with_git_user_email("test@example.com".to_string())
-            .build();
-
-        let tsk_config = Arc::new(TskConfig::new(Some(xdg_config)).unwrap());
-        tsk_config.ensure_directories().unwrap();
-
         // Create a mock docker client that captures the build tar archive
         use crate::context::docker_client::DockerClient;
         use async_trait::async_trait;
@@ -799,10 +770,18 @@ mod tests {
             tar_archive: Mutex::new(None),
         });
 
+        // Create AppContext with test-safe temporary directories and custom docker client
         let ctx = AppContext::builder()
             .with_docker_client(docker_client.clone())
-            .with_tsk_config(tsk_config)
             .build();
+
+        // Create a custom squid.conf file in the config directory
+        let custom_squid_conf = ctx.tsk_config().config_dir().join("squid.conf");
+        std::fs::write(
+            &custom_squid_conf,
+            "# Custom squid configuration\nhttp_port 3128\n",
+        )
+        .unwrap();
 
         let manager = ProxyManager::new(&ctx);
         let result = manager.build_proxy(false).await;

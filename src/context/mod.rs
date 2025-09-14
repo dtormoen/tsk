@@ -101,7 +101,6 @@ impl Default for AppContextBuilder {
     }
 }
 
-#[allow(dead_code)] // Builder methods are used throughout the codebase
 impl AppContextBuilder {
     pub fn new() -> Self {
         Self {
@@ -120,6 +119,7 @@ impl AppContextBuilder {
     /// Configure the Docker build lock manager for this context
     ///
     /// Used in tests to provide custom lock manager implementations
+    #[allow(dead_code)]
     pub fn with_docker_build_lock_manager(
         mut self,
         docker_build_lock_manager: Arc<DockerBuildLockManager>,
@@ -138,7 +138,8 @@ impl AppContextBuilder {
 
     /// Configure the file system operations for this context
     ///
-    /// Used extensively in tests and production code throughout the codebase
+    /// Used in tests to provide custom file system implementations
+    #[allow(dead_code)]
     pub fn with_file_system(mut self, file_system: Arc<dyn FileSystemOperations>) -> Self {
         self.file_system = Some(file_system);
         self
@@ -146,7 +147,8 @@ impl AppContextBuilder {
 
     /// Configure the git operations for this context
     ///
-    /// Used extensively in tests and production code throughout the codebase
+    /// Used in tests to provide custom git operations implementations
+    #[allow(dead_code)]
     pub fn with_git_operations(mut self, git_operations: Arc<dyn GitOperations>) -> Self {
         self.git_operations = Some(git_operations);
         self
@@ -154,7 +156,8 @@ impl AppContextBuilder {
 
     /// Configure the terminal operations for this context
     ///
-    /// Used extensively in tests and production code throughout the codebase
+    /// Used in tests to provide custom terminal operations
+    #[allow(dead_code)]
     pub fn with_terminal_operations(
         mut self,
         terminal_operations: Arc<dyn TerminalOperations>,
@@ -165,7 +168,8 @@ impl AppContextBuilder {
 
     /// Configure the TSK client for this context
     ///
-    /// Used extensively in tests and production code throughout the codebase
+    /// Used in tests to provide custom TSK client implementations
+    #[allow(dead_code)]
     pub fn with_tsk_client(mut self, tsk_client: Arc<dyn TskClient>) -> Self {
         self.tsk_client = Some(tsk_client);
         self
@@ -173,7 +177,8 @@ impl AppContextBuilder {
 
     /// Configure the TSK configuration for this context
     ///
-    /// Used extensively in tests and production code throughout the codebase
+    /// Used in tests to provide custom TSK configuration
+    #[allow(dead_code)]
     pub fn with_tsk_config(mut self, tsk_config: Arc<TskConfig>) -> Self {
         self.tsk_config = Some(tsk_config);
         self
@@ -188,15 +193,14 @@ impl AppContextBuilder {
 
             let tsk_config = self.tsk_config.unwrap_or_else(|| {
                 // Create test-safe TSK configuration in temp directory
-                let xdg_config = crate::context::tsk_config::XdgConfig::builder()
+                let config = TskConfig::builder()
                     .with_data_dir(temp_path.join("data").to_path_buf())
                     .with_runtime_dir(temp_path.join("runtime").to_path_buf())
                     .with_config_dir(temp_path.join("config").to_path_buf())
                     .with_claude_config_dir(temp_path.join("claude").to_path_buf())
                     .with_git_user_name("Test User".to_string())
                     .with_git_user_email("test@example.com".to_string())
-                    .build();
-                let config = TskConfig::new(Some(xdg_config))
+                    .build()
                     .expect("Failed to initialize test TSK configuration");
                 config
                     .ensure_directories()
@@ -245,7 +249,7 @@ impl AppContextBuilder {
         #[cfg(not(test))]
         {
             let tsk_config = self.tsk_config.unwrap_or_else(|| {
-                let config = TskConfig::new(None).expect("Failed to initialize TSK configuration");
+                let config = TskConfig::new().expect("Failed to initialize TSK configuration");
                 // Ensure directories exist
                 config
                     .ensure_directories()

@@ -1,6 +1,8 @@
 use crate::context::tsk_config::TskConfig;
 use std::io::{self, Write};
-use std::sync::{Arc, Mutex};
+#[cfg(test)]
+use std::sync::Arc;
+use std::sync::Mutex;
 
 /// Trait for terminal operations
 pub trait TerminalOperations: Send + Sync {
@@ -14,7 +16,8 @@ pub trait TerminalOperations: Send + Sync {
 /// Default terminal operations implementation
 pub struct DefaultTerminalOperations {
     state: Mutex<TerminalState>,
-    #[allow(dead_code)] // Will be used when terminal operations need config-based customization
+    #[cfg(test)]
+    #[allow(dead_code)]
     tsk_config: Option<Arc<TskConfig>>,
 }
 
@@ -33,12 +36,13 @@ impl DefaultTerminalOperations {
                 supported,
                 original_title: None,
             }),
+            #[cfg(test)]
             tsk_config: None,
         }
     }
 
     /// Create a new terminal operations instance with TSK configuration
-    #[allow(dead_code)] // Used in tests and for future config-based terminal customization
+    #[cfg(test)]
     pub fn with_tsk_config(tsk_config: Arc<TskConfig>) -> Self {
         let supported = Self::is_supported(Some(&tsk_config));
 
@@ -47,6 +51,7 @@ impl DefaultTerminalOperations {
                 supported,
                 original_title: None,
             }),
+            #[cfg(test)]
             tsk_config: Some(tsk_config),
         }
     }
@@ -161,36 +166,36 @@ mod tests {
 
     #[test]
     fn test_terminal_support_detection() {
-        use crate::context::tsk_config::{TskConfig, XdgConfig};
+        use crate::context::tsk_config::TskConfig;
 
         // Test with xterm-256color terminal
-        let xdg_config_xterm = XdgConfig::builder()
+        let config_xterm = TskConfig::builder()
             .with_terminal_type(Some("xterm-256color".to_string()))
             .with_git_user_name("Test User".to_string())
             .with_git_user_email("test@example.com".to_string())
-            .build();
-        let config_xterm = TskConfig::new(Some(xdg_config_xterm)).unwrap();
+            .build()
+            .unwrap();
         assert!(
             DefaultTerminalOperations::is_supported(Some(&config_xterm))
                 || !atty::is(atty::Stream::Stdout)
         );
 
         // Test with dumb terminal
-        let xdg_config_dumb = XdgConfig::builder()
+        let config_dumb = TskConfig::builder()
             .with_terminal_type(Some("dumb".to_string()))
             .with_git_user_name("Test User".to_string())
             .with_git_user_email("test@example.com".to_string())
-            .build();
-        let config_dumb = TskConfig::new(Some(xdg_config_dumb)).unwrap();
+            .build()
+            .unwrap();
         assert!(!DefaultTerminalOperations::is_supported(Some(&config_dumb)));
 
         // Test with no terminal type set
-        let xdg_config_none = XdgConfig::builder()
+        let config_none = TskConfig::builder()
             .with_terminal_type(None)
             .with_git_user_name("Test User".to_string())
             .with_git_user_email("test@example.com".to_string())
-            .build();
-        let config_none = TskConfig::new(Some(xdg_config_none)).unwrap();
+            .build()
+            .unwrap();
         assert!(!DefaultTerminalOperations::is_supported(Some(&config_none)));
 
         // Test terminal operations with TSK configuration

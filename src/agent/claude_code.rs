@@ -38,7 +38,7 @@ impl ClaudeCodeAgent {
 impl Default for ClaudeCodeAgent {
     fn default() -> Self {
         Self::with_tsk_config(Arc::new(
-            TskConfig::new(None).expect("Failed to create TskConfig"),
+            TskConfig::new().expect("Failed to create TskConfig"),
         ))
     }
 }

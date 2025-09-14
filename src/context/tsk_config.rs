@@ -14,150 +14,6 @@ pub enum TskConfigError {
     GitConfig(String),
 }
 
-/// Configuration for overriding TSK configuration paths and environment settings
-#[derive(Debug, Clone, Default)]
-pub struct XdgConfig {
-    /// Override for data directory (XDG_DATA_HOME)
-    pub data_dir: Option<PathBuf>,
-    /// Override for runtime directory (XDG_RUNTIME_DIR)
-    pub runtime_dir: Option<PathBuf>,
-    /// Override for config directory (XDG_CONFIG_HOME)
-    pub config_dir: Option<PathBuf>,
-    /// Override for Claude configuration directory (defaults to $HOME/.claude)
-    pub claude_config_dir: Option<PathBuf>,
-    /// Override for editor command (defaults to $EDITOR or "vi")
-    pub editor: Option<String>,
-    /// Override for terminal type (from $TERM)
-    pub terminal_type: Option<Option<String>>,
-    /// Override for git user.name (defaults to git config --global user.name)
-    pub git_user_name: Option<String>,
-    /// Override for git user.email (defaults to git config --global user.email)
-    pub git_user_email: Option<String>,
-}
-
-impl XdgConfig {
-    /// Create a new XdgConfig with all overrides set
-    ///
-    /// This method is used extensively throughout the codebase for testing with temporary directories
-    #[allow(dead_code)] // Used throughout codebase for testing
-    pub fn with_paths(data_dir: PathBuf, runtime_dir: PathBuf, config_dir: PathBuf) -> Self {
-        Self {
-            data_dir: Some(data_dir),
-            runtime_dir: Some(runtime_dir),
-            config_dir: Some(config_dir),
-            claude_config_dir: None,
-            editor: None,
-            terminal_type: None,
-            git_user_name: None,
-            git_user_email: None,
-        }
-    }
-
-    /// Create a builder for XdgConfig with more fine-grained control
-    #[allow(dead_code)] // Used in tests for creating custom configs
-    pub fn builder() -> XdgConfigBuilder {
-        XdgConfigBuilder::new()
-    }
-}
-
-/// Builder for creating XdgConfig instances with custom values
-#[allow(dead_code)] // Used in tests for creating custom configs
-pub struct XdgConfigBuilder {
-    data_dir: Option<PathBuf>,
-    runtime_dir: Option<PathBuf>,
-    config_dir: Option<PathBuf>,
-    claude_config_dir: Option<PathBuf>,
-    editor: Option<String>,
-    terminal_type: Option<Option<String>>,
-    git_user_name: Option<String>,
-    git_user_email: Option<String>,
-}
-
-#[allow(dead_code)] // Used in tests for creating custom configs  
-impl XdgConfigBuilder {
-    /// Creates a new XdgConfigBuilder
-    pub fn new() -> Self {
-        Self {
-            data_dir: None,
-            runtime_dir: None,
-            config_dir: None,
-            claude_config_dir: None,
-            editor: None,
-            terminal_type: None,
-            git_user_name: None,
-            git_user_email: None,
-        }
-    }
-
-    /// Sets the data directory
-    pub fn with_data_dir(mut self, dir: PathBuf) -> Self {
-        self.data_dir = Some(dir);
-        self
-    }
-
-    /// Sets the runtime directory
-    pub fn with_runtime_dir(mut self, dir: PathBuf) -> Self {
-        self.runtime_dir = Some(dir);
-        self
-    }
-
-    /// Sets the config directory
-    pub fn with_config_dir(mut self, dir: PathBuf) -> Self {
-        self.config_dir = Some(dir);
-        self
-    }
-
-    /// Sets the Claude configuration directory
-    pub fn with_claude_config_dir(mut self, dir: PathBuf) -> Self {
-        self.claude_config_dir = Some(dir);
-        self
-    }
-
-    /// Sets the editor command
-    pub fn with_editor(mut self, editor: String) -> Self {
-        self.editor = Some(editor);
-        self
-    }
-
-    /// Sets the terminal type
-    pub fn with_terminal_type(mut self, terminal_type: Option<String>) -> Self {
-        self.terminal_type = Some(terminal_type);
-        self
-    }
-
-    /// Sets the git user name
-    pub fn with_git_user_name(mut self, name: String) -> Self {
-        self.git_user_name = Some(name);
-        self
-    }
-
-    /// Sets the git user email
-    pub fn with_git_user_email(mut self, email: String) -> Self {
-        self.git_user_email = Some(email);
-        self
-    }
-
-    /// Builds the XdgConfig instance
-    pub fn build(self) -> XdgConfig {
-        XdgConfig {
-            data_dir: self.data_dir,
-            runtime_dir: self.runtime_dir,
-            config_dir: self.config_dir,
-            claude_config_dir: self.claude_config_dir,
-            editor: self.editor,
-            terminal_type: self.terminal_type,
-            git_user_name: self.git_user_name,
-            git_user_email: self.git_user_email,
-        }
-    }
-}
-
-impl Default for XdgConfigBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Provides access to XDG Base Directory compliant paths for TSK
 #[derive(Debug, Clone)]
 pub struct TskConfig {
@@ -172,21 +28,21 @@ pub struct TskConfig {
 }
 
 impl TskConfig {
-    /// Create new TSK configuration instance with optional configuration overrides
+    /// Create new TSK configuration instance with default paths from environment
     ///
-    /// # Arguments
-    /// * `config` - Optional configuration to override default XDG paths. If `None`,
-    ///   environment variables and defaults will be used.
-    pub fn new(config: Option<XdgConfig>) -> Result<Self, TskConfigError> {
-        let config = config.unwrap_or_default();
-        let data_dir = Self::resolve_data_dir(&config)?;
-        let runtime_dir = Self::resolve_runtime_dir(&config)?;
-        let config_dir = Self::resolve_config_dir(&config)?;
-        let claude_config_dir = Self::resolve_claude_config_dir(&config)?;
-        let editor = Self::resolve_editor(&config);
-        let terminal_type = Self::resolve_terminal_type(&config);
-        let git_user_name = Self::resolve_git_user_name(&config)?;
-        let git_user_email = Self::resolve_git_user_email(&config)?;
+    /// Uses XDG Base Directory specification:
+    /// - XDG_DATA_HOME for data directory (defaults to ~/.local/share/tsk)
+    /// - XDG_RUNTIME_DIR for runtime directory (defaults to /tmp/tsk-$UID)
+    /// - XDG_CONFIG_HOME for config directory (defaults to ~/.config/tsk)
+    pub fn new() -> Result<Self, TskConfigError> {
+        let data_dir = Self::resolve_data_dir(None)?;
+        let runtime_dir = Self::resolve_runtime_dir(None)?;
+        let config_dir = Self::resolve_config_dir(None)?;
+        let claude_config_dir = Self::resolve_claude_config_dir(None)?;
+        let editor = Self::resolve_editor(None);
+        let terminal_type = Self::resolve_terminal_type(None);
+        let git_user_name = Self::resolve_git_user_name(None)?;
+        let git_user_email = Self::resolve_git_user_email(None)?;
 
         Ok(Self {
             data_dir,
@@ -200,10 +56,16 @@ impl TskConfig {
         })
     }
 
+    /// Create a builder for TskConfig with custom overrides
+    #[cfg(test)]
+    pub fn builder() -> TskConfigBuilder {
+        TskConfigBuilder::new()
+    }
+
     /// Get the data directory path (for persistent storage)
     ///
-    /// Used by task.rs for accessing task storage directory
-    #[allow(dead_code)] // Used by task.rs
+    /// Used in tests for accessing task storage directory
+    #[cfg(test)]
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
     }
@@ -275,9 +137,9 @@ impl TskConfig {
         Ok(())
     }
 
-    fn resolve_data_dir(config: &XdgConfig) -> Result<PathBuf, TskConfigError> {
-        // Check config override first
-        if let Some(ref data_dir) = config.data_dir {
+    fn resolve_data_dir(override_dir: Option<&PathBuf>) -> Result<PathBuf, TskConfigError> {
+        // Check override first
+        if let Some(data_dir) = override_dir {
             return Ok(data_dir.join("tsk"));
         }
 
@@ -294,9 +156,9 @@ impl TskConfig {
         Ok(PathBuf::from(home).join(".local").join("share").join("tsk"))
     }
 
-    fn resolve_runtime_dir(config: &XdgConfig) -> Result<PathBuf, TskConfigError> {
-        // Check config override first
-        if let Some(ref runtime_dir) = config.runtime_dir {
+    fn resolve_runtime_dir(override_dir: Option<&PathBuf>) -> Result<PathBuf, TskConfigError> {
+        // Check override first
+        if let Some(runtime_dir) = override_dir {
             return Ok(runtime_dir.join("tsk"));
         }
 
@@ -321,9 +183,9 @@ impl TskConfig {
         Ok(PathBuf::from("/tmp").join(format!("tsk-{uid}")))
     }
 
-    fn resolve_config_dir(config: &XdgConfig) -> Result<PathBuf, TskConfigError> {
-        // Check config override first
-        if let Some(ref config_dir) = config.config_dir {
+    fn resolve_config_dir(override_dir: Option<&PathBuf>) -> Result<PathBuf, TskConfigError> {
+        // Check override first
+        if let Some(config_dir) = override_dir {
             return Ok(config_dir.join("tsk"));
         }
 
@@ -340,9 +202,11 @@ impl TskConfig {
         Ok(PathBuf::from(home).join(".config").join("tsk"))
     }
 
-    fn resolve_claude_config_dir(config: &XdgConfig) -> Result<PathBuf, TskConfigError> {
-        // Check config override first
-        if let Some(ref claude_config_dir) = config.claude_config_dir {
+    fn resolve_claude_config_dir(
+        override_dir: Option<&PathBuf>,
+    ) -> Result<PathBuf, TskConfigError> {
+        // Check override first
+        if let Some(claude_config_dir) = override_dir {
             return Ok(claude_config_dir.clone());
         }
 
@@ -354,9 +218,9 @@ impl TskConfig {
         Ok(PathBuf::from(home).join(".claude"))
     }
 
-    fn resolve_editor(config: &XdgConfig) -> String {
-        // Check config override first
-        if let Some(ref editor) = config.editor {
+    fn resolve_editor(override_editor: Option<&String>) -> String {
+        // Check override first
+        if let Some(editor) = override_editor {
             return editor.clone();
         }
 
@@ -364,9 +228,9 @@ impl TskConfig {
         env::var("EDITOR").unwrap_or_else(|_| "vi".to_string())
     }
 
-    fn resolve_terminal_type(config: &XdgConfig) -> Option<String> {
-        // Check config override first
-        if let Some(ref terminal_type) = config.terminal_type {
+    fn resolve_terminal_type(override_terminal: Option<&Option<String>>) -> Option<String> {
+        // Check override first
+        if let Some(terminal_type) = override_terminal {
             return terminal_type.clone();
         }
 
@@ -374,9 +238,9 @@ impl TskConfig {
         env::var("TERM").ok()
     }
 
-    fn resolve_git_user_name(config: &XdgConfig) -> Result<String, TskConfigError> {
-        // Check config override first
-        if let Some(ref name) = config.git_user_name {
+    fn resolve_git_user_name(override_name: Option<&String>) -> Result<String, TskConfigError> {
+        // Check override first
+        if let Some(name) = override_name {
             return Ok(name.clone());
         }
 
@@ -384,14 +248,130 @@ impl TskConfig {
         get_git_config("user.name")
     }
 
-    fn resolve_git_user_email(config: &XdgConfig) -> Result<String, TskConfigError> {
-        // Check config override first
-        if let Some(ref email) = config.git_user_email {
+    fn resolve_git_user_email(override_email: Option<&String>) -> Result<String, TskConfigError> {
+        // Check override first
+        if let Some(email) = override_email {
             return Ok(email.clone());
         }
 
         // Fall back to git config
         get_git_config("user.email")
+    }
+}
+
+impl Default for TskConfig {
+    /// Create a TskConfig with default settings from environment
+    fn default() -> Self {
+        Self::new().expect("Failed to create default TskConfig")
+    }
+}
+
+/// Builder for creating TskConfig instances with custom values
+#[cfg(test)]
+pub struct TskConfigBuilder {
+    data_dir: Option<PathBuf>,
+    runtime_dir: Option<PathBuf>,
+    config_dir: Option<PathBuf>,
+    claude_config_dir: Option<PathBuf>,
+    editor: Option<String>,
+    terminal_type: Option<Option<String>>,
+    git_user_name: Option<String>,
+    git_user_email: Option<String>,
+}
+
+#[cfg(test)]
+impl TskConfigBuilder {
+    /// Creates a new TskConfigBuilder
+    pub fn new() -> Self {
+        Self {
+            data_dir: None,
+            runtime_dir: None,
+            config_dir: None,
+            claude_config_dir: None,
+            editor: None,
+            terminal_type: None,
+            git_user_name: None,
+            git_user_email: None,
+        }
+    }
+
+    /// Sets the data directory
+    pub fn with_data_dir(mut self, dir: PathBuf) -> Self {
+        self.data_dir = Some(dir);
+        self
+    }
+
+    /// Sets the runtime directory
+    pub fn with_runtime_dir(mut self, dir: PathBuf) -> Self {
+        self.runtime_dir = Some(dir);
+        self
+    }
+
+    /// Sets the config directory
+    pub fn with_config_dir(mut self, dir: PathBuf) -> Self {
+        self.config_dir = Some(dir);
+        self
+    }
+
+    /// Sets the Claude configuration directory
+    pub fn with_claude_config_dir(mut self, dir: PathBuf) -> Self {
+        self.claude_config_dir = Some(dir);
+        self
+    }
+
+    /// Sets the editor command
+    pub fn with_editor(mut self, editor: String) -> Self {
+        self.editor = Some(editor);
+        self
+    }
+
+    /// Sets the terminal type
+    pub fn with_terminal_type(mut self, terminal_type: Option<String>) -> Self {
+        self.terminal_type = Some(terminal_type);
+        self
+    }
+
+    /// Sets the git user name
+    pub fn with_git_user_name(mut self, name: String) -> Self {
+        self.git_user_name = Some(name);
+        self
+    }
+
+    /// Sets the git user email
+    pub fn with_git_user_email(mut self, email: String) -> Self {
+        self.git_user_email = Some(email);
+        self
+    }
+
+    /// Builds the TskConfig instance
+    pub fn build(self) -> Result<TskConfig, TskConfigError> {
+        let data_dir = TskConfig::resolve_data_dir(self.data_dir.as_ref())?;
+        let runtime_dir = TskConfig::resolve_runtime_dir(self.runtime_dir.as_ref())?;
+        let config_dir = TskConfig::resolve_config_dir(self.config_dir.as_ref())?;
+        let claude_config_dir =
+            TskConfig::resolve_claude_config_dir(self.claude_config_dir.as_ref())?;
+        let editor = TskConfig::resolve_editor(self.editor.as_ref());
+        let terminal_type = TskConfig::resolve_terminal_type(self.terminal_type.as_ref());
+        let git_user_name = TskConfig::resolve_git_user_name(self.git_user_name.as_ref())?;
+        let git_user_email = TskConfig::resolve_git_user_email(self.git_user_email.as_ref())?;
+
+        Ok(TskConfig {
+            data_dir,
+            runtime_dir,
+            config_dir,
+            claude_config_dir,
+            editor,
+            terminal_type,
+            git_user_name,
+            git_user_email,
+        })
+    }
+}
+
+#[cfg(test)]
+impl Default for TskConfigBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -448,30 +428,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_tsk_config_with_config() {
-        let config = XdgConfig::builder()
+    fn test_tsk_config_with_builder() {
+        let config = TskConfig::builder()
             .with_data_dir(PathBuf::from("/custom/data"))
             .with_runtime_dir(PathBuf::from("/custom/runtime"))
             .with_config_dir(PathBuf::from("/custom/config"))
             .with_git_user_name("Test User".to_string())
             .with_git_user_email("test@example.com".to_string())
-            .build();
+            .build()
+            .expect("Failed to create TSK configuration");
 
-        let dirs = TskConfig::new(Some(config)).expect("Failed to create TSK configuration");
-
-        assert_eq!(dirs.data_dir(), Path::new("/custom/data/tsk"));
-        assert_eq!(dirs.runtime_dir(), Path::new("/custom/runtime/tsk"));
-        assert_eq!(dirs.config_dir(), Path::new("/custom/config/tsk"));
-        assert_eq!(dirs.tasks_file(), Path::new("/custom/data/tsk/tasks.json"));
+        assert_eq!(config.data_dir(), Path::new("/custom/data/tsk"));
+        assert_eq!(config.runtime_dir(), Path::new("/custom/runtime/tsk"));
+        assert_eq!(config.config_dir(), Path::new("/custom/config/tsk"));
         assert_eq!(
-            dirs.socket_path(),
+            config.tasks_file(),
+            Path::new("/custom/data/tsk/tasks.json")
+        );
+        assert_eq!(
+            config.socket_path(),
             Path::new("/custom/runtime/tsk/tsk.sock")
         );
-        assert_eq!(dirs.pid_file(), Path::new("/custom/runtime/tsk/tsk.pid"));
+        assert_eq!(config.pid_file(), Path::new("/custom/runtime/tsk/tsk.pid"));
         // Check that environment fields have defaults
-        assert!(!dirs.editor().is_empty());
+        assert!(!config.editor().is_empty());
         assert!(
-            dirs.claude_config_dir()
+            config
+                .claude_config_dir()
                 .to_string_lossy()
                 .contains(".claude")
         );
@@ -479,66 +462,54 @@ mod tests {
 
     #[test]
     fn test_tsk_config_fallback() {
-        // Test that fallback paths work when no config is provided
+        // Test that fallback paths work when no overrides are provided
         // In tests, we need to provide git config
-        let config = XdgConfig::builder()
+        let config = TskConfig::builder()
             .with_git_user_name("Test User".to_string())
             .with_git_user_email("test@example.com".to_string())
-            .build();
-        let dirs = TskConfig::new(Some(config)).expect("Failed to create TSK configuration");
+            .build()
+            .expect("Failed to create TSK configuration");
 
         // These paths depend on environment variables, so we just verify they contain "tsk"
-        assert!(dirs.data_dir().to_string_lossy().contains("tsk"));
-        assert!(dirs.runtime_dir().to_string_lossy().contains("tsk"));
-        assert!(dirs.config_dir().to_string_lossy().contains("tsk"));
+        assert!(config.data_dir().to_string_lossy().contains("tsk"));
+        assert!(config.runtime_dir().to_string_lossy().contains("tsk"));
+        assert!(config.config_dir().to_string_lossy().contains("tsk"));
     }
 
     #[test]
     fn test_partial_config_overrides() {
         // Test that partial configs work correctly - only override some paths
-        let config = XdgConfig {
-            data_dir: Some(PathBuf::from("/override/data")),
-            runtime_dir: None,
-            config_dir: Some(PathBuf::from("/override/config")),
-            claude_config_dir: None,
-            editor: None,
-            terminal_type: None,
-            git_user_name: Some("Test User".to_string()),
-            git_user_email: Some("test@example.com".to_string()),
-        };
+        let config = TskConfig::builder()
+            .with_data_dir(PathBuf::from("/override/data"))
+            .with_config_dir(PathBuf::from("/override/config"))
+            .with_git_user_name("Test User".to_string())
+            .with_git_user_email("test@example.com".to_string())
+            .build()
+            .expect("Failed to create TSK configuration");
 
-        let dirs = TskConfig::new(Some(config)).expect("Failed to create TSK configuration");
-
-        assert_eq!(dirs.data_dir(), Path::new("/override/data/tsk"));
-        assert_eq!(dirs.config_dir(), Path::new("/override/config/tsk"));
+        assert_eq!(config.data_dir(), Path::new("/override/data/tsk"));
+        assert_eq!(config.config_dir(), Path::new("/override/config/tsk"));
         // Runtime dir should use environment variable or default
-        assert!(dirs.runtime_dir().to_string_lossy().contains("tsk"));
+        assert!(config.runtime_dir().to_string_lossy().contains("tsk"));
     }
 
     #[test]
     fn test_config_resolution_priority() {
         // Test that config overrides work without environment manipulation
-        // The XdgConfig mechanism provides a safe way to override paths
-        let config = XdgConfig {
-            data_dir: Some(PathBuf::from("/config/data")),
-            runtime_dir: None,
-            config_dir: None,
-            claude_config_dir: None,
-            editor: None,
-            terminal_type: None,
-            git_user_name: Some("Test User".to_string()),
-            git_user_email: Some("test@example.com".to_string()),
-        };
-
-        let dirs = TskConfig::new(Some(config)).expect("Failed to create TSK configuration");
+        let config = TskConfig::builder()
+            .with_data_dir(PathBuf::from("/config/data"))
+            .with_git_user_name("Test User".to_string())
+            .with_git_user_email("test@example.com".to_string())
+            .build()
+            .expect("Failed to create TSK configuration");
 
         // Config should be used as provided
-        assert_eq!(dirs.data_dir(), Path::new("/config/data/tsk"));
+        assert_eq!(config.data_dir(), Path::new("/config/data/tsk"));
 
         // Runtime and config dirs will use defaults or environment
         // Just verify they are set to something
-        assert!(!dirs.runtime_dir().as_os_str().is_empty());
-        assert!(!dirs.config_dir().as_os_str().is_empty());
+        assert!(!config.runtime_dir().as_os_str().is_empty());
+        assert!(!config.config_dir().as_os_str().is_empty());
     }
 
     #[test]
@@ -546,45 +517,44 @@ mod tests {
         use crate::context::AppContext;
 
         let ctx = AppContext::builder().build();
-        let dirs = ctx.tsk_config();
-        let task_dir = dirs.task_dir("task-123", "repo-abc");
+        let config = ctx.tsk_config();
+        let task_dir = config.task_dir("task-123", "repo-abc");
 
         assert!(task_dir.to_string_lossy().contains("repo-abc-task-123"));
     }
 
     #[test]
-    fn test_xdg_config_builder_with_environment_fields() {
-        let config = XdgConfig::builder()
+    fn test_tsk_config_builder_with_environment_fields() {
+        let config = TskConfig::builder()
             .with_claude_config_dir(PathBuf::from("/test/.claude"))
             .with_editor("emacs".to_string())
             .with_terminal_type(Some("xterm-256color".to_string()))
             .with_git_user_name("Test User".to_string())
             .with_git_user_email("test@example.com".to_string())
-            .build();
+            .build()
+            .expect("Failed to create TSK configuration");
 
-        let dirs = TskConfig::new(Some(config)).expect("Failed to create TSK configuration");
-
-        assert_eq!(dirs.claude_config_dir(), Path::new("/test/.claude"));
-        assert_eq!(dirs.editor(), "emacs");
-        assert_eq!(dirs.terminal_type(), Some("xterm-256color"));
+        assert_eq!(config.claude_config_dir(), Path::new("/test/.claude"));
+        assert_eq!(config.editor(), "emacs");
+        assert_eq!(config.terminal_type(), Some("xterm-256color"));
     }
 
     #[test]
-    fn test_xdg_config_builder_partial_environment() {
-        let config = XdgConfig::builder()
+    fn test_tsk_config_builder_partial_environment() {
+        let config = TskConfig::builder()
             .with_editor("nano".to_string())
             .with_terminal_type(None)
             .with_git_user_name("Test User".to_string())
             .with_git_user_email("test@example.com".to_string())
-            .build();
+            .build()
+            .expect("Failed to create TSK configuration");
 
-        let dirs = TskConfig::new(Some(config)).expect("Failed to create TSK configuration");
-
-        assert_eq!(dirs.editor(), "nano");
-        assert_eq!(dirs.terminal_type(), None);
+        assert_eq!(config.editor(), "nano");
+        assert_eq!(config.terminal_type(), None);
         // Claude config dir should use default
         assert!(
-            dirs.claude_config_dir()
+            config
+                .claude_config_dir()
                 .to_string_lossy()
                 .contains(".claude")
         );
@@ -592,35 +562,42 @@ mod tests {
 
     #[test]
     fn test_git_configuration_overrides() {
-        let config = XdgConfig::builder()
+        let config = TskConfig::builder()
             .with_git_user_name("Override User".to_string())
             .with_git_user_email("override@example.com".to_string())
-            .build();
+            .build()
+            .expect("Failed to create TSK configuration");
 
-        let dirs = TskConfig::new(Some(config)).expect("Failed to create TSK configuration");
-
-        assert_eq!(dirs.git_user_name(), "Override User");
-        assert_eq!(dirs.git_user_email(), "override@example.com");
+        assert_eq!(config.git_user_name(), "Override User");
+        assert_eq!(config.git_user_email(), "override@example.com");
     }
 
     #[test]
     fn test_git_configuration_partial_override() {
         // Test that we can override just the name and git email will fall back to git config
-        let config = XdgConfig::builder()
-            .with_git_user_name("Partial Override".to_string())
-            .build();
+        let builder = TskConfig::builder().with_git_user_name("Partial Override".to_string());
 
         // This test may fail if git is not configured on the system
-        match TskConfig::new(Some(config)) {
-            Ok(dirs) => {
-                assert_eq!(dirs.git_user_name(), "Partial Override");
+        match builder.build() {
+            Ok(config) => {
+                assert_eq!(config.git_user_name(), "Partial Override");
                 // git_user_email will be from git config or will cause error
-                assert!(!dirs.git_user_email().is_empty());
+                assert!(!config.git_user_email().is_empty());
             }
             Err(e) => {
                 // Expected if git user.email is not configured
                 assert!(e.to_string().contains("Git config"));
             }
+        }
+    }
+
+    #[test]
+    fn test_default_implementation() {
+        // Default should work if git is configured, or fail gracefully
+        let result = std::panic::catch_unwind(TskConfig::default);
+        if let Ok(config) = result {
+            assert!(!config.editor().is_empty());
+            assert!(config.data_dir().to_string_lossy().contains("tsk"));
         }
     }
 }
