@@ -130,7 +130,8 @@ impl AppContextBuilder {
 
     /// Configure the Docker client for this context
     ///
-    /// Used extensively in tests and production code throughout the codebase
+    /// Used extensively in tests throughout the codebase
+    #[allow(dead_code)] // Used in tests
     pub fn with_docker_client(mut self, docker_client: Arc<dyn DockerClient>) -> Self {
         self.docker_client = Some(docker_client);
         self

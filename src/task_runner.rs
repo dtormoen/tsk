@@ -1,8 +1,6 @@
 use crate::agent::AgentProvider;
 use crate::context::AppContext;
-use crate::docker::{
-    DockerManager, image_manager::DockerImageManager, proxy_manager::ProxyManager,
-};
+use crate::docker::{DockerManager, image_manager::DockerImageManager};
 use crate::git::RepoManager;
 use crate::task::Task;
 
@@ -54,7 +52,7 @@ impl TaskRunner {
     /// * `ctx` - The application context providing all required dependencies
     pub fn new(ctx: &AppContext) -> Self {
         let repo_manager = RepoManager::new(ctx);
-        let docker_manager = DockerManager::new(ctx.docker_client());
+        let docker_manager = DockerManager::new(ctx);
 
         Self {
             ctx: ctx.clone(),
@@ -105,13 +103,6 @@ impl TaskRunner {
         println!("Launching Docker container with {} agent...", agent.name());
         println!("\n{}", "=".repeat(60));
 
-        // Ensure the proxy is running first
-        let proxy_manager = ProxyManager::new(&self.ctx);
-        proxy_manager
-            .ensure_proxy()
-            .await
-            .map_err(|e| format!("Error ensuring proxy: {e}"))?;
-
         // Create a task-specific image manager with the copied repository as the project root
         // This ensures that project-specific dockerfiles are found in the copied repository
         let task_image_manager = DockerImageManager::new(&self.ctx, Some(repo_path));
@@ -137,7 +128,7 @@ impl TaskRunner {
         }
 
         // Run the container using the unified method
-        let (_output, task_result_from_container) = self
+        let (_output, task_result) = self
             .docker_manager
             .run_task_container(&docker_image_tag, task, agent.as_ref())
             .await
@@ -172,9 +163,6 @@ impl TaskRunner {
                 eprintln!("Error fetching changes: {e}");
             }
         }
-
-        // Use the task result from the container execution
-        let task_result = task_result_from_container;
 
         // Send notification about task completion
         let success = task_result.as_ref().map(|r| r.success).unwrap_or(false);

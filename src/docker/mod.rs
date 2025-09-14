@@ -7,13 +7,12 @@ pub mod template_engine;
 pub mod template_manager;
 
 use crate::agent::{Agent, LogProcessor};
-use crate::context::docker_client::DockerClient;
+use crate::context::AppContext;
 use crate::docker::proxy_manager::ProxyManager;
 use bollard::models::{ContainerCreateBody, HostConfig};
 use bollard::query_parameters::{LogsOptions, RemoveContainerOptions};
 use futures_util::stream::StreamExt;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::PathBuf;
 
 // Container resource limits
 const CONTAINER_MEMORY_LIMIT: i64 = 12 * 1024 * 1024 * 1024; // 12GB
@@ -21,25 +20,116 @@ const CONTAINER_CPU_QUOTA: i64 = 800000; // 8 CPUs
 const CONTAINER_WORKING_DIR: &str = "/workspace";
 const CONTAINER_USER: &str = "agent";
 
+/// Manages Docker container execution for TSK tasks.
+///
+/// This struct handles the lifecycle of task containers including:
+/// - Container configuration and creation
+/// - Proxy management for network isolation
+/// - Log streaming and processing
+/// - Container cleanup
 pub struct DockerManager {
-    client: Arc<dyn DockerClient>,
+    ctx: AppContext,
+    proxy_manager: ProxyManager,
 }
 
 impl DockerManager {
-    pub fn new(client: Arc<dyn DockerClient>) -> Self {
-        Self { client }
+    /// Creates a new DockerManager with the given application context.
+    ///
+    /// # Arguments
+    /// * `ctx` - The application context containing all dependencies
+    pub fn new(ctx: &AppContext) -> Self {
+        let proxy_manager = ProxyManager::new(ctx);
+        Self {
+            ctx: ctx.clone(),
+            proxy_manager,
+        }
     }
 
-    fn prepare_worktree_path(worktree_path: &Path) -> Result<PathBuf, String> {
-        // Convert to absolute path to ensure Docker can find the volume
-        let absolute_path = if worktree_path.is_relative() {
-            std::env::current_dir()
-                .map_err(|e| format!("Failed to get current directory: {e}"))?
-                .join(worktree_path)
+    /// Build proxy environment variables
+    fn build_proxy_env_vars(&self) -> Vec<String> {
+        let proxy_url = self.proxy_manager.proxy_url();
+        vec![
+            format!("HTTP_PROXY={proxy_url}"),
+            format!("HTTPS_PROXY={proxy_url}"),
+            format!("http_proxy={proxy_url}"),
+            format!("https_proxy={proxy_url}"),
+            "NO_PROXY=localhost,127.0.0.1".to_string(),
+            "no_proxy=localhost,127.0.0.1".to_string(),
+        ]
+    }
+
+    /// Build command for container based on mode (interactive or non-interactive)
+    fn build_container_command(
+        &self,
+        agent: &dyn Agent,
+        instructions_file: &str,
+        is_interactive: bool,
+    ) -> Option<Vec<String>> {
+        let agent_command = if is_interactive {
+            agent.build_interactive_command(instructions_file)
         } else {
-            worktree_path.to_path_buf()
+            agent.build_command(instructions_file)
         };
-        Ok(absolute_path)
+
+        if agent_command.is_empty() {
+            None
+        } else {
+            Some(agent_command)
+        }
+    }
+
+    /// Remove a container with force option
+    async fn remove_container(&self, container_id: &str) -> Result<(), String> {
+        self.ctx
+            .docker_client()
+            .remove_container(
+                container_id,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+            )
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// Build bind volumes for container
+    fn build_bind_volumes(&self, task: &crate::task::Task, agent: &dyn Agent) -> Vec<String> {
+        let repo_path_str = task
+            .copied_repo_path
+            .to_str()
+            .expect("Repository path should be valid UTF-8");
+        let mut binds = vec![format!("{repo_path_str}:{CONTAINER_WORKING_DIR}")];
+
+        // Add agent-specific volumes
+        for (host_path, container_path, options) in agent.volumes() {
+            let bind = if options.is_empty() {
+                format!("{host_path}:{container_path}")
+            } else {
+                format!("{host_path}:{container_path}:{options}")
+            };
+            binds.push(bind);
+        }
+
+        // Add instructions directory mount
+        let instructions_file_path = PathBuf::from(&task.instructions_file);
+        if let Some(parent) = instructions_file_path.parent() {
+            let abs_parent = parent
+                .canonicalize()
+                .unwrap_or_else(|_| parent.to_path_buf());
+            binds.push(format!("{}:/instructions:ro", abs_parent.to_str().unwrap()));
+        }
+
+        binds
+    }
+
+    /// Generate container name based on task mode
+    fn build_container_name(&self, task: &crate::task::Task) -> String {
+        if task.is_interactive {
+            format!("tsk-interactive-{}", task.id)
+        } else {
+            format!("tsk-{}", task.id)
+        }
     }
 
     /// Create a container configuration for both interactive and non-interactive modes.
@@ -49,72 +139,31 @@ impl DockerManager {
     ///
     /// # Arguments
     /// * `image` - The Docker image to use
-    /// * `worktree_path_str` - The absolute path to the work directory to mount
-    /// * `command` - Optional command to run in the container
-    /// * `interactive` - Whether to configure for interactive (TTY) mode
-    /// * `instructions_file_path` - Optional path to instructions file to mount
-    /// * `agent` - Optional agent to get volumes and environment variables from
-    /// * `proxy_manager` - ProxyManager for network and proxy configuration
+    /// * `task` - The task containing all necessary configuration
+    /// * `agent` - The agent to get volumes and environment variables from
     ///
     /// # Returns
     /// A `ContainerCreateBody` configured with appropriate settings for the mode
-    fn create_base_container_config(
+    fn create_container_config(
+        &self,
         image: &str,
-        worktree_path_str: &str,
-        command: Option<Vec<String>>,
-        interactive: bool,
-        instructions_file_path: Option<&PathBuf>,
-        agent: Option<&dyn Agent>,
-        proxy_manager: &ProxyManager,
+        task: &crate::task::Task,
+        agent: &dyn Agent,
     ) -> ContainerCreateBody {
-        // Build binds vector starting with workspace
-        let mut binds = vec![format!("{worktree_path_str}:{CONTAINER_WORKING_DIR}")];
+        let binds = self.build_bind_volumes(task, agent);
+        let instructions_file_path = PathBuf::from(&task.instructions_file);
+        let mut env_vars = self.build_proxy_env_vars();
 
-        // Add agent-specific volumes if provided
-        if let Some(agent) = agent {
-            for (host_path, container_path, options) in agent.volumes() {
-                let bind = if options.is_empty() {
-                    format!("{host_path}:{container_path}")
-                } else {
-                    format!("{host_path}:{container_path}:{options}")
-                };
-                binds.push(bind);
-            }
+        // Add agent-specific environment variables
+        for (key, value) in agent.environment() {
+            env_vars.push(format!("{key}={value}"));
         }
 
-        // Add instructions directory mount if provided
-        if let Some(inst_path) = instructions_file_path
-            && let Some(parent) = inst_path.parent()
-        {
-            // Convert to absolute path to avoid Docker volume naming issues
-            let abs_parent = parent
-                .canonicalize()
-                .unwrap_or_else(|_| parent.to_path_buf());
-            binds.push(format!("{}:/instructions:ro", abs_parent.to_str().unwrap()));
-        }
-
-        // Build environment variables
-        let mut env_vars = vec![
-            // Configure proxy settings
-            format!("HTTP_PROXY={}", proxy_manager.proxy_url()),
-            format!("HTTPS_PROXY={}", proxy_manager.proxy_url()),
-            format!("http_proxy={}", proxy_manager.proxy_url()),
-            format!("https_proxy={}", proxy_manager.proxy_url()),
-            // Don't proxy localhost
-            "NO_PROXY=localhost,127.0.0.1".to_string(),
-            "no_proxy=localhost,127.0.0.1".to_string(),
-        ];
-
-        // Add agent-specific environment variables if provided
-        if let Some(agent) = agent {
-            for (key, value) in agent.environment() {
-                env_vars.push(format!("{key}={value}"));
-            }
-        } else {
-            // Default environment if no agent specified
-            env_vars.push(format!("HOME=/home/{CONTAINER_USER}"));
-            env_vars.push(format!("USER={CONTAINER_USER}"));
-        }
+        let command = self.build_container_command(
+            agent,
+            instructions_file_path.to_str().unwrap_or("instructions.md"),
+            task.is_interactive,
+        );
 
         ContainerCreateBody {
             image: Some(image.to_string()),
@@ -123,7 +172,7 @@ impl DockerManager {
             cmd: command,
             host_config: Some(HostConfig {
                 binds: Some(binds),
-                network_mode: Some(proxy_manager.network_name().to_string()),
+                network_mode: Some(self.proxy_manager.network_name().to_string()),
                 memory: Some(CONTAINER_MEMORY_LIMIT),
                 cpu_quota: Some(CONTAINER_CPU_QUOTA),
                 // No capabilities needed since we're not running iptables
@@ -142,10 +191,11 @@ impl DockerManager {
             }),
             working_dir: Some(CONTAINER_WORKING_DIR.to_string()),
             env: Some(env_vars),
-            attach_stdin: Some(interactive),
-            attach_stdout: Some(interactive),
-            attach_stderr: Some(interactive),
-            tty: Some(interactive),
+            attach_stdin: Some(task.is_interactive),
+            attach_stdout: Some(task.is_interactive),
+            attach_stderr: Some(task.is_interactive),
+            tty: Some(task.is_interactive),
+            open_stdin: Some(task.is_interactive),
             ..Default::default()
         }
     }
@@ -166,23 +216,10 @@ impl DockerManager {
         task: &crate::task::Task,
         agent: &dyn Agent,
     ) -> Result<(String, Option<crate::agent::TaskResult>), String> {
-        // Extract necessary values from the task
-        let worktree_path = &task.copied_repo_path;
-        let task_id = &task.id;
-        let is_interactive = task.is_interactive;
-        let instructions_file_path = PathBuf::from(&task.instructions_file);
-
-        // Use ProxyManager to ensure proxy is running and healthy
-        use crate::context::AppContext;
-        let ctx = AppContext::builder()
-            .with_docker_client(self.client.clone())
-            .build();
-        let proxy_manager = ProxyManager::new(&ctx);
-
         // Try to ensure proxy is running and healthy
         // If proxy fails to start or become healthy, return an error
         // This will cause the task to fail and can be retried later
-        if let Err(e) = proxy_manager.ensure_proxy().await {
+        if let Err(e) = self.proxy_manager.ensure_proxy().await {
             return Err(format!(
                 "Failed to ensure proxy is running and healthy: {e}. \
                 The task should be retried later when the proxy is available. \
@@ -190,82 +227,32 @@ impl DockerManager {
             ));
         }
 
-        let absolute_worktree_path = Self::prepare_worktree_path(worktree_path)?;
-        let worktree_path_str = absolute_worktree_path
-            .to_str()
-            .ok_or_else(|| "Invalid worktree path".to_string())?;
-
-        // Build the command based on whether we're interactive or not
-        let command = if is_interactive {
-            // For interactive mode, use the agent's interactive command
-            let agent_command = agent.build_interactive_command(
-                instructions_file_path.to_str().unwrap_or("instructions.md"),
-            );
-            if agent_command.is_empty() {
-                None
-            } else {
-                Some(agent_command)
-            }
-        } else {
-            // For non-interactive mode, just run the agent command
-            let agent_command =
-                agent.build_command(instructions_file_path.to_str().unwrap_or("instructions.md"));
-            if agent_command.is_empty() {
-                None
-            } else {
-                Some(agent_command)
-            }
-        };
-
-        // Create container configuration - shared for both modes
-        let mut config = Self::create_base_container_config(
-            docker_image_tag,
-            worktree_path_str,
-            command,
-            is_interactive,
-            Some(&instructions_file_path),
-            Some(agent),
-            &proxy_manager,
-        );
-
-        // Add open_stdin for interactive mode
-        if is_interactive {
-            config.open_stdin = Some(true);
-        }
-
-        // Create container name
-        let container_name = if is_interactive {
-            format!("tsk-interactive-{task_id}")
-        } else {
-            format!("tsk-{task_id}")
-        };
-
+        let config = self.create_container_config(docker_image_tag, task, agent);
+        let container_name = self.build_container_name(task);
         let options = bollard::query_parameters::CreateContainerOptionsBuilder::default()
             .name(&container_name)
             .build();
 
-        // Create the container
-        let container_id = self.client.create_container(Some(options), config).await?;
+        let container_id = self
+            .ctx
+            .docker_client()
+            .create_container(Some(options), config)
+            .await?;
 
-        if is_interactive {
-            // Interactive mode: start, attach, and cleanup
+        if task.is_interactive {
             println!("\nStarting interactive session...");
-            self.client.start_container(&container_id).await?;
+            self.ctx
+                .docker_client()
+                .start_container(&container_id)
+                .await?;
 
-            // Attach to the container for interactive session
-            let attach_result = self.client.attach_container(&container_id).await;
-
-            // Clean up the container after the session ends
-            let _ = self
-                .client
-                .remove_container(
-                    &container_id,
-                    Some(RemoveContainerOptions {
-                        force: true,
-                        ..Default::default()
-                    }),
-                )
+            let attach_result = self
+                .ctx
+                .docker_client()
+                .attach_container(&container_id)
                 .await;
+
+            let _ = self.remove_container(&container_id).await;
 
             if let Err(e) = attach_result {
                 eprintln!("Interactive session ended with error: {e}");
@@ -277,7 +264,10 @@ impl DockerManager {
         } else {
             // Non-interactive mode: start, stream logs, process results
             println!("Starting agent sand box container: {container_id}");
-            self.client.start_container(&container_id).await?;
+            self.ctx
+                .docker_client()
+                .start_container(&container_id)
+                .await?;
 
             // Stream logs and process them
             let mut log_processor = agent.create_log_processor();
@@ -285,19 +275,9 @@ impl DockerManager {
                 .stream_container_logs(&container_id, &mut *log_processor)
                 .await?;
 
-            // Get the task result
             let task_result = log_processor.get_final_result().cloned();
 
-            // Remove the container
-            self.client
-                .remove_container(
-                    &container_id,
-                    Some(RemoveContainerOptions {
-                        force: true,
-                        ..Default::default()
-                    }),
-                )
-                .await?;
+            self.remove_container(&container_id).await?;
 
             Ok((output, task_result))
         }
@@ -310,7 +290,7 @@ impl DockerManager {
         log_processor: &mut dyn LogProcessor,
     ) -> Result<String, String> {
         // Start a background task to stream logs
-        let client_clone = Arc::clone(&self.client);
+        let client_clone = self.ctx.docker_client();
         let container_id_clone = container_id.to_string();
         let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(100);
 
@@ -351,6 +331,9 @@ impl DockerManager {
         // Collect all logs for return value
         let mut all_logs = String::new();
 
+        // Get docker client to avoid temporary value issues
+        let docker_client = self.ctx.docker_client();
+
         // Process logs while container is running
         loop {
             tokio::select! {
@@ -361,7 +344,7 @@ impl DockerManager {
                         println!("{formatted}");
                     }
                 }
-                exit_code = self.client.wait_container(container_id) => {
+                exit_code = docker_client.wait_container(container_id) => {
                     let exit_code = exit_code?;
 
                     // Give a bit of time for remaining logs
@@ -397,15 +380,16 @@ mod tests {
     use crate::context::AppContext;
     use crate::task::{Task, TaskStatus};
     use crate::test_utils::TrackedDockerClient;
+    use std::sync::Arc;
 
     fn create_test_task(is_interactive: bool) -> Task {
-        let worktree_path = PathBuf::from("/tmp/test-worktree");
+        let repo_path = PathBuf::from("/tmp/test-repo");
         Task {
             id: "test-task-id".to_string(),
-            repo_root: worktree_path.clone(),
+            repo_root: repo_path.clone(),
             name: "test-task".to_string(),
             task_type: "feature".to_string(),
-            instructions_file: "/tmp/test-worktree/.tsk/tasks/instructions.md".to_string(),
+            instructions_file: "/tmp/test-repo/.tsk/tasks/instructions.md".to_string(),
             agent: "claude-code".to_string(),
             timeout: 30,
             status: TaskStatus::Running,
@@ -417,7 +401,7 @@ mod tests {
             source_commit: "abc123".to_string(),
             stack: "default".to_string(),
             project: "default".to_string(),
-            copied_repo_path: worktree_path,
+            copied_repo_path: repo_path,
             is_interactive,
         }
     }
@@ -425,13 +409,13 @@ mod tests {
     #[tokio::test]
     async fn test_run_task_container_success() {
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .build();
+        let manager = DockerManager::new(&ctx);
 
         let task = create_test_task(false);
-
-        let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
-        let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(tsk_config);
+        let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(ctx.tsk_config());
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
@@ -478,13 +462,13 @@ mod tests {
     async fn test_run_task_container_interactive() {
         // Test interactive mode with mock client
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .build();
+        let manager = DockerManager::new(&ctx);
 
         let task = create_test_task(true);
-        let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
-        let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(tsk_config);
-
+        let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(ctx.tsk_config());
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         // Interactive mode should succeed with mock client
@@ -528,16 +512,13 @@ mod tests {
             exit_code: 1,
             ..Default::default()
         });
-        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
-
-        let task = create_test_task(false);
-
-        // Use AppContext builder to create test-safe directories and configs
-        let app_context = AppContext::builder()
+        let ctx = AppContext::builder()
             .with_docker_client(mock_client.clone())
             .build();
-        let tsk_config = app_context.tsk_config();
-        let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(tsk_config);
+        let manager = DockerManager::new(&ctx);
+
+        let task = create_test_task(false);
+        let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(ctx.tsk_config());
 
         // Run the task container
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
@@ -563,13 +544,13 @@ mod tests {
             ..Default::default()
         };
         let mock_client = Arc::new(mock_client);
-        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .build();
+        let manager = DockerManager::new(&ctx);
 
         let task = create_test_task(false);
-
-        let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
-        let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(tsk_config);
+        let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(ctx.tsk_config());
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_err());
@@ -589,13 +570,13 @@ mod tests {
     #[tokio::test]
     async fn test_container_configuration() {
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .build();
+        let manager = DockerManager::new(&ctx);
 
         let task = create_test_task(false);
-
-        let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
-        let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(tsk_config);
+        let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(ctx.tsk_config());
         let _ = manager.run_task_container("tsk/base", &task, &agent).await;
 
         let create_calls = mock_client.create_container_calls.lock().unwrap();
@@ -646,7 +627,7 @@ mod tests {
 
         let binds = host_config.binds.as_ref().unwrap();
         assert_eq!(binds.len(), 4); // workspace, claude dir, claude.json, and instructions
-        assert!(binds[0].contains(&format!("/tmp/test-worktree:{CONTAINER_WORKING_DIR}")));
+        assert!(binds[0].contains(&format!("/tmp/test-repo:{CONTAINER_WORKING_DIR}")));
         // In test mode, .claude directory is in temp directory
         assert!(binds[1].contains(":/home/agent/.claude"));
         assert!(binds[2].contains(":/home/agent/.claude.json"));
@@ -661,14 +642,14 @@ mod tests {
     #[tokio::test]
     async fn test_run_task_container_with_instructions_file() {
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .build();
+        let manager = DockerManager::new(&ctx);
 
         let mut task = create_test_task(false);
         task.instructions_file = "/tmp/tsk-test/instructions.txt".to_string();
-
-        let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
-        let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(tsk_config);
+        let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(ctx.tsk_config());
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
@@ -687,18 +668,18 @@ mod tests {
     #[tokio::test]
     async fn test_relative_path_conversion() {
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let manager = DockerManager::new(mock_client.clone() as Arc<dyn DockerClient>);
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .build();
+        let manager = DockerManager::new(&ctx);
 
         // Create a temporary directory to use as base
         let temp_dir = tempfile::TempDir::new().unwrap();
-        let absolute_path = temp_dir.path().join("test-worktree");
+        let absolute_path = temp_dir.path().join("test-repo");
 
         let mut task = create_test_task(false);
         task.copied_repo_path = absolute_path.clone();
-
-        let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
-        let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(tsk_config);
+        let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(ctx.tsk_config());
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
@@ -709,12 +690,12 @@ mod tests {
 
         let host_config = config.host_config.as_ref().unwrap();
         let binds = host_config.binds.as_ref().unwrap();
-        let worktree_bind = &binds[0];
+        let repo_bind = &binds[0];
 
         // Should contain an absolute path (starts with /)
-        assert!(worktree_bind.starts_with('/'));
-        assert!(worktree_bind.contains("test-worktree"));
-        assert!(worktree_bind.ends_with(&format!(":{CONTAINER_WORKING_DIR}")));
+        assert!(repo_bind.starts_with('/'));
+        assert!(repo_bind.contains("test-repo"));
+        assert!(repo_bind.ends_with(&format!(":{CONTAINER_WORKING_DIR}")));
 
         // Should also have the claude directory, claude.json, and instructions mounts
         assert_eq!(binds.len(), 4); // workspace, claude dir, claude.json, and instructions
