@@ -223,6 +223,13 @@ impl ClaudeCodeLogProcessor {
     /// Formats an assistant message, extracting text content, tool uses, and todo updates
     fn format_assistant_message(&self, msg: ClaudeMessage) -> Option<String> {
         if let Some(message) = msg.message {
+            // Extract model name if available
+            let model_suffix = if let Some(model) = &message.model {
+                format!(" [{}]", model)
+            } else {
+                String::new()
+            };
+
             if let Some(content) = message.content {
                 match content {
                     Value::Array(contents) => {
@@ -246,7 +253,7 @@ impl ClaudeCodeLogProcessor {
                                 if !output.is_empty() {
                                     output.push('\n');
                                 }
-                                output.push_str(&format!("🤖 {text}"));
+                                output.push_str(&format!("🤖{} {text}", model_suffix));
                             }
                         }
 
@@ -256,7 +263,7 @@ impl ClaudeCodeLogProcessor {
                             None
                         }
                     }
-                    Value::String(text) => Some(format!("🤖 {text}")),
+                    Value::String(text) => Some(format!("🤖{} {text}", model_suffix)),
                     _ => None,
                 }
             } else {
@@ -690,7 +697,7 @@ mod tests {
     fn test_assistant_message_formats() {
         let mut processor = ClaudeCodeLogProcessor::new();
 
-        // Test text message
+        // Test text message without model
         let json = r#"{
             "type": "assistant",
             "message": {
@@ -699,6 +706,34 @@ mod tests {
         }"#;
         let result = processor.process_line(json);
         assert_eq!(result, Some("🤖 Hello, world!".to_string()));
+
+        // Test text message with model
+        let json_with_model = r#"{
+            "type": "assistant",
+            "message": {
+                "model": "claude-opus-4-1-20250805",
+                "content": [{"type": "text", "text": "Hello with model!"}]
+            }
+        }"#;
+        let result = processor.process_line(json_with_model);
+        assert_eq!(
+            result,
+            Some("🤖 [claude-opus-4-1-20250805] Hello with model!".to_string())
+        );
+
+        // Test string content with model
+        let json_string_content = r#"{
+            "type": "assistant",
+            "message": {
+                "model": "claude-3-sonnet",
+                "content": "Direct string content"
+            }
+        }"#;
+        let result = processor.process_line(json_string_content);
+        assert_eq!(
+            result,
+            Some("🤖 [claude-3-sonnet] Direct string content".to_string())
+        );
 
         // Test tool use messages
         let bash_json = r#"{
