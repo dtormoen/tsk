@@ -71,7 +71,9 @@ impl Agent for ClaudeCodeAgent {
                 "sh".to_string(),
                 "-c".to_string(),
                 format!(
-                    "cat /instructions/{} | claude -p --verbose --output-format stream-json --dangerously-skip-permissions",
+                    // Pipe instructions to claude, capture all output (stdout + stderr), and tee to log file
+                    // This allows TSK to process output in real-time while preserving a complete log
+                    "cat /instructions/{} | claude -p --verbose --output-format stream-json --dangerously-skip-permissions 2>&1 | tee /output/claude-code-log.txt",
                     filename
                 ),
             ]
@@ -259,10 +261,12 @@ mod tests {
         assert_eq!(command[1], "-c");
         assert!(command[2].contains("cat /instructions/instructions.md"));
         assert!(command[2].contains("claude -p --verbose --output-format stream-json"));
+        assert!(command[2].contains("tee /output/claude-code-log.txt"));
 
         // Test non-interactive mode with complex path
         let command = agent.build_command("/path/to/task/instructions.txt", false);
         assert!(command[2].contains("cat /instructions/instructions.txt"));
+        assert!(command[2].contains("tee /output/claude-code-log.txt"));
 
         // Test interactive mode
         let command = agent.build_command("/tmp/instructions.md", true);

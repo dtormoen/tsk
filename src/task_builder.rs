@@ -206,6 +206,10 @@ impl TaskBuilder {
         let task_dir = ctx.tsk_config().task_dir(&task_dir_name, &repo_hash);
         ctx.file_system().create_dir(&task_dir).await?;
 
+        // Create output directory for capturing agent output
+        let output_dir = task_dir.join("output");
+        ctx.file_system().create_dir(&output_dir).await?;
+
         // Create instructions file
         let instructions_path = if self.edit {
             // Create temporary file in repository root for editing
@@ -706,5 +710,31 @@ mod tests {
         assert!(copied_repo.join("src/main.rs").exists());
         assert!(copied_repo.join("Cargo.toml").exists());
         assert!(copied_repo.join(".git").exists());
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_creates_output_directory() {
+        use crate::test_utils::TestGitRepository;
+
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+
+        let ctx = AppContext::builder().build();
+
+        let task = TaskBuilder::new()
+            .repo_root(test_repo.path().to_path_buf())
+            .name("output-test".to_string())
+            .description(Some("Test output directory creation".to_string()))
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        // Verify output directory was created
+        let repo_hash = crate::storage::get_repo_hash(test_repo.path());
+        let task_dir = ctx.tsk_config().task_dir(&task.id, &repo_hash);
+        let output_dir = task_dir.join("output");
+
+        assert!(output_dir.exists());
+        assert!(output_dir.is_dir());
     }
 }
