@@ -8,6 +8,7 @@ repository = "https://github.com/dtormoen/tsk"
 homepage = "https://github.com/dtormoen/tsk"
 license = "MIT"
 readme = "README.md"
+default-run = "tsk"
 
 [[bin]]
 name = "tsk"

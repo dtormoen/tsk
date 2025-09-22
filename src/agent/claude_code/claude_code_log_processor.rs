@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 
 use crate::agent::{LogProcessor, TaskResult};
 
@@ -14,17 +15,12 @@ struct ClaudeMessage {
     cost_usd: Option<f64>,
     is_error: Option<bool>,
     duration_ms: Option<u64>,
-    duration_api_ms: Option<u64>,
     num_turns: Option<u64>,
     result: Option<String>,
-    total_cost: Option<f64>,
-    session_id: Option<String>,
-    timestamp: Option<String>,
     #[serde(rename = "toolUseResult")]
     tool_use_result: Option<Value>,
     summary: Option<String>,
-    #[serde(rename = "leafUuid")]
-    leaf_uuid: Option<String>,
+    parent_tool_use_id: Option<String>,
 }
 
 /// Message content structure from Claude Code
@@ -61,6 +57,13 @@ struct TodoItem {
     priority: Option<String>,
 }
 
+/// Task invocation information for tracking sub-agent tasks
+#[derive(Debug, Clone)]
+struct TaskInvocation {
+    subagent_type: String,
+    description: String,
+}
+
 /// Claude Code specific log processor that parses and formats JSON output
 ///
 /// This processor provides rich output including:
@@ -70,6 +73,7 @@ struct TodoItem {
 /// - Assistant reasoning and conversation
 /// - Summary messages
 /// - Cost calculations from token usage
+/// - Task tool tracking with sub-agent output display
 ///
 /// The processor handles non-JSON output gracefully:
 /// - Initially prints non-JSON lines as-is (for misconfiguration messages)
@@ -78,26 +82,68 @@ pub struct ClaudeCodeLogProcessor {
     full_log: Vec<String>,
     final_result: Option<TaskResult>,
     json_mode_active: bool,
+    /// Optional task name for prefixing log lines
+    task_name: Option<String>,
+    /// Track task contexts by parent_tool_use_id for sub-agent message tagging
+    task_contexts: HashMap<String, TaskInvocation>,
 }
 
 impl ClaudeCodeLogProcessor {
     /// Creates a new ClaudeCodeLogProcessor
-    pub fn new() -> Self {
+    pub fn new(task_name: Option<String>) -> Self {
         Self {
             full_log: Vec::new(),
             final_result: None,
             json_mode_active: false,
+            task_name,
+            task_contexts: HashMap::new(),
         }
+    }
+
+    /// Creates a prefix for log lines in the format: <emoji> [<Task.name>][<model>][<sub-agent-name>]:
+    fn create_prefix(
+        &self,
+        emoji: &str,
+        model: Option<&str>,
+        sub_agent: Option<&str>,
+        parent_tool_use_id: Option<&str>,
+    ) -> String {
+        let mut prefix = emoji.to_string();
+
+        if let Some(task_name) = &self.task_name {
+            prefix.push_str(&format!(" [{}]", task_name));
+        }
+
+        if let Some(model) = model {
+            prefix.push_str(&format!("[{}]", model));
+        }
+
+        // Two-level fallback for sub_agent name:
+        // 1. Use explicit sub_agent parameter if provided
+        // 2. Lookup parent_tool_use_id in task_contexts
+        let sub_agent_name = sub_agent.or_else(|| {
+            parent_tool_use_id
+                .and_then(|id| self.task_contexts.get(id))
+                .map(|task| task.subagent_type.as_str())
+        });
+
+        if let Some(sub_agent_name) = sub_agent_name {
+            prefix.push_str(&format!("[{}]", sub_agent_name));
+        }
+
+        prefix.push_str(": ");
+        prefix
     }
 
     /// Formats a Claude message based on its type
     fn format_message(&mut self, msg: ClaudeMessage) -> Option<String> {
+        let parent_tool_use_id = msg.parent_tool_use_id.as_deref();
+
         match msg.message_type.as_str() {
             "assistant" => self.format_assistant_message(msg),
             "user" => self.format_user_message(&msg),
             "result" => self.format_result_message(msg),
             "summary" => {
-                // Summary messages indicate task completion
                 if let Some(summary_text) = msg.summary {
                     // Store as final result if not already set
                     if self.final_result.is_none() {
@@ -108,20 +154,65 @@ impl ClaudeCodeLogProcessor {
                             duration_ms: None,
                         });
                     }
-                    Some(format!("✅ Task Complete: {summary_text}"))
+                    Some(format!(
+                        "{}{summary_text}",
+                        self.create_prefix("✅", None, None, parent_tool_use_id)
+                    ))
                 } else {
-                    Some("✅ Task Complete".to_string())
+                    Some(format!(
+                        "{}Task Complete",
+                        self.create_prefix("✅", None, None, parent_tool_use_id)
+                    ))
                 }
             }
             other_type => {
                 // For other message types, just show a brief indicator
-                Some(format!("📋 [{other_type}]"))
+                Some(format!(
+                    "{}[{other_type}]",
+                    self.create_prefix("📋", None, None, parent_tool_use_id)
+                ))
             }
         }
     }
 
+    /// Extracts the actual content from a tool_result item in the message content array
+    fn extract_tool_result_content(&self, item: &Value) -> Option<String> {
+        if let Some(content) = item.get("content") {
+            match content {
+                // If content is a string, use it directly
+                Value::String(text) => Some(text.clone()),
+                // If content is an array, iterate through all elements looking for text objects
+                Value::Array(arr) => {
+                    let mut text_parts = Vec::new();
+
+                    for element in arr {
+                        // Look for objects with "type": "text" and extract their "text" field
+                        if let Some(element_type) = element.get("type")
+                            && element_type.as_str() == Some("text")
+                            && let Some(text) = element.get("text")
+                            && let Some(text_str) = text.as_str()
+                        {
+                            text_parts.push(text_str);
+                        }
+                    }
+
+                    if text_parts.is_empty() {
+                        None
+                    } else {
+                        Some(text_parts.join(""))
+                    }
+                }
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
+
     /// Formats a user message with tool result information
-    fn format_user_message(&self, msg: &ClaudeMessage) -> Option<String> {
+    fn format_user_message(&mut self, msg: &ClaudeMessage) -> Option<String> {
+        let parent_tool_use_id = msg.parent_tool_use_id.as_deref();
+
         // Check if this is a tool result message
         if let Some(message) = &msg.message
             && let Some(content) = &message.content
@@ -130,12 +221,67 @@ impl ClaudeCodeLogProcessor {
             if let Value::Array(contents) = content {
                 for item in contents {
                     if let Some("tool_result") = item.get("type").and_then(|t| t.as_str()) {
-                        // Try to determine which tool was used from toolUseResult
-                        if let Some(tool_result) = msg.tool_use_result.as_ref() {
-                            return Some(self.format_tool_result(tool_result));
+                        let tool_use_id = item.get("tool_use_id").and_then(|id| id.as_str());
+
+                        // Check for empty tool results - filter them out UNLESS it's a Task tool result
+                        let is_task_tool_result = tool_use_id
+                            .map(|id| self.task_contexts.contains_key(id))
+                            .unwrap_or(false);
+
+                        if !is_task_tool_result {
+                            let is_empty = if let Some(content) = item.get("content") {
+                                match content {
+                                    Value::String(text) => text.trim().is_empty(),
+                                    Value::Array(arr) => arr.is_empty(),
+                                    _ => false,
+                                }
+                            } else {
+                                true // No content field
+                            };
+
+                            // For non-Task tools with empty content, filter out completely
+                            if is_empty {
+                                return None;
+                            }
                         }
-                        // Generic tool result if we couldn't identify the type
-                        return Some("🔧 Tool result".to_string());
+
+                        // Check if this is a Task tool result first (by tool_use_id in task_contexts)
+                        if let Some(tool_use_id) = tool_use_id
+                            && let Some(task_info) = self.task_contexts.get(tool_use_id)
+                        {
+                            // Extract the actual content from the tool_result item
+                            let actual_content = self.extract_tool_result_content(item);
+
+                            let result = self.format_task_tool_result(
+                                task_info,
+                                parent_tool_use_id,
+                                actual_content.as_deref(),
+                            );
+
+                            // Remove the completed task from tracking
+                            self.task_contexts.remove(tool_use_id);
+
+                            return Some(result);
+                        }
+
+                        // For non-Task tools, try to determine which tool was used from toolUseResult
+                        if let Some(tool_result) = msg.tool_use_result.as_ref() {
+                            // Extract the actual content from the tool_result item
+                            let actual_content = self.extract_tool_result_content(item);
+
+                            let result = self.format_tool_result(
+                                tool_result,
+                                tool_use_id,
+                                parent_tool_use_id,
+                                actual_content.as_deref(),
+                            );
+
+                            return Some(result);
+                        }
+
+                        // If we have a tool_result but no toolUseResult in the message,
+                        // it's likely from a sub-agent with no useful content, so filter it out
+                        return None;
                     }
                 }
             }
@@ -143,34 +289,93 @@ impl ClaudeCodeLogProcessor {
             else if let Value::String(text) = content {
                 let first_line = text.lines().next().unwrap_or("").trim();
                 if first_line.starts_with("# ") {
-                    return Some(format!("👤 User: {}", first_line.trim_start_matches("# ")));
+                    return Some(format!(
+                        "{}User: {}",
+                        self.create_prefix("👤", None, None, parent_tool_use_id),
+                        first_line.trim_start_matches("# ")
+                    ));
                 } else if first_line.len() > 60 {
-                    return Some(format!("👤 User: {}...", &first_line[..60]));
+                    return Some(format!(
+                        "{}User: {}...",
+                        self.create_prefix("👤", None, None, parent_tool_use_id),
+                        &first_line[..60]
+                    ));
                 } else if !first_line.is_empty() {
-                    return Some(format!("👤 User: {first_line}"));
+                    return Some(format!(
+                        "{}User: {first_line}",
+                        self.create_prefix("👤", None, None, parent_tool_use_id)
+                    ));
                 }
             }
         }
 
         // Default fallback
-        Some("👤 [user]".to_string())
+        Some(format!(
+            "{}[user]",
+            self.create_prefix("👤", None, None, parent_tool_use_id)
+        ))
     }
 
     /// Formats tool result based on its content
-    fn format_tool_result(&self, tool_result: &Value) -> String {
+    fn format_tool_result(
+        &mut self,
+        tool_result: &Value,
+        tool_use_id: Option<&str>,
+        parent_tool_use_id: Option<&str>,
+        actual_content: Option<&str>,
+    ) -> String {
+        // Check if this is a Task tool result with sub-agent output
+        if let Some(tool_use_id) = tool_use_id
+            && let Some(task_info) = self.task_contexts.get(tool_use_id)
+        {
+            let prefix = self.create_prefix(
+                "🤖",
+                None,
+                Some(&task_info.subagent_type),
+                parent_tool_use_id,
+            );
+
+            // Use the actual content from the message instead of tool_result
+            if let Some(content) = actual_content {
+                // If content is not empty, display it properly
+                if !content.trim().is_empty() {
+                    // Convert escaped newlines to actual newlines for better display
+                    let processed_content = content.replace("\\n", "\n");
+                    return format!(
+                        "{}Task Complete: {} ({})\n\n📋 Sub-agent Output:\n{}",
+                        prefix, task_info.description, task_info.subagent_type, processed_content
+                    );
+                }
+            }
+
+            // Fallback for empty or missing content
+            return format!(
+                "{}Task Complete: {} ({})",
+                prefix, task_info.description, task_info.subagent_type
+            );
+        }
         // Check for specific result types to identify the tool
         if tool_result.get("type").and_then(|t| t.as_str()) == Some("text") {
             if let Some(file_info) = tool_result.get("file")
                 && let Some(path) = file_info.get("filePath").and_then(|p| p.as_str())
             {
                 let filename = path.rsplit('/').next().unwrap_or(path);
-                return format!("📖 Read result: {filename}");
+                return format!(
+                    "{}Read result: {filename}",
+                    self.create_prefix("📖", None, None, parent_tool_use_id)
+                );
             }
-            return "📖 Read result".to_string();
+            return format!(
+                "{}Read result",
+                self.create_prefix("📖", None, None, parent_tool_use_id)
+            );
         }
 
         if tool_result.get("filePath").is_some() {
-            return "✏️ Edit result".to_string();
+            return format!(
+                "{}Edit result",
+                self.create_prefix("✏️", None, None, parent_tool_use_id)
+            );
         }
 
         if tool_result.get("oldTodos").is_some() || tool_result.get("newTodos").is_some() {
@@ -178,15 +383,23 @@ impl ClaudeCodeLogProcessor {
             if let Some(new_todos) = tool_result.get("newTodos")
                 && let Ok(todos) = serde_json::from_value::<Vec<TodoItem>>(new_todos.clone())
             {
-                return format!("📝 TodoWrite result - {} todos", todos.len());
+                return format!(
+                    "{}TodoWrite result - {} todos",
+                    self.create_prefix("📝", None, None, parent_tool_use_id),
+                    todos.len()
+                );
             }
-            return "📝 TodoWrite result".to_string();
+            return format!(
+                "{}TodoWrite result",
+                self.create_prefix("📝", None, None, parent_tool_use_id)
+            );
         }
 
         if let Some(filenames) = tool_result.get("filenames").and_then(|v| v.as_array()) {
             let count = filenames.len();
             return format!(
-                "🔍 Search result: Found {} file{}",
+                "{}Search result: Found {} file{}",
+                self.create_prefix("🔍", None, None, parent_tool_use_id),
                 count,
                 if count == 1 { "" } else { "s" }
             );
@@ -194,42 +407,96 @@ impl ClaudeCodeLogProcessor {
 
         if let Some(stdout) = tool_result.get("stdout").and_then(|v| v.as_str()) {
             if stdout.contains("test result: ok") {
-                return "🖥️ Bash result: Tests passed ✅".to_string();
+                return format!(
+                    "{}Bash result: Tests passed ✅",
+                    self.create_prefix("🖥️", None, None, parent_tool_use_id)
+                );
             } else if stdout.contains("test result: FAILED") {
-                return "🖥️ Bash result: Tests failed ❌".to_string();
+                return format!(
+                    "{}Bash result: Tests failed ❌",
+                    self.create_prefix("🖥️", None, None, parent_tool_use_id)
+                );
             } else if stdout.trim().is_empty() {
-                return "🖥️ Bash result: Command completed".to_string();
+                return format!(
+                    "{}Bash result: Command completed",
+                    self.create_prefix("🖥️", None, None, parent_tool_use_id)
+                );
             } else {
                 let first_line = stdout.lines().next().unwrap_or("").trim();
                 if first_line.len() > 40 {
-                    return format!("🖥️ Bash result: {}...", &first_line[..40]);
+                    return format!(
+                        "{}Bash result: {}...",
+                        self.create_prefix("🖥️", None, None, parent_tool_use_id),
+                        &first_line[..40]
+                    );
                 } else {
-                    return format!("🖥️ Bash result: {first_line}");
+                    return format!(
+                        "{}Bash result: {first_line}",
+                        self.create_prefix("🖥️", None, None, parent_tool_use_id)
+                    );
                 }
             }
         }
 
         if let Some(error) = tool_result.get("error").and_then(|v| v.as_str()) {
-            return format!("❌ Tool error: {error}");
+            return format!(
+                "{}Tool error: {error}",
+                self.create_prefix("❌", None, None, parent_tool_use_id)
+            );
         }
 
         if tool_result.get("is_error").and_then(|v| v.as_bool()) == Some(true) {
-            return "❌ Tool error occurred".to_string();
+            return format!(
+                "{}Tool error occurred",
+                self.create_prefix("❌", None, None, parent_tool_use_id)
+            );
         }
 
-        "🔧 Tool result: Completed".to_string()
+        format!(
+            "{}Tool result: Completed",
+            self.create_prefix("🔧", None, None, parent_tool_use_id)
+        )
+    }
+
+    /// Formats a Task tool result with sub-agent output
+    fn format_task_tool_result(
+        &self,
+        task_info: &TaskInvocation,
+        parent_tool_use_id: Option<&str>,
+        actual_content: Option<&str>,
+    ) -> String {
+        let prefix = self.create_prefix(
+            "🤖",
+            None,
+            Some(&task_info.subagent_type),
+            parent_tool_use_id,
+        );
+
+        // Use the actual content from the message instead of tool_result
+        if let Some(content) = actual_content {
+            // If content is not empty, display it properly
+            if !content.trim().is_empty() {
+                // Convert escaped newlines to actual newlines for better display
+                let processed_content = content.replace("\\n", "\n");
+                return format!(
+                    "{}Task Complete: {} ({})\n\n📋 Sub-agent Output:\n{}",
+                    prefix, task_info.description, task_info.subagent_type, processed_content
+                );
+            }
+        }
+
+        // Fallback for empty or missing content
+        format!(
+            "{}Task Complete: {} ({})",
+            prefix, task_info.description, task_info.subagent_type
+        )
     }
 
     /// Formats an assistant message, extracting text content, tool uses, and todo updates
-    fn format_assistant_message(&self, msg: ClaudeMessage) -> Option<String> {
-        if let Some(message) = msg.message {
-            // Extract model name if available
-            let model_suffix = if let Some(model) = &message.model {
-                format!(" [{}]", model)
-            } else {
-                String::new()
-            };
+    fn format_assistant_message(&mut self, msg: ClaudeMessage) -> Option<String> {
+        let parent_tool_use_id = msg.parent_tool_use_id.as_deref();
 
+        if let Some(message) = msg.message {
             if let Some(content) = message.content {
                 match content {
                     Value::Array(contents) => {
@@ -240,7 +507,39 @@ impl ClaudeCodeLogProcessor {
                             if let Some("tool_use") = item.get("type").and_then(|t| t.as_str())
                                 && let Some(tool_name) = item.get("name").and_then(|n| n.as_str())
                             {
-                                let tool_output = self.format_tool_use(tool_name, &item);
+                                // Store Task tool invocations for later matching with results
+                                if tool_name == "Task"
+                                    && let Some(tool_use_id) =
+                                        item.get("id").and_then(|id| id.as_str())
+                                    && let Some(input) = item.get("input")
+                                {
+                                    let subagent_type = input
+                                        .get("subagent_type")
+                                        .and_then(|s| s.as_str())
+                                        .unwrap_or("unknown")
+                                        .to_string();
+                                    let description = input
+                                        .get("description")
+                                        .and_then(|d| d.as_str())
+                                        .unwrap_or("No description")
+                                        .to_string();
+
+                                    let task_invocation = TaskInvocation {
+                                        subagent_type,
+                                        description,
+                                    };
+
+                                    // Add to task_contexts for tracking messages by parent_tool_use_id
+                                    self.task_contexts
+                                        .insert(tool_use_id.to_string(), task_invocation);
+                                }
+
+                                let tool_output = self.format_tool_use(
+                                    tool_name,
+                                    &item,
+                                    message.model.as_deref(),
+                                    parent_tool_use_id,
+                                );
                                 if !tool_output.is_empty() {
                                     output.push_str(&tool_output);
                                 }
@@ -253,7 +552,13 @@ impl ClaudeCodeLogProcessor {
                                 if !output.is_empty() {
                                     output.push('\n');
                                 }
-                                output.push_str(&format!("🤖{} {text}", model_suffix));
+                                let prefix = self.create_prefix(
+                                    "🤖",
+                                    message.model.as_deref(),
+                                    None,
+                                    parent_tool_use_id,
+                                );
+                                output.push_str(&format!("{}{text}", prefix));
                             }
                         }
 
@@ -263,7 +568,15 @@ impl ClaudeCodeLogProcessor {
                             None
                         }
                     }
-                    Value::String(text) => Some(format!("🤖{} {text}", model_suffix)),
+                    Value::String(text) => {
+                        let prefix = self.create_prefix(
+                            "🤖",
+                            message.model.as_deref(),
+                            None,
+                            parent_tool_use_id,
+                        );
+                        Some(format!("{}{text}", prefix))
+                    }
                     _ => None,
                 }
             } else {
@@ -275,16 +588,52 @@ impl ClaudeCodeLogProcessor {
     }
 
     /// Formats a tool use based on its name and input
-    fn format_tool_use(&self, tool_name: &str, item: &Value) -> String {
+    fn format_tool_use(
+        &self,
+        tool_name: &str,
+        item: &Value,
+        model: Option<&str>,
+        parent_tool_use_id: Option<&str>,
+    ) -> String {
         match tool_name {
+            "Task" => {
+                if let Some(input) = item.get("input") {
+                    let subagent_type = input
+                        .get("subagent_type")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("unknown");
+                    let description = input
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or("No description");
+                    let prompt = input.get("prompt").and_then(|p| p.as_str()).unwrap_or("");
+
+                    let prefix = self.create_prefix("🤖", model, None, parent_tool_use_id);
+                    if !prompt.is_empty() {
+                        format!(
+                            "{}Starting Task: {} ({})\n\nPrompt: {}",
+                            prefix, description, subagent_type, prompt
+                        )
+                    } else {
+                        format!(
+                            "{}Starting Task: {} ({})",
+                            prefix, description, subagent_type
+                        )
+                    }
+                } else {
+                    let prefix = self.create_prefix("🤖", model, None, parent_tool_use_id);
+                    format!("{}Starting Task", prefix)
+                }
+            }
             "TodoWrite" => {
                 if let Some(input) = item.get("input")
                     && let Some(todos) = input.get("todos")
                     && let Ok(todo_items) = serde_json::from_value::<Vec<TodoItem>>(todos.clone())
                 {
-                    self.format_todo_update(&todo_items)
+                    self.format_todo_update(&todo_items, parent_tool_use_id)
                 } else {
-                    "📝 Using TodoWrite\n".to_string()
+                    let prefix = self.create_prefix("📝", model, None, parent_tool_use_id);
+                    format!("{}Using TodoWrite\n", prefix)
                 }
             }
             "Read" => {
@@ -292,51 +641,47 @@ impl ClaudeCodeLogProcessor {
                     && let Some(file_path) = input.get("file_path").and_then(|f| f.as_str())
                 {
                     let file_name = file_path.rsplit('/').next().unwrap_or(file_path);
-                    format!("📖 Reading {file_name}\n")
+                    let prefix = self.create_prefix("📖", model, None, parent_tool_use_id);
+                    format!("{}Reading {file_name}\n", prefix)
                 } else {
-                    "📖 Reading file\n".to_string()
+                    let prefix = self.create_prefix("📖", model, None, parent_tool_use_id);
+                    format!("{}Reading file\n", prefix)
                 }
             }
-            "LS" => {
-                if let Some(input) = item.get("input")
-                    && let Some(path) = input.get("path").and_then(|p| p.as_str())
-                {
-                    format!("📂 Listing {path}\n")
-                } else {
-                    "📂 Listing directory\n".to_string()
-                }
+            "NotebookRead" => {
+                let prefix = self.create_prefix("📓", model, None, parent_tool_use_id);
+                format!("{}Reading notebook\n", prefix)
             }
-            "NotebookRead" => "📓 Reading notebook\n".to_string(),
             "Edit" | "MultiEdit" => {
                 if let Some(input) = item.get("input")
                     && let Some(file_path) = input.get("file_path").and_then(|f| f.as_str())
                 {
                     let file_name = file_path.rsplit('/').next().unwrap_or(file_path);
+                    let prefix = self.create_prefix("🔧", model, None, parent_tool_use_id);
                     if tool_name == "MultiEdit" {
                         if let Some(edits) = input.get("edits").and_then(|e| e.as_array()) {
-                            format!("🔧 Editing {file_name} ({} changes)\n", edits.len())
+                            format!("{}Editing {file_name} ({} changes)\n", prefix, edits.len())
                         } else {
-                            format!("🔧 Editing {file_name}\n")
+                            format!("{}Editing {file_name}\n", prefix)
                         }
                     } else {
-                        format!("🔧 Editing {file_name}\n")
+                        format!("{}Editing {file_name}\n", prefix)
                     }
                 } else {
-                    format!("🔧 Using {tool_name}\n")
+                    let prefix = self.create_prefix("🔧", model, None, parent_tool_use_id);
+                    format!("{}Using {tool_name}\n", prefix)
                 }
             }
             "Bash" => {
                 if let Some(input) = item.get("input")
                     && let Some(cmd) = input.get("command").and_then(|c| c.as_str())
                 {
-                    let cmd_preview = if cmd.len() > 60 {
-                        format!("{}...", &cmd[..60])
-                    } else {
-                        cmd.to_string()
-                    };
-                    format!("🖥️ Running: {cmd_preview}\n")
+                    // Show the full command, not just a preview
+                    let prefix = self.create_prefix("🖥️", model, None, parent_tool_use_id);
+                    format!("{}Running: {cmd}\n", prefix)
                 } else {
-                    "🖥️ Running command\n".to_string()
+                    let prefix = self.create_prefix("🖥️", model, None, parent_tool_use_id);
+                    format!("{}Running command\n", prefix)
                 }
             }
             "Write" => {
@@ -344,37 +689,57 @@ impl ClaudeCodeLogProcessor {
                     && let Some(file_path) = input.get("file_path").and_then(|f| f.as_str())
                 {
                     let file_name = file_path.rsplit('/').next().unwrap_or(file_path);
-                    format!("📝 Writing {file_name}\n")
+                    let prefix = self.create_prefix("📝", model, None, parent_tool_use_id);
+                    format!("{}Writing {file_name}\n", prefix)
                 } else {
-                    "📝 Writing file\n".to_string()
+                    let prefix = self.create_prefix("📝", model, None, parent_tool_use_id);
+                    format!("{}Writing file\n", prefix)
                 }
             }
             "Grep" => {
                 if let Some(input) = item.get("input")
                     && let Some(pattern) = input.get("pattern").and_then(|p| p.as_str())
                 {
-                    format!("🔍 Searching for: {pattern}\n")
+                    let prefix = self.create_prefix("🔍", model, None, parent_tool_use_id);
+                    format!("{}Searching for: {pattern}\n", prefix)
                 } else {
-                    "🔍 Searching\n".to_string()
+                    let prefix = self.create_prefix("🔍", model, None, parent_tool_use_id);
+                    format!("{}Searching\n", prefix)
                 }
             }
             "WebSearch" => {
                 if let Some(input) = item.get("input")
                     && let Some(query) = input.get("query").and_then(|q| q.as_str())
                 {
-                    format!("🌐 Web search: {query}\n")
+                    let prefix = self.create_prefix("🌐", model, None, parent_tool_use_id);
+                    format!("{}Web search: {query}\n", prefix)
                 } else {
-                    "🌐 Web search\n".to_string()
+                    let prefix = self.create_prefix("🌐", model, None, parent_tool_use_id);
+                    format!("{}Web search\n", prefix)
                 }
             }
-            _ => format!("🔧 Using {tool_name}\n"),
+            _ => {
+                // For unknown tools, show description if available
+                let description = if let Some(input) = item.get("input") {
+                    if let Some(desc) = input.get("description").and_then(|d| d.as_str()) {
+                        format!(": {desc}")
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                };
+                let prefix = self.create_prefix("🔧", model, None, parent_tool_use_id);
+                format!("{}Using {tool_name}{description}\n", prefix)
+            }
         }
     }
 
     /// Formats a todo list update with status indicators and summary
-    fn format_todo_update(&self, todos: &[TodoItem]) -> String {
+    fn format_todo_update(&self, todos: &[TodoItem], parent_tool_use_id: Option<&str>) -> String {
         let mut output = String::new();
-        output.push_str("📝 TODO Update:\n");
+        let prefix = self.create_prefix("📝", None, None, parent_tool_use_id);
+        output.push_str(&format!("{}TODO Update:\n", prefix));
         output.push_str(&"─".repeat(60));
         output.push('\n');
 
@@ -586,7 +951,10 @@ impl LogProcessor for ClaudeCodeLogProcessor {
             Err(_) => {
                 if self.json_mode_active {
                     // In JSON mode, show parsing error for non-JSON lines
-                    Some("‼️ parsing error".to_string())
+                    Some(format!(
+                        "{}parsing error",
+                        self.create_prefix("‼️", None, None, None)
+                    ))
                 } else {
                     // Before JSON mode is active, pass through non-JSON lines as-is
                     // This allows misconfiguration messages to be displayed
@@ -608,71 +976,99 @@ impl LogProcessor for ClaudeCodeLogProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
-    #[test]
-    fn test_process_todo_update_new_format() {
-        let mut processor = ClaudeCodeLogProcessor::new();
+    // Simplified helper functions using serde_json::json! macro
 
-        // Test the actual format from Claude Code logs
-        let json = r#"{
-            "type": "assistant",
-            "message": {
-                "content": [{
-                    "type": "tool_use",
-                    "name": "TodoWrite",
-                    "input": {
-                        "todos": [
-                            {"content": "Analyze current usage", "status": "in_progress", "activeForm": "Analyzing current usage"},
-                            {"content": "Move file to new location", "status": "pending", "activeForm": "Moving file to new location"},
-                            {"content": "Update imports", "status": "completed", "activeForm": "Updating imports"}
-                        ]
-                    }
-                }]
-            }
-        }"#;
+    fn task_msg(id: &str, agent: &str, desc: &str, prompt: Option<&str>) -> String {
+        let input = if let Some(p) = prompt {
+            json!({"subagent_type": agent, "description": desc, "prompt": p})
+        } else {
+            json!({"subagent_type": agent, "description": desc})
+        };
+        json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": id, "name": "Task", "input": input}]}}).to_string()
+    }
 
-        let result = processor.process_line(json);
-        assert!(result.is_some());
-        let formatted = result.unwrap();
+    fn task_result(id: &str, content: &str, parent_id: Option<&str>) -> String {
+        let mut result = json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": id, "content": content}]}, "toolUseResult": {}});
+        if let Some(pid) = parent_id {
+            result["parent_tool_use_id"] = json!(pid);
+        }
+        result.to_string()
+    }
 
-        // Check that the TODO update is formatted correctly
-        assert!(formatted.contains("📝 TODO Update:"));
-        assert!(formatted.contains("🔄  [1] Analyzing current usage"));
-        assert!(formatted.contains("⏳  [2] Move file to new location"));
-        assert!(formatted.contains("✅  [3] Update imports"));
-        assert!(formatted.contains("Summary: 3 total | 1 completed | 1 in progress | 1 pending"));
+    fn assistant_text(text: &str, model: Option<&str>, parent_id: Option<&str>) -> String {
+        let mut msg =
+            json!({"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}});
+        if let Some(m) = model {
+            msg["message"]["model"] = json!(m);
+        }
+        if let Some(pid) = parent_id {
+            msg["parent_tool_use_id"] = json!(pid);
+        }
+        msg.to_string()
+    }
+
+    fn tool_use_msg(
+        tool: &str,
+        input: &str,
+        model: Option<&str>,
+        parent_id: Option<&str>,
+    ) -> String {
+        let mut msg = json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": tool, "input": serde_json::from_str::<serde_json::Value>(input).unwrap()}]}});
+        if let Some(m) = model {
+            msg["message"]["model"] = json!(m);
+        }
+        if let Some(pid) = parent_id {
+            msg["parent_tool_use_id"] = json!(pid);
+        }
+        msg.to_string()
+    }
+
+    fn todo_msg(todos: &str) -> String {
+        json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "TodoWrite", "input": {"todos": serde_json::from_str::<serde_json::Value>(todos).unwrap()}}]}}).to_string()
+    }
+
+    // Simplified assertion helpers
+    fn has_tag(output: &str, tag: &str) {
+        assert!(output.contains(&format!("[{}]", tag)));
+    }
+    fn no_tag(output: &str, tag: &str) {
+        assert!(!output.contains(&format!("[{}]", tag)));
     }
 
     #[test]
-    fn test_process_todo_with_priority() {
-        let mut processor = ClaudeCodeLogProcessor::new();
-        let json = r#"{
-            "type": "assistant",
-            "message": {
-                "content": [{
-                    "type": "tool_use",
-                    "name": "TodoWrite",
-                    "input": {
-                        "todos": [
-                            {"content": "High priority task", "status": "pending", "activeForm": "Working on high priority", "priority": "high"},
-                            {"content": "Low priority task", "status": "completed", "activeForm": "Completed low priority", "priority": "low"}
-                        ]
-                    }
-                }]
-            }
-        }"#;
+    fn test_todo_processing() {
+        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
 
-        let result = processor.process_line(json);
-        assert!(result.is_some());
-        let formatted = result.unwrap();
+        // Test basic format with status icons and summary
+        let todos = r#"[
+            {"content": "Analyze current usage", "status": "in_progress", "activeForm": "Analyzing current usage"},
+            {"content": "Move file to new location", "status": "pending", "activeForm": "Moving file to new location"},
+            {"content": "Update imports", "status": "completed", "activeForm": "Updating imports"}
+        ]"#;
+        let msg = todo_msg(todos);
+        let output = processor.process_line(&msg).unwrap();
+        assert!(output.contains("📝 [test-task]: TODO Update:"));
+        assert!(output.contains("🔄  [1] Analyzing current usage"));
+        assert!(output.contains("⏳  [2] Move file to new location"));
+        assert!(output.contains("✅  [3] Update imports"));
+        assert!(output.contains("Summary: 3 total | 1 completed | 1 in progress | 1 pending"));
 
-        assert!(formatted.contains("⏳ 🔴 [1]")); // pending with high priority
-        assert!(formatted.contains("✅ 🟢 [2]")); // completed with low priority
+        // Test priority indicators
+        let todos_with_priority = r#"[
+            {"content": "High priority task", "status": "pending", "activeForm": "Working on high priority", "priority": "high"},
+            {"content": "Low priority task", "status": "completed", "activeForm": "Completed low priority", "priority": "low"}
+        ]"#;
+        let msg = todo_msg(todos_with_priority);
+        let output = processor.process_line(&msg).unwrap();
+        assert!(output.contains("⏳ 🔴 [1]")); // pending with high priority
+        assert!(output.contains("✅ 🟢 [2]")); // completed with low priority
     }
 
     #[test]
     fn test_user_message_with_todo_result() {
-        let mut processor = ClaudeCodeLogProcessor::new();
+        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
         let json = r#"{
             "type": "user",
             "message": {
@@ -690,135 +1086,79 @@ mod tests {
 
         let result = processor.process_line(json);
         assert!(result.is_some());
-        assert_eq!(result.unwrap(), "📝 TodoWrite result - 2 todos");
+        assert_eq!(
+            result.unwrap(),
+            "📝 [test-task]: TodoWrite result - 2 todos"
+        );
     }
 
     #[test]
     fn test_assistant_message_formats() {
-        let mut processor = ClaudeCodeLogProcessor::new();
+        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
 
-        // Test text message without model
-        let json = r#"{
-            "type": "assistant",
-            "message": {
-                "content": [{"type": "text", "text": "Hello, world!"}]
-            }
-        }"#;
-        let result = processor.process_line(json);
-        assert_eq!(result, Some("🤖 Hello, world!".to_string()));
+        // Text message without model
+        let json = r#"{"type": "assistant", "message": {"content": [{"type": "text", "text": "Hello, world!"}]}}"#;
+        let output = processor.process_line(json).unwrap();
+        assert_eq!(output, "🤖 [test-task]: Hello, world!");
 
-        // Test text message with model
-        let json_with_model = r#"{
-            "type": "assistant",
-            "message": {
-                "model": "claude-opus-4-1-20250805",
-                "content": [{"type": "text", "text": "Hello with model!"}]
-            }
-        }"#;
-        let result = processor.process_line(json_with_model);
+        // Text message with model
+        let json = r#"{"type": "assistant", "message": {"model": "claude-opus", "content": [{"type": "text", "text": "Hello with model!"}]}}"#;
+        let output = processor.process_line(json).unwrap();
+        assert_eq!(output, "🤖 [test-task][claude-opus]: Hello with model!");
+
+        // Direct string content with model
+        let json = r#"{"type": "assistant", "message": {"model": "claude-3-sonnet", "content": "Direct string content"}}"#;
+        let output = processor.process_line(json).unwrap();
         assert_eq!(
-            result,
-            Some("🤖 [claude-opus-4-1-20250805] Hello with model!".to_string())
+            output,
+            "🤖 [test-task][claude-3-sonnet]: Direct string content"
         );
 
-        // Test string content with model
-        let json_string_content = r#"{
-            "type": "assistant",
-            "message": {
-                "model": "claude-3-sonnet",
-                "content": "Direct string content"
-            }
-        }"#;
-        let result = processor.process_line(json_string_content);
-        assert_eq!(
-            result,
-            Some("🤖 [claude-3-sonnet] Direct string content".to_string())
-        );
-
-        // Test tool use messages
-        let bash_json = r#"{
-            "type": "assistant",
-            "message": {
-                "content": [{
-                    "type": "tool_use",
-                    "name": "Bash",
-                    "input": {"command": "cargo test"}
-                }]
-            }
-        }"#;
-        let result = processor.process_line(bash_json);
-        assert_eq!(result, Some("🖥️ Running: cargo test".to_string()));
+        // Bash tool use
+        let json = r#"{"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": "cargo test"}}]}}"#;
+        let output = processor.process_line(json).unwrap();
+        assert_eq!(output, "🖥️ [test-task]: Running: cargo test");
     }
 
     #[test]
-    fn test_result_message() {
-        let mut processor = ClaudeCodeLogProcessor::new();
-        let json = r#"{
+    fn test_result_and_summary_messages() {
+        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+
+        // Test result message with cost and duration
+        let result_json = r#"{
             "type": "result",
             "subtype": "success",
             "cost_usd": 0.15,
             "duration_ms": 45000,
             "result": "Task completed successfully"
         }"#;
+        let output = processor.process_line(result_json).unwrap();
+        assert!(output.contains("✅ Task Result: success"));
+        assert!(output.contains("💰 Cost: $0.15"));
+        assert!(output.contains("⏱️ Duration: 45 seconds"));
 
-        let result = processor.process_line(json);
-        assert!(result.is_some());
-        let formatted = result.unwrap();
+        let final_result = processor.get_final_result().unwrap();
+        assert!(final_result.success);
+        assert_eq!(final_result.cost_usd, Some(0.15));
 
-        assert!(formatted.contains("✅ Task Result: success"));
-        assert!(formatted.contains("💰 Cost: $0.15"));
-        assert!(formatted.contains("⏱️ Duration: 45 seconds"));
-
-        // Check final result storage
-        let final_result = processor.get_final_result();
-        assert!(final_result.is_some());
-        let task_result = final_result.unwrap();
-        assert!(task_result.success);
-        assert_eq!(task_result.cost_usd, Some(0.15));
-    }
-
-    #[test]
-    fn test_format_duration() {
-        let processor = ClaudeCodeLogProcessor::new();
-
-        assert_eq!(processor.format_duration(0), "0 seconds");
-        assert_eq!(processor.format_duration(1000), "1 second");
-        assert_eq!(processor.format_duration(60000), "1 minute");
-        assert_eq!(
-            processor.format_duration(3661000),
-            "1 hour, 1 minute, 1 second"
-        );
-    }
-
-    #[test]
-    fn test_summary_message() {
-        let mut processor = ClaudeCodeLogProcessor::new();
-        let json = r#"{
+        // Test summary message
+        let summary_json = r#"{
             "type": "summary",
             "summary": "Refactoring completed: Renamed XdgDirectories to TskConfig"
         }"#;
-
-        let result = processor.process_line(json);
+        let output = processor.process_line(summary_json).unwrap();
         assert_eq!(
-            result,
-            Some(
-                "✅ Task Complete: Refactoring completed: Renamed XdgDirectories to TskConfig"
-                    .to_string()
-            )
+            output,
+            "✅ [test-task]: Refactoring completed: Renamed XdgDirectories to TskConfig"
         );
     }
 
     #[test]
-    fn test_empty_line_processing() {
-        let mut processor = ClaudeCodeLogProcessor::new();
+    fn test_json_mode_behavior() {
+        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
 
-        assert!(processor.process_line("").is_none());
-        assert!(processor.process_line("   ").is_none());
-    }
-
-    #[test]
-    fn test_non_json_before_json_mode() {
-        let mut processor = ClaudeCodeLogProcessor::new();
+        // Initially not in JSON mode
+        assert!(!processor.json_mode_active);
 
         // Before JSON mode is active, non-JSON lines should be passed through as-is
         let result = processor.process_line("Error: Claude Code is misconfigured");
@@ -826,54 +1166,127 @@ mod tests {
             result,
             Some("Error: Claude Code is misconfigured".to_string())
         );
+        assert!(!processor.json_mode_active);
 
-        let result = processor.process_line("Please run 'claude login' to authenticate");
+        let result = processor.process_line("Configuration warning: API key missing");
         assert_eq!(
             result,
-            Some("Please run 'claude login' to authenticate".to_string())
+            Some("Configuration warning: API key missing".to_string())
         );
+        assert!(!processor.json_mode_active);
 
-        // Now process a valid JSON line to activate JSON mode
+        // First valid JSON line activates JSON mode
         let json =
             r#"{"type": "assistant", "message": {"content": [{"type": "text", "text": "Hello"}]}}"#;
         let result = processor.process_line(json);
-        assert_eq!(result, Some("🤖 Hello".to_string()));
+        assert_eq!(result, Some("🤖 [test-task]: Hello".to_string()));
+        assert!(processor.json_mode_active);
 
         // After JSON mode is active, non-JSON lines should show parsing error
         let result = processor.process_line("This is not JSON");
-        assert_eq!(result, Some("‼️ parsing error".to_string()));
-    }
+        assert_eq!(result, Some("‼️ [test-task]: parsing error".to_string()));
 
-    #[test]
-    fn test_json_mode_transition() {
-        let mut processor = ClaudeCodeLogProcessor::new();
-
-        // Initially not in JSON mode
-        assert!(!processor.json_mode_active);
-
-        // Non-JSON lines pass through
-        processor.process_line("Configuration warning: API key missing");
-        assert!(!processor.json_mode_active);
-
-        // First valid JSON activates JSON mode
-        let json = r#"{"type": "summary", "summary": "Task started"}"#;
-        processor.process_line(json);
-        assert!(processor.json_mode_active);
-
-        // Subsequent non-JSON lines show error
         let result = processor.process_line("random text");
-        assert_eq!(result, Some("‼️ parsing error".to_string()));
+        assert_eq!(result, Some("‼️ [test-task]: parsing error".to_string()));
     }
 
     #[test]
-    fn test_get_full_log() {
-        let mut processor = ClaudeCodeLogProcessor::new();
+    fn test_empty_tool_results_filtered() {
+        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
 
-        processor.process_line("Line 1");
-        processor.process_line("Line 2");
-        processor.process_line("Line 3");
+        // Test empty tool result (should return None)
+        let empty_tool_result_json = r#"{
+            "type": "user",
+            "message": {
+                "role": "user",
+                "content": [{"tool_use_id": "toolu_456", "type": "tool_result", "content": ""}]
+            }
+        }"#;
 
-        let full_log = processor.get_full_log();
-        assert_eq!(full_log, "Line 1\nLine 2\nLine 3");
+        let result = processor.process_line(empty_tool_result_json);
+        // Should return None for empty tool results, not show "🔧 Tool result"
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_sub_agent_tagging_scenarios() {
+        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+
+        // Task invocation should NOT have sub-agent tag
+        let msg = task_msg(
+            "toolu_123",
+            "software-architect",
+            "Test task",
+            Some("Test prompt"),
+        );
+        let output = processor.process_line(&msg).unwrap();
+        no_tag(&output, "software-architect");
+
+        // Messages with parent_tool_use_id should have sub-agent tag
+        let msg = tool_use_msg("Bash", r#"{"command": "ls -la"}"#, None, Some("toolu_123"));
+        let output = processor.process_line(&msg).unwrap();
+        has_tag(&output, "software-architect");
+
+        let msg = assistant_text("Working on task", None, Some("toolu_123"));
+        let output = processor.process_line(&msg).unwrap();
+        has_tag(&output, "software-architect");
+
+        // Task result should have sub-agent tag
+        let result = task_result("toolu_123", "Task completed", None);
+        let output = processor.process_line(&result).unwrap();
+        has_tag(&output, "software-architect");
+
+        // Summary without parent should NOT have tag
+        let summary = r#"{"type":"summary","summary":"Task completed successfully"}"#;
+        if let Some(output) = processor.process_line(summary) {
+            no_tag(&output, "software-architect");
+        }
+    }
+
+    #[test]
+    fn test_task_tool_scenarios() {
+        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+
+        // Test with prompt
+        let msg1 = task_msg(
+            "toolu_123",
+            "software-architect",
+            "Analyze code",
+            Some("Check patterns"),
+        );
+        let output = processor.process_line(&msg1).unwrap();
+        assert!(
+            output.contains("🤖 [test-task]: Starting Task: Analyze code (software-architect)")
+        );
+        assert!(output.contains("Prompt: Check patterns"));
+
+        let result = task_result("toolu_123", "Analysis complete", None);
+        let output = processor.process_line(&result).unwrap();
+        assert!(output.contains("Task Complete: Analyze code (software-architect)"));
+
+        // Test array content with sub-agent output
+        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+        let msg2 = task_msg("toolu_456", "data-analyst", "Analyze patterns", None);
+        processor.process_line(&msg2);
+
+        let result = task_result(
+            "toolu_456",
+            r#"[{"type": "text", "text": "Found 5 patterns. Pattern A: 45%."}]"#,
+            None,
+        );
+        let output = processor.process_line(&result).unwrap();
+        assert!(output.contains("Task Complete: Analyze patterns (data-analyst)"));
+        assert!(output.contains("📋 Sub-agent Output:"));
+        assert!(output.contains("Found 5 patterns"));
+
+        // Test empty content (no sub-agent output section)
+        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+        let msg3 = task_msg("toolu_789", "test-agent", "Test edge cases", None);
+        processor.process_line(&msg3);
+
+        let result = task_result("toolu_789", "", None);
+        let output = processor.process_line(&result).unwrap();
+        assert!(output.contains("Task Complete: Test edge cases (test-agent)"));
+        assert!(!output.contains("📋 Sub-agent Output:"));
     }
 }

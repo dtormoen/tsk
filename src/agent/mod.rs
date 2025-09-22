@@ -35,7 +35,7 @@ pub trait Agent: Send + Sync {
     fn environment(&self) -> Vec<(String, String)>;
 
     /// Creates a log processor for this agent's output
-    fn create_log_processor(&self) -> Box<dyn LogProcessor>;
+    fn create_log_processor(&self, task: Option<&crate::task::Task>) -> Box<dyn LogProcessor>;
 
     /// Returns the agent's unique identifier
     fn name(&self) -> &str;
@@ -111,7 +111,7 @@ mod tests {
             vec![("TEST_VAR".to_string(), "test_value".to_string())]
         }
 
-        fn create_log_processor(&self) -> Box<dyn LogProcessor> {
+        fn create_log_processor(&self, _task: Option<&crate::task::Task>) -> Box<dyn LogProcessor> {
             struct TestLogProcessor;
 
             #[async_trait]

@@ -44,7 +44,7 @@ impl Agent for NoOpAgent {
         vec![]
     }
 
-    fn create_log_processor(&self) -> Box<dyn LogProcessor> {
+    fn create_log_processor(&self, _task: Option<&crate::task::Task>) -> Box<dyn LogProcessor> {
         Box::new(super::no_op_log_processor::NoOpLogProcessor::new())
     }
 

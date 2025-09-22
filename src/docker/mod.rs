@@ -261,7 +261,7 @@ impl DockerManager {
                 .await?;
 
             // Stream logs and process them
-            let mut log_processor = agent.create_log_processor();
+            let mut log_processor = agent.create_log_processor(Some(task));
             let output = self
                 .stream_container_logs(&container_id, &mut *log_processor)
                 .await?;

@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, OnceLock};
 
-mod claude_code_log_processor;
-use claude_code_log_processor::ClaudeCodeLogProcessor;
+pub mod claude_code_log_processor;
+pub use claude_code_log_processor::ClaudeCodeLogProcessor;
 
 /// Claude Code AI agent implementation
 pub struct ClaudeCodeAgent {
@@ -107,8 +107,12 @@ impl Agent for ClaudeCodeAgent {
         ]
     }
 
-    fn create_log_processor(&self) -> Box<dyn super::LogProcessor> {
-        Box::new(ClaudeCodeLogProcessor::new())
+    fn create_log_processor(
+        &self,
+        task: Option<&crate::task::Task>,
+    ) -> Box<dyn super::LogProcessor> {
+        let task_name = task.map(|t| t.name.clone());
+        Box::new(ClaudeCodeLogProcessor::new(task_name))
     }
 
     fn name(&self) -> &str {
@@ -309,7 +313,7 @@ mod tests {
         let tsk_config = app_context.tsk_config();
         let agent = ClaudeCodeAgent::with_tsk_config(tsk_config);
 
-        let log_processor = agent.create_log_processor();
+        let log_processor = agent.create_log_processor(None);
 
         // Just verify we can create a log processor
         // The actual log processor functionality is tested elsewhere
@@ -319,7 +323,7 @@ mod tests {
         use crate::context::AppContext;
         let ctx = AppContext::builder().build();
         let agent_with_config = ClaudeCodeAgent::with_tsk_config(ctx.tsk_config());
-        let _ = agent_with_config.create_log_processor();
+        let _ = agent_with_config.create_log_processor(None);
     }
 
     #[test]
