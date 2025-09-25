@@ -98,8 +98,33 @@ impl FileSystemOperations for DefaultFileSystem {
         if let Some(parent) = path.parent() {
             self.create_dir(parent).await?;
         }
-        tokio::fs::write(path, content).await?;
-        Ok(())
+
+        // Generate unique temporary filename to avoid collisions
+        let temp_path = {
+            let mut temp = path.to_path_buf();
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            let pid = std::process::id();
+            temp.set_file_name(format!(
+                ".{}.{}.{}.tmp",
+                path.file_name().unwrap_or_default().to_string_lossy(),
+                pid,
+                timestamp
+            ));
+            temp
+        };
+
+        tokio::fs::write(&temp_path, content).await?;
+
+        match tokio::fs::rename(&temp_path, path).await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                Err(e.into())
+            }
+        }
     }
 
     async fn read_file(&self, path: &Path) -> Result<String> {
@@ -484,5 +509,57 @@ mod tests {
 
         assert_send_sync::<DefaultFileSystem>();
         assert_send_sync::<Arc<dyn FileSystemOperations>>();
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_write_and_read_safety() {
+        use std::sync::Arc;
+        use tokio::task;
+
+        let temp_dir = TempDir::new().unwrap();
+        let fs = Arc::new(DefaultFileSystem);
+        let file_path = Arc::new(temp_dir.path().join("concurrent_test.json"));
+
+        // Create initial file with valid JSON
+        let initial_content = r#"{"tasks": []}"#;
+        fs.write_file(&file_path, initial_content).await.unwrap();
+
+        // Spawn multiple concurrent writers and readers
+        let mut handles = vec![];
+
+        // Writers - continuously update the file with valid JSON
+        for i in 0..5 {
+            let fs_clone = fs.clone();
+            let path_clone = file_path.clone();
+            handles.push(task::spawn(async move {
+                for j in 0..20 {
+                    let content = format!(r#"{{"task_id": {}, "iteration": {}}}"#, i, j);
+                    fs_clone.write_file(&path_clone, &content).await.unwrap();
+                    tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
+                }
+            }));
+        }
+
+        // Readers - continuously read and parse the file
+        for _ in 0..5 {
+            let fs_clone = fs.clone();
+            let path_clone = file_path.clone();
+            handles.push(task::spawn(async move {
+                for _ in 0..50 {
+                    let content = fs_clone.read_file(&path_clone).await.unwrap();
+                    // Should always be valid JSON - never empty or partial
+                    assert!(!content.is_empty(), "File should never be empty");
+                    // Verify it's valid JSON
+                    let _: serde_json::Value = serde_json::from_str(&content)
+                        .expect("File should always contain valid JSON");
+                    tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
+                }
+            }));
+        }
+
+        // Wait for all tasks to complete
+        for handle in handles {
+            handle.await.unwrap();
+        }
     }
 }
