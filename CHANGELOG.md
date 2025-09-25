@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.1](https://github.com/dtormoen/tsk/compare/v0.5.0...v0.5.1) - 2025-09-25
 
+This release mainly adds a few new features:
+- The outputs while agents are working are much more detailed. They include:
+    - The model being used e.g. opus or sonnet
+    - The sub-agent that is active
+    - The full instructions and outputs of sub-agents
+- Adds the ability to pipe in your instructions: `echo "Make a sweet app" | tsk add --type feat --name an-app
+- Adds the ability to define a custom proxy configuration
+
 ### Added
 
 - add stdin pipe support for task descriptions
