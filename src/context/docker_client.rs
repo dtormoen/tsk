@@ -5,6 +5,7 @@ use bollard::query_parameters::{
     BuildImageOptions, CreateContainerOptions, LogsOptions, RemoveContainerOptions,
 };
 use futures_util::stream::{Stream, StreamExt};
+use is_terminal::IsTerminal;
 use std::collections::HashMap;
 
 #[async_trait]
@@ -320,7 +321,7 @@ impl DockerClient for DefaultDockerClient {
         use tokio::io::AsyncWriteExt;
 
         // Check if the terminal is a TTY
-        let is_tty = atty::is(atty::Stream::Stdin);
+        let is_tty = std::io::stdin().is_terminal();
         if !is_tty {
             return Err(
                 "Interactive containers require a TTY. Please run in a terminal.".to_string(),

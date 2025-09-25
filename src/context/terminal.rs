@@ -1,4 +1,5 @@
 use crate::context::tsk_config::TskConfig;
+use is_terminal::IsTerminal;
 use std::io::{self, Write};
 #[cfg(test)]
 use std::sync::Arc;
@@ -59,7 +60,7 @@ impl DefaultTerminalOperations {
     /// Check if terminal title updates are supported
     fn is_supported(tsk_config: Option<&TskConfig>) -> bool {
         // Check if we're in a TTY
-        if !atty::is(atty::Stream::Stdout) {
+        if !std::io::stdout().is_terminal() {
             return false;
         }
 
@@ -177,7 +178,7 @@ mod tests {
             .unwrap();
         assert!(
             DefaultTerminalOperations::is_supported(Some(&config_xterm))
-                || !atty::is(atty::Stream::Stdout)
+                || !std::io::stdout().is_terminal()
         );
 
         // Test with dumb terminal

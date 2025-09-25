@@ -39,6 +39,12 @@ tsk docker build
 # Add a task using the "feat" task template
 tsk add --type "feat" --name "greeting" --description "Add a warm greeting to all CLI commands"
 
+# Or pipe the description from stdin
+echo "Add a warm greeting to all CLI commands" | tsk add --type "feat" --name "greeting"
+
+# Pipe from a file
+cat detailed-instructions.md | tsk add --type "feat" --name "complex-feature"
+
 # Run all queued tasks
 tsk run
 

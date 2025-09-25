@@ -1,6 +1,7 @@
 use super::Command;
 use crate::context::AppContext;
 use crate::repo_utils::find_repository_root;
+use crate::stdin_utils::{merge_description_with_stdin, read_piped_input};
 use crate::task::TaskBuilder;
 use crate::task_manager::TaskManager;
 use async_trait::async_trait;
@@ -31,6 +32,12 @@ impl Command for DebugCommand {
         println!("Starting debug session: {}", self.name);
         println!("Type: {}", self.r#type);
 
+        // Read from stdin if data is piped
+        let piped_input = read_piped_input()?;
+
+        // Merge piped input with CLI description (piped input takes precedence)
+        let final_description = merge_description_with_stdin(self.description.clone(), piped_input);
+
         // Find repository root
         let start_path = self.repo.as_deref().unwrap_or(".");
         let repo_root = find_repository_root(Path::new(start_path))?;
@@ -40,7 +47,7 @@ impl Command for DebugCommand {
             .repo_root(repo_root.clone())
             .name(self.name.clone())
             .task_type(self.r#type.clone())
-            .description(self.description.clone())
+            .description(final_description)
             .instructions_file(self.prompt.as_ref().map(PathBuf::from))
             .edit(self.edit)
             .agent(self.agent.clone())

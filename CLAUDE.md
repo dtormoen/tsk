@@ -36,11 +36,11 @@ TSK implements a command pattern with dependency injection for testability. The 
 **CLI Commands** (`src/commands/`)
 
 *Task Commands (implicit "task" noun):*
-- `add`: Queue tasks with descriptions and templates
+- `add`: Queue tasks with descriptions and templates (supports piped input via stdin for descriptions)
 - `run`: Execute all queued tasks
-- `quick`: Immediately execute single tasks
+- `quick`: Immediately execute single tasks (supports piped input via stdin for descriptions)
 - `list`: Display task status and results
-- `debug`: Launch interactive containers for troubleshooting (accepts same arguments as `quick` but always runs interactively)
+- `debug`: Launch interactive containers for troubleshooting (accepts same arguments as `quick` but always runs interactively, supports piped input via stdin for descriptions)
 - `clean`: Delete all completed tasks
 - `delete <task-id>`: Delete a specific task
 - `retry <task-id>`: Retry a previous task

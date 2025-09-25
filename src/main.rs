@@ -12,6 +12,7 @@ mod notifications;
 mod repo_utils;
 mod repository;
 mod server;
+mod stdin_utils;
 mod storage;
 mod task;
 mod task_builder;
@@ -62,7 +63,7 @@ enum Commands {
         #[arg(short = 't', long, default_value = "generic")]
         r#type: String,
 
-        /// Detailed description of what needs to be accomplished
+        /// Detailed description of what needs to be accomplished (can also be piped via stdin)
         #[arg(short, long, conflicts_with = "prompt")]
         description: Option<String>,
 
@@ -112,7 +113,7 @@ enum Commands {
         #[arg(short = 't', long, default_value = "generic")]
         r#type: String,
 
-        /// Detailed description of what needs to be accomplished
+        /// Detailed description of what needs to be accomplished (can also be piped via stdin)
         #[arg(short, long, conflicts_with = "prompt")]
         description: Option<String>,
 
@@ -154,7 +155,7 @@ enum Commands {
         #[arg(short = 't', long, default_value = "generic")]
         r#type: String,
 
-        /// Detailed description of what needs to be accomplished
+        /// Detailed description of what needs to be accomplished (can also be piped via stdin)
         #[arg(short, long, conflicts_with = "prompt")]
         description: Option<String>,
 

@@ -1,6 +1,7 @@
 use super::Command;
 use crate::context::AppContext;
 use crate::repo_utils::find_repository_root;
+use crate::stdin_utils::{merge_description_with_stdin, read_piped_input};
 use crate::task::TaskBuilder;
 use crate::task_storage::get_task_storage;
 use async_trait::async_trait;
@@ -25,6 +26,12 @@ impl Command for AddCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         println!("Adding task to queue: {}", self.name);
 
+        // Read from stdin if data is piped
+        let piped_input = read_piped_input()?;
+
+        // Merge piped input with CLI description (piped input takes precedence)
+        let final_description = merge_description_with_stdin(self.description.clone(), piped_input);
+
         // Find repository root
         let start_path = self.repo.as_deref().unwrap_or(".");
         let repo_root = find_repository_root(Path::new(start_path))?;
@@ -34,7 +41,7 @@ impl Command for AddCommand {
             .repo_root(repo_root.clone())
             .name(self.name.clone())
             .task_type(self.r#type.clone())
-            .description(self.description.clone())
+            .description(final_description.clone())
             .instructions_file(self.prompt.as_ref().map(PathBuf::from))
             .edit(self.edit)
             .agent(self.agent.clone())
@@ -77,7 +84,7 @@ impl Command for AddCommand {
         println!("\nTask successfully added to queue!");
         println!("Task ID: {}", task.id);
         println!("Type: {}", self.r#type);
-        if let Some(ref desc) = self.description {
+        if let Some(ref desc) = final_description {
             println!("Description: {desc}");
         }
         if self.prompt.is_some() {
