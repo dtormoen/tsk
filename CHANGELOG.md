@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1](https://github.com/dtormoen/tsk/compare/v0.5.0...v0.5.1) - 2025-09-25
+
+This release mainly adds a few new features:
+- The outputs while agents are working are much more detailed. They include:
+    - The model being used e.g. opus or sonnet
+    - The sub-agent that is active
+    - The full instructions and outputs of sub-agents
+- Adds the ability to pipe in your instructions: `echo "Make a sweet app" | tsk add --type feat --name an-app
+- Adds the ability to define a custom proxy configuration
+
+### Added
+
+- add stdin pipe support for task descriptions
+- enhance claude-code log processor with task-aware multi-agent output tracking
+- add output logging for claude-code agent debugging
+- display model name in claude code log processor output
+- add support for custom squid proxy configuration
+
+### Fixed
+
+- implement atomic file writes to prevent race conditions
+
+### Other
+
+- simplify Agent trait by consolidating build_command methods
+- simplify DockerManager by integrating ProxyManager and using AppContext
+- simplify TSK configuration by removing redundant XdgConfig struct
+- simplify Docker image management interface
+- remove unused additional_files functionality from Docker composer
+- remove obsolete tsk-base dockerfile
+
 ## [0.5.0](https://github.com/dtormoen/tsk/compare/v0.4.1...v0.5.0) - 2025-09-08
 
 This release should make Docker builds more reliable overall, but it does introduce a
