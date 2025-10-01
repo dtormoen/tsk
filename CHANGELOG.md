@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2](https://github.com/dtormoen/tsk/compare/v0.5.1...v0.5.2) - 2025-10-01
+
+### Fixed
+
+- handle empty git repositories gracefully
+
 ## [0.5.1](https://github.com/dtormoen/tsk/compare/v0.5.0...v0.5.1) - 2025-09-25
 
 This release mainly adds a few new features:
