@@ -1,6 +1,6 @@
 [package]
 name = "tsk-ai"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 authors = ["Danny Tormoen <dtormoen@gmail.com>"]
 description = "AI-powered development task delegation and sandboxing tool"
