@@ -7,6 +7,15 @@ pub trait GitOperations: Send + Sync {
     /// Check if the given path is within a git repository
     async fn is_git_repository(&self, repo_path: &Path) -> Result<bool, String>;
 
+    /// Create a branch from HEAD
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The repository cannot be opened
+    /// - HEAD cannot be resolved (e.g., empty repository with no commits)
+    /// - The branch already exists
+    /// - The working directory cannot be updated
     async fn create_branch(&self, repo_path: &Path, branch_name: &str) -> Result<(), String>;
 
     async fn get_status(&self, repo_path: &Path) -> Result<String, String>;
@@ -43,6 +52,13 @@ pub trait GitOperations: Send + Sync {
     async fn delete_branch(&self, repo_path: &Path, branch_name: &str) -> Result<(), String>;
 
     /// Get the current commit SHA
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The repository cannot be opened
+    /// - HEAD cannot be resolved (e.g., empty repository with no commits)
+    /// - The HEAD reference does not point to a valid commit
     async fn get_current_commit(&self, repo_path: &Path) -> Result<String, String>;
 
     /// Create a branch from a specific commit
@@ -670,5 +686,60 @@ mod integration_tests {
         // Verify the second file doesn't exist in the working directory
         assert!(!repo_path.join("file2.txt").exists());
         assert!(repo_path.join("file1.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn test_get_current_commit_empty_repository() {
+        let git_ops = DefaultGitOperations;
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path();
+
+        // Initialize a git repository without any commits
+        git2::Repository::init(repo_path).unwrap();
+
+        // Attempt to get current commit from empty repository
+        let result = git_ops.get_current_commit(repo_path).await;
+
+        // Verify it returns an error (not a panic)
+        assert!(
+            result.is_err(),
+            "get_current_commit should return error on empty repository"
+        );
+
+        // Verify the error message is descriptive
+        let error_message = result.unwrap_err();
+        assert!(
+            error_message.contains("Failed to get HEAD")
+                || error_message.contains("Failed to get commit from HEAD"),
+            "Error should mention HEAD failure, got: {error_message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_branch_empty_repository() {
+        let git_ops = DefaultGitOperations;
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path();
+
+        // Initialize a git repository without any commits
+        git2::Repository::init(repo_path).unwrap();
+
+        // Attempt to create a branch in empty repository
+        let result = git_ops.create_branch(repo_path, "test-branch").await;
+
+        // Verify it returns an error (not a panic)
+        assert!(
+            result.is_err(),
+            "create_branch should return error on empty repository"
+        );
+
+        // Verify the error message is descriptive
+        let error_message = result.unwrap_err();
+        assert!(
+            error_message.contains("Failed to get commit from HEAD")
+                || error_message.contains("Failed to get HEAD")
+                || error_message.contains("unborn"),
+            "Error should mention HEAD or unborn branch, got: {error_message}"
+        );
     }
 }

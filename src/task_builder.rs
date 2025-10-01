@@ -197,6 +197,34 @@ impl TaskBuilder {
             }
         }
 
+        // Check if repository has any commits
+        // This must happen before we try to capture source_commit
+        let has_commits = match ctx.git_operations().get_current_commit(&repo_root).await {
+            Ok(_) => true,
+            Err(e) => {
+                // Check if this is an empty repository error
+                if e.contains("Failed to get HEAD") || e.contains("reference 'refs/heads") {
+                    false
+                } else {
+                    // Some other git error - propagate it
+                    return Err(format!("Failed to check repository status: {e}").into());
+                }
+            }
+        };
+
+        if !has_commits {
+            return Err(
+                format!(
+                    "Cannot create task in an empty git repository.\n\n\
+                     The repository at '{}' has no commits. TSK needs at least one commit to create a branch and track changes.\n\n\
+                     To fix this, create an initial commit:\n  \
+                     git commit --allow-empty -m \"Initial commit\"\n\n\
+                     Then try running your TSK command again.",
+                    repo_root.display()
+                ).into()
+            );
+        }
+
         // Create task directory in centralized location
         let now = Local::now();
         let created_at = now;
@@ -736,5 +764,63 @@ mod tests {
 
         assert!(output_dir.exists());
         assert!(output_dir.is_dir());
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_rejects_empty_repository() {
+        use crate::test_utils::TestGitRepository;
+
+        // Create an empty git repository (no commits)
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init().unwrap(); // Initialize but don't create initial commit
+        let repo_path = test_repo.path().to_path_buf();
+
+        // Create context
+        let ctx = AppContext::builder().build();
+
+        // Attempt to create a task in the empty repository
+        let result = TaskBuilder::new()
+            .repo_root(repo_path.clone())
+            .name("test-task".to_string())
+            .task_type("generic".to_string())
+            .description(Some("Test description".to_string()))
+            .build(&ctx)
+            .await;
+
+        // Verify that task creation failed
+        assert!(
+            result.is_err(),
+            "Task creation should fail on empty repository"
+        );
+
+        // Verify error message is helpful and actionable
+        let error_message = result.unwrap_err().to_string();
+        assert!(
+            error_message.contains("empty git repository"),
+            "Error should mention empty repository, got: {error_message}"
+        );
+        assert!(
+            error_message.contains("no commits"),
+            "Error should mention no commits, got: {error_message}"
+        );
+        assert!(
+            error_message.contains("git commit --allow-empty"),
+            "Error should provide the command to fix it, got: {error_message}"
+        );
+        assert!(
+            error_message.contains(&repo_path.display().to_string()),
+            "Error should show repository path, got: {error_message}"
+        );
+
+        // Verify no task directory was created (cleanup verification)
+        // The task ID would be generated, but we can verify that no tasks exist in storage
+        // This ensures we're not leaving behind partial state
+        let task_storage =
+            crate::task_storage::get_task_storage(ctx.tsk_config(), ctx.file_system());
+        let all_tasks = task_storage.list_tasks().await.unwrap();
+        assert!(
+            all_tasks.is_empty(),
+            "No tasks should exist after failed creation"
+        );
     }
 }
