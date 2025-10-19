@@ -5,16 +5,21 @@ use std::path::Path;
 ///
 /// Checks for language-specific marker files in priority order:
 /// - Rust: `Cargo.toml` → "rust"
-/// - Python: `pyproject.toml`, `requirements.txt`, `setup.py` → "python"  
+/// - Lua: `rockspec`, `.luacheckrc`, `init.lua` → "lua"
+/// - Python: `pyproject.toml`, `requirements.txt`, `setup.py` → "python"
 /// - Node.js: `package.json` → "node"
 /// - Go: `go.mod` → "go"
 /// - Java: `pom.xml`, `build.gradle`, `build.gradle.kts` → "java"
-/// - Lua: `rockspec`, `.luacheckrc`, `init.lua` → "lua"
 /// - Default: "default" (when no specific files found)
 pub async fn detect_stack(repo_path: &Path) -> Result<String> {
     // Check for language-specific files in priority order
     let stack = if file_exists(repo_path, "Cargo.toml").await {
         "rust"
+    } else if file_exists(repo_path, "rockspec").await
+        || file_exists(repo_path, ".luacheckrc").await
+        || file_exists(repo_path, "init.lua").await
+    {
+        "lua"
     } else if file_exists(repo_path, "pyproject.toml").await
         || file_exists(repo_path, "requirements.txt").await
         || file_exists(repo_path, "setup.py").await
@@ -29,11 +34,6 @@ pub async fn detect_stack(repo_path: &Path) -> Result<String> {
         || file_exists(repo_path, "build.gradle.kts").await
     {
         "java"
-    } else if file_exists(repo_path, "rockspec").await
-        || file_exists(repo_path, ".luacheckrc").await
-        || file_exists(repo_path, "init.lua").await
-    {
-        "lua"
     } else {
         "default"
     };

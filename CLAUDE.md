@@ -129,11 +129,11 @@ TSK implements a command pattern with dependency injection for testability. The 
 **Auto-Detection** (`src/repository.rs`)
 - Automatic detection of stack based on repository files:
   - Rust: `Cargo.toml` → "rust"
+  - Lua: `rockspec`, `.luacheckrc`, `init.lua` → "lua"
   - Python: `pyproject.toml`, `requirements.txt`, `setup.py` → "python"
   - Node.js: `package.json` → "node"
   - Go: `go.mod` → "go"
   - Java: `pom.xml`, `build.gradle`, `build.gradle.kts` → "java"
-  - Lua: `rockspec`, `.luacheckrc`, `init.lua` → "lua"
   - Default: "default" (when no specific files found)
 - Automatic project name detection from repository directory name with cleaning for Docker compatibility
 - Used by `TaskBuilder`, `DockerBuildCommand`, and `DebugCommand` when `--stack` and `--project` flags are not provided
