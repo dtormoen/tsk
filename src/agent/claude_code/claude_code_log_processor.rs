@@ -82,6 +82,8 @@ pub struct ClaudeCodeLogProcessor {
     full_log: Vec<String>,
     final_result: Option<TaskResult>,
     json_mode_active: bool,
+    /// Track whether the previous line was a parsing error to avoid duplicate error messages
+    last_line_was_parse_error: bool,
     /// Optional task name for prefixing log lines
     task_name: Option<String>,
     /// Track task contexts by parent_tool_use_id for sub-agent message tagging
@@ -95,6 +97,7 @@ impl ClaudeCodeLogProcessor {
             full_log: Vec::new(),
             final_result: None,
             json_mode_active: false,
+            last_line_was_parse_error: false,
             task_name,
             task_contexts: HashMap::new(),
         }
@@ -934,7 +937,7 @@ impl LogProcessor for ClaudeCodeLogProcessor {
         // Store the raw line for the full log
         self.full_log.push(line.to_string());
 
-        // Skip empty lines
+        // Skip empty lines - don't reset error tracking
         if line.trim().is_empty() {
             return None;
         }
@@ -946,18 +949,27 @@ impl LogProcessor for ClaudeCodeLogProcessor {
                 if !self.json_mode_active {
                     self.json_mode_active = true;
                 }
+                // Reset the error flag on successful parse
+                self.last_line_was_parse_error = false;
                 self.format_message(msg)
             }
             Err(_) => {
                 if self.json_mode_active {
-                    // In JSON mode, show parsing error for non-JSON lines
-                    Some(format!(
-                        "{}parsing error",
-                        self.create_prefix("‼️", None, None, None)
-                    ))
+                    // Check if we should suppress this error
+                    if self.last_line_was_parse_error {
+                        // Suppress duplicate parsing error
+                        None
+                    } else {
+                        // Show first parsing error in sequence
+                        self.last_line_was_parse_error = true;
+                        Some(format!(
+                            "{}parsing error",
+                            self.create_prefix("‼️", None, None, None)
+                        ))
+                    }
                 } else {
                     // Before JSON mode is active, pass through non-JSON lines as-is
-                    // This allows misconfiguration messages to be displayed
+                    // Don't set last_line_was_parse_error since we're not in JSON mode yet
                     Some(line.to_string())
                 }
             }
@@ -1186,8 +1198,9 @@ mod tests {
         let result = processor.process_line("This is not JSON");
         assert_eq!(result, Some("‼️ [test-task]: parsing error".to_string()));
 
+        // Consecutive parsing errors should be suppressed
         let result = processor.process_line("random text");
-        assert_eq!(result, Some("‼️ [test-task]: parsing error".to_string()));
+        assert_eq!(result, None);
     }
 
     #[test]
@@ -1288,5 +1301,142 @@ mod tests {
         let output = processor.process_line(&result).unwrap();
         assert!(output.contains("Task Complete: Test edge cases (test-agent)"));
         assert!(!output.contains("📋 Sub-agent Output:"));
+    }
+
+    #[test]
+    fn test_parse_error_deduplication() {
+        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+
+        // First, activate JSON mode with a valid JSON line
+        let json =
+            r#"{"type": "assistant", "message": {"content": [{"type": "text", "text": "Hello"}]}}"#;
+        let result = processor.process_line(json);
+        assert_eq!(result, Some("🤖 [test-task]: Hello".to_string()));
+        assert!(processor.json_mode_active);
+
+        // First parsing error should be shown
+        let result = processor.process_line("This is not JSON");
+        assert_eq!(result, Some("‼️ [test-task]: parsing error".to_string()));
+
+        // Second parsing error should be suppressed (returns None)
+        let result = processor.process_line("Another non-JSON line");
+        assert_eq!(result, None);
+
+        // Third parsing error should also be suppressed
+        let result = processor.process_line("Yet another non-JSON line");
+        assert_eq!(result, None);
+
+        // Fourth parsing error should also be suppressed
+        let result = processor.process_line("Still more non-JSON");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_error_resume_after_valid_json() {
+        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+
+        // Activate JSON mode
+        let json =
+            r#"{"type": "assistant", "message": {"content": [{"type": "text", "text": "First"}]}}"#;
+        processor.process_line(json);
+
+        // First parsing error shown
+        let result = processor.process_line("Bad line 1");
+        assert_eq!(result, Some("‼️ [test-task]: parsing error".to_string()));
+
+        // Consecutive errors suppressed
+        let result = processor.process_line("Bad line 2");
+        assert_eq!(result, None);
+        let result = processor.process_line("Bad line 3");
+        assert_eq!(result, None);
+
+        // Valid JSON resets the error flag
+        let json = r#"{"type": "assistant", "message": {"content": [{"type": "text", "text": "Second"}]}}"#;
+        let result = processor.process_line(json);
+        assert_eq!(result, Some("🤖 [test-task]: Second".to_string()));
+
+        // Next parsing error should be shown again
+        let result = processor.process_line("Bad line 4");
+        assert_eq!(result, Some("‼️ [test-task]: parsing error".to_string()));
+
+        // And consecutive errors suppressed again
+        let result = processor.process_line("Bad line 5");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_empty_lines_dont_reset_error_tracking() {
+        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+
+        // Activate JSON mode
+        let json =
+            r#"{"type": "assistant", "message": {"content": [{"type": "text", "text": "Start"}]}}"#;
+        processor.process_line(json);
+
+        // First parsing error shown
+        let result = processor.process_line("Bad line 1");
+        assert_eq!(result, Some("‼️ [test-task]: parsing error".to_string()));
+
+        // Empty line should not reset error tracking
+        let result = processor.process_line("");
+        assert_eq!(result, None);
+
+        // Next parsing error should still be suppressed
+        let result = processor.process_line("Bad line 2");
+        assert_eq!(result, None);
+
+        // Another empty line
+        let result = processor.process_line("   ");
+        assert_eq!(result, None);
+
+        // Parsing error still suppressed
+        let result = processor.process_line("Bad line 3");
+        assert_eq!(result, None);
+
+        // Valid JSON resets the state
+        let json =
+            r#"{"type": "assistant", "message": {"content": [{"type": "text", "text": "Good"}]}}"#;
+        processor.process_line(json);
+
+        // Empty line after valid JSON
+        let result = processor.process_line("");
+        assert_eq!(result, None);
+
+        // Next parsing error should be shown (error flag was reset by valid JSON)
+        let result = processor.process_line("Bad line 4");
+        assert_eq!(result, Some("‼️ [test-task]: parsing error".to_string()));
+    }
+
+    #[test]
+    fn test_pre_json_mode_behavior_unchanged() {
+        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+
+        // Before JSON mode, non-JSON lines should be passed through
+        let result = processor.process_line("Configuration error message");
+        assert_eq!(result, Some("Configuration error message".to_string()));
+        assert!(!processor.json_mode_active);
+
+        // Multiple non-JSON lines should all be passed through
+        let result = processor.process_line("Warning: API key missing");
+        assert_eq!(result, Some("Warning: API key missing".to_string()));
+        assert!(!processor.json_mode_active);
+
+        let result = processor.process_line("Another warning");
+        assert_eq!(result, Some("Another warning".to_string()));
+        assert!(!processor.json_mode_active);
+
+        // Now activate JSON mode
+        let json =
+            r#"{"type": "assistant", "message": {"content": [{"type": "text", "text": "Start"}]}}"#;
+        let result = processor.process_line(json);
+        assert_eq!(result, Some("🤖 [test-task]: Start".to_string()));
+        assert!(processor.json_mode_active);
+
+        // Now parsing errors should be shown and deduplicated
+        let result = processor.process_line("Bad line 1");
+        assert_eq!(result, Some("‼️ [test-task]: parsing error".to_string()));
+
+        let result = processor.process_line("Bad line 2");
+        assert_eq!(result, None);
     }
 }
