@@ -617,13 +617,12 @@ mod tests {
         assert_eq!(host_config.cpu_quota, Some(CONTAINER_CPU_QUOTA));
 
         let binds = host_config.binds.as_ref().unwrap();
-        assert_eq!(binds.len(), 5); // workspace, claude dir, claude.json, instructions, and output
+        assert_eq!(binds.len(), 4); // workspace, claude dir, instructions, and output
         assert!(binds[0].contains(&format!("/tmp/test-repo:{CONTAINER_WORKING_DIR}")));
         // In test mode, .claude directory is in temp directory
         assert!(binds[1].contains(":/home/agent/.claude"));
-        assert!(binds[2].contains(":/home/agent/.claude.json"));
-        assert!(binds[3].contains(":/instructions:ro"));
-        assert!(binds[4].contains(":/output"));
+        assert!(binds[2].contains(":/instructions:ro"));
+        assert!(binds[3].contains(":/output"));
 
         // Check proxy environment variables
         let env = config.env.as_ref().unwrap();
@@ -653,9 +652,9 @@ mod tests {
         let task_container_config = &create_calls[1].1;
         let host_config = task_container_config.host_config.as_ref().unwrap();
         let binds = host_config.binds.as_ref().unwrap();
-        assert_eq!(binds.len(), 5); // workspace, claude dir, claude.json, instructions, and output
-        assert!(binds[3].contains("/tmp/tsk-test:/instructions:ro"));
-        assert!(binds[4].contains(":/output"));
+        assert_eq!(binds.len(), 4); // workspace, claude dir, instructions, and output
+        assert!(binds[2].contains("/tmp/tsk-test:/instructions:ro"));
+        assert!(binds[3].contains(":/output"));
     }
 
     #[tokio::test]
@@ -690,12 +689,11 @@ mod tests {
         assert!(repo_bind.contains("test-repo"));
         assert!(repo_bind.ends_with(&format!(":{CONTAINER_WORKING_DIR}")));
 
-        // Should also have the claude directory, claude.json, instructions, and output mounts
-        assert_eq!(binds.len(), 5); // workspace, claude dir, claude.json, instructions, and output
+        // Should also have the claude directory, instructions, and output mounts
+        assert_eq!(binds.len(), 4); // workspace, claude dir, instructions, and output
         // In test mode, .claude directory is in temp directory
         assert!(binds[1].contains(":/home/agent/.claude"));
-        assert!(binds[2].contains(":/home/agent/.claude.json"));
-        assert!(binds[3].contains(":/instructions:ro"));
-        assert!(binds[4].contains(":/output"));
+        assert!(binds[2].contains(":/instructions:ro"));
+        assert!(binds[3].contains(":/output"));
     }
 }

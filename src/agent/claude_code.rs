@@ -82,19 +82,12 @@ impl Agent for ClaudeCodeAgent {
 
     fn volumes(&self) -> Vec<(String, String, String)> {
         let claude_config_dir = self.get_claude_config_dir();
-        let claude_json_path = claude_config_dir.with_extension("json");
 
         vec![
             // Claude config directory
             (
                 claude_config_dir.to_string_lossy().to_string(),
                 "/home/agent/.claude".to_string(),
-                "".to_string(),
-            ),
-            // Claude config file
-            (
-                claude_json_path.to_string_lossy().to_string(),
-                "/home/agent/.claude.json".to_string(),
                 "".to_string(),
             ),
         ]
@@ -125,13 +118,13 @@ impl Agent for ClaudeCodeAgent {
             return Ok(());
         }
 
-        // Check if ~/.claude.json exists
-        let claude_config = self.get_claude_config_dir().with_extension("json");
+        // Check if ~/.claude directory exists
+        let claude_config_dir = self.get_claude_config_dir();
 
-        if !claude_config.exists() {
+        if !claude_config_dir.exists() {
             return Err(format!(
-                "Claude configuration not found at {}. Please run 'claude login' first.",
-                claude_config.display()
+                "Claude configuration directory not found at {}. Please run 'claude login' first.",
+                claude_config_dir.display()
             ));
         }
 
@@ -233,15 +226,14 @@ mod tests {
 
         // Test volumes
         let volumes = agent.volumes();
-        assert_eq!(volumes.len(), 2);
+        assert_eq!(volumes.len(), 1);
 
-        // Should mount .claude directory and .claude.json file
+        // Should mount .claude directory
         let volume_paths: Vec<&str> = volumes
             .iter()
             .map(|(_, container_path, _)| container_path.as_str())
             .collect();
         assert!(volume_paths.contains(&"/home/agent/.claude"));
-        assert!(volume_paths.contains(&"/home/agent/.claude.json"));
 
         // Test environment variables
         let env = agent.environment();
