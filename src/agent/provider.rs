@@ -1,4 +1,4 @@
-use super::{Agent, ClaudeCodeAgent, NoOpAgent};
+use super::{Agent, ClaudeCodeAgent, CodexAgent, NoOpAgent};
 use crate::context::tsk_config::TskConfig;
 use std::sync::Arc;
 
@@ -17,6 +17,7 @@ impl AgentProvider {
     pub fn get_agent(name: &str, tsk_config: Arc<TskConfig>) -> anyhow::Result<Arc<dyn Agent>> {
         match name {
             "claude-code" => Ok(Arc::new(ClaudeCodeAgent::with_tsk_config(tsk_config))),
+            "codex" => Ok(Arc::new(CodexAgent::with_tsk_config(tsk_config))),
             "no-op" => Ok(Arc::new(NoOpAgent)),
             _ => Err(anyhow::anyhow!("Unknown agent: {}", name)),
         }
@@ -24,7 +25,7 @@ impl AgentProvider {
 
     /// List all available agents
     pub fn list_agents() -> Vec<&'static str> {
-        vec!["claude-code", "no-op"]
+        vec!["claude-code", "codex", "no-op"]
     }
 
     /// Get the default agent name
@@ -80,8 +81,20 @@ mod tests {
     #[test]
     fn test_agent_provider_is_valid_agent() {
         assert!(AgentProvider::is_valid_agent("claude-code"));
+        assert!(AgentProvider::is_valid_agent("codex"));
         assert!(AgentProvider::is_valid_agent("no-op"));
         assert!(!AgentProvider::is_valid_agent("invalid-agent"));
+    }
+
+    #[test]
+    fn test_agent_provider_get_codex_agent() {
+        // Test getting the codex agent
+        let app_context = AppContext::builder().build();
+        let tsk_config = app_context.tsk_config();
+        let agent = AgentProvider::get_agent("codex", tsk_config);
+        assert!(agent.is_ok());
+        let agent = agent.unwrap();
+        assert_eq!(agent.name(), "codex");
     }
 
     #[test]
@@ -93,6 +106,12 @@ mod tests {
         assert!(agent.is_ok());
         let agent = agent.unwrap();
         assert_eq!(agent.name(), "no-op");
+    }
+
+    #[test]
+    fn test_agent_provider_list_includes_codex() {
+        let agents = AgentProvider::list_agents();
+        assert!(agents.contains(&"codex"));
     }
 
     #[test]

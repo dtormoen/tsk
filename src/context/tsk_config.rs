@@ -21,6 +21,7 @@ pub struct TskConfig {
     runtime_dir: PathBuf,
     config_dir: PathBuf,
     claude_config_dir: PathBuf,
+    codex_config_dir: PathBuf,
     editor: String,
     terminal_type: Option<String>,
     git_user_name: String,
@@ -39,6 +40,7 @@ impl TskConfig {
         let runtime_dir = Self::resolve_runtime_dir(None)?;
         let config_dir = Self::resolve_config_dir(None)?;
         let claude_config_dir = Self::resolve_claude_config_dir(None)?;
+        let codex_config_dir = Self::resolve_codex_config_dir(None)?;
         let editor = Self::resolve_editor(None);
         let terminal_type = Self::resolve_terminal_type(None);
         let git_user_name = Self::resolve_git_user_name(None)?;
@@ -49,6 +51,7 @@ impl TskConfig {
             runtime_dir,
             config_dir,
             claude_config_dir,
+            codex_config_dir,
             editor,
             terminal_type,
             git_user_name,
@@ -84,6 +87,11 @@ impl TskConfig {
     /// Gets the Claude configuration directory path
     pub fn claude_config_dir(&self) -> &Path {
         &self.claude_config_dir
+    }
+
+    /// Gets the Codex configuration directory path
+    pub fn codex_config_dir(&self) -> &Path {
+        &self.codex_config_dir
     }
 
     /// Gets the editor command
@@ -218,6 +226,20 @@ impl TskConfig {
         Ok(PathBuf::from(home).join(".claude"))
     }
 
+    fn resolve_codex_config_dir(override_dir: Option<&PathBuf>) -> Result<PathBuf, TskConfigError> {
+        // Check override first
+        if let Some(codex_config_dir) = override_dir {
+            return Ok(codex_config_dir.clone());
+        }
+
+        // Fall back to ~/.codex
+        let home = env::var("HOME")
+            .or_else(|_| env::var("USERPROFILE"))
+            .map_err(|_| TskConfigError::NoHomeDirectory)?;
+
+        Ok(PathBuf::from(home).join(".codex"))
+    }
+
     fn resolve_editor(override_editor: Option<&String>) -> String {
         // Check override first
         if let Some(editor) = override_editor {
@@ -273,6 +295,7 @@ pub struct TskConfigBuilder {
     runtime_dir: Option<PathBuf>,
     config_dir: Option<PathBuf>,
     claude_config_dir: Option<PathBuf>,
+    codex_config_dir: Option<PathBuf>,
     editor: Option<String>,
     terminal_type: Option<Option<String>>,
     git_user_name: Option<String>,
@@ -288,6 +311,7 @@ impl TskConfigBuilder {
             runtime_dir: None,
             config_dir: None,
             claude_config_dir: None,
+            codex_config_dir: None,
             editor: None,
             terminal_type: None,
             git_user_name: None,
@@ -316,6 +340,12 @@ impl TskConfigBuilder {
     /// Sets the Claude configuration directory
     pub fn with_claude_config_dir(mut self, dir: PathBuf) -> Self {
         self.claude_config_dir = Some(dir);
+        self
+    }
+
+    /// Sets the Codex configuration directory
+    pub fn with_codex_config_dir(mut self, dir: PathBuf) -> Self {
+        self.codex_config_dir = Some(dir);
         self
     }
 
@@ -350,6 +380,7 @@ impl TskConfigBuilder {
         let config_dir = TskConfig::resolve_config_dir(self.config_dir.as_ref())?;
         let claude_config_dir =
             TskConfig::resolve_claude_config_dir(self.claude_config_dir.as_ref())?;
+        let codex_config_dir = TskConfig::resolve_codex_config_dir(self.codex_config_dir.as_ref())?;
         let editor = TskConfig::resolve_editor(self.editor.as_ref());
         let terminal_type = TskConfig::resolve_terminal_type(self.terminal_type.as_ref());
         let git_user_name = TskConfig::resolve_git_user_name(self.git_user_name.as_ref())?;
@@ -360,6 +391,7 @@ impl TskConfigBuilder {
             runtime_dir,
             config_dir,
             claude_config_dir,
+            codex_config_dir,
             editor,
             terminal_type,
             git_user_name,
@@ -558,6 +590,18 @@ mod tests {
                 .to_string_lossy()
                 .contains(".claude")
         );
+    }
+
+    #[test]
+    fn test_tsk_config_builder_with_codex_config_dir() {
+        let config = TskConfig::builder()
+            .with_codex_config_dir(PathBuf::from("/test/.codex"))
+            .with_git_user_name("Test User".to_string())
+            .with_git_user_email("test@example.com".to_string())
+            .build()
+            .expect("Failed to create TSK configuration");
+
+        assert_eq!(config.codex_config_dir(), Path::new("/test/.codex"));
     }
 
     #[test]

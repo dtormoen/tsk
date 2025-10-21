@@ -123,6 +123,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - `version()`: Returns the agent's version string (used to trigger Docker rebuilds when agents are upgraded)
 - Available agents:
   - `claude-code`: Claude Code AI agent (default) - automatically detects version from `claude --version`
+  - `codex`: Codex AI agent - automatically detects version from `codex --version`
   - `no-op`: Simple agent for testing that displays instructions
 - Interactive debugging mode shows task instructions and the normal command before providing shell access
 

@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 
 mod claude_code;
+mod codex;
 mod log_processor;
 mod no_op;
 mod no_op_log_processor;
@@ -10,6 +11,7 @@ mod task_result;
 pub use self::log_processor::LogProcessor;
 pub use self::task_result::TaskResult;
 pub use claude_code::ClaudeCodeAgent;
+pub use codex::CodexAgent;
 pub use no_op::NoOpAgent;
 pub use provider::AgentProvider;
 
@@ -196,6 +198,28 @@ mod tests {
         use super::no_op_log_processor::NoOpLogProcessor;
 
         let mut processor = NoOpLogProcessor::new();
+
+        // Test process_line passes through
+        let line = "test output line";
+        let result = processor.process_line(line);
+        assert_eq!(result, Some(line.to_string()));
+
+        // Test get_full_log
+        processor.process_line("line 1");
+        processor.process_line("line 2");
+        let full_log = processor.get_full_log();
+        assert!(full_log.contains("line 1"));
+        assert!(full_log.contains("line 2"));
+
+        // Test get_final_result returns None
+        assert!(processor.get_final_result().is_none());
+    }
+
+    #[test]
+    fn test_codex_log_processor() {
+        use super::codex::codex_log_processor::CodexLogProcessor;
+
+        let mut processor = CodexLogProcessor::new();
 
         // Test process_line passes through
         let line = "test output line";
