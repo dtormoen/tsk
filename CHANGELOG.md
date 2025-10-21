@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3](https://github.com/dtormoen/tsk/compare/v0.5.2...v0.5.3) - 2025-10-21
+
+### Fixed
+
+- don't mount .claude.json to avoid corrupting it
+- deduplicate consecutive parsing errors in Claude Code log processor
+- detect lua before python
+
 ## [0.5.2](https://github.com/dtormoen/tsk/compare/v0.5.1...v0.5.2) - 2025-10-01
 
 ### Fixed
