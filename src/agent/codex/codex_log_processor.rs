@@ -22,6 +22,13 @@ struct ItemData {
     text: Option<String>,
     aggregated_output: Option<String>,
     exit_code: Option<i32>,
+    changes: Option<Vec<FileChange>>,
+}
+
+/// File change information
+#[derive(Debug, Deserialize)]
+struct FileChange {
+    path: String,
 }
 
 /// Usage information from Codex turn.completed events
@@ -72,7 +79,7 @@ impl CodexLogProcessor {
         }
     }
 
-    /// Creates a prefix for log lines in the format: <emoji> [<task-name>]:
+    /// Creates a prefix for log lines in the format: <emoji> [<task-name>][codex]:
     fn create_prefix(&self, emoji: &str) -> String {
         let mut prefix = emoji.to_string();
 
@@ -80,8 +87,33 @@ impl CodexLogProcessor {
             prefix.push_str(&format!(" [{}]", task_name));
         }
 
-        prefix.push_str(": ");
+        prefix.push_str("[codex]: ");
         prefix
+    }
+
+    /// Simplifies a command by removing bash -lc wrapper boilerplate
+    fn simplify_command(&self, command: &str) -> String {
+        // Handle: bash -lc 'actual command'
+        if let Some(inner) = command.strip_prefix("bash -lc '")
+            && let Some(cmd) = inner.strip_suffix('\'')
+        {
+            return cmd.to_string();
+        }
+
+        // Handle: bash -lc "actual command"
+        if let Some(inner) = command.strip_prefix("bash -lc \"")
+            && let Some(cmd) = inner.strip_suffix('"')
+        {
+            return cmd.to_string();
+        }
+
+        // Handle: bash -lc command (no quotes)
+        if let Some(inner) = command.strip_prefix("bash -lc ") {
+            return inner.to_string();
+        }
+
+        // No match, return original
+        command.to_string()
     }
 
     /// Formats a Codex event based on its type
@@ -105,12 +137,10 @@ impl CodexLogProcessor {
     /// Formats a turn.completed event with usage statistics
     fn format_turn_completed(&mut self, event: CodexEvent) -> Option<String> {
         if let Some(usage) = event.usage {
-            let cost_usd = self.calculate_cost_from_usage(&usage);
-
             self.final_result = Some(TaskResult {
                 success: true,
                 message: "Task completed successfully".to_string(),
-                cost_usd,
+                cost_usd: None,
                 duration_ms: None,
             });
 
@@ -158,7 +188,12 @@ impl CodexLogProcessor {
             match item.item_type.as_str() {
                 "command_execution" => {
                     let cmd = item.command.as_deref().unwrap_or("unknown");
-                    Some(format!("{}Running: {}", self.create_prefix("🖥️"), cmd))
+                    let simplified_cmd = self.simplify_command(cmd);
+                    Some(format!(
+                        "{}Running: {}",
+                        self.create_prefix("🖥️"),
+                        simplified_cmd
+                    ))
                 }
                 "agent_message" => None, // Wait for completion
                 "reasoning" => Some(format!("{}Reasoning...", self.create_prefix("🧠"))),
@@ -186,23 +221,38 @@ impl CodexLogProcessor {
             match item.item_type.as_str() {
                 "command_execution" => {
                     let exit_code = item.exit_code.unwrap_or(-1);
-                    let mut output = format!(
-                        "{}Command completed (exit: {})",
-                        self.create_prefix("🖥️"),
-                        exit_code
-                    );
+                    let mut result_msg = String::new();
 
-                    // Show output preview if available
-                    if let Some(stdout) = item.aggregated_output {
-                        let preview = stdout.lines().next().unwrap_or("").trim();
-                        if !preview.is_empty() && preview.len() <= 80 {
-                            output.push_str(&format!(" - {}", preview));
-                        } else if !preview.is_empty() {
-                            output.push_str(&format!(" - {}...", &preview[..77]));
+                    // Check if this is a test command with results
+                    if let Some(stdout) = &item.aggregated_output {
+                        if stdout.contains("test result: ok") {
+                            result_msg = " - Tests passed ✅".to_string();
+                        } else if stdout.contains("test result: FAILED") {
+                            result_msg = " - Tests failed ❌".to_string();
                         }
                     }
 
-                    Some(output)
+                    // Only show output preview for errors (non-zero exit) or if we didn't find test results
+                    if exit_code != 0
+                        && result_msg.is_empty()
+                        && let Some(stdout) = &item.aggregated_output
+                    {
+                        let preview = stdout.lines().next().unwrap_or("").trim();
+                        if !preview.is_empty() {
+                            if preview.len() > 60 {
+                                result_msg = format!(" - {}...", &preview[..60]);
+                            } else {
+                                result_msg = format!(" - {}", preview);
+                            }
+                        }
+                    }
+
+                    Some(format!(
+                        "{}Command completed (exit: {}){}",
+                        self.create_prefix("🖥️"),
+                        exit_code,
+                        result_msg
+                    ))
                 }
                 "agent_message" => {
                     if let Some(text) = item.text {
@@ -230,7 +280,40 @@ impl CodexLogProcessor {
                         None
                     }
                 }
-                "file_change" => Some(format!("{}File modified", self.create_prefix("✅"))),
+                "file_change" => {
+                    if let Some(changes) = &item.changes {
+                        // Extract filenames from paths (remove /workspace prefix if present)
+                        let filenames: Vec<String> = changes
+                            .iter()
+                            .map(|c| {
+                                c.path
+                                    .strip_prefix("/workspace/")
+                                    .unwrap_or(&c.path)
+                                    .to_string()
+                            })
+                            .collect();
+
+                        if filenames.is_empty() {
+                            Some(format!("{}File modified", self.create_prefix("✅")))
+                        } else if filenames.len() == 1 {
+                            Some(format!(
+                                "{}Modified: {}",
+                                self.create_prefix("✅"),
+                                filenames[0]
+                            ))
+                        } else {
+                            // Multiple files - show count and first file
+                            Some(format!(
+                                "{}Modified {} files: {}, ...",
+                                self.create_prefix("✅"),
+                                filenames.len(),
+                                filenames[0]
+                            ))
+                        }
+                    } else {
+                        Some(format!("{}File modified", self.create_prefix("✅")))
+                    }
+                }
                 "mcp_tool_call" => Some(format!("{}Tool completed", self.create_prefix("🔧"))),
                 "web_search" => Some(format!("{}Search completed", self.create_prefix("🌐"))),
                 "todo_list" => {
@@ -273,29 +356,6 @@ impl CodexLogProcessor {
             ))
         } else {
             Some(format!("{}Error occurred", self.create_prefix("❌")))
-        }
-    }
-
-    /// Calculates approximate cost from token usage
-    fn calculate_cost_from_usage(&self, usage: &UsageData) -> Option<f64> {
-        // Codex pricing (using Claude-like placeholder rates for now)
-        // TODO: Update with actual Codex pricing when available
-        const INPUT_COST_PER_1K: f64 = 0.015;
-        const OUTPUT_COST_PER_1K: f64 = 0.075;
-        const CACHE_READ_COST_PER_1K: f64 = 0.0015;
-
-        let input_tokens = usage.input_tokens.unwrap_or(0) as f64;
-        let output_tokens = usage.output_tokens.unwrap_or(0) as f64;
-        let cached_tokens = usage.cached_input_tokens.unwrap_or(0) as f64;
-
-        let total_cost = (input_tokens * INPUT_COST_PER_1K / 1000.0)
-            + (output_tokens * OUTPUT_COST_PER_1K / 1000.0)
-            + (cached_tokens * CACHE_READ_COST_PER_1K / 1000.0);
-
-        if total_cost > 0.0 {
-            Some(total_cost)
-        } else {
-            None
         }
     }
 }
@@ -371,12 +431,12 @@ mod tests {
 
         let started = r#"{"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"ls -la","status":"in_progress"}}"#;
         let output = processor.process_line(started).unwrap();
-        assert!(output.contains("🖥️ [test-task]: Running: ls -la"));
+        assert!(output.contains("🖥️ [test-task][codex]: Running: ls -la"));
 
         let completed = r#"{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"ls -la","aggregated_output":"file1.txt\nfile2.txt","exit_code":0,"status":"completed"}}"#;
         let output = processor.process_line(completed).unwrap();
-        assert!(output.contains("🖥️ [test-task]: Command completed (exit: 0)"));
-        assert!(output.contains("file1.txt"));
+        assert!(output.contains("🖥️ [test-task][codex]: Command completed (exit: 0)"));
+        assert!(!output.contains("file1.txt")); // Should not show output for successful commands
     }
 
     #[test]
@@ -385,7 +445,7 @@ mod tests {
 
         let completed = r#"{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"This is my response"}}"#;
         let output = processor.process_line(completed).unwrap();
-        assert_eq!(output, "🤖 [test-task]: This is my response");
+        assert_eq!(output, "🤖 [test-task][codex]: This is my response");
     }
 
     #[test]
@@ -394,7 +454,7 @@ mod tests {
 
         let completed = r#"{"type":"turn.completed","usage":{"input_tokens":1000,"output_tokens":500,"cached_input_tokens":200}}"#;
         let output = processor.process_line(completed).unwrap();
-        assert!(output.contains("📊 [test-task]: Task completed"));
+        assert!(output.contains("📊 [test-task][codex]: Task completed"));
         assert!(output.contains("1000 input tokens"));
         assert!(output.contains("500 output tokens"));
         assert!(output.contains("200 cached tokens"));
@@ -402,7 +462,7 @@ mod tests {
         // Check final result was extracted
         let result = processor.get_final_result().unwrap();
         assert!(result.success);
-        assert!(result.cost_usd.is_some());
+        assert!(result.cost_usd.is_none());
     }
 
     #[test]
@@ -411,7 +471,7 @@ mod tests {
 
         let failed = r#"{"type":"turn.failed","error":{"message":"API request failed"}}"#;
         let output = processor.process_line(failed).unwrap();
-        assert!(output.contains("❌ [test-task]: Turn failed: API request failed"));
+        assert!(output.contains("❌ [test-task][codex]: Turn failed: API request failed"));
 
         let result = processor.get_final_result().unwrap();
         assert!(!result.success);
@@ -433,7 +493,7 @@ mod tests {
 
         // After JSON mode, non-JSON shows parsing error
         let result = processor.process_line("Not JSON");
-        assert!(result.unwrap().contains("parsing error"));
+        assert!(result.unwrap().contains("[codex]: parsing error"));
     }
 
     #[test]
@@ -445,7 +505,7 @@ mod tests {
 
         // First error shown
         let result = processor.process_line("Bad line 1");
-        assert!(result.unwrap().contains("parsing error"));
+        assert!(result.unwrap().contains("[codex]: parsing error"));
 
         // Subsequent errors suppressed
         assert_eq!(processor.process_line("Bad line 2"), None);
@@ -456,7 +516,7 @@ mod tests {
 
         // Next error shown again
         let result = processor.process_line("Bad line 4");
-        assert!(result.unwrap().contains("parsing error"));
+        assert!(result.unwrap().contains("[codex]: parsing error"));
     }
 
     #[test]
@@ -466,18 +526,33 @@ mod tests {
         // Reasoning started
         let started = r#"{"type":"item.started","item":{"id":"item_1","type":"reasoning"}}"#;
         let output = processor.process_line(started).unwrap();
-        assert!(output.contains("🧠 [test-task]: Reasoning..."));
+        assert!(output.contains("🧠 [test-task][codex]: Reasoning..."));
 
         // Reasoning completed with text
         let completed = r#"{"type":"item.completed","item":{"id":"item_1","type":"reasoning","text":"I need to analyze the code structure"}}"#;
         let output = processor.process_line(completed).unwrap();
-        assert!(output.contains("🧠 [test-task]: I need to analyze"));
+        assert!(output.contains("🧠 [test-task][codex]: I need to analyze"));
 
-        // File change
-        let file_completed =
-            r#"{"type":"item.completed","item":{"id":"item_2","type":"file_change"}}"#;
+        // File change with path
+        let file_completed = r#"{"type":"item.completed","item":{"id":"item_2","type":"file_change","changes":[{"path":"/workspace/src/main.rs","kind":"update"}]}}"#;
         let output = processor.process_line(file_completed).unwrap();
-        assert!(output.contains("✅ [test-task]: File modified"));
+        assert!(output.contains("✅ [test-task][codex]: Modified: src/main.rs"));
+
+        // File change without changes array (fallback)
+        let file_completed_no_changes =
+            r#"{"type":"item.completed","item":{"id":"item_3","type":"file_change"}}"#;
+        let output = processor.process_line(file_completed_no_changes).unwrap();
+        assert!(output.contains("✅ [test-task][codex]: File modified"));
+    }
+
+    #[test]
+    fn test_multiple_file_changes() {
+        let mut processor = CodexLogProcessor::new(Some("test-task".to_string()));
+
+        // Multiple file changes
+        let file_completed = r#"{"type":"item.completed","item":{"id":"item_1","type":"file_change","changes":[{"path":"/workspace/src/main.rs","kind":"update"},{"path":"/workspace/src/lib.rs","kind":"update"},{"path":"/workspace/Cargo.toml","kind":"update"}]}}"#;
+        let output = processor.process_line(file_completed).unwrap();
+        assert!(output.contains("✅ [test-task][codex]: Modified 3 files: src/main.rs, ..."));
     }
 
     #[test]
@@ -490,7 +565,7 @@ mod tests {
 
         // First parsing error shown
         let result = processor.process_line("Bad line 1");
-        assert!(result.unwrap().contains("parsing error"));
+        assert!(result.unwrap().contains("[codex]: parsing error"));
 
         // Empty line should not reset error tracking
         let result = processor.process_line("");
@@ -507,11 +582,11 @@ mod tests {
 
         let started = r#"{"type":"item.started","item":{"id":"item_1","type":"unknown_type"}}"#;
         let output = processor.process_line(started).unwrap();
-        assert!(output.contains("🔧 [test-task]: unknown_type: started"));
+        assert!(output.contains("🔧 [test-task][codex]: unknown_type: started"));
 
         let completed = r#"{"type":"item.completed","item":{"id":"item_1","type":"unknown_type"}}"#;
         let output = processor.process_line(completed).unwrap();
-        assert!(output.contains("🔧 [test-task]: unknown_type: completed"));
+        assert!(output.contains("🔧 [test-task][codex]: unknown_type: completed"));
     }
 
     #[test]
@@ -520,7 +595,7 @@ mod tests {
 
         let completed = r#"{"type":"item.completed","item":{"id":"item_1","type":"todo_list","text":"- Implement feature A\n- Test feature A\n- Document feature A"}}"#;
         let output = processor.process_line(completed).unwrap();
-        assert!(output.contains("📋 [test-task]: TODO:"));
+        assert!(output.contains("📋 [test-task][codex]: TODO:"));
         assert!(output.contains("Implement feature A"));
     }
 
@@ -528,15 +603,15 @@ mod tests {
     fn test_long_output_truncation() {
         let mut processor = CodexLogProcessor::new(Some("test-task".to_string()));
 
-        // Test command with long output
+        // Test command with long output - should not show output for exit 0
         let long_output = "a".repeat(100);
         let completed = format!(
             r#"{{"type":"item.completed","item":{{"id":"item_0","type":"command_execution","aggregated_output":"{}","exit_code":0}}}}"#,
             long_output
         );
         let output = processor.process_line(&completed).unwrap();
-        assert!(output.contains("..."));
-        assert!(output.len() < long_output.len() + 50); // Should be truncated
+        assert!(output.contains("[codex]: Command completed (exit: 0)"));
+        assert!(!output.contains("aaa")); // Should not show output for successful commands
 
         // Test reasoning with long text
         let long_reasoning = "b".repeat(100);
@@ -556,5 +631,59 @@ mod tests {
         let completed = r#"{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"   "}}"#;
         let output = processor.process_line(completed);
         assert_eq!(output, None); // Empty messages should be filtered
+    }
+
+    #[test]
+    fn test_command_simplification() {
+        let mut processor = CodexLogProcessor::new(Some("test".to_string()));
+
+        // Test single-quoted command
+        let event = r#"{"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"bash -lc 'ls -la'","status":"in_progress"}}"#;
+        let output = processor.process_line(event).unwrap();
+        assert!(output.contains("Running: ls -la"));
+        assert!(!output.contains("bash -lc"));
+
+        // Test double-quoted command
+        let event = r#"{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"bash -lc \"echo hello\"","status":"in_progress"}}"#;
+        let output = processor.process_line(event).unwrap();
+        assert!(output.contains("Running: echo hello"));
+
+        // Test nested quotes
+        let event = r#"{"type":"item.started","item":{"id":"item_2","type":"command_execution","command":"bash -lc 'rg \"fn main\" src'","status":"in_progress"}}"#;
+        let output = processor.process_line(event).unwrap();
+        assert!(output.contains("Running: rg \"fn main\" src"));
+
+        // Test command without quotes
+        let event = r#"{"type":"item.started","item":{"id":"item_3","type":"command_execution","command":"bash -lc ls","status":"in_progress"}}"#;
+        let output = processor.process_line(event).unwrap();
+        assert!(output.contains("Running: ls"));
+        assert!(!output.contains("bash -lc"));
+
+        // Test multi-word command without quotes
+        let event = r#"{"type":"item.started","item":{"id":"item_4","type":"command_execution","command":"bash -lc cat file.txt","status":"in_progress"}}"#;
+        let output = processor.process_line(event).unwrap();
+        assert!(output.contains("Running: cat file.txt"));
+        assert!(!output.contains("bash -lc"));
+    }
+
+    #[test]
+    fn test_verbose_output_filtering() {
+        let mut processor = CodexLogProcessor::new(Some("test".to_string()));
+
+        // Success with routine output - should hide output
+        let event = r#"{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"file1.txt\nfile2.txt","exit_code":0}}"#;
+        let output = processor.process_line(event).unwrap();
+        assert!(output.contains("Command completed (exit: 0)"));
+        assert!(!output.contains("file1.txt"));
+
+        // Test results - should show test status
+        let event = r#"{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"test result: ok. 13 passed","exit_code":0}}"#;
+        let output = processor.process_line(event).unwrap();
+        assert!(output.contains("Tests passed ✅"));
+
+        // Error - should show output
+        let event = r#"{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"error: file not found","exit_code":1}}"#;
+        let output = processor.process_line(event).unwrap();
+        assert!(output.contains("error: file not found"));
     }
 }
