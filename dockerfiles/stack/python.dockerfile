@@ -21,8 +21,10 @@ RUN uv pip install \
     pytest-cov \
     pytest-asyncio \
     pytest-mock \
+    pip \
     black \
     ruff \
+    ty \
     mypy \
     ipython \
     ipdb \
