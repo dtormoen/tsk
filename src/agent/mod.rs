@@ -219,21 +219,32 @@ mod tests {
     fn test_codex_log_processor() {
         use super::codex::codex_log_processor::CodexLogProcessor;
 
-        let mut processor = CodexLogProcessor::new();
+        let mut processor = CodexLogProcessor::new(Some("test-task".to_string()));
 
-        // Test process_line passes through
-        let line = "test output line";
-        let result = processor.process_line(line);
-        assert_eq!(result, Some(line.to_string()));
+        // Test that thread.started is filtered out
+        let thread_started = r#"{"type":"thread.started","thread_id":"test-123"}"#;
+        assert_eq!(processor.process_line(thread_started), None);
 
-        // Test get_full_log
-        processor.process_line("line 1");
-        processor.process_line("line 2");
+        // Test command execution
+        let cmd_started = r#"{"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"ls","status":"in_progress"}}"#;
+        let output = processor.process_line(cmd_started);
+        assert!(output.is_some());
+        assert!(output.unwrap().contains("Running: ls"));
+
+        // Test get_full_log stores lines
         let full_log = processor.get_full_log();
-        assert!(full_log.contains("line 1"));
-        assert!(full_log.contains("line 2"));
+        assert!(full_log.contains("thread.started"));
+        assert!(full_log.contains("command_execution"));
 
-        // Test get_final_result returns None
+        // Test get_final_result returns None before turn.completed
         assert!(processor.get_final_result().is_none());
+
+        // Test turn.completed creates final result
+        let turn_completed =
+            r#"{"type":"turn.completed","usage":{"input_tokens":1000,"output_tokens":500}}"#;
+        processor.process_line(turn_completed);
+        let result = processor.get_final_result();
+        assert!(result.is_some());
+        assert!(result.unwrap().success);
     }
 }

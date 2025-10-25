@@ -54,7 +54,7 @@ impl Agent for CodexAgent {
 
         if is_interactive {
             let normal_command = format!(
-                "cat /instructions/{} | codex e --dangerously-bypass-approvals-and-sandbox",
+                "cat /instructions/{} | codex e --dangerously-bypass-approvals-and-sandbox --json",
                 filename
             );
 
@@ -73,7 +73,7 @@ impl Agent for CodexAgent {
                 format!(
                     // Pipe instructions to codex, capture all output (stdout + stderr), and tee to log file
                     // This allows TSK to process output in real-time while preserving a complete log
-                    "cat /instructions/{} | codex e --dangerously-bypass-approvals-and-sandbox 2>&1 | tee /output/codex-log.txt",
+                    "cat /instructions/{} | codex e --dangerously-bypass-approvals-and-sandbox --json 2>&1 | tee /output/codex-log.txt",
                     filename
                 ),
             ]
@@ -102,9 +102,10 @@ impl Agent for CodexAgent {
 
     fn create_log_processor(
         &self,
-        _task: Option<&crate::task::Task>,
+        task: Option<&crate::task::Task>,
     ) -> Box<dyn super::LogProcessor> {
-        Box::new(CodexLogProcessor::new())
+        let task_name = task.map(|t| t.name.clone());
+        Box::new(CodexLogProcessor::new(task_name))
     }
 
     fn name(&self) -> &str {
