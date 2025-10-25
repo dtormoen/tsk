@@ -8,6 +8,9 @@ use futures_util::stream::{Stream, StreamExt};
 use is_terminal::IsTerminal;
 use std::collections::HashMap;
 
+#[cfg(not(windows))]
+use tokio::signal::unix::{SignalKind, signal};
+
 #[async_trait]
 pub trait DockerClient: Send + Sync {
     #[cfg(test)]
@@ -123,6 +126,38 @@ impl DefaultDockerClient {
 impl Default for DefaultDockerClient {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Detect the current terminal size
+///
+/// Returns None if terminal size cannot be detected (with warning logged)
+#[cfg(not(windows))]
+fn detect_terminal_size() -> Option<(u16, u16)> {
+    match termion::terminal_size() {
+        Ok((cols, rows)) => Some((cols, rows)),
+        Err(e) => {
+            eprintln!("Warning: Could not detect terminal size: {e}");
+            eprintln!("Continuing with default terminal dimensions");
+            None
+        }
+    }
+}
+
+/// Resize a container's TTY to the specified dimensions
+///
+/// Logs a warning on failure but does not propagate the error
+#[cfg(not(windows))]
+async fn resize_container(docker: &Docker, container_id: &str, width: u16, height: u16) {
+    use bollard::query_parameters::ResizeContainerTTYOptionsBuilder;
+
+    let options = ResizeContainerTTYOptionsBuilder::default()
+        .w(width as i32)
+        .h(height as i32)
+        .build();
+
+    if let Err(e) = docker.resize_container_tty(container_id, options).await {
+        eprintln!("Warning: Failed to resize container TTY to {width}x{height}: {e}");
     }
 }
 
@@ -328,6 +363,15 @@ impl DockerClient for DefaultDockerClient {
             );
         }
 
+        // Detect terminal size and set initial container TTY size
+        #[cfg(not(windows))]
+        let terminal_size = detect_terminal_size();
+
+        #[cfg(not(windows))]
+        if let Some((cols, rows)) = terminal_size {
+            resize_container(&self.docker, id, cols, rows).await;
+        }
+
         // Attach to the container
         let attach_options = AttachContainerOptionsBuilder::default()
             .stdout(true)
@@ -388,6 +432,27 @@ impl DockerClient for DefaultDockerClient {
                 }
             });
 
+            // Spawn a task to monitor terminal resize events (SIGWINCH)
+            let docker_clone = self.docker.clone();
+            let container_id_clone = id.to_string();
+            let resize_handle = tokio::spawn(async move {
+                // Set up SIGWINCH signal handler
+                let mut sigwinch = match signal(SignalKind::window_change()) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Warning: Could not set up terminal resize handler: {e}");
+                        return;
+                    }
+                };
+
+                // Monitor for resize signals
+                while sigwinch.recv().await.is_some() {
+                    if let Some((cols, rows)) = detect_terminal_size() {
+                        resize_container(&docker_clone, &container_id_clone, cols, rows).await;
+                    }
+                }
+            });
+
             // Process output in a blocking task to handle raw terminal mode
             let write_handle = tokio::task::spawn_blocking(move || {
                 // Set stdout to raw mode
@@ -415,6 +480,9 @@ impl DockerClient for DefaultDockerClient {
 
             // Abort the input task
             input_handle.abort();
+
+            // Abort the resize monitor task
+            resize_handle.abort();
 
             // Wait for the write task to complete
             write_handle
