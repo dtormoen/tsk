@@ -20,6 +20,7 @@ pub struct TskServer {
     storage: Arc<Mutex<Box<dyn TaskStorage>>>,
     socket_path: PathBuf,
     shutdown_signal: Arc<Mutex<bool>>,
+    quit_signal: Arc<tokio::sync::Notify>,
     scheduler: Arc<Mutex<TaskScheduler>>,
     lifecycle: ServerLifecycle,
     workers: u32,
@@ -27,15 +28,20 @@ pub struct TskServer {
 
 impl TskServer {
     /// Create a new TSK server instance with specified number of workers
-    pub fn with_workers(app_context: Arc<AppContext>, workers: u32) -> Self {
+    pub fn with_workers(app_context: Arc<AppContext>, workers: u32, quit_when_done: bool) -> Self {
         let tsk_config = app_context.tsk_config();
         let socket_path = tsk_config.socket_path();
         let storage = get_task_storage(tsk_config.clone(), app_context.file_system());
         let storage = Arc::new(Mutex::new(storage));
 
+        // Create the quit signal for scheduler-to-server communication
+        let quit_signal = Arc::new(tokio::sync::Notify::new());
+
         let scheduler = Arc::new(Mutex::new(TaskScheduler::new(
             app_context.clone(),
             storage.clone(),
+            quit_when_done,
+            quit_signal.clone(),
         )));
         let lifecycle = ServerLifecycle::new(tsk_config);
 
@@ -44,6 +50,7 @@ impl TskServer {
             storage,
             socket_path,
             shutdown_signal: Arc::new(Mutex::new(false)),
+            quit_signal,
             scheduler,
             lifecycle,
             workers,
@@ -80,29 +87,38 @@ impl TskServer {
 
         // Accept connections in a loop
         loop {
-            // Check shutdown signal
-            if *self.shutdown_signal.lock().await {
-                println!("Server shutting down...");
-                break;
-            }
-
-            match listener.accept().await {
-                Ok((stream, _)) => {
-                    let app_context = self.app_context.clone();
-                    let storage = self.storage.clone();
-                    let shutdown_signal = self.shutdown_signal.clone();
-
-                    // Handle each client in a separate task
-                    tokio::spawn(async move {
-                        if let Err(e) =
-                            handle_client(stream, app_context, storage, shutdown_signal).await
-                        {
-                            eprintln!("Error handling client: {e}");
-                        }
-                    });
+            tokio::select! {
+                _ = self.quit_signal.notified() => {
+                    println!("Received quit signal from scheduler...");
+                    break;
                 }
-                Err(e) => {
-                    eprintln!("Error accepting connection: {e}");
+                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                    // Periodically check shutdown signal
+                    if *self.shutdown_signal.lock().await {
+                        println!("Server shutting down...");
+                        break;
+                    }
+                }
+                result = listener.accept() => {
+                    match result {
+                        Ok((stream, _)) => {
+                            let app_context = self.app_context.clone();
+                            let storage = self.storage.clone();
+                            let shutdown_signal = self.shutdown_signal.clone();
+
+                            // Handle each client in a separate task
+                            tokio::spawn(async move {
+                                if let Err(e) =
+                                    handle_client(stream, app_context, storage, shutdown_signal).await
+                                {
+                                    eprintln!("Error handling client: {e}");
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            eprintln!("Error accepting connection: {e}");
+                        }
+                    }
                 }
             }
         }

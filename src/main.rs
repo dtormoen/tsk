@@ -207,6 +207,10 @@ enum ServerCommands {
         /// Number of parallel workers for task execution
         #[arg(short, long, default_value = "1", value_parser = clap::value_parser!(u32).range(1..=32))]
         workers: u32,
+
+        /// Quit when done - exit when queue is empty and all tasks complete
+        #[arg(short, long)]
+        quit: bool,
     },
     /// Stop the running TSK server
     Stop,
@@ -347,7 +351,9 @@ async fn main() {
         Commands::Delete { task_ids } => Box::new(DeleteCommand { task_ids }),
         Commands::Retry { task_ids, edit } => Box::new(RetryCommand { task_ids, edit }),
         Commands::Server(server_args) => match server_args.command {
-            ServerCommands::Start { workers } => Box::new(ServerStartCommand { workers }),
+            ServerCommands::Start { workers, quit } => {
+                Box::new(ServerStartCommand { workers, quit })
+            }
             ServerCommands::Stop => Box::new(ServerStopCommand),
         },
         Commands::Docker(docker_args) => match docker_args.command {

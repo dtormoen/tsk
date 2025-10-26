@@ -25,6 +25,8 @@ pub struct TaskScheduler {
     worker_pool: Option<Arc<WorkerPool<TaskJob>>>,
     /// Track task IDs that are currently submitted to the worker pool
     submitted_tasks: Arc<Mutex<HashSet<String>>>,
+    quit_signal: Arc<tokio::sync::Notify>,
+    quit_when_done: bool,
 }
 
 impl TaskScheduler {
@@ -48,7 +50,12 @@ impl TaskScheduler {
     }
 
     /// Create a new task scheduler
-    pub fn new(context: Arc<AppContext>, storage: Arc<Mutex<Box<dyn TaskStorage>>>) -> Self {
+    pub fn new(
+        context: Arc<AppContext>,
+        storage: Arc<Mutex<Box<dyn TaskStorage>>>,
+        quit_when_done: bool,
+        quit_signal: Arc<tokio::sync::Notify>,
+    ) -> Self {
         Self {
             context,
             storage,
@@ -56,6 +63,8 @@ impl TaskScheduler {
             warmup_failure_wait_until: Arc::new(Mutex::new(None)),
             worker_pool: None,
             submitted_tasks: Arc::new(Mutex::new(HashSet::new())),
+            quit_signal,
+            quit_when_done,
         }
     }
 
@@ -73,12 +82,35 @@ impl TaskScheduler {
 
         println!("Task scheduler started with {} worker(s)", workers);
 
+        if self.quit_when_done {
+            println!("Running in quit-when-done mode - will exit when queue is empty");
+        }
+
         // Create the worker pool
         let worker_pool = Arc::new(WorkerPool::<TaskJob>::new(workers as usize));
         self.worker_pool = Some(worker_pool.clone());
 
         // Set initial idle title
         self.update_terminal_title();
+
+        // Check if we should quit immediately due to empty queue
+        if self.quit_when_done {
+            let storage = self.storage.lock().await;
+            let tasks = storage.list_tasks().await?;
+            drop(storage);
+
+            let queued_count = tasks
+                .iter()
+                .filter(|t| t.status == TaskStatus::Queued)
+                .count();
+
+            if queued_count == 0 {
+                println!("Queue is empty at startup. Exiting immediately...");
+                self.quit_signal.notify_one();
+                self.stop().await;
+                // Loop will check running flag and exit immediately
+            }
+        }
 
         // Main scheduling loop
         loop {
@@ -220,6 +252,36 @@ impl TaskScheduler {
                                 .await;
                         }
                     }
+                }
+            }
+
+            // Check if we should quit when done
+            if self.quit_when_done {
+                // Get current task list
+                let storage = self.storage.lock().await;
+                let tasks = storage.list_tasks().await?;
+                drop(storage);
+
+                // Count queued tasks
+                let queued_count = tasks
+                    .iter()
+                    .filter(|t| t.status == TaskStatus::Queued)
+                    .count();
+
+                // Check: no queued tasks AND no active workers AND not in warmup wait
+                let active_workers = if let Some(pool) = &self.worker_pool {
+                    pool.active_workers()
+                } else {
+                    0
+                };
+
+                let in_warmup_wait = self.warmup_failure_wait_until.lock().await.is_some();
+
+                if queued_count == 0 && active_workers == 0 && !in_warmup_wait {
+                    println!("Queue is empty and no workers active. Shutting down...");
+                    self.quit_signal.notify_one();
+                    self.stop().await;
+                    // Loop will exit on next iteration when running becomes false
                 }
             }
 
@@ -401,7 +463,8 @@ mod tests {
             ctx.file_system(),
         )));
 
-        let mut scheduler = TaskScheduler::new(Arc::new(ctx), storage);
+        let quit_signal = Arc::new(tokio::sync::Notify::new());
+        let mut scheduler = TaskScheduler::new(Arc::new(ctx), storage, false, quit_signal);
 
         // Test that scheduler starts as not running
         assert!(!*scheduler.running.lock().await);
@@ -436,7 +499,8 @@ mod tests {
         storage.add_task(task1.clone()).await.unwrap();
 
         let storage = Arc::new(Mutex::new(storage));
-        let mut scheduler = TaskScheduler::new(Arc::new(ctx), storage.clone());
+        let quit_signal = Arc::new(tokio::sync::Notify::new());
+        let mut scheduler = TaskScheduler::new(Arc::new(ctx), storage.clone(), false, quit_signal);
 
         // Start scheduler in background with 1 worker
         let sched_handle = tokio::spawn(async move {
@@ -494,7 +558,8 @@ mod tests {
             ctx.file_system(),
         )));
 
-        let scheduler = TaskScheduler::new(ctx, storage);
+        let quit_signal = Arc::new(tokio::sync::Notify::new());
+        let scheduler = TaskScheduler::new(ctx, storage, false, quit_signal);
 
         // Initially no wait period
         assert!(
@@ -532,7 +597,8 @@ mod tests {
             ctx.tsk_config(),
             ctx.file_system(),
         )));
-        let scheduler = TaskScheduler::new(Arc::new(ctx), storage);
+        let quit_signal = Arc::new(tokio::sync::Notify::new());
+        let scheduler = TaskScheduler::new(Arc::new(ctx), storage, false, quit_signal);
 
         // Add a task ID to submitted tasks
         scheduler

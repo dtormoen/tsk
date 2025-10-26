@@ -87,6 +87,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `TskClient`: Client for communicating with server
 - Unix socket-based IPC protocol
 - Parallel task execution with configurable workers (default: 1)
+- Quit-when-done mode (`-q/--quit`): Exits automatically when queue is empty
 - `TaskScheduler`: Manages task scheduling and execution delegation
   - Polls for completed jobs from the worker pool
   - Schedules queued tasks when workers are available

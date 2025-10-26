@@ -7,13 +7,14 @@ use std::sync::Arc;
 
 pub struct ServerStartCommand {
     pub workers: u32,
+    pub quit: bool,
 }
 
 #[async_trait]
 impl Command for ServerStartCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         println!("Starting TSK server with {} worker(s)...", self.workers);
-        let server = TskServer::with_workers(Arc::new(ctx.clone()), self.workers);
+        let server = TskServer::with_workers(Arc::new(ctx.clone()), self.workers, self.quit);
 
         // Setup signal handlers for graceful shutdown
         let shutdown_signal = Arc::new(tokio::sync::Notify::new());
