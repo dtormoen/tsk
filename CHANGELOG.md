@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/dtormoen/tsk/compare/v0.5.4...v0.6.0) - 2025-10-26
+
+### Added
+
+- add multi-agent support for task creation
+- *(codex)* improve log processor output quality
+- *(codex)* add JSON log processor with human-readable output
+- add codex agent support
+
+### Other
+
+- reorganize and enhance README
+- improve documentation
+- rename claude-code agent to claude
+- [**breaking**] simplify command structure for better UX
+
 ## [0.5.4](https://github.com/dtormoen/tsk/compare/v0.5.3...v0.5.4) - 2025-10-26
 
 ### Added
