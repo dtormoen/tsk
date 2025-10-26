@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4](https://github.com/dtormoen/tsk/compare/v0.5.3...v0.5.4) - 2025-10-26
+
+### Added
+
+- add pip and ty to python dockerfile
+
+### Fixed
+
+- handle terminal size and resize in debug command
+
+### Other
+
+- move agent layer after project layer since claude code updates frequently
+
 ## [0.5.3](https://github.com/dtormoen/tsk/compare/v0.5.2...v0.5.3) - 2025-10-21
 
 ### Fixed
