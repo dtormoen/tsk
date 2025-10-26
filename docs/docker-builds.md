@@ -25,30 +25,34 @@ TSK's Docker infrastructure provides:
 
 ## The Four-Layer Architecture
 
-TSK composes Docker images from four distinct layers, each serving a specific purpose:
+TSK composes Docker images from four distinct layers, each serving a specific purpose. All base dockerfiles are embedded as assets within the TSK binary and are automatically extracted when needed, ensuring TSK works out-of-the-box without requiring separate configuration files.
 
 ### 1. Base Layer
-The foundation of all TSK containers:
+The foundation of all TSK containers (`base/default.dockerfile`):
 - Ubuntu 24.04 base operating system
 - Essential development tools (git, curl, build-essential, ripgrep, etc.)
-- Non-root `agent` user (UID 1000) for security
-- Git configuration inherited from host user
+- Non-root `agent` user (created by renaming the default `ubuntu` user) for security
+- Git configuration inherited from host user via build arguments
 - Working directory set to `/workspace`
+- Contains placeholders (`{{{STACK}}}`, `{{{PROJECT}}}`, `{{{AGENT}}}`) for layer composition
 
-### 2. Tech-Stack Layer
+### 2. Stack Layer
 Language-specific toolchains and runtimes:
 - **default**: Minimal additions, used as fallback
-- **rust**: Rust toolchain via rustup
-- **python**: Python 3.11 with pip and common tools
-- **node**: Node.js 20.x with npm
-- **go**: Go 1.21 with module support
-- **java**: OpenJDK 17 with Maven and Gradle
-- **lua**: Lua 5.4 with LuaRocks
+- **rust**: Rust toolchain via rustup with Cargo and Just
+- **python**: Python 3 with uv package manager, pytest, black, ruff, mypy, and poetry
+- **node**: Node.js LTS with npm, pnpm, yarn, TypeScript, ESLint, and Jest
+- **go**: Go 1.25.0 with gopls, delve debugger, goimports, and staticcheck
+- **java**: OpenJDK 17 with Maven, Gradle, Kotlin, Groovy, and SDKMAN
+- **lua**: Neovim with LuaJIT, Luarocks, luacheck, busted, and stylua
 
 ### 3. Agent Layer
 AI agent installations and configurations:
-- **claude-code**: Claude Code CLI with Node.js runtime
-- Additional agents can be added as needed
+- **claude**: Claude Code CLI (installed via npm with Node.js 20.x)
+- **codex**: Codex CLI (installed via npm with Node.js 20.x)
+- **no-op**: Testing/debugging agent (displays instructions without executing)
+
+Agent versions are automatically detected and tracked via the `TSK_AGENT_VERSION` build argument, triggering image rebuilds when agents are upgraded on the host system.
 
 ### 4. Project Layer
 Project-specific dependencies and optimizations:
@@ -60,13 +64,13 @@ Project-specific dependencies and optimizations:
 TSK uses a hierarchical naming convention for Docker images:
 
 ```
-tsk/{tech-stack}/{agent}/{project}
+tsk/{stack}/{agent}/{project}
 ```
 
 For example:
-- `tsk/rust/claude-code/my-project`
-- `tsk/python/claude-code/default`
-- `tsk/node/claude-code/web-app`
+- `tsk/rust/claude/my-project`
+- `tsk/python/claude/default`
+- `tsk/node/codex/web-app`
 
 If a specific project layer doesn't exist, TSK automatically falls back to the `default` project layer.
 
@@ -109,13 +113,14 @@ Add personal preferences in `~/.config/tsk/dockerfiles/`:
 ~/.config/tsk/
 └── dockerfiles/
     ├── base/
-    │   └── Dockerfile
-    ├── tech-stack/
-    │   └── python/
-    │       └── Dockerfile
-    └── agent/
-        └── claude-code/
-            └── Dockerfile
+    │   └── default.dockerfile
+    ├── stack/
+    │   ├── python.dockerfile
+    │   └── rust.dockerfile
+    ├── agent/
+    │   └── claude.dockerfile
+    └── project/
+        └── my-project.dockerfile
 ```
 
 User-level customizations are useful for:
@@ -137,79 +142,97 @@ The first matching asset is used.
 
 ### Manual Building
 
-Use the `docker-build` command to manually build images:
+Use the `docker build` command to manually build images:
 
 ```bash
 # Build with auto-detected settings
-tsk docker-build
+tsk docker build
 
-# Specify tech stack explicitly
-tsk docker-build --tech-stack rust
+# Specify stack explicitly
+tsk docker build --stack rust
+
+# Build for a specific agent
+tsk docker build --agent codex
 
 # Build for a specific project
-tsk docker-build --project my-app
+tsk docker build --project my-app
 
 # Build without cache
-tsk docker-build --no-cache
+tsk docker build --no-cache
 
 # Preview the composed Dockerfile
-tsk docker-build --dry-run
+tsk docker build --dry-run
 ```
 
 ### Automatic Building
 
 TSK automatically builds missing images when:
 - Running a task (`tsk run`)
-- Starting a debug session (`tsk debug`)
-- Executing a quick task (`tsk quick`)
+- Starting an interactive shell (`tsk shell`)
+- Adding tasks to the queue (`tsk add`)
 
 ## Tech Stack Auto-Detection
 
 TSK automatically detects your project's technology stack based on repository files:
 
-| Tech Stack | Detection Files |
-|------------|-----------------|
+| Stack | Detection Files |
+|-------|-----------------|
 | Rust | `Cargo.toml` |
 | Python | `pyproject.toml`, `requirements.txt`, `setup.py` |
 | Node.js | `package.json` |
 | Go | `go.mod` |
 | Java | `pom.xml`, `build.gradle`, `build.gradle.kts` |
-| Lua | `*.rockspec`, `.luacheckrc`, `init.lua` |
+| Lua | files ending in `rockspec`, `.luacheckrc`, `init.lua` |
 | Default | Used when no specific files found |
 
-Auto-detection is used when the `--tech-stack` flag is not provided.
+Auto-detection is used when the `--stack` flag is not provided.
 
 ## Security and Isolation
 
 TSK implements multiple security layers:
 
 ### Non-Root Execution
-- Containers run as the `agent` user (UID 1000)
+- Containers run as the `agent` user (created by renaming the default `ubuntu` user)
 - No sudo access within containers
 - Limited filesystem permissions
 
 ### Network Isolation
 - Containers use a dedicated Docker network (`tsk-network`)
-- Internet access only through Squid proxy (`tsk-proxy`)
-- Proxy allows API access while blocking general browsing
-- Proxy allows access to package registries for all supported languages:
-  - **Python**: PyPI (pypi.org, files.pythonhosted.org)
-  - **Rust**: crates.io and related domains
-  - **Go**: proxy.golang.org, sum.golang.org, and other Go infrastructure
-  - **Java**: Maven Central, Gradle plugins, and common repositories
-  - **npm**: registry.npmjs.org and Node.js resources
+- Internet access only through Squid proxy container (`tsk-proxy`)
+- Proxy allows API access and package registry access while blocking general browsing
+- Proxy allows access to:
+  - **AI APIs**: api.anthropic.com, api.openai.com, sentry.io, statsig.com
+  - **Python**: PyPI (pypi.org, pypi.python.org, files.pythonhosted.org)
+  - **Rust**: crates.io, index.crates.io, static.crates.io
+  - **Go**: proxy.golang.org, sum.golang.org, pkg.go.dev, golang.org, google.golang.org
+  - **Java**: Maven Central (repo.maven.apache.org, repo1.maven.org), Gradle repositories
+  - **Node.js**: registry.npmjs.org, nodejs.org, npmjs.com
 
-### Resource Limits
-- Memory limited to 4GB
-- CPU quota of 4 (400% of a single core)
+### Resource Limits and Container Configuration
+- Memory limited to 12GB
+- CPU quota of 8 CPUs (800000 microseconds)
 - Automatic cleanup of stopped containers
+- Task containers named: `tsk-{task-id}` (e.g., `tsk-abc123def4`)
+- Interactive containers named: `tsk-interactive-{task-id}`
+
+### Volume Mounts
+Each container has the following volumes mounted:
+- Repository copy: `{repo_path}:/workspace` (read-write)
+- Agent configuration: Agent-specific (e.g., `~/.claude:/home/agent/.claude` for Claude)
+- Instructions: `{instructions_dir}:/instructions:ro` (read-only)
+- Output: `{task_dir}/output:/output` (read-write)
 
 ### Capability Dropping
-Containers run with minimal Linux capabilities, removing:
-- `CAP_AUDIT_WRITE`
-- `CAP_MKNOD`
-- `CAP_NET_RAW`
-- And others unnecessary for development
+Containers run with minimal Linux capabilities, dropping exactly 9 capabilities:
+- `NET_ADMIN` - Can't manage network interfaces
+- `NET_RAW` - Can't create raw sockets
+- `SETPCAP` - Can't change capability sets
+- `SYS_ADMIN` - Can't mount filesystems or perform namespace operations
+- `SYS_PTRACE` - Can't trace processes
+- `DAC_OVERRIDE` - Can't bypass file read/write/execute permissions
+- `AUDIT_WRITE` - Can't write audit logs
+- `SETUID` - Can't change user IDs
+- `SETGID` - Can't change group IDs
 
 ## Debugging Docker Issues
 
@@ -218,20 +241,23 @@ Containers run with minimal Linux capabilities, removing:
 #### 1. Git Configuration Error
 **Error**: "Git user.name is not set"
 
-**Solution**: Configure git globally:
+**Solution**: Git configuration is automatically inherited from your host system. Configure git on your host machine:
 ```bash
 git config --global user.name "Your Name"
 git config --global user.email "your@email.com"
 ```
 
 #### 2. Missing Docker Layer
-**Error**: "Tech stack layer 'xyz' not found"
+**Error**: "Stack layer 'xyz' not found"
 
 **Solution**: Check available layers:
 ```bash
 # List all available Docker templates
-ls ~/.config/tsk/dockerfiles/tech-stack/
+ls ~/.config/tsk/dockerfiles/stack/
 ls .tsk/dockerfiles/stack/
+
+# Or check embedded stacks (built into TSK)
+# Available: rust, python, node, go, java, lua, default
 ```
 
 #### 3. Build Failures
@@ -247,18 +273,18 @@ ls .tsk/dockerfiles/stack/
 **Error**: Container fails to start or exits immediately
 
 **Solutions**:
-- Use `tsk debug` to get an interactive shell
+- Use `tsk shell` to get an interactive shell for debugging
 - Check container logs: `docker logs <container-id>`
 - Verify volume mounts and permissions
 
 ### Debugging Commands
 
 ```bash
-# Interactive debugging container
-tsk debug
+# Interactive debugging shell
+tsk shell
 
 # View composed Dockerfile
-tsk docker-build --dry-run
+tsk docker build --dry-run
 
 # Check Docker images
 docker images | grep tsk
@@ -268,6 +294,9 @@ docker ps --filter "label=tsk"
 
 # View proxy logs
 docker logs tsk-proxy
+
+# Stop the proxy if needed
+tsk proxy stop
 ```
 
 ## Common Patterns and Examples
@@ -276,7 +305,11 @@ docker logs tsk-proxy
 
 `.tsk/dockerfiles/project/my-python-app.dockerfile`:
 ```dockerfile
-# Install Python dependencies
+# Install Python dependencies using uv (recommended)
+COPY requirements.txt ./
+RUN uv pip install --system -r requirements.txt
+
+# Alternative: Using pip
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -302,9 +335,19 @@ RUN gradle dependencies
 
 User-level customization in `~/.config/tsk/dockerfiles/stack/python.dockerfile`:
 ```dockerfile
-# Add after the embedded Python layer
-RUN pip install ipython black flake8 mypy
-RUN apt-get update && apt-get install -y postgresql-client
+# Override embedded Python stack to add additional tools
+# Note: This replaces the entire embedded stack, so you may want to copy
+# the embedded stack first and then add your customizations
+
+# Using uv (recommended)
+RUN uv pip install --system ipython
+
+# Or using pip
+RUN pip install ipython
+
+# System packages
+RUN apt-get update && apt-get install -y postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
 ```
 
 ### Custom Environment Variables
@@ -330,7 +373,7 @@ ENV NODE_ENV=development
 
 4. **Version Lock Dependencies**: Use lock files (`Cargo.lock`, `package-lock.json`, etc.) for reproducible builds.
 
-5. **Test Locally**: Use `tsk debug` to test your custom Dockerfiles interactively before running tasks.
+5. **Test Locally**: Use `tsk shell` to test your custom Dockerfiles interactively before running tasks.
 
 6. **Document Custom Layers**: Add comments in your Dockerfiles explaining why customizations are needed.
 
@@ -344,8 +387,8 @@ When encountering issues:
 4. ✓ Verify file permissions in `.tsk/` directory
 5. ✓ Use `--dry-run` to inspect Dockerfile composition
 6. ✓ Try building with `--no-cache`
-7. ✓ Check TSK logs with `RUST_LOG=debug`
-8. ✓ Test with `tsk debug` for interactive debugging
+7. ✓ Check TSK logs with `RUST_LOG=debug tsk <command>`
+8. ✓ Test with `tsk shell` for interactive debugging
 
 ## Further Resources
 

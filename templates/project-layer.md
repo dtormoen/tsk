@@ -6,9 +6,9 @@ You need to create a project-specific Docker layer (Dockerfile) that will be use
 
 TSK uses a layered Docker image system where each task runs in a container built from these layers:
 1. **Base layer**: Ubuntu 24.04 with essential development tools
-2. **Tech-stack layer**: Language-specific toolchains (e.g., Rust/Cargo, Python/pip, Node/npm)
-3. **Agent layer**: AI agent setup (already configured)
-4. **Project layer**: Project-specific dependencies and optimizations (what you're creating)
+2. **Stack layer**: Language-specific toolchains (e.g., Rust/Cargo, Python/uv, Node/npm)
+3. **Project layer**: Project-specific dependencies and optimizations (what you're creating)
+4. **Agent layer**: AI agent setup (added last)
 
 The repository will be mounted at `/workspace` in the container, and the working directory will be set to `/workspace`. The container runs as the `agent` user (not root).
 
@@ -64,8 +64,10 @@ Your Dockerfile should:
    ```dockerfile
    # Copy dependency files
    COPY requirements.txt ./
-   # Install dependencies
-   RUN pip install --user -r requirements.txt
+   # Install dependencies using uv (preferred - faster and more reliable)
+   RUN uv pip install --system -r requirements.txt
+   # Or using pip (if uv is unavailable)
+   RUN pip install -r requirements.txt
    ```
 
    **Node.js projects:**

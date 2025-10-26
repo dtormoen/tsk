@@ -6,23 +6,22 @@ You need to create a technology stack Docker layer (Dockerfile) that will be use
 
 TSK uses a layered Docker image system where each task runs in a container built from these layers:
 1. **Base layer**: Ubuntu 24.04 with essential development tools (git, curl, build-essential, etc.)
-2. **Tech-stack layer**: Language-specific toolchains (what you're creating)
-3. **Agent layer**: AI agent setup
-4. **Project layer**: Project-specific dependencies
+2. **Stack layer**: Language-specific toolchains (what you're creating)
+3. **Project layer**: Project-specific dependencies
+4. **Agent layer**: AI agent setup (added last)
 
-The tech-stack layer installs the core language runtime, package managers, and common development tools for a specific technology stack.
+The stack layer installs the core language runtime, package managers, and common development tools for a specific technology stack.
 
-## Requirements for the Tech-Stack Layer
+## Requirements for the Stack Layer
 
 Your Dockerfile should:
 
 1. **Build on the base layer**: Assume Ubuntu 24.04 with basic tools installed
-2. **Run as the agent user**: The base layer sets up an `agent` user (UID 1000)
+2. **Run as the agent user**: The base layer sets up an `agent` user (created by renaming the default ubuntu user)
 3. **Install the language runtime**: Install the appropriate version of the language
 4. **Install package managers**: Include the standard package managers for the ecosystem
 5. **Install common development tools**: Linters, formatters, test runners, etc.
 6. **Set up environment variables**: PATH, language-specific variables
-7. **Return to /workspace**: End with `WORKDIR /workspace`
 
 ## Instructions
 
@@ -32,32 +31,37 @@ Your Dockerfile should:
    - What development tools are commonly used
    - What environment variables need to be set
 
-2. Create a Dockerfile at `.tsk/dockerfiles/tech-stack/{tech-stack-name}/Dockerfile` where `{tech-stack-name}` is one of: `rust`, `python`, `node`, `go`, `java`, `lua`, etc.
+2. Create a Dockerfile using the correct location and naming:
+   - **For embedded stacks** (built into TSK): `dockerfiles/stack/{stack-name}.dockerfile`
+   - **For user-level customization**: `~/.config/tsk/dockerfiles/stack/{stack-name}.dockerfile`
+   - **For project-level override**: `.tsk/dockerfiles/stack/{stack-name}.dockerfile`
+
+   Where `{stack-name}` is one of: `rust`, `python`, `node`, `go`, `java`, `lua`, `default`, etc.
+
+   Note: Use `stack` (not `tech-stack`) and `.dockerfile` extension (not `Dockerfile`).
 
 3. The Dockerfile should follow this general pattern:
    ```dockerfile
    # {Language} tech stack layer
 
-   # Already running as agent user from base layer
-   WORKDIR /home/agent
-
-   # Install language runtime
+   # Install language runtime (as agent user)
    # Install package managers
    # Install common development tools
 
    # Set environment variables
-   ENV PATH="..."
-
-   # Switch back to workspace directory
-   WORKDIR /workspace
+   ENV PATH="/home/agent/.local/bin:${PATH}"
    ```
 
+   Note: Don't change WORKDIR - the base layer already sets it to `/workspace` and maintains it throughout.
+
 4. Important notes:
-   - User is already `agent` (not root), use `sudo` for system packages
-   - Python3 and pip are pre-installed in base layer
+   - The stack layer runs as the `agent` user (not root)
+   - For system packages, you'll need `sudo` (the agent user has sudo access during build)
+   - Python3 and pip are pre-installed in the base layer
    - Consider using version managers (rustup, nvm, pyenv) when appropriate
-   - Install tools to user home directory when possible
+   - Install tools to the user's home directory (`/home/agent/`) when possible
    - Keep the layer focused on language toolchain, not project dependencies
+   - The working directory remains `/workspace` throughout - don't change it
 
 5. Example patterns for reference:
 
@@ -67,9 +71,10 @@ Your Dockerfile should:
    - Set CARGO_TARGET_DIR to avoid workspace pollution
 
    **Python tech-stack:**
-   - Upgrade pip, install pipx
-   - Install tools via pipx: poetry, black, ruff, pytest
-   - Consider installing uv for fast package management
+   - Install uv for fast package management (recommended primary tool)
+   - Create a virtual environment in /home/agent/.venv using uv
+   - Install common tools via uv pip: poetry, black, ruff, pytest, mypy
+   - Set up VIRTUAL_ENV and PATH to use the venv
 
    **Node tech-stack:**
    - Install Node.js LTS via NodeSource or nvm
@@ -86,4 +91,4 @@ Your Dockerfile should:
    - Install Maven and Gradle
    - Consider SDKMAN for version management
 
-Remember: This layer provides the development toolchain that all projects using this technology will share. Project-specific dependencies go in the project layer.
+Remember: This layer provides the development toolchain that all projects using this technology will share. Project-specific dependencies go in the project layer (which comes after the stack layer but before the agent layer).
