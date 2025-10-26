@@ -5,17 +5,17 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, OnceLock};
 
-pub mod claude_code_log_processor;
-pub use claude_code_log_processor::ClaudeCodeLogProcessor;
+pub mod claude_log_processor;
+pub use claude_log_processor::ClaudeLogProcessor;
 
-/// Claude Code AI agent implementation
-pub struct ClaudeCodeAgent {
+/// Claude AI agent implementation
+pub struct ClaudeAgent {
     tsk_config: Option<Arc<TskConfig>>,
     version_cache: OnceLock<String>,
 }
 
-impl ClaudeCodeAgent {
-    /// Creates a new ClaudeCodeAgent with the provided TSK configuration
+impl ClaudeAgent {
+    /// Creates a new ClaudeAgent with the provided TSK configuration
     ///
     /// # Arguments
     /// * `tsk_config` - Arc reference to the TskConfig instance containing environment settings
@@ -35,7 +35,7 @@ impl ClaudeCodeAgent {
     }
 }
 
-impl Default for ClaudeCodeAgent {
+impl Default for ClaudeAgent {
     fn default() -> Self {
         Self::with_tsk_config(Arc::new(
             TskConfig::new().expect("Failed to create TskConfig"),
@@ -44,7 +44,7 @@ impl Default for ClaudeCodeAgent {
 }
 
 #[async_trait]
-impl Agent for ClaudeCodeAgent {
+impl Agent for ClaudeAgent {
     fn build_command(&self, instruction_path: &str, is_interactive: bool) -> Vec<String> {
         // Get just the filename from the instruction path
         let filename = Path::new(instruction_path)
@@ -73,7 +73,7 @@ impl Agent for ClaudeCodeAgent {
                 format!(
                     // Pipe instructions to claude, capture all output (stdout + stderr), and tee to log file
                     // This allows TSK to process output in real-time while preserving a complete log
-                    "cat /instructions/{} | claude -p --verbose --output-format stream-json --dangerously-skip-permissions 2>&1 | tee /output/claude-code-log.txt",
+                    "cat /instructions/{} | claude -p --verbose --output-format stream-json --dangerously-skip-permissions 2>&1 | tee /output/claude-log.txt",
                     filename
                 ),
             ]
@@ -105,11 +105,11 @@ impl Agent for ClaudeCodeAgent {
         task: Option<&crate::task::Task>,
     ) -> Box<dyn super::LogProcessor> {
         let task_name = task.map(|t| t.name.clone());
-        Box::new(ClaudeCodeLogProcessor::new(task_name))
+        Box::new(ClaudeLogProcessor::new(task_name))
     }
 
     fn name(&self) -> &str {
-        "claude-code"
+        "claude"
     }
 
     async fn validate(&self) -> Result<(), String> {
@@ -216,13 +216,13 @@ mod tests {
     use crate::context::AppContext;
 
     #[test]
-    fn test_claude_code_agent_properties() {
+    fn test_claude_agent_properties() {
         let app_context = AppContext::builder().build();
         let tsk_config = app_context.tsk_config();
-        let agent = ClaudeCodeAgent::with_tsk_config(tsk_config);
+        let agent = ClaudeAgent::with_tsk_config(tsk_config);
 
         // Test name
-        assert_eq!(agent.name(), "claude-code");
+        assert_eq!(agent.name(), "claude");
 
         // Test volumes
         let volumes = agent.volumes();
@@ -245,10 +245,10 @@ mod tests {
     }
 
     #[test]
-    fn test_claude_code_agent_build_command() {
+    fn test_claude_agent_build_command() {
         let app_context = AppContext::builder().build();
         let tsk_config = app_context.tsk_config();
-        let agent = ClaudeCodeAgent::with_tsk_config(tsk_config);
+        let agent = ClaudeAgent::with_tsk_config(tsk_config);
 
         // Test non-interactive mode with full path
         let command = agent.build_command("/tmp/instructions.md", false);
@@ -257,12 +257,12 @@ mod tests {
         assert_eq!(command[1], "-c");
         assert!(command[2].contains("cat /instructions/instructions.md"));
         assert!(command[2].contains("claude -p --verbose --output-format stream-json"));
-        assert!(command[2].contains("tee /output/claude-code-log.txt"));
+        assert!(command[2].contains("tee /output/claude-log.txt"));
 
         // Test non-interactive mode with complex path
         let command = agent.build_command("/path/to/task/instructions.txt", false);
         assert!(command[2].contains("cat /instructions/instructions.txt"));
-        assert!(command[2].contains("tee /output/claude-code-log.txt"));
+        assert!(command[2].contains("tee /output/claude-log.txt"));
 
         // Test interactive mode
         let command = agent.build_command("/tmp/instructions.md", true);
@@ -287,12 +287,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_claude_code_agent_validate_without_config() {
+    async fn test_claude_agent_validate_without_config() {
         // In test mode, validation is skipped so this test just verifies
         // that validate() returns Ok in test environments
         let app_context = AppContext::builder().build();
         let tsk_config = app_context.tsk_config();
-        let agent = ClaudeCodeAgent::with_tsk_config(tsk_config);
+        let agent = ClaudeAgent::with_tsk_config(tsk_config);
         let result = agent.validate().await;
 
         // In test mode, validation is skipped
@@ -300,10 +300,10 @@ mod tests {
     }
 
     #[test]
-    fn test_claude_code_agent_create_log_processor() {
+    fn test_claude_agent_create_log_processor() {
         let app_context = AppContext::builder().build();
         let tsk_config = app_context.tsk_config();
-        let agent = ClaudeCodeAgent::with_tsk_config(tsk_config);
+        let agent = ClaudeAgent::with_tsk_config(tsk_config);
 
         let log_processor = agent.create_log_processor(None);
 
@@ -314,15 +314,15 @@ mod tests {
         // Also test with custom config using AppContext
         use crate::context::AppContext;
         let ctx = AppContext::builder().build();
-        let agent_with_config = ClaudeCodeAgent::with_tsk_config(ctx.tsk_config());
+        let agent_with_config = ClaudeAgent::with_tsk_config(ctx.tsk_config());
         let _ = agent_with_config.create_log_processor(None);
     }
 
     #[test]
-    fn test_claude_code_agent_version() {
+    fn test_claude_agent_version() {
         let app_context = AppContext::builder().build();
         let tsk_config = app_context.tsk_config();
-        let agent = ClaudeCodeAgent::with_tsk_config(tsk_config);
+        let agent = ClaudeAgent::with_tsk_config(tsk_config);
 
         // In test mode, should return test version
         let version = agent.version();

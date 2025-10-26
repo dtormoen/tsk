@@ -191,7 +191,7 @@ mod tests {
             description: Some("Test description".to_string()),
             prompt: None,
             edit: false,
-            agent: Some("claude-code".to_string()),
+            agent: Some("claude".to_string()),
             stack: None,
             project: None,
             repo: None,
@@ -203,7 +203,7 @@ mod tests {
         assert_eq!(cmd.description, Some("Test description".to_string()));
         assert_eq!(cmd.prompt, None);
         assert!(!cmd.edit);
-        assert_eq!(cmd.agent, Some("claude-code".to_string()));
+        assert_eq!(cmd.agent, Some("claude".to_string()));
         assert_eq!(cmd.stack, None);
         assert_eq!(cmd.project, None);
         assert_eq!(cmd.repo, None);

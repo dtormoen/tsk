@@ -74,7 +74,7 @@ enum Commands {
         #[arg(short, long)]
         edit: bool,
 
-        /// Specific agent to use (claude-code, codex)
+        /// Specific agent to use (claude, codex)
         #[arg(short, long)]
         agent: Option<String>,
 
@@ -112,7 +112,7 @@ enum Commands {
         #[arg(short, long)]
         edit: bool,
 
-        /// Specific agent to use (defaults to claude-code)
+        /// Specific agent to use (defaults to claude)
         #[arg(short, long)]
         agent: Option<String>,
 
@@ -150,7 +150,7 @@ enum Commands {
         #[arg(short, long)]
         edit: bool,
 
-        /// Specific agent to use (claude-code, codex)
+        /// Specific agent to use (claude, codex)
         #[arg(short, long)]
         agent: Option<String>,
 
@@ -231,7 +231,7 @@ enum DockerCommands {
         #[arg(long)]
         stack: Option<String>,
 
-        /// Agent (e.g., claude-code, codex)
+        /// Agent (e.g., claude, codex)
         #[arg(long)]
         agent: Option<String>,
 

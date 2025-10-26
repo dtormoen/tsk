@@ -22,18 +22,18 @@ mod agent {
         pub duration_ms: Option<u64>,
     }
 
-    pub mod claude_code {
+    pub mod claude {
         #[allow(unused_imports)]
-        pub use super::super::claude_code_log_processor::ClaudeCodeLogProcessor;
+        pub use super::super::claude_log_processor::ClaudeLogProcessor;
     }
 }
 
 // Include the log processor module
-#[path = "../agent/claude_code/claude_code_log_processor.rs"]
-mod claude_code_log_processor;
+#[path = "../agent/claude/claude_log_processor.rs"]
+mod claude_log_processor;
 
 use agent::LogProcessor;
-use claude_code_log_processor::ClaudeCodeLogProcessor;
+use claude_log_processor::ClaudeLogProcessor;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
@@ -47,7 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file = File::open(log_file_path)?;
     let reader = BufReader::new(file);
 
-    let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+    let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
 
     for line in reader.lines() {
         let line = line?;

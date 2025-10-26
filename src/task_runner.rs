@@ -246,7 +246,7 @@ mod tests {
                 .join(".tsk/tasks/instructions.md")
                 .to_string_lossy()
                 .to_string(),
-            agent: "claude-code".to_string(),
+            agent: "claude".to_string(),
             status: TaskStatus::Queued,
             created_at: chrono::Local::now(),
             started_at: None,

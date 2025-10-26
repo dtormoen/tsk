@@ -355,7 +355,7 @@ mod tests {
             description: Some("Test with multiple agents".to_string()),
             prompt: None,
             edit: false,
-            agent: Some("codex,claude-code".to_string()),
+            agent: Some("codex,claude".to_string()),
             stack: None,
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
@@ -372,7 +372,7 @@ mod tests {
         // Verify agent names
         let agent_names: Vec<&str> = tasks.iter().map(|t| t.agent.as_str()).collect();
         assert!(agent_names.contains(&"codex"));
-        assert!(agent_names.contains(&"claude-code"));
+        assert!(agent_names.contains(&"claude"));
 
         // Verify same name for all tasks
         assert_eq!(tasks[0].name, "test-multi");
@@ -394,7 +394,7 @@ mod tests {
             description: Some("Test description".to_string()),
             prompt: None,
             edit: false,
-            agent: Some("claude-code,invalid-agent,codex".to_string()),
+            agent: Some("claude,invalid-agent,codex".to_string()),
             stack: None,
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
@@ -498,7 +498,7 @@ mod tests {
             description: Some("Test with multiple agents in edit mode".to_string()),
             prompt: None,
             edit: true,
-            agent: Some("codex,claude-code".to_string()),
+            agent: Some("codex,claude".to_string()),
             stack: None,
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
@@ -520,7 +520,7 @@ mod tests {
         // Verify agent names
         let agent_names: Vec<&str> = tasks.iter().map(|t| t.agent.as_str()).collect();
         assert!(agent_names.contains(&"codex"));
-        assert!(agent_names.contains(&"claude-code"));
+        assert!(agent_names.contains(&"claude"));
 
         // Verify both tasks have the same instructions content
         let instructions_1 = ctx

@@ -32,7 +32,7 @@ pub struct Task {
     pub task_type: String,
     /// Path to the instructions file containing task details
     pub instructions_file: String,
-    /// AI agent to use for task execution (e.g., "claude-code")
+    /// AI agent to use for task execution (e.g., "claude")
     pub agent: String,
     /// Current status of the task
     pub status: TaskStatus,
@@ -136,7 +136,7 @@ mod tests {
             "test-task".to_string(),
             "feat".to_string(),
             "instructions.md".to_string(),
-            "claude-code".to_string(),
+            "claude".to_string(),
             "tsk/feat/test-task/test-id".to_string(),
             "abc123".to_string(),
             "rust".to_string(),

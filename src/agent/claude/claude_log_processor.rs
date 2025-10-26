@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use crate::agent::{LogProcessor, TaskResult};
 
-/// Represents a message from Claude Code's JSON output
+/// Represents a message from Claude's JSON output
 #[derive(Debug, Deserialize, Serialize)]
 struct ClaudeMessage {
     #[serde(rename = "type")]
@@ -23,7 +23,7 @@ struct ClaudeMessage {
     parent_tool_use_id: Option<String>,
 }
 
-/// Message content structure from Claude Code
+/// Message content structure from Claude
 #[derive(Debug, Deserialize, Serialize)]
 struct MessageContent {
     role: Option<String>,
@@ -36,7 +36,7 @@ struct MessageContent {
     usage: Option<Usage>,
 }
 
-/// Usage information from Claude Code
+/// Usage information from Claude
 #[derive(Debug, Deserialize, Serialize)]
 struct Usage {
     input_tokens: Option<u64>,
@@ -46,7 +46,7 @@ struct Usage {
     service_tier: Option<String>,
 }
 
-/// Todo item structure from Claude Code's TodoWrite tool
+/// Todo item structure from Claude's TodoWrite tool
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct TodoItem {
     content: String,
@@ -78,7 +78,7 @@ struct TaskInvocation {
 /// The processor handles non-JSON output gracefully:
 /// - Initially prints non-JSON lines as-is (for misconfiguration messages)
 /// - Switches to JSON-only mode after the first valid JSON line
-pub struct ClaudeCodeLogProcessor {
+pub struct ClaudeLogProcessor {
     full_log: Vec<String>,
     final_result: Option<TaskResult>,
     json_mode_active: bool,
@@ -90,8 +90,8 @@ pub struct ClaudeCodeLogProcessor {
     task_contexts: HashMap<String, TaskInvocation>,
 }
 
-impl ClaudeCodeLogProcessor {
-    /// Creates a new ClaudeCodeLogProcessor
+impl ClaudeLogProcessor {
+    /// Creates a new ClaudeLogProcessor
     pub fn new(task_name: Option<String>) -> Self {
         Self {
             full_log: Vec::new(),
@@ -932,7 +932,7 @@ impl ClaudeCodeLogProcessor {
 }
 
 #[async_trait]
-impl LogProcessor for ClaudeCodeLogProcessor {
+impl LogProcessor for ClaudeLogProcessor {
     fn process_line(&mut self, line: &str) -> Option<String> {
         // Store the raw line for the full log
         self.full_log.push(line.to_string());
@@ -1051,7 +1051,7 @@ mod tests {
 
     #[test]
     fn test_todo_processing() {
-        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
 
         // Test basic format with status icons and summary
         let todos = r#"[
@@ -1080,7 +1080,7 @@ mod tests {
 
     #[test]
     fn test_user_message_with_todo_result() {
-        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
         let json = r#"{
             "type": "user",
             "message": {
@@ -1106,7 +1106,7 @@ mod tests {
 
     #[test]
     fn test_assistant_message_formats() {
-        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
 
         // Text message without model
         let json = r#"{"type": "assistant", "message": {"content": [{"type": "text", "text": "Hello, world!"}]}}"#;
@@ -1134,7 +1134,7 @@ mod tests {
 
     #[test]
     fn test_result_and_summary_messages() {
-        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
 
         // Test result message with cost and duration
         let result_json = r#"{
@@ -1167,7 +1167,7 @@ mod tests {
 
     #[test]
     fn test_json_mode_behavior() {
-        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
 
         // Initially not in JSON mode
         assert!(!processor.json_mode_active);
@@ -1205,7 +1205,7 @@ mod tests {
 
     #[test]
     fn test_empty_tool_results_filtered() {
-        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
 
         // Test empty tool result (should return None)
         let empty_tool_result_json = r#"{
@@ -1223,7 +1223,7 @@ mod tests {
 
     #[test]
     fn test_sub_agent_tagging_scenarios() {
-        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
 
         // Task invocation should NOT have sub-agent tag
         let msg = task_msg(
@@ -1258,7 +1258,7 @@ mod tests {
 
     #[test]
     fn test_task_tool_scenarios() {
-        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
 
         // Test with prompt
         let msg1 = task_msg(
@@ -1278,7 +1278,7 @@ mod tests {
         assert!(output.contains("Task Complete: Analyze code (software-architect)"));
 
         // Test array content with sub-agent output
-        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
         let msg2 = task_msg("toolu_456", "data-analyst", "Analyze patterns", None);
         processor.process_line(&msg2);
 
@@ -1293,7 +1293,7 @@ mod tests {
         assert!(output.contains("Found 5 patterns"));
 
         // Test empty content (no sub-agent output section)
-        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
         let msg3 = task_msg("toolu_789", "test-agent", "Test edge cases", None);
         processor.process_line(&msg3);
 
@@ -1305,7 +1305,7 @@ mod tests {
 
     #[test]
     fn test_parse_error_deduplication() {
-        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
 
         // First, activate JSON mode with a valid JSON line
         let json =
@@ -1333,7 +1333,7 @@ mod tests {
 
     #[test]
     fn test_parse_error_resume_after_valid_json() {
-        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
 
         // Activate JSON mode
         let json =
@@ -1366,7 +1366,7 @@ mod tests {
 
     #[test]
     fn test_empty_lines_dont_reset_error_tracking() {
-        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
 
         // Activate JSON mode
         let json =
@@ -1409,7 +1409,7 @@ mod tests {
 
     #[test]
     fn test_pre_json_mode_behavior_unchanged() {
-        let mut processor = ClaudeCodeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
 
         // Before JSON mode, non-JSON lines should be passed through
         let result = processor.process_line("Configuration error message");

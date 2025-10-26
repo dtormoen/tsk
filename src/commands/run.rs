@@ -194,7 +194,7 @@ mod tests {
             description: Some("Test description".to_string()),
             prompt: None,
             edit: false,
-            agent: Some("codex,claude-code".to_string()),
+            agent: Some("codex,claude".to_string()),
             stack: None,
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),

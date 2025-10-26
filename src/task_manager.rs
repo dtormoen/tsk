@@ -289,7 +289,7 @@ mod tests {
         // Create tasks.json with the task
         let tasks_json_path = config.tasks_file();
         let task_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"test-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
+            r#"[{{"id":"{}","repo_root":"{}","name":"test-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude","timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
             task_id,
             repo_root.to_string_lossy(),
             task_id,
@@ -349,7 +349,7 @@ mod tests {
             "queued-task".to_string(),
             "feat".to_string(),
             "instructions.md".to_string(),
-            "claude-code".to_string(),
+            "claude".to_string(),
             format!("tsk/{queued_task_id}"),
             "abc123".to_string(),
             "default".to_string(),
@@ -365,7 +365,7 @@ mod tests {
             "completed-task".to_string(),
             "fix".to_string(),
             "instructions.md".to_string(),
-            "claude-code".to_string(),
+            "claude".to_string(),
             format!("tsk/{completed_task_id}"),
             "abc123".to_string(),
             "default".to_string(),
@@ -378,7 +378,7 @@ mod tests {
 
         // Create initial tasks.json with both tasks
         let tasks_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}},{{"id":"{}","repo_root":"{}","name":"completed-task","task_type":"fix","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"COMPLETE","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":"2024-01-01T01:00:00Z","branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
+            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude","timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}},{{"id":"{}","repo_root":"{}","name":"completed-task","task_type":"fix","instructions_file":"instructions.md","agent":"claude","timeout":30,"status":"COMPLETE","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":"2024-01-01T01:00:00Z","branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
             queued_task_id,
             repo_root.to_string_lossy(),
             queued_task_id,
@@ -437,7 +437,7 @@ mod tests {
             "original-task".to_string(),
             "generic".to_string(),
             instructions_path.to_string_lossy().to_string(),
-            "claude-code".to_string(),
+            "claude".to_string(),
             format!("tsk/{task_id}"),
             "abc123".to_string(),
             "default".to_string(),
@@ -457,7 +457,7 @@ mod tests {
 
         // Create tasks.json with the completed task
         let tasks_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"original-task","task_type":"generic","instructions_file":"{}","agent":"claude-code","timeout":45,"status":"COMPLETE","created_at":"2024-01-01T12:00:00Z","started_at":"2024-01-01T12:30:00Z","completed_at":"2024-01-01T13:00:00Z","branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
+            r#"[{{"id":"{}","repo_root":"{}","name":"original-task","task_type":"generic","instructions_file":"{}","agent":"claude","timeout":45,"status":"COMPLETE","created_at":"2024-01-01T12:00:00Z","started_at":"2024-01-01T12:30:00Z","completed_at":"2024-01-01T13:00:00Z","branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
             task_id,
             repo_root.to_string_lossy(),
             instructions_path.to_string_lossy(),
@@ -492,7 +492,7 @@ mod tests {
         // Since we removed the "retry-" prefix, name should be the same as original
         assert_eq!(new_task.name, "original-task");
         assert_eq!(new_task.task_type, "generic");
-        assert_eq!(new_task.agent, "claude-code".to_string());
+        assert_eq!(new_task.agent, "claude".to_string());
         assert_eq!(new_task.status, TaskStatus::Queued);
 
         // Verify instructions file was created
@@ -544,7 +544,7 @@ mod tests {
 
         // Create tasks.json with the queued task
         let tasks_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"QUEUED","created_at":"2024-01-01T12:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
+            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude","timeout":30,"status":"QUEUED","created_at":"2024-01-01T12:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
             task_id,
             repo_root.to_string_lossy(),
             task_id,
@@ -591,7 +591,7 @@ mod tests {
             "test-feature".to_string(),
             "feat".to_string(),
             "instructions.md".to_string(),
-            "claude-code".to_string(),
+            "claude".to_string(),
             format!("tsk/{task_id}"),
             "abc123".to_string(),
             "default".to_string(),
@@ -604,7 +604,7 @@ mod tests {
 
         // Create tasks.json with the completed task
         let tasks_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"test-feature","task_type":"feat","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"COMPLETE","created_at":"2024-01-15T14:30:00Z","started_at":null,"completed_at":"2024-01-15T15:00:00Z","branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
+            r#"[{{"id":"{}","repo_root":"{}","name":"test-feature","task_type":"feat","instructions_file":"instructions.md","agent":"claude","timeout":30,"status":"COMPLETE","created_at":"2024-01-15T14:30:00Z","started_at":null,"completed_at":"2024-01-15T15:00:00Z","branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
             task_id,
             repo_root.to_string_lossy(),
             task_id,

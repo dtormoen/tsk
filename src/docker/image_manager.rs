@@ -207,7 +207,7 @@ impl DockerImageManager {
     ///
     /// # Arguments
     /// * `stack` - The stack layer (e.g., "rust", "python", "default")
-    /// * `agent` - The agent layer (e.g., "claude-code")
+    /// * `agent` - The agent layer (e.g., "claude")
     /// * `project` - Optional project layer (defaults to "default")
     /// * `build_root` - Optional build root directory for project-specific context
     /// * `no_cache` - Whether to build without using Docker's cache
@@ -411,11 +411,11 @@ mod tests {
         let manager = create_test_manager();
 
         // Test with all default layers (should exist in embedded assets)
-        let result = manager.get_image_tag("default", "claude-code", Some("default"), None);
+        let result = manager.get_image_tag("default", "claude", Some("default"), None);
         assert!(result.is_ok());
 
         let (tag, used_fallback) = result.unwrap();
-        assert_eq!(tag, "tsk/default/claude-code/default");
+        assert_eq!(tag, "tsk/default/claude/default");
         assert!(!used_fallback);
     }
 
@@ -424,12 +424,11 @@ mod tests {
         let manager = create_test_manager();
 
         // Test with non-existent project layer (should fall back to default)
-        let result =
-            manager.get_image_tag("default", "claude-code", Some("non-existent-project"), None);
+        let result = manager.get_image_tag("default", "claude", Some("non-existent-project"), None);
         assert!(result.is_ok());
 
         let (tag, used_fallback) = result.unwrap();
-        assert_eq!(tag, "tsk/default/claude-code/default");
+        assert_eq!(tag, "tsk/default/claude/default");
         assert!(used_fallback);
     }
 
@@ -438,8 +437,7 @@ mod tests {
         let manager = create_test_manager();
 
         // Test with non-existent tech stack (should fail)
-        let result =
-            manager.get_image_tag("non-existent-stack", "claude-code", Some("default"), None);
+        let result = manager.get_image_tag("non-existent-stack", "claude", Some("default"), None);
         assert!(result.is_err());
 
         let err = result.unwrap_err();
@@ -469,11 +467,11 @@ mod tests {
         let manager = create_test_manager();
 
         // Test with None project (should use "default")
-        let result = manager.get_image_tag("default", "claude-code", None, None);
+        let result = manager.get_image_tag("default", "claude", None, None);
         assert!(result.is_ok());
 
         let (tag, used_fallback) = result.unwrap();
-        assert_eq!(tag, "tsk/default/claude-code/default");
+        assert_eq!(tag, "tsk/default/claude/default");
         assert!(!used_fallback);
     }
 
@@ -483,27 +481,20 @@ mod tests {
 
         // Test build_image with dry_run=true
         let result = manager
-            .build_image("default", "claude-code", Some("default"), None, false, true)
+            .build_image("default", "claude", Some("default"), None, false, true)
             .await;
 
         assert!(result.is_ok(), "Dry run failed: {:?}", result.err());
         let tag = result.unwrap();
-        assert_eq!(tag, "tsk/default/claude-code/default");
+        assert_eq!(tag, "tsk/default/claude/default");
 
         // Test build_image with dry_run=false (normal mode)
         let result = manager
-            .build_image(
-                "default",
-                "claude-code",
-                Some("default"),
-                None,
-                false,
-                false,
-            )
+            .build_image("default", "claude", Some("default"), None, false, false)
             .await;
 
         let tag = result.unwrap();
-        assert_eq!(tag, "tsk/default/claude-code/default");
+        assert_eq!(tag, "tsk/default/claude/default");
     }
 
     #[test]
@@ -606,7 +597,7 @@ mod tests {
         // Compose the Dockerfile to check if TSK_AGENT_VERSION is included
         let config = DockerImageConfig::new(
             "default".to_string(),
-            "claude-code".to_string(),
+            "claude".to_string(),
             "default".to_string(),
         );
         let composed = manager.composer.compose(&config).unwrap();
@@ -632,7 +623,7 @@ mod tests {
 
         // Build image in dry-run mode to avoid actual Docker calls
         let result = manager
-            .build_image("default", "claude-code", Some("default"), None, false, true)
+            .build_image("default", "claude", Some("default"), None, false, true)
             .await;
 
         assert!(result.is_ok(), "Build should succeed with agent version");
@@ -714,13 +705,13 @@ mod tests {
         // Launch two concurrent ensure_image tasks for different images
         let task1 = tokio::spawn(async move {
             manager1
-                .ensure_image("rust", "claude-code", Some("project1"), None, false)
+                .ensure_image("rust", "claude", Some("project1"), None, false)
                 .await
         });
 
         let task2 = tokio::spawn(async move {
             manager2
-                .ensure_image("python", "claude-code", Some("project2"), None, false)
+                .ensure_image("python", "claude", Some("project2"), None, false)
                 .await
         });
 

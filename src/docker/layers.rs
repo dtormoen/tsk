@@ -173,9 +173,9 @@ mod tests {
         assert_eq!(rust.layer_type, DockerLayerType::Stack);
         assert_eq!(rust.name, "rust");
 
-        let claude = DockerLayer::agent("claude-code");
+        let claude = DockerLayer::agent("claude");
         assert_eq!(claude.layer_type, DockerLayerType::Agent);
-        assert_eq!(claude.name, "claude-code");
+        assert_eq!(claude.name, "claude");
 
         let web_api = DockerLayer::project("web-api");
         assert_eq!(web_api.layer_type, DockerLayerType::Project);
@@ -193,8 +193,8 @@ mod tests {
             "stack/rust.dockerfile"
         );
         assert_eq!(
-            DockerLayer::agent("claude-code").dockerfile_path(),
-            "agent/claude-code.dockerfile"
+            DockerLayer::agent("claude").dockerfile_path(),
+            "agent/claude.dockerfile"
         );
         assert_eq!(
             DockerLayer::project("web-api").dockerfile_path(),
@@ -224,13 +224,13 @@ mod tests {
     fn test_default_config() {
         let config = DockerImageConfig {
             stack: "default".to_string(),
-            agent: "claude-code".to_string(),
+            agent: "claude".to_string(),
             project: "default".to_string(),
         };
         assert_eq!(config.stack, "default");
-        assert_eq!(config.agent, "claude-code");
+        assert_eq!(config.agent, "claude");
         assert_eq!(config.project, "default");
-        assert_eq!(config.image_tag(), "tsk/default/claude-code/default");
+        assert_eq!(config.image_tag(), "tsk/default/claude/default");
     }
 
     #[test]

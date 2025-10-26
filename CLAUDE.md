@@ -121,7 +121,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - `warmup()`: Performs pre-execution setup (e.g., refreshing OAuth tokens)
   - `version()`: Returns the agent's version string (used to trigger Docker rebuilds when agents are upgraded)
 - Available agents:
-  - `claude-code`: Claude Code AI agent (default) - automatically detects version from `claude --version`
+  - `claude`: Claude AI agent (default) - automatically detects version from `claude --version`
   - `codex`: Codex AI agent - automatically detects version from `codex --version`
   - `no-op`: Simple agent for testing that displays instructions
 - Interactive debugging mode shows task instructions and the normal command before providing shell access
@@ -169,7 +169,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - **Layered Images**: Four-layer system for flexible customization
   - Base layer: Ubuntu 24.04 base OS and common tools (stored as `dockerfiles/base/default.dockerfile`)
   - Stack layer: Language-specific toolchains (stored as `dockerfiles/stack/{name}.dockerfile` for rust, python, node, go, java, lua, etc.)
-  - Agent layer: AI agent installations (stored as `dockerfiles/agent/{name}.dockerfile` for claude-code, etc.)
+  - Agent layer: AI agent installations (stored as `dockerfiles/agent/{name}.dockerfile` for claude, codex, etc.)
   - Project layer: Project-specific dependencies (stored as `dockerfiles/project/{name}.dockerfile`, optional, falls back to default)
 - **Custom Project Dockerfiles**: Place project-specific Dockerfiles in `.tsk/dockerfiles/project/{project-name}.dockerfile`
 - **Proxy Image** (`dockerfiles/tsk-proxy/`): Squid proxy for controlled network access

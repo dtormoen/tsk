@@ -1,4 +1,4 @@
-use super::{Agent, ClaudeCodeAgent, CodexAgent, NoOpAgent};
+use super::{Agent, ClaudeAgent, CodexAgent, NoOpAgent};
 use crate::context::tsk_config::TskConfig;
 use std::sync::Arc;
 
@@ -16,7 +16,7 @@ impl AgentProvider {
     /// An `Arc<dyn Agent>` for the requested agent type
     pub fn get_agent(name: &str, tsk_config: Arc<TskConfig>) -> anyhow::Result<Arc<dyn Agent>> {
         match name {
-            "claude-code" => Ok(Arc::new(ClaudeCodeAgent::with_tsk_config(tsk_config))),
+            "claude" => Ok(Arc::new(ClaudeAgent::with_tsk_config(tsk_config))),
             "codex" => Ok(Arc::new(CodexAgent::with_tsk_config(tsk_config))),
             "no-op" => Ok(Arc::new(NoOpAgent)),
             _ => Err(anyhow::anyhow!("Unknown agent: {}", name)),
@@ -25,12 +25,12 @@ impl AgentProvider {
 
     /// List all available agents
     pub fn list_agents() -> Vec<&'static str> {
-        vec!["claude-code", "codex", "no-op"]
+        vec!["claude", "codex", "no-op"]
     }
 
     /// Get the default agent name
     pub fn default_agent() -> &'static str {
-        "claude-code"
+        "claude"
     }
 
     /// Validate an agent name
@@ -49,10 +49,10 @@ mod tests {
         // Test getting a valid agent
         let app_context = AppContext::builder().build();
         let tsk_config = app_context.tsk_config();
-        let agent = AgentProvider::get_agent("claude-code", tsk_config);
+        let agent = AgentProvider::get_agent("claude", tsk_config);
         assert!(agent.is_ok());
         let agent = agent.unwrap();
-        assert_eq!(agent.name(), "claude-code");
+        assert_eq!(agent.name(), "claude");
     }
 
     #[test]
@@ -70,17 +70,17 @@ mod tests {
     fn test_agent_provider_list_agents() {
         let agents = AgentProvider::list_agents();
         assert!(!agents.is_empty());
-        assert!(agents.contains(&"claude-code"));
+        assert!(agents.contains(&"claude"));
     }
 
     #[test]
     fn test_agent_provider_default_agent() {
-        assert_eq!(AgentProvider::default_agent(), "claude-code");
+        assert_eq!(AgentProvider::default_agent(), "claude");
     }
 
     #[test]
     fn test_agent_provider_is_valid_agent() {
-        assert!(AgentProvider::is_valid_agent("claude-code"));
+        assert!(AgentProvider::is_valid_agent("claude"));
         assert!(AgentProvider::is_valid_agent("codex"));
         assert!(AgentProvider::is_valid_agent("no-op"));
         assert!(!AgentProvider::is_valid_agent("invalid-agent"));

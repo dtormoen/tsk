@@ -372,7 +372,7 @@ mod tests {
             format!("task-{id}"),
             "test".to_string(),
             "instructions.md".to_string(),
-            "claude-code".to_string(),
+            "claude".to_string(),
             format!("tsk/test/{id}"),
             commit_sha.to_string(),
             "default".to_string(),

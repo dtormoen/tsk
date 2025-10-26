@@ -84,12 +84,7 @@ mod tests {
 
         // Note: This test will use actual embedded assets if they exist
         let result = engine
-            .render_dockerfile(
-                base_template,
-                Some("rust"),
-                Some("claude-code"),
-                Some("default"),
-            )
+            .render_dockerfile(base_template, Some("rust"), Some("claude"), Some("default"))
             .unwrap();
 
         assert!(result.contains("FROM ubuntu:24.04"));

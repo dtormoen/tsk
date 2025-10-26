@@ -88,7 +88,7 @@ mod tests {
             )?;
 
             tasks_json.push(format!(
-                r#"{{"id":"{}","repo_root":"{}","name":"test-task-{}","task_type":"feat","instructions_file":"{}","agent":"claude-code","timeout":30,"status":"COMPLETE","created_at":"2024-01-01T00:00:00Z","started_at":"2024-01-01T00:30:00Z","completed_at":"2024-01-01T01:00:00Z","branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}"#,
+                r#"{{"id":"{}","repo_root":"{}","name":"test-task-{}","task_type":"feat","instructions_file":"{}","agent":"claude","timeout":30,"status":"COMPLETE","created_at":"2024-01-01T00:00:00Z","started_at":"2024-01-01T00:30:00Z","completed_at":"2024-01-01T01:00:00Z","branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}"#,
                 task_id,
                 repo_root.to_string_lossy(),
                 i,
@@ -242,7 +242,7 @@ mod tests {
         std::fs::create_dir_all(&task_dir_path).unwrap();
 
         let task_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude-code","timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
+            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude","timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
             task_id,
             repo_root.to_string_lossy(),
             task_id,

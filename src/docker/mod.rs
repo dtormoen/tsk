@@ -381,7 +381,7 @@ mod tests {
             name: "test-task".to_string(),
             task_type: "feature".to_string(),
             instructions_file: "/tmp/test-repo/.tsk/tasks/instructions.md".to_string(),
-            agent: "claude-code".to_string(),
+            agent: "claude".to_string(),
             status: TaskStatus::Running,
             created_at: chrono::Local::now(),
             started_at: Some(chrono::Utc::now()),
@@ -405,7 +405,7 @@ mod tests {
         let manager = DockerManager::new(&ctx);
 
         let task = create_test_task(false);
-        let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(ctx.tsk_config());
+        let agent = crate::agent::ClaudeAgent::with_tsk_config(ctx.tsk_config());
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
@@ -458,7 +458,7 @@ mod tests {
         let manager = DockerManager::new(&ctx);
 
         let task = create_test_task(true);
-        let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(ctx.tsk_config());
+        let agent = crate::agent::ClaudeAgent::with_tsk_config(ctx.tsk_config());
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         // Interactive mode should succeed with mock client
@@ -508,7 +508,7 @@ mod tests {
         let manager = DockerManager::new(&ctx);
 
         let task = create_test_task(false);
-        let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(ctx.tsk_config());
+        let agent = crate::agent::ClaudeAgent::with_tsk_config(ctx.tsk_config());
 
         // Run the task container
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
@@ -540,7 +540,7 @@ mod tests {
         let manager = DockerManager::new(&ctx);
 
         let task = create_test_task(false);
-        let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(ctx.tsk_config());
+        let agent = crate::agent::ClaudeAgent::with_tsk_config(ctx.tsk_config());
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_err());
@@ -566,7 +566,7 @@ mod tests {
         let manager = DockerManager::new(&ctx);
 
         let task = create_test_task(false);
-        let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(ctx.tsk_config());
+        let agent = crate::agent::ClaudeAgent::with_tsk_config(ctx.tsk_config());
         let _ = manager.run_task_container("tsk/base", &task, &agent).await;
 
         let create_calls = mock_client.create_container_calls.lock().unwrap();
@@ -639,7 +639,7 @@ mod tests {
 
         let mut task = create_test_task(false);
         task.instructions_file = "/tmp/tsk-test/instructions.txt".to_string();
-        let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(ctx.tsk_config());
+        let agent = crate::agent::ClaudeAgent::with_tsk_config(ctx.tsk_config());
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
@@ -670,7 +670,7 @@ mod tests {
 
         let mut task = create_test_task(false);
         task.copied_repo_path = absolute_path.clone();
-        let agent = crate::agent::ClaudeCodeAgent::with_tsk_config(ctx.tsk_config());
+        let agent = crate::agent::ClaudeAgent::with_tsk_config(ctx.tsk_config());
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());

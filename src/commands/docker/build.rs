@@ -46,7 +46,7 @@ impl Command for DockerBuildCommand {
             }
         };
 
-        let agent = self.agent.as_deref().unwrap_or("claude-code");
+        let agent = self.agent.as_deref().unwrap_or("claude");
 
         // Auto-detect project if not provided
         let project = match &self.project {

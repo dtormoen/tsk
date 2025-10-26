@@ -146,13 +146,9 @@ impl DockerTemplateManager {
                     }
                 }
                 DockerLayerType::Agent => {
-                    // Check if we have a "claude-code" agent layer
-                    if self
-                        .asset_manager
-                        .get_dockerfile("agent/claude-code")
-                        .is_ok()
-                    {
-                        Some("claude-code".to_string())
+                    // Check if we have a "claude" agent layer
+                    if self.asset_manager.get_dockerfile("agent/claude").is_ok() {
+                        Some("claude".to_string())
                     } else {
                         None
                     }
@@ -240,7 +236,7 @@ mod tests {
     fn test_docker_image_config_layers() {
         let config = DockerImageConfig::new(
             "rust".to_string(),
-            "claude-code".to_string(),
+            "claude".to_string(),
             "web-api".to_string(),
         );
 
@@ -248,7 +244,7 @@ mod tests {
         assert_eq!(layers.len(), 4);
         assert_eq!(layers[0].name, "default");
         assert_eq!(layers[1].name, "rust");
-        assert_eq!(layers[2].name, "claude-code");
+        assert_eq!(layers[2].name, "claude");
         assert_eq!(layers[3].name, "web-api");
     }
 
@@ -268,8 +264,8 @@ mod tests {
         );
 
         assert_eq!(
-            manager.extract_layer_name("dockerfiles/agent/claude-code", &DockerLayerType::Agent),
-            Some("claude-code".to_string())
+            manager.extract_layer_name("dockerfiles/agent/claude", &DockerLayerType::Agent),
+            Some("claude".to_string())
         );
 
         assert_eq!(

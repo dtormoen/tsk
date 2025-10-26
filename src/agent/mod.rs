@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-mod claude_code;
+mod claude;
 mod codex;
 mod log_processor;
 mod no_op;
@@ -10,7 +10,7 @@ mod task_result;
 
 pub use self::log_processor::LogProcessor;
 pub use self::task_result::TaskResult;
-pub use claude_code::ClaudeCodeAgent;
+pub use claude::ClaudeAgent;
 pub use codex::CodexAgent;
 pub use no_op::NoOpAgent;
 pub use provider::AgentProvider;
