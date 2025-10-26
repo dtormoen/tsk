@@ -113,7 +113,6 @@ mod tests {
             prompt: None,
             edit: false,
             agent: None,
-            timeout: 30,
             stack: None,
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
@@ -131,7 +130,6 @@ mod tests {
             prompt: None,
             edit: false,
             agent: None,
-            timeout: 30,
             stack: None,
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
@@ -145,9 +143,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_quick_command_with_piped_input() {
+    async fn test_run_command_with_piped_input() {
         use crate::commands::Command;
-        use crate::commands::QuickCommand;
+        use crate::commands::RunCommand;
 
         // Create a test git repository
         let test_repo = TestGitRepository::new().unwrap();
@@ -163,14 +161,13 @@ mod tests {
         let ctx = AppContext::builder().build();
 
         // Test: Command without description should work for templates without placeholder
-        let cmd = QuickCommand {
+        let cmd = RunCommand {
             name: "test-ack".to_string(),
             r#type: "ack".to_string(),
             description: None,
             prompt: None,
             edit: false,
             agent: None,
-            timeout: 30,
             stack: None,
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
@@ -185,30 +182,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_debug_command_structure() {
-        use crate::commands::DebugCommand;
+    async fn test_shell_command_structure() {
+        use crate::commands::ShellCommand;
 
-        let cmd = DebugCommand {
-            name: "test-debug".to_string(),
+        let cmd = ShellCommand {
+            name: "test-shell".to_string(),
             r#type: "generic".to_string(),
             description: Some("Test description".to_string()),
             prompt: None,
             edit: false,
             agent: Some("claude-code".to_string()),
-            timeout: 0,
             stack: None,
             project: None,
             repo: None,
         };
 
         // Verify the command has the expected fields
-        assert_eq!(cmd.name, "test-debug");
+        assert_eq!(cmd.name, "test-shell");
         assert_eq!(cmd.r#type, "generic");
         assert_eq!(cmd.description, Some("Test description".to_string()));
         assert_eq!(cmd.prompt, None);
         assert!(!cmd.edit);
         assert_eq!(cmd.agent, Some("claude-code".to_string()));
-        assert_eq!(cmd.timeout, 0);
         assert_eq!(cmd.stack, None);
         assert_eq!(cmd.project, None);
         assert_eq!(cmd.repo, None);

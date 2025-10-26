@@ -36,17 +36,16 @@ TSK implements a command pattern with dependency injection for testability. The 
 **CLI Commands** (`src/commands/`)
 
 *Task Commands (implicit "task" noun):*
+- `run`: Immediately execute single tasks (supports piped input via stdin for descriptions)
+- `shell`: Launch sandbox container with agent for interactive use (supports piped input via stdin for descriptions)
 - `add`: Queue tasks with descriptions and templates (supports piped input via stdin for descriptions)
-- `run`: Execute all queued tasks
-- `quick`: Immediately execute single tasks (supports piped input via stdin for descriptions)
 - `list`: Display task status and results
-- `debug`: Launch interactive containers for troubleshooting (accepts same arguments as `quick` but always runs interactively, supports piped input via stdin for descriptions)
 - `clean`: Delete all completed tasks
 - `delete <task-id>`: Delete a specific task
 - `retry <task-id>`: Retry a previous task
 
 *Subcommand Groups:*
-- `server run`: Start the TSK server daemon
+- `server start`: Start the TSK server daemon
 - `server stop`: Stop the running TSK server
 - `docker build`: Build required docker images
 - `proxy stop`: Stop the running TSK proxy
@@ -137,7 +136,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Java: `pom.xml`, `build.gradle`, `build.gradle.kts` → "java"
   - Default: "default" (when no specific files found)
 - Automatic project name detection from repository directory name with cleaning for Docker compatibility
-- Used by `TaskBuilder`, `DockerBuildCommand`, and `DebugCommand` when `--stack` and `--project` flags are not provided
+- Used by `TaskBuilder`, `DockerBuildCommand`, and `ShellCommand` when `--stack` and `--project` flags are not provided
 - Provides user feedback when auto-detection is used vs. explicit flags
 
 ### Development Conventions

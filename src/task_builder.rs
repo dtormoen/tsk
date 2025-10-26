@@ -18,7 +18,6 @@ pub struct TaskBuilder {
     instructions_file_path: Option<PathBuf>,
     edit: bool,
     agent: Option<String>,
-    timeout: Option<u32>,
     stack: Option<String>,
     project: Option<String>,
     copied_repo_path: Option<PathBuf>,
@@ -36,7 +35,6 @@ impl TaskBuilder {
             instructions_file_path: None,
             edit: false,
             agent: None,
-            timeout: None,
             stack: None,
             project: None,
             copied_repo_path: None,
@@ -51,7 +49,6 @@ impl TaskBuilder {
         builder.name = Some(task.name.clone());
         builder.task_type = Some(task.task_type.clone());
         builder.agent = Some(task.agent.clone());
-        builder.timeout = Some(task.timeout);
         builder.stack = Some(task.stack.clone());
         builder.project = Some(task.project.clone());
         builder.copied_repo_path = Some(task.copied_repo_path.clone());
@@ -105,12 +102,6 @@ impl TaskBuilder {
         self
     }
 
-    /// Sets the task timeout in minutes
-    pub fn timeout(mut self, timeout: u32) -> Self {
-        self.timeout = Some(timeout);
-        self
-    }
-
     /// Sets the stack for Docker image selection
     pub fn stack(mut self, stack: Option<String>) -> Self {
         self.stack = stack;
@@ -141,7 +132,6 @@ impl TaskBuilder {
             .task_type
             .clone()
             .unwrap_or_else(|| "generic".to_string());
-        let timeout = self.timeout.unwrap_or(30);
 
         // Check if template requires description
         let template_needs_description = if task_type != "generic" {
@@ -346,7 +336,6 @@ impl TaskBuilder {
             task_type,
             instructions_path,
             agent,
-            timeout,
             branch_name,
             source_commit,
             stack,
@@ -522,7 +511,6 @@ mod tests {
         assert_eq!(task.task_type, "generic");
         assert!(!task.instructions_file.is_empty());
         assert_eq!(task.id.len(), 8);
-        assert_eq!(task.timeout, 30); // default timeout
     }
 
     #[tokio::test]
@@ -535,7 +523,6 @@ mod tests {
             .name("custom-task".to_string())
             .task_type("feat".to_string())
             .description(Some("Custom description".to_string()))
-            .timeout(60)
             .stack(Some("rust".to_string()))
             .project(Some("web-api".to_string()))
             .build(&ctx)
@@ -544,7 +531,6 @@ mod tests {
 
         assert_eq!(task.name, "custom-task");
         assert_eq!(task.task_type, "feat");
-        assert_eq!(task.timeout, 60);
         assert_eq!(task.stack, "rust");
         assert_eq!(task.project, "web-api");
     }

@@ -350,7 +350,6 @@ mod tests {
             "feat".to_string(),
             "instructions.md".to_string(),
             "claude-code".to_string(),
-            30,
             format!("tsk/{queued_task_id}"),
             "abc123".to_string(),
             "default".to_string(),
@@ -367,7 +366,6 @@ mod tests {
             "fix".to_string(),
             "instructions.md".to_string(),
             "claude-code".to_string(),
-            30,
             format!("tsk/{completed_task_id}"),
             "abc123".to_string(),
             "default".to_string(),
@@ -440,7 +438,6 @@ mod tests {
             "generic".to_string(),
             instructions_path.to_string_lossy().to_string(),
             "claude-code".to_string(),
-            45,
             format!("tsk/{task_id}"),
             "abc123".to_string(),
             "default".to_string(),
@@ -496,7 +493,6 @@ mod tests {
         assert_eq!(new_task.name, "original-task");
         assert_eq!(new_task.task_type, "generic");
         assert_eq!(new_task.agent, "claude-code".to_string());
-        assert_eq!(new_task.timeout, 45);
         assert_eq!(new_task.status, TaskStatus::Queued);
 
         // Verify instructions file was created
@@ -596,7 +592,6 @@ mod tests {
             "feat".to_string(),
             "instructions.md".to_string(),
             "claude-code".to_string(),
-            30,
             format!("tsk/{task_id}"),
             "abc123".to_string(),
             "default".to_string(),

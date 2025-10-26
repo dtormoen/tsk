@@ -382,7 +382,6 @@ mod tests {
             task_type: "feature".to_string(),
             instructions_file: "/tmp/test-repo/.tsk/tasks/instructions.md".to_string(),
             agent: "claude-code".to_string(),
-            timeout: 30,
             status: TaskStatus::Running,
             created_at: chrono::Local::now(),
             started_at: Some(chrono::Utc::now()),

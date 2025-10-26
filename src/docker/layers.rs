@@ -10,7 +10,7 @@ pub enum DockerLayerType {
     Base,
     /// Technology stack (e.g., rust, python, node)
     Stack,
-    /// AI agent setup (e.g., claude, aider)
+    /// AI agent setup (e.g., claude, codex)
     Agent,
     /// Project-specific configuration
     Project,
@@ -127,7 +127,7 @@ impl DockerLayerContent {
 pub struct DockerImageConfig {
     /// Stack name (e.g., "rust", "python", "node")
     pub stack: String,
-    /// Agent name (e.g., "claude", "aider")
+    /// Agent name (e.g., "claude", "codex")
     pub agent: String,
     /// Project name (e.g., "web-api", "cli-tool")
     pub project: String,

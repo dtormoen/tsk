@@ -5,12 +5,12 @@ use async_trait::async_trait;
 use std::error::Error;
 use std::sync::Arc;
 
-pub struct ServerRunCommand {
+pub struct ServerStartCommand {
     pub workers: u32,
 }
 
 #[async_trait]
-impl Command for ServerRunCommand {
+impl Command for ServerStartCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         println!("Starting TSK server with {} worker(s)...", self.workers);
         let server = TskServer::with_workers(Arc::new(ctx.clone()), self.workers);

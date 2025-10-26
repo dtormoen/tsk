@@ -25,11 +25,11 @@ mod utils;
 mod test_utils;
 
 use commands::{
-    AddCommand, CleanCommand, Command, DebugCommand, DeleteCommand, ListCommand, QuickCommand,
-    RetryCommand, RunCommand,
+    AddCommand, CleanCommand, Command, DeleteCommand, ListCommand, RetryCommand, RunCommand,
+    ShellCommand,
     docker::DockerBuildCommand,
     proxy::ProxyStopCommand,
-    server::{ServerRunCommand, ServerStopCommand},
+    server::{ServerStartCommand, ServerStopCommand},
     template::TemplateListCommand,
 };
 use context::AppContext;
@@ -52,8 +52,83 @@ struct Cli {
 #[derive(Subcommand)]
 #[command(about = "Task operations and configuration management", long_about = None)]
 enum Commands {
-    // Task Commands (implicit noun)
-    /// Queue a task for later execution
+    /// Immediately run a task in a sandbox container synchronously
+    Run {
+        /// Unique identifier for the task
+        #[arg(short, long)]
+        name: String,
+
+        /// Task type (defaults to 'generic' if not specified)
+        #[arg(short = 't', long, default_value = "generic")]
+        r#type: String,
+
+        /// Detailed description of what needs to be accomplished (can also be piped via stdin)
+        #[arg(short, long, conflicts_with = "prompt")]
+        description: Option<String>,
+
+        /// Path to prompt file to pass to the agent
+        #[arg(short, long, conflicts_with = "description")]
+        prompt: Option<String>,
+
+        /// Open the prompt file in $EDITOR after creation
+        #[arg(short, long)]
+        edit: bool,
+
+        /// Specific agent to use (claude-code, codex)
+        #[arg(short, long)]
+        agent: Option<String>,
+
+        /// Stack for Docker image (e.g., rust, python, node)
+        #[arg(long)]
+        stack: Option<String>,
+
+        /// Project name for Docker image
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Path to the git repository (defaults to current directory)
+        #[arg(long)]
+        repo: Option<String>,
+    },
+    /// Launch a sandbox container with an agent for interactive use
+    Shell {
+        /// Unique identifier for the shell session
+        #[arg(short, long, default_value = "shell")]
+        name: String,
+
+        /// Task type (defaults to 'shell' if not specified)
+        #[arg(short = 't', long, default_value = "shell")]
+        r#type: String,
+
+        /// Detailed description of what needs to be accomplished (can also be piped via stdin)
+        #[arg(short, long, conflicts_with = "prompt")]
+        description: Option<String>,
+
+        /// Path to prompt file to pass to the agent
+        #[arg(short, long, conflicts_with = "description")]
+        prompt: Option<String>,
+
+        /// Open the prompt file in $EDITOR after creation
+        #[arg(short, long)]
+        edit: bool,
+
+        /// Specific agent to use (defaults to claude-code)
+        #[arg(short, long)]
+        agent: Option<String>,
+
+        /// Stack for Docker image (e.g., rust, python, node)
+        #[arg(long, alias = "tech-stack")]
+        stack: Option<String>,
+
+        /// Project name for Docker image
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Path to the git repository (defaults to current directory)
+        #[arg(long)]
+        repo: Option<String>,
+    },
+    /// Queue a task for later execution by the TSK server
     Add {
         /// Unique identifier for the task
         #[arg(short, long)]
@@ -75,13 +150,9 @@ enum Commands {
         #[arg(short, long)]
         edit: bool,
 
-        /// Specific agent to use (aider, claude-code)
+        /// Specific agent to use (claude-code, codex)
         #[arg(short, long)]
         agent: Option<String>,
-
-        /// Task timeout in minutes
-        #[arg(long, default_value = "30")]
-        timeout: u32,
 
         /// Stack for Docker image (e.g., rust, python, node)
         #[arg(long)]
@@ -95,99 +166,11 @@ enum Commands {
         #[arg(long)]
         repo: Option<String>,
     },
+    /// Start or stop the TSK server daemon that runs queued tasks in containers
+    Server(ServerArgs),
     /// List all queued tasks
     List,
-    /// Run all queued tasks sequentially
-    Run {
-        /// Number of parallel workers for task execution
-        #[arg(short, long, default_value = "1", value_parser = clap::value_parser!(u32).range(1..=32))]
-        workers: u32,
-    },
-    /// Immediately execute a task without queuing
-    Quick {
-        /// Unique identifier for the task
-        #[arg(short, long)]
-        name: String,
-
-        /// Task type (defaults to 'generic' if not specified)
-        #[arg(short = 't', long, default_value = "generic")]
-        r#type: String,
-
-        /// Detailed description of what needs to be accomplished (can also be piped via stdin)
-        #[arg(short, long, conflicts_with = "prompt")]
-        description: Option<String>,
-
-        /// Path to prompt file to pass to the agent
-        #[arg(short, long, conflicts_with = "description")]
-        prompt: Option<String>,
-
-        /// Open the prompt file in $EDITOR after creation
-        #[arg(short, long)]
-        edit: bool,
-
-        /// Specific agent to use (aider, claude-code)
-        #[arg(short, long)]
-        agent: Option<String>,
-
-        /// Task timeout in minutes
-        #[arg(long, default_value = "30")]
-        timeout: u32,
-
-        /// Stack for Docker image (e.g., rust, python, node)
-        #[arg(long)]
-        stack: Option<String>,
-
-        /// Project name for Docker image
-        #[arg(long)]
-        project: Option<String>,
-
-        /// Path to the git repository (defaults to current directory)
-        #[arg(long)]
-        repo: Option<String>,
-    },
-    /// Launch a Docker container for interactive debugging
-    Debug {
-        /// Unique identifier for the debug session
-        #[arg(short, long)]
-        name: String,
-
-        /// Task type (defaults to 'generic' if not specified)
-        #[arg(short = 't', long, default_value = "generic")]
-        r#type: String,
-
-        /// Detailed description of what needs to be accomplished (can also be piped via stdin)
-        #[arg(short, long, conflicts_with = "prompt")]
-        description: Option<String>,
-
-        /// Path to prompt file to pass to the agent
-        #[arg(short, long, conflicts_with = "description")]
-        prompt: Option<String>,
-
-        /// Open the prompt file in $EDITOR after creation
-        #[arg(short, long)]
-        edit: bool,
-
-        /// Specific agent to use (defaults to claude-code)
-        #[arg(short, long)]
-        agent: Option<String>,
-
-        /// Task timeout in minutes (0 for no timeout in debug mode)
-        #[arg(long, default_value = "0")]
-        timeout: u32,
-
-        /// Stack for Docker image (e.g., rust, python, node)
-        #[arg(long, alias = "tech-stack")]
-        stack: Option<String>,
-
-        /// Project name for Docker image
-        #[arg(long)]
-        project: Option<String>,
-
-        /// Path to the git repository (defaults to current directory)
-        #[arg(long)]
-        repo: Option<String>,
-    },
-    /// Delete all completed tasks and all quick tasks
+    /// Delete all completed tasks
     Clean,
     /// Delete one or more tasks by ID
     Delete {
@@ -202,9 +185,6 @@ enum Commands {
         #[arg(short, long)]
         edit: bool,
     },
-    // Configuration and Infrastructure Commands
-    /// Server operations - manage the TSK server daemon
-    Server(ServerArgs),
     /// Docker operations - build and manage TSK Docker images
     Docker(DockerArgs),
     /// Proxy operations - manage the TSK proxy container
@@ -223,7 +203,7 @@ struct ServerArgs {
 #[derive(Subcommand)]
 enum ServerCommands {
     /// Start the TSK server daemon
-    Run {
+    Start {
         /// Number of parallel workers for task execution
         #[arg(short, long, default_value = "1", value_parser = clap::value_parser!(u32).range(1..=32))]
         workers: u32,
@@ -251,7 +231,7 @@ enum DockerCommands {
         #[arg(long)]
         stack: Option<String>,
 
-        /// Agent (e.g., claude-code, aider)
+        /// Agent (e.g., claude-code, codex)
         #[arg(long)]
         agent: Option<String>,
 
@@ -306,7 +286,6 @@ async fn main() {
             prompt,
             edit,
             agent,
-            timeout,
             stack,
             project,
             repo,
@@ -317,67 +296,58 @@ async fn main() {
             prompt,
             edit,
             agent,
-            timeout,
             stack,
             project,
             repo,
         }),
-        Commands::Quick {
+        Commands::Run {
             name,
             r#type,
             description,
             prompt,
             edit,
             agent,
-            timeout,
             stack,
             project,
             repo,
-        } => Box::new(QuickCommand {
+        } => Box::new(RunCommand {
             name,
             r#type,
             description,
             prompt,
             edit,
             agent,
-            timeout,
             stack,
             project,
             repo,
         }),
-        Commands::Debug {
+        Commands::Shell {
             name,
             r#type,
             description,
             prompt,
             edit,
             agent,
-            timeout,
             stack,
             project,
             repo,
-        } => Box::new(DebugCommand {
+        } => Box::new(ShellCommand {
             name,
             r#type,
             description,
             prompt,
             edit,
             agent,
-            timeout,
             stack,
             project,
             repo,
         }),
         Commands::List => Box::new(ListCommand),
-        Commands::Run { workers } => Box::new(RunCommand {
-            server: false,
-            workers,
-        }),
         Commands::Clean => Box::new(CleanCommand),
         Commands::Delete { task_ids } => Box::new(DeleteCommand { task_ids }),
         Commands::Retry { task_ids, edit } => Box::new(RetryCommand { task_ids, edit }),
         Commands::Server(server_args) => match server_args.command {
-            ServerCommands::Run { workers } => Box::new(ServerRunCommand { workers }),
+            ServerCommands::Start { workers } => Box::new(ServerStartCommand { workers }),
             ServerCommands::Stop => Box::new(ServerStopCommand),
         },
         Commands::Docker(docker_args) => match docker_args.command {

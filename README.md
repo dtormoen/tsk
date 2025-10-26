@@ -45,8 +45,11 @@ echo "Add a warm greeting to all CLI commands" | tsk add --type "feat" --name "g
 # Pipe from a file
 cat detailed-instructions.md | tsk add --type "feat" --name "complex-feature"
 
-# Run all queued tasks
-tsk run
+# Execute the task immediately
+tsk run --name "greeting" --type "feat" --description "Add a warm greeting to all CLI commands"
+
+# Or check queued tasks and start the server
+tsk server start
 
 # Check results
 tsk list
@@ -65,7 +68,7 @@ For continuous task processing across multiple repositories:
 
 ```bash
 # Start server
-tsk server run
+tsk server start
 
 # Add tasks from any repo
 cd ~/project-a && tsk add --type "fix" --name "task1" --description "..."
@@ -82,14 +85,11 @@ The server includes automatic retry logic for agent warmup failures (e.g., API r
 
 ### Parallel Execution
 
-TSK supports parallel task execution for improved throughput:
+TSK supports parallel task execution in server mode for improved throughput:
 
 ```bash
-# Run up to 4 tasks in parallel
-tsk run --workers 4
-
-# Server mode also supports parallel execution
-tsk server run --workers 4
+# Server mode supports parallel execution
+tsk server start --workers 4
 ```
 
 Each task runs in its own isolated Docker container, so parallel execution is safe and efficient.
@@ -97,17 +97,16 @@ Each task runs in its own isolated Docker container, so parallel execution is sa
 ## Commands
 
 ### Task Commands
+- `tsk run` - Execute a task immediately
+- `tsk shell` - Start an interactive sandbox container
 - `tsk add` - Queue a task
-- `tsk run` - Execute queued tasks
 - `tsk list` - View task status and branches
-- `tsk quick` - Execute a task immediately
-- `tsk debug` - Start an interactive docker container
 - `tsk clean` - Clean up completed tasks
 - `tsk delete <task-id>...` - Delete one or more tasks
 - `tsk retry <task-id>...` - Retry one or more tasks
 
 ### Server Commands
-- `tsk server run` - Start the TSK server daemon
+- `tsk server start` - Start the TSK server daemon
 - `tsk server stop` - Stop the running TSK server
 
 ### Configuration Commands

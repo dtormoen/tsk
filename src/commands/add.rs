@@ -15,7 +15,6 @@ pub struct AddCommand {
     pub prompt: Option<String>,
     pub edit: bool,
     pub agent: Option<String>,
-    pub timeout: u32,
     pub stack: Option<String>,
     pub project: Option<String>,
     pub repo: Option<String>,
@@ -45,7 +44,6 @@ impl Command for AddCommand {
             .instructions_file(self.prompt.as_ref().map(PathBuf::from))
             .edit(self.edit)
             .agent(self.agent.clone())
-            .timeout(self.timeout)
             .stack(self.stack.clone())
             .project(self.project.clone())
             .build(ctx)
@@ -93,7 +91,6 @@ impl Command for AddCommand {
         if let Some(ref agent) = self.agent {
             println!("Agent: {agent}");
         }
-        println!("Timeout: {} minutes", self.timeout);
         println!("\nUse 'tsk list' to view all queued tasks");
         println!("Use 'tsk run' to execute the next task in the queue");
 
@@ -119,7 +116,6 @@ mod tests {
             prompt: None,
             edit: false,
             agent: None,
-            timeout: 30,
             stack: None,
             project: None,
             repo: Some(".".to_string()),
@@ -145,7 +141,6 @@ mod tests {
             prompt: None,
             edit: false,
             agent: None,
-            timeout: 30,
             stack: None,
             project: None,
             repo: Some(".".to_string()),
@@ -186,7 +181,6 @@ mod tests {
             prompt: None,
             edit: false,
             agent: None,
-            timeout: 30,
             stack: None,
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
@@ -225,7 +219,6 @@ mod tests {
             prompt: None,
             edit: false,
             agent: None,
-            timeout: 30,
             stack: None,
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),

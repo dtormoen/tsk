@@ -1,166 +1,159 @@
 use super::Command;
 use crate::context::AppContext;
-use crate::server::TskServer;
-use crate::task::{Task, TaskStatus};
+use crate::repo_utils::find_repository_root;
+use crate::stdin_utils::{merge_description_with_stdin, read_piped_input};
+use crate::task::TaskBuilder;
 use crate::task_manager::TaskManager;
-use crate::task_storage::get_task_storage;
 use async_trait::async_trait;
 use std::error::Error;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
 
 pub struct RunCommand {
-    pub server: bool,
-    pub workers: u32,
+    pub name: String,
+    pub r#type: String,
+    pub description: Option<String>,
+    pub prompt: Option<String>,
+    pub edit: bool,
+    pub agent: Option<String>,
+    pub stack: Option<String>,
+    pub project: Option<String>,
+    pub repo: Option<String>,
 }
 
 #[async_trait]
 impl Command for RunCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
-        if self.server {
-            // Run in server mode
-            println!("Starting TSK server with {} worker(s)...", self.workers);
-            let server = TskServer::with_workers(Arc::new(ctx.clone()), self.workers);
+        println!("Running task: {}", self.name);
+        println!("Type: {}", self.r#type);
 
-            // Setup signal handlers for graceful shutdown
-            let shutdown_signal = Arc::new(tokio::sync::Notify::new());
-            let shutdown_signal_clone = shutdown_signal.clone();
+        // Read from stdin if data is piped
+        let piped_input = read_piped_input()?;
 
-            tokio::spawn(async move {
-                tokio::signal::ctrl_c()
-                    .await
-                    .expect("Failed to listen for Ctrl+C");
-                println!("\nReceived shutdown signal...");
-                shutdown_signal_clone.notify_one();
-            });
+        // Merge piped input with CLI description (piped input takes precedence)
+        let final_description = merge_description_with_stdin(self.description.clone(), piped_input);
 
-            // Run server until shutdown
-            tokio::select! {
-                result = server.run() => {
-                    match result {
-                        Ok(_) => {},
-                        Err(e) => {
-                            let error_msg = e.to_string();
-                            eprintln!("Server error: {error_msg}");
-                            return Err(Box::new(std::io::Error::other(error_msg)));
-                        }
-                    }
-                }
-                _ = shutdown_signal.notified() => {
-                    server.shutdown().await;
-                }
-            }
+        // Find repository root
+        let start_path = self.repo.as_deref().unwrap_or(".");
+        let repo_root = find_repository_root(Path::new(start_path))?;
 
-            println!("Server stopped");
-            return Ok(());
+        // Create task using TaskBuilder
+        let task = TaskBuilder::new()
+            .repo_root(repo_root.clone())
+            .name(self.name.clone())
+            .task_type(self.r#type.clone())
+            .description(final_description)
+            .instructions_file(self.prompt.as_ref().map(PathBuf::from))
+            .edit(self.edit)
+            .agent(self.agent.clone())
+            .stack(self.stack.clone())
+            .project(self.project.clone())
+            .build(ctx)
+            .await?;
+
+        if let Some(ref agent) = self.agent {
+            println!("Agent: {agent}");
         }
 
-        // Run in client mode (execute current tasks and exit)
-        let storage = get_task_storage(ctx.tsk_config(), ctx.file_system());
-        let tasks = storage
-            .list_tasks()
-            .await
-            .map_err(|e| e as Box<dyn Error>)?;
+        // Update terminal title for the task
+        ctx.terminal_operations()
+            .set_title(&format!("TSK: {}", self.name));
 
-        let queued_tasks: Vec<Task> = tasks
-            .into_iter()
-            .filter(|t| t.status == TaskStatus::Queued)
-            .collect();
-
-        if queued_tasks.is_empty() {
-            println!("No queued tasks to run");
-            return Ok(());
-        }
-
-        println!(
-            "Found {} queued task(s) to run with {} worker(s)",
-            queued_tasks.len(),
-            self.workers
-        );
-
+        // Execute the task
         let task_manager = TaskManager::new(ctx)?;
-        let total_tasks = queued_tasks.len();
-        let succeeded = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let failed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let result = task_manager
+            .execute_queued_task(&task)
+            .await
+            .map_err(|e| e.message);
 
-        if self.workers == 1 {
-            // Sequential execution for single worker
-            for task in queued_tasks {
-                println!("\n{}", "=".repeat(60));
-                println!("Running task: {} ({})", task.name, task.id);
-                println!("Type: {}", task.task_type);
-                println!("{}", "=".repeat(60));
-
-                // Update terminal title for current task
-                ctx.terminal_operations()
-                    .set_title(&format!("TSK: {}", task.name));
-
-                // Execute the task with automatic status updates
-                match task_manager.execute_queued_task(&task).await {
-                    Ok(_result) => {
-                        println!("\nTask completed successfully");
-                        succeeded.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    }
-                    Err(e) => {
-                        eprintln!("Task failed: {}", e.message);
-                        failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    }
-                }
-            }
-        } else {
-            // Parallel execution for multiple workers
-            use tokio::sync::Semaphore;
-            use tokio::task::JoinSet;
-
-            let semaphore = Arc::new(Semaphore::new(self.workers as usize));
-            let mut active_tasks = JoinSet::new();
-
-            for task in queued_tasks {
-                let permit = semaphore.clone().acquire_owned().await.unwrap();
-                let task_manager = TaskManager::new(ctx)?;
-                let succeeded = succeeded.clone();
-                let failed = failed.clone();
-
-                active_tasks.spawn(async move {
-                    println!("\n{}", "=".repeat(60));
-                    println!("Starting task: {} ({})", task.name, task.id);
-                    println!("Type: {}", task.task_type);
-                    println!("{}", "=".repeat(60));
-
-                    // Execute the task with automatic status updates
-                    match task_manager.execute_queued_task(&task).await {
-                        Ok(_result) => {
-                            println!("\nTask completed successfully: {}", task.name);
-                            succeeded.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        }
-                        Err(e) => {
-                            eprintln!("\nTask failed: {} - {}", task.name, e.message);
-                            failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        }
-                    }
-                    drop(permit);
-                });
-            }
-
-            // Wait for all tasks to complete
-            while active_tasks.join_next().await.is_some() {}
-        }
-
-        // Restore terminal title after all tasks complete
+        // Restore terminal title
         ctx.terminal_operations().restore_title();
 
-        println!("\n{}", "=".repeat(60));
-        println!("All tasks processed!");
-        println!("Use 'tsk list' to see the final status of all tasks");
-
-        // Send summary notification
-        let final_succeeded = succeeded.load(std::sync::atomic::Ordering::Relaxed);
-        let final_failed = failed.load(std::sync::atomic::Ordering::Relaxed);
-        ctx.notification_client().notify_all_tasks_complete(
-            total_tasks,
-            final_succeeded,
-            final_failed,
-        );
+        result?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_context() -> AppContext {
+        // Automatically gets test defaults: NoOpDockerClient, NoOpTskClient, etc.
+        AppContext::builder().build()
+    }
+
+    #[tokio::test]
+    async fn test_run_command_validation_no_input() {
+        use crate::test_utils::TestGitRepository;
+
+        // Create a test git repository
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+
+        let cmd = RunCommand {
+            name: "test".to_string(),
+            r#type: "generic".to_string(),
+            description: None,
+            prompt: None,
+            edit: false,
+            agent: None,
+            stack: None,
+            project: None,
+            repo: Some(test_repo.path().to_string_lossy().to_string()),
+        };
+
+        let ctx = create_test_context();
+        let result = cmd.execute(&ctx).await;
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg
+                .contains("Either description or prompt file must be provided, or use edit mode"),
+            "Expected validation error, but got: {err_msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_run_command_template_without_description() {
+        use crate::test_utils::TestGitRepository;
+
+        // Create a test git repository
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+
+        // Create template file without {{DESCRIPTION}} placeholder
+        let template_content = "Say ack and exit.";
+        test_repo
+            .create_file(".tsk/templates/ack.md", template_content)
+            .unwrap();
+
+        // Create AppContext - automatically gets test defaults
+        let ctx = AppContext::builder().build();
+
+        // Create RunCommand without description (should succeed for templates without placeholder)
+        let cmd = RunCommand {
+            name: "test-ack".to_string(),
+            r#type: "ack".to_string(),
+            description: None,
+            prompt: None,
+            edit: false,
+            agent: None,
+            stack: None,
+            project: None,
+            repo: Some(test_repo.path().to_string_lossy().to_string()),
+        };
+
+        // Execute should succeed for templates without {{DESCRIPTION}} placeholder
+        // The NoOpDockerClient simulates successful execution
+        let result = cmd.execute(&ctx).await;
+
+        // The test verifies that templates without {{DESCRIPTION}} placeholder
+        // don't require a description to be provided
+        assert!(
+            result.is_ok(),
+            "Should succeed for template without placeholder: {:?}",
+            result.err()
+        );
     }
 }

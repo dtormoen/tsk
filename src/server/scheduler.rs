@@ -373,7 +373,6 @@ mod tests {
             "test".to_string(),
             "instructions.md".to_string(),
             "claude-code".to_string(),
-            30,
             format!("tsk/test/{id}"),
             commit_sha.to_string(),
             "default".to_string(),

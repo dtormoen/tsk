@@ -4,25 +4,23 @@ use std::error::Error;
 
 pub mod add;
 pub mod clean;
-pub mod debug;
 pub mod delete;
 pub mod docker;
 pub mod list;
 pub mod proxy;
-pub mod quick;
 pub mod retry;
 pub mod run;
 pub mod server;
+pub mod shell;
 pub mod template;
 
 pub use add::AddCommand;
 pub use clean::CleanCommand;
-pub use debug::DebugCommand;
 pub use delete::DeleteCommand;
 pub use list::ListCommand;
-pub use quick::QuickCommand;
 pub use retry::RetryCommand;
 pub use run::RunCommand;
+pub use shell::ShellCommand;
 
 #[async_trait]
 pub trait Command: Send + Sync {

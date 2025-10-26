@@ -247,7 +247,6 @@ mod tests {
                 .to_string_lossy()
                 .to_string(),
             agent: "claude-code".to_string(),
-            timeout: 30,
             status: TaskStatus::Queued,
             created_at: chrono::Local::now(),
             started_at: None,

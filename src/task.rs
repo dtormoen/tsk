@@ -34,8 +34,6 @@ pub struct Task {
     pub instructions_file: String,
     /// AI agent to use for task execution (e.g., "claude-code")
     pub agent: String,
-    /// Timeout in minutes for task execution
-    pub timeout: u32,
     /// Current status of the task
     pub status: TaskStatus,
     /// When the task was created
@@ -72,7 +70,6 @@ impl Task {
         task_type: String,
         instructions_file: String,
         agent: String,
-        timeout: u32,
         branch_name: String,
         source_commit: String,
         stack: String,
@@ -88,7 +85,6 @@ impl Task {
             task_type,
             instructions_file,
             agent,
-            timeout,
             status: TaskStatus::Queued,
             created_at,
             started_at: None,
@@ -141,7 +137,6 @@ mod tests {
             "feat".to_string(),
             "instructions.md".to_string(),
             "claude-code".to_string(),
-            30,
             "tsk/feat/test-task/test-id".to_string(),
             "abc123".to_string(),
             "rust".to_string(),

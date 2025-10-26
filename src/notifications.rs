@@ -5,9 +5,6 @@ use std::sync::Arc;
 pub trait NotificationClient: Send + Sync {
     /// Notify when a task completes
     fn notify_task_complete(&self, task_name: &str, success: bool, message: Option<&str>);
-
-    /// Notify when all tasks are complete
-    fn notify_all_tasks_complete(&self, total: usize, succeeded: usize, failed: usize);
 }
 
 /// Desktop notification client using notify-rust
@@ -51,27 +48,6 @@ impl NotificationClient for DesktopNotificationClient {
             eprintln!("(Desktop notification failed: {e})");
         }
     }
-
-    fn notify_all_tasks_complete(&self, total: usize, succeeded: usize, failed: usize) {
-        let summary = if failed == 0 {
-            "All Tasks Completed"
-        } else {
-            "Tasks Completed with Failures"
-        };
-
-        let body = format!("Total: {total}\nSucceeded: {succeeded}\nFailed: {failed}");
-
-        let mut notification = Notification::new();
-        notification.summary(summary);
-        notification.body(&body);
-        notification.timeout(Timeout::Milliseconds(self.timeout_seconds * 1000));
-
-        if let Err(e) = notification.show() {
-            // Fall back to terminal output
-            eprintln!("TSK: {} - {}", summary, body.replace('\n', " "));
-            eprintln!("(Desktop notification failed: {e})");
-        }
-    }
 }
 
 /// No-op notification client for testing
@@ -79,10 +55,6 @@ pub struct NoOpNotificationClient;
 
 impl NotificationClient for NoOpNotificationClient {
     fn notify_task_complete(&self, _task_name: &str, _success: bool, _message: Option<&str>) {
-        // No-op
-    }
-
-    fn notify_all_tasks_complete(&self, _total: usize, _succeeded: usize, _failed: usize) {
         // No-op
     }
 }
@@ -107,7 +79,6 @@ mod tests {
         // Should not panic
         client.notify_task_complete("test", true, None);
         client.notify_task_complete("test", false, Some("error"));
-        client.notify_all_tasks_complete(5, 3, 2);
     }
 
     #[test]
