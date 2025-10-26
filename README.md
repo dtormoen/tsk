@@ -10,7 +10,7 @@ Currently Claude Code and Codex coding agents are supported.
 
 TSK enables a "lead engineer + AI team" workflow:
 1. **Assign tasks** to AI agents with natural language descriptions and task type templates to automate prompt boilerplate
-2. **Agents work autonomously** in isolated Docker containers
+2. **Agents work autonomously** in parallel isolated Docker containers
 3. **Get git branches** back with their changes for review
 4. **Review and merge** using your normal git workflow
 
@@ -37,19 +37,41 @@ cargo install tsk-ai
 gh repo clone dtormoen/tsk
 cd tsk
 cargo install .
+
+## Commands
+
+### Task Commands
+- `tsk run` - Execute a task immediately
+- `tsk shell` - Start a sandbox container with an interactive shell
+- `tsk add` - Queue a task
+- `tsk list` - View task status and branches
+- `tsk clean` - Clean up completed tasks
+- `tsk delete <task-id>...` - Delete one or more tasks
+- `tsk retry <task-id>...` - Retry one or more tasks
+
+### Server Commands
+- `tsk server start` - Start the TSK server daemon
+- `tsk server stop` - Stop the running TSK server
+
+### Configuration Commands
+- `tsk docker build` - Build required docker images
+- `tsk proxy stop` - Stop the TSK proxy container
+- `tsk template list` - View available task type templates and where they are installed
+
+Run `tsk help` or `tsk help <command>` for detailed options.
 ```
 
-## Quick Start
+## Quick Start Guide
 
-TSK can be used in multiple ways. Here are some of the main workflows to get started.
+TSK can be used in multiple ways. Here are some of the main workflows to get started. Try testing these in the TSK repository!
 
 ### Interactive Sandboxes
 
-```sh
+Start up sandbox with an interactive shell so you can work interactively with a coding agent. `claude` is the default, but you can also specify `--agent codex` to use `codex`.
+
+```bash
 tsk shell
 ```
-
-After the shell starts, fire up your coding agent! `claude` is the default, but you can also use `codex` by adding `--agent codex`.
 
 The `tsk shell` command will:
 - Make a copy of your repo
@@ -64,16 +86,18 @@ This workflow is really powerful when used with terminal multiplexers like `tmux
 
 ### One-off Fully Autonomous Agent Sandboxes
 
-```sh
-tsk run --type feat --name my-feature --description "Implement a fancy new feature for TSK."
-```
+TSK has flags that help you avoid repetitive instructions like "make sure unit tests pass", "update documentation", or "write a descriptive commit message". Consider this command which immediately kicks off an autonomous agent in a sandbox to implement a new feature:
 
-This allows you to quickly launch a fully autonomous agent to implement a new feature. Similar to `tsk shell`, the agent will run in a sandbox so it will not interfere with any ongoing work and will create a new branch in your repository in the background once it is done working. The command will run synchronously until the agent is done working.
+```bash
+tsk run --type feat --name greeting --description "Add a greeting to all TSK commands."
+```
 
 Some important parts of the command:
 - `--type` specifies the type of task the agent is working on. Using TSK built-in tasks or writing your own can save a lot of boilerplate. Check out [feat.md](./templates/feat.md) for the `feat` type and [templates](./templates) for all task types.
 - `--name` will be used in the final git branch to help you remember what task the branch contains.
-- `--description` is used to fill in a `{{description}}` placeholder in [feat.md](./templates/feat.md).
+- `--description` is used to fill in the `{{description}}` placeholder in [feat.md](./templates/feat.md).
+
+Similar to `tsk shell`, the agent will run in a sandbox so it will not interfere with any ongoing work and will create a new branch in your repository in the background once it is done working.
 
 After you try this command out, try out these next steps:
 - Add the `--edit` flag to edit the full prompt that is sent to the agent.
@@ -82,28 +106,29 @@ After you try this command out, try out these next steps:
 
 ### Queuing Tasks for Parallel Execution
 
-```sh
-# In a separate terminal window, start the TSK server
+The TSK server allows you to have a single process that manages parallel task execution so you can easily background agents working. First, we start the server set up to handle up to 4 tasks in parallel:
+
+```bash
 tsk server start --workers 4
 ```
 
-This is where TSK starts to get really powerful. This command starts a server that will handle up to 4 tasks in parallel. Now that the server is running, you can add tasks to it:
+Now, in another terminal window, we can quickly queue up multiple tasks:
 
-```sh
-# Add a task. Notice the similarity to the `tsk run` command. The options discussed there work here too
-tsk add --type feat --name my-feature --description "Implement a fancy new feature for TSK."
+```bash
+# Add a task. Notice the similarity to the `tsk run` command
+tsk add --type doc --name tsk-architecture --description "Tell me how TSK works"
 
-# Look at the task queue. Your task `my-feature` should be present in the list and RUNNING
+# Look at the task queue. Your task `tsk-architecture` should be present in the list
 tsk list
 
 # Add another task. Notice the short flag names
-tsk add -t feat -n greeting -d "Make TSK print a silly robot greeting every time a user runs a command."
+tsk add -t feat -n greeting -d "Add a silly robot greeting to every TSK command"
 
 # Now there should be two running tasks
 tsk list
 
 # Wait for the tasks to finish. After they complete, look at the two new branches
-git branch --format="%(refname:short) - %(objectname:short) - %(subject) (%(committerdate:relative))"
+git branch --format="%(refname:short) - %(subject) (%(committerdate:relative))"
 ```
 
 After you try this command out, try these next steps:
@@ -117,13 +142,14 @@ After you try this command out, try these next steps:
 
 Let's create a very basic way to automate working on GitHub issues:
 
-```sh
+```bash
 # First create the tsk template configuration directory
-mkdir -p .tsk/templates
+mkdir -p ~/.config/tsk/templates
 
 # Create a very simple template. Notice the use of the "{{DESCRIPTION}}" placeholder
-cat > .tsk/templates/issue-bot.md << 'EOF'
-Solve the GitHub issue below. Make sure it is tested and write a descriptive commit message describing the changes after you are done.
+cat > ~/.config/tsk/templates/issue-bot.md << 'EOF'
+Solve the GitHub issue below. Make sure it is tested and write a descriptive commit
+message describing the changes after you are done.
 
 {{DESCRIPTION}}
 EOF
@@ -131,8 +157,9 @@ EOF
 # Make sure tsk sees the new `issue-bot` task template
 tsk template list
 
-# Pipe in some input to start the task. Piped input automatically replaces the {{DESCRIPTION}} placeholder
-gh issue view <some GitHub issue number> | tsk add -t issue-bot -n fix-my-issue
+# Pipe in some input to start the task
+# Piped input automatically replaces the {{DESCRIPTION}} placeholder
+gh issue view <issue-number> | tsk add -t issue-bot -n fix-my-issue
 ```
 
 Now it's easy to solve GitHub issues with a simple task template. Try this with code reviews as well to easily respond to feedback.
@@ -176,27 +203,18 @@ Templates are simply markdown files that get passed to agents. TSK additionally 
 
 To create good templates, I would recommend thinking about repetitive tasks that you need agents to do within your codebase like "make sure the unit tests pass", "write a commit message", etc. and encode those in a template file. There are many great prompting guides out there so I'll spare the details here.
 
-## Commands
+### Custom Proxy Configuration
 
-### Task Commands
-- `tsk run` - Execute a task immediately
-- `tsk shell` - Start an interactive sandbox container
-- `tsk add` - Queue a task
-- `tsk list` - View task status and branches
-- `tsk clean` - Clean up completed tasks
-- `tsk delete <task-id>...` - Delete one or more tasks
-- `tsk retry <task-id>...` - Retry one or more tasks
+TSK uses Squid as a forward proxy to control network access from task containers. If you want to customize the proxy configuration e.g. to allow access to a specific service or allow a URL for downloading specific dependencies of your project, you can create a `squid.conf` file in the user level configuration directory, usually `~/.config/tsk`. Look at the default [TSK squid.conf](./dockerfiles/tsk-proxy/squid.conf) as an example.
 
-### Server Commands
-- `tsk server start` - Start the TSK server daemon
-- `tsk server stop` - Stop the running TSK server
+## TSK Data Directory
 
-### Configuration Commands
-- `tsk docker build` - Build required docker images
-- `tsk proxy stop` - Stop the TSK proxy container
-- `tsk template list` - View available task type templates and where they are installed
-
-Run `tsk help` or `tsk help <command>` for detailed options.
+TSK uses the following directories for storing data while running tasks:
+- **~/.local/share/tsk/tasks.json**: The task queue and task definitions
+- **~/.local/share/tsk/tasks/**: Task directories that get mounted into sandboxes when the agent runs. They contain:
+  - **<taskid>/repo**: The repo copy that the agent operates on
+  - **<taskid>/output**: Directory containing a log file with the agent's actions
+  - **<taskid>/instructions.md**: The instructions that were passed to an agent
 
 ## Contributing
 
