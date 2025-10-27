@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/dtormoen/tsk/compare/v0.5.4...v0.6.0) - 2025-10-26
+
+This release has a few large changes. First we've added
+[codex](https://openai.com/codex/) support! You can now launch codex agents or even
+launch multiple agents in parallel:
+
+```bash
+tsk add --type feat --name greeting --description "Add a greeting to all TSK commands" --agent claude,codex
+```
+
+This will create two tasks that are identical except for `claude` will work on one and
+`codex` will work on the other. This is great for comparing the performance of different
+agents.
+
+We've also simplified TSK commands:
+- `tsk debug` is now called `tsk shell`
+- `tsk quick` is now called `tsk run`
+- `tsk run` has been removed
+- `--timeout` has been removed from a few commands as it was not actually implemented
+- The `claude-code` agent has been renamed to `claude` throughout the codebase
+
+### Added
+
+- [**breaking**] simplify command structure for better UX
+- add multi-agent support for task creation
+- *(codex)* improve log processor output quality
+- *(codex)* add JSON log processor with human-readable output
+- add codex agent support
+
+### Other
+
+- reorganize and enhance README
+- improve documentation
+- rename claude-code agent to claude
+
 ## [0.5.4](https://github.com/dtormoen/tsk/compare/v0.5.3...v0.5.4) - 2025-10-26
 
 ### Added
