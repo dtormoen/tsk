@@ -42,6 +42,10 @@ USER agent
 RUN git config --global user.name "$GIT_USER_NAME" && \
     git config --global user.email "$GIT_USER_EMAIL"
 
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PATH="/home/agent/.local/bin:${PATH}"
+
 # Stack layer
 {{{STACK}}}
 # End of Stack layer
@@ -58,9 +62,8 @@ ARG TSK_AGENT_VERSION
 # End of Agent layer
 
 USER agent
-
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
+ENV HOME="/home/agent"
+ENV USER="agent"
 
 # Default command (will be overridden by agent setup)
 CMD ["/bin/bash"]

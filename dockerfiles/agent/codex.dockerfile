@@ -20,7 +20,3 @@ RUN npm install -g @openai/codex
 
 # Add npm global binaries and local bin to PATH
 ENV PATH="/home/agent/.npm-global/bin:/home/agent/.local/bin:${PATH}"
-
-# Codex-specific environment
-ENV HOME="/home/agent"
-ENV USER="agent"
