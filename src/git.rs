@@ -22,14 +22,16 @@ impl RepoManager {
 
     /// Copy repository for a task using the task ID and repository root
     ///
-    /// Copies all non-ignored files from the working directory including:
+    /// Creates a task repository by cloning the source repository and overlaying
+    /// all non-ignored files from the working directory including:
     /// - Tracked files with their current working directory content (including unstaged changes)
     /// - Staged files (newly added files in the index)
     /// - Untracked files (not ignored)
-    /// - The .git directory for full repository state
     /// - The .tsk directory for project-specific configurations
     ///
-    /// This captures the complete state of the repository as shown by `git status`
+    /// The clone operation optimizes pack files (1-2 pack files instead of 30+)
+    /// while the file overlay ensures the complete state of the repository as shown
+    /// by `git status` is preserved.
     ///
     /// Returns the path to the copied repository and the branch name
     pub async fn copy_repo(
@@ -78,26 +80,18 @@ impl RepoManager {
             .get_all_non_ignored_files(&current_dir)
             .await?;
 
-        // Copy .git directory first
-        let git_src = current_dir.join(".git");
-        let git_dst = repo_path.join(".git");
-        if self
-            .ctx
-            .file_system()
-            .exists(&git_src)
+        // Clone repository with optimized pack files (no hardlinks)
+        // This creates an efficient repository copy with 1-2 pack files instead of
+        // preserving fragmented pack structure from the source repository
+        self.ctx
+            .git_operations()
+            .clone_local(&current_dir, &repo_path)
             .await
-            .map_err(|e| format!("Failed to check if .git exists: {e}"))?
-        {
-            self.ctx
-                .file_system()
-                .copy_dir(&git_src, &git_dst)
-                .await
-                .map_err(|e| format!("Failed to copy .git directory: {e}"))?;
-        }
+            .map_err(|e| format!("Failed to clone repository: {e}"))?;
 
-        // Create a new branch in the copied repository BEFORE copying files
+        // Create a new branch in the cloned repository BEFORE overlaying files
         // This ensures that when source_commit is provided, the checkout doesn't
-        // overwrite the working directory files we're about to copy
+        // overwrite the working directory files we're about to overlay from the source
         match source_commit {
             Some(commit_sha) => {
                 // Create branch from specific commit
@@ -116,8 +110,8 @@ impl RepoManager {
             }
         }
 
-        // Copy all non-ignored files from the working directory
-        // This happens AFTER branch creation to preserve unstaged changes
+        // Overlay all non-ignored files from the source working directory
+        // This happens AFTER branch creation to preserve unstaged changes over the cloned state
         for file_path in all_files_to_copy {
             // Remove trailing slash if present (git adds it for directories)
             let file_path_str = file_path.to_string_lossy();
@@ -135,6 +129,15 @@ impl RepoManager {
                 Ok(metadata) => {
                     if metadata.is_dir() {
                         // It's an actual directory, copy it recursively
+                        // Remove existing directory if present (from clone)
+                        if dst_path.exists() {
+                            tokio::fs::remove_dir_all(&dst_path).await.map_err(|e| {
+                                format!(
+                                    "Failed to remove existing directory {}: {e}",
+                                    dst_path.display()
+                                )
+                            })?;
+                        }
                         self.ctx
                             .file_system()
                             .copy_dir(&src_path, &dst_path)
@@ -154,6 +157,25 @@ impl RepoManager {
                                 .create_dir(parent)
                                 .await
                                 .map_err(|e| format!("Failed to create parent directory: {e}"))?;
+                        }
+
+                        // Remove existing file/symlink if present (from clone)
+                        if let Ok(dst_meta) = tokio::fs::symlink_metadata(&dst_path).await {
+                            if dst_meta.is_symlink() || dst_meta.is_file() {
+                                tokio::fs::remove_file(&dst_path).await.map_err(|e| {
+                                    format!(
+                                        "Failed to remove existing file {}: {e}",
+                                        dst_path.display()
+                                    )
+                                })?;
+                            } else if dst_meta.is_dir() {
+                                tokio::fs::remove_dir_all(&dst_path).await.map_err(|e| {
+                                    format!(
+                                        "Failed to remove existing directory {}: {e}",
+                                        dst_path.display()
+                                    )
+                                })?;
+                            }
                         }
 
                         // Read the symlink target and recreate it
@@ -215,6 +237,18 @@ impl RepoManager {
                                 .map_err(|e| format!("Failed to create parent directory: {e}"))?;
                         }
 
+                        // Remove existing file if present (from clone) to ensure overlay
+                        if let Ok(dst_meta) = tokio::fs::symlink_metadata(&dst_path).await
+                            && (dst_meta.is_file() || dst_meta.is_symlink())
+                        {
+                            tokio::fs::remove_file(&dst_path).await.map_err(|e| {
+                                format!(
+                                    "Failed to remove existing file {}: {e}",
+                                    dst_path.display()
+                                )
+                            })?;
+                        }
+
                         // Copy the file
                         self.ctx
                             .file_system()
@@ -241,6 +275,7 @@ impl RepoManager {
         }
 
         // Copy .tsk directory if it exists (for project-specific Docker configurations)
+        // Remove existing .tsk if present (from clone) to ensure overlay
         let tsk_src = current_dir.join(".tsk");
         let tsk_dst = repo_path.join(".tsk");
         if self
@@ -250,6 +285,11 @@ impl RepoManager {
             .await
             .map_err(|e| format!("Failed to check if .tsk exists: {e}"))?
         {
+            if tsk_dst.exists() {
+                tokio::fs::remove_dir_all(&tsk_dst)
+                    .await
+                    .map_err(|e| format!("Failed to remove existing .tsk directory: {e}"))?;
+            }
             self.ctx
                 .file_system()
                 .copy_dir(&tsk_src, &tsk_dst)
@@ -309,6 +349,27 @@ impl RepoManager {
                     .git_operations()
                     .add_remote(&main_repo, &remote_name, repo_path_str)
                     .await?;
+
+                // Validate that the branch is accessible before attempting fetch
+                if let Err(e) = self
+                    .ctx
+                    .git_operations()
+                    .validate_branch_accessible(repo_path, branch_name)
+                    .await
+                {
+                    // Clean up remote before returning error
+                    let _ = self
+                        .ctx
+                        .git_operations()
+                        .remove_remote(&main_repo, &remote_name)
+                        .await;
+                    return Err(format!(
+                        "Cannot fetch branch '{}': {}\n\
+                         The branch was created but points to an inaccessible commit.\n\
+                         This may indicate git object database inconsistency.",
+                        branch_name, e
+                    ));
+                }
 
                 // Fetch the specific branch from the remote
                 match self
@@ -1044,6 +1105,76 @@ mod tests {
         assert_eq!(
             untracked_content, "untracked content",
             "Untracked files should be copied"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fetch_changes_with_branch_from_specific_commit_no_new_changes() {
+        // Test the exact scenario that causes the "object is not a committish" error:
+        // 1. Create repo with commits
+        // 2. Copy repo and create branch from specific commit
+        // 3. Make no changes
+        // 4. Try to fetch - should handle gracefully with validation
+        let ctx = AppContext::builder().build();
+
+        // Create main repository with multiple commits
+        let main_repo = TestGitRepository::new().unwrap();
+        main_repo.init().unwrap();
+        main_repo
+            .run_git_command(&["config", "init.defaultBranch", "main"])
+            .unwrap();
+        main_repo
+            .run_git_command(&["checkout", "-b", "main"])
+            .unwrap();
+
+        // Create first commit
+        main_repo
+            .create_file("README.md", "# Test Repository\n")
+            .unwrap();
+        main_repo.stage_all().unwrap();
+        let first_commit = main_repo.commit("Initial commit").unwrap();
+
+        // Create second commit
+        main_repo.create_file("feature.txt", "new feature").unwrap();
+        main_repo.stage_all().unwrap();
+        main_repo.commit("Add feature").unwrap();
+
+        let manager = RepoManager::new(&ctx);
+
+        // Copy repo from the first commit (simulates task creation from specific commit)
+        let task_id = "commit123";
+        let branch_name = "tsk/test/from-commit-no-changes/commit123";
+        let result = manager
+            .copy_repo(task_id, main_repo.path(), Some(&first_commit), branch_name)
+            .await;
+
+        assert!(result.is_ok(), "Failed to copy repo: {:?}", result);
+        let (copied_repo_path, _) = result.unwrap();
+
+        // Don't make any commits in the copied repo - just like the error scenario
+        // The branch exists and points to first_commit, but we haven't added any new work
+
+        // Try to fetch changes - should handle gracefully (no new commits)
+        let fetch_result = manager
+            .fetch_changes(&copied_repo_path, branch_name, main_repo.path())
+            .await;
+
+        // The fetch should succeed (validation passes) but return false (no new commits)
+        assert!(
+            fetch_result.is_ok(),
+            "Fetch should succeed with validation: {:?}",
+            fetch_result
+        );
+        assert!(
+            !fetch_result.unwrap(),
+            "Should return false when no new commits"
+        );
+
+        // Verify the branch was cleaned up in main repo
+        let main_branches = main_repo.branches().unwrap();
+        assert!(
+            !main_branches.contains(&branch_name.to_string()),
+            "Branch should be cleaned up when no new commits"
         );
     }
 }

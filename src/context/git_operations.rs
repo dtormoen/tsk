@@ -72,6 +72,44 @@ pub trait GitOperations: Send + Sync {
     /// Get list of all non-ignored files in the working directory
     /// This includes tracked files (with or without modifications), staged files, and untracked files
     async fn get_all_non_ignored_files(&self, repo_path: &Path) -> Result<Vec<PathBuf>, String>;
+
+    /// Validate that a branch exists and points to an accessible commit
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The repository cannot be opened
+    /// - The branch reference does not exist
+    /// - The branch has no target commit
+    /// - The target commit object is not accessible in the object database
+    async fn validate_branch_accessible(
+        &self,
+        repo_path: &Path,
+        branch_name: &str,
+    ) -> Result<(), String>;
+
+    /// Clone a local repository without hardlinks
+    ///
+    /// This creates an optimized copy of the source repository at the destination path.
+    /// The clone operation repacks objects efficiently, typically resulting in 1-2 pack files
+    /// instead of preserving fragmented pack structure.
+    ///
+    /// # Arguments
+    ///
+    /// * `source_repo_path` - Path to the source repository to clone
+    /// * `destination_path` - Path where the cloned repository will be created
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The source path is invalid or not a git repository
+    /// - The destination path cannot be created
+    /// - The clone operation fails
+    async fn clone_local(
+        &self,
+        source_repo_path: &Path,
+        destination_path: &Path,
+    ) -> Result<(), String>;
 }
 
 pub struct DefaultGitOperations;
@@ -294,15 +332,28 @@ impl GitOperations for DefaultGitOperations {
                 let repo = Repository::open(&repo_path)
                     .map_err(|e| format!("Failed to open repository: {e}"))?;
 
-                let mut remote = repo
+                let remote = repo
                     .find_remote(&remote_name)
                     .map_err(|e| format!("Failed to find remote: {e}"))?;
 
-                let refspec = format!("refs/heads/{branch_name}:refs/heads/{branch_name}");
+                let url = remote
+                    .url()
+                    .ok_or_else(|| "Remote has no URL".to_string())?;
 
-                remote
-                    .fetch(&[&refspec], None, None)
-                    .map_err(|e| format!("Failed to fetch changes: {e}"))?;
+                let output = std::process::Command::new("git")
+                    .current_dir(&repo_path)
+                    .arg("fetch")
+                    .arg(url)
+                    .arg(format!("refs/heads/{branch_name}:refs/heads/{branch_name}"))
+                    .output()
+                    .map_err(|e| format!("Failed to execute git fetch: {e}"))?;
+
+                if !output.status.success() {
+                    return Err(format!(
+                        "Failed to fetch changes: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    ));
+                }
 
                 Ok(())
             }
@@ -498,6 +549,70 @@ impl GitOperations for DefaultGitOperations {
                 }
 
                 Ok(files)
+            }
+        })
+        .await
+        .map_err(|e| format!("Task join error: {e}"))?
+    }
+
+    async fn validate_branch_accessible(
+        &self,
+        repo_path: &Path,
+        branch_name: &str,
+    ) -> Result<(), String> {
+        tokio::task::spawn_blocking({
+            let repo_path = repo_path.to_owned();
+            let branch_name = branch_name.to_owned();
+            move || -> Result<(), String> {
+                let repo = Repository::open(&repo_path)
+                    .map_err(|e| format!("Failed to open repository: {e}"))?;
+
+                // Check branch exists
+                let branch_ref = format!("refs/heads/{branch_name}");
+                let reference = repo
+                    .find_reference(&branch_ref)
+                    .map_err(|e| format!("Branch '{}' not found: {}", branch_name, e))?;
+
+                // Check branch points to valid commit
+                let oid = reference
+                    .target()
+                    .ok_or_else(|| format!("Branch '{}' has no target", branch_name))?;
+
+                // Try to find the commit - this validates object accessibility
+                repo.find_commit(oid).map_err(|e| {
+                    format!(
+                        "Branch '{}' points to inaccessible commit {}: {}",
+                        branch_name, oid, e
+                    )
+                })?;
+
+                Ok(())
+            }
+        })
+        .await
+        .map_err(|e| format!("Task join error: {e}"))?
+    }
+
+    async fn clone_local(
+        &self,
+        source_repo_path: &Path,
+        destination_path: &Path,
+    ) -> Result<(), String> {
+        tokio::task::spawn_blocking({
+            let source_repo_path = source_repo_path.to_owned();
+            let destination_path = destination_path.to_owned();
+            move || -> Result<(), String> {
+                let mut builder = git2::build::RepoBuilder::new();
+                builder.clone_local(git2::build::CloneLocal::NoLinks);
+
+                builder
+                    .clone(
+                        source_repo_path.to_str().ok_or("Invalid source path")?,
+                        &destination_path,
+                    )
+                    .map_err(|e| format!("Failed to clone repository: {e}"))?;
+
+                Ok(())
             }
         })
         .await
@@ -741,5 +856,97 @@ mod integration_tests {
                 || error_message.contains("unborn"),
             "Error should mention HEAD or unborn branch, got: {error_message}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_clone_local() {
+        let git_ops = DefaultGitOperations;
+
+        // Create source repository with commits
+        let source_dir = TempDir::new().unwrap();
+        let source_path = source_dir.path();
+        let source_repo = git2::Repository::init(source_path).unwrap();
+
+        // Configure git user
+        let mut config = source_repo.config().unwrap();
+        config.set_str("user.name", "Test User").unwrap();
+        config.set_str("user.email", "test@example.com").unwrap();
+
+        // Create first commit
+        std::fs::write(source_path.join("file1.txt"), "First file").unwrap();
+        git_ops.add_all(source_path).await.unwrap();
+        git_ops.commit(source_path, "First commit").await.unwrap();
+        let first_commit_sha = git_ops.get_current_commit(source_path).await.unwrap();
+
+        // Create second commit
+        std::fs::write(source_path.join("file2.txt"), "Second file").unwrap();
+        git_ops.add_all(source_path).await.unwrap();
+        git_ops.commit(source_path, "Second commit").await.unwrap();
+        let second_commit_sha = git_ops.get_current_commit(source_path).await.unwrap();
+
+        // Clone the repository
+        let dest_dir = TempDir::new().unwrap();
+        let dest_path = dest_dir.path().join("cloned_repo");
+        git_ops.clone_local(source_path, &dest_path).await.unwrap();
+
+        // Verify cloned repository exists and is a valid git repository
+        assert!(dest_path.exists(), "Cloned repository should exist");
+        assert!(
+            dest_path.join(".git").exists(),
+            "Cloned repository should have .git directory"
+        );
+
+        let cloned_repo = git2::Repository::open(&dest_path).unwrap();
+
+        // Verify the cloned repository has the same commits
+        let cloned_head = cloned_repo.head().unwrap();
+        let cloned_commit = cloned_head.peel_to_commit().unwrap();
+        assert_eq!(
+            cloned_commit.id().to_string(),
+            second_commit_sha,
+            "Cloned repository should have the same HEAD commit"
+        );
+
+        // Verify both files exist in the cloned repository
+        assert!(
+            dest_path.join("file1.txt").exists(),
+            "First file should exist in cloned repo"
+        );
+        assert!(
+            dest_path.join("file2.txt").exists(),
+            "Second file should exist in cloned repo"
+        );
+
+        // Verify we can access the first commit in the cloned repository
+        let first_commit_oid = git2::Oid::from_str(&first_commit_sha).unwrap();
+        let first_commit = cloned_repo.find_commit(first_commit_oid).unwrap();
+        assert_eq!(
+            first_commit.id().to_string(),
+            first_commit_sha,
+            "Should be able to access first commit in cloned repo"
+        );
+
+        // Verify pack file optimization (should have 1-2 pack files, not 30+)
+        let pack_dir = dest_path.join(".git/objects/pack");
+        if pack_dir.exists() {
+            let pack_files: Vec<_> = std::fs::read_dir(&pack_dir)
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| {
+                    entry
+                        .path()
+                        .extension()
+                        .and_then(|s| s.to_str())
+                        .map(|s| s == "pack")
+                        .unwrap_or(false)
+                })
+                .collect();
+
+            assert!(
+                pack_files.len() <= 2,
+                "Cloned repository should have at most 2 pack files, found {}",
+                pack_files.len()
+            );
+        }
     }
 }

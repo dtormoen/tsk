@@ -53,12 +53,11 @@ TSK implements a command pattern with dependency injection for testability. The 
 
 **Task Management** (`src/task.rs`, `src/task_storage.rs`, `src/task_manager.rs`)
 - `TaskBuilder` provides consistent task creation with builder pattern
-- Repository is copied at task creation time, capturing the complete working directory state including:
-  - All tracked files with their current working directory content (including unstaged changes)
-  - All staged files (newly added files in the index)
-  - All untracked non-ignored files
-  - The `.git` directory for full repository state
-  - The `.tsk` directory for project-specific configurations
+- Repository is cloned at task creation time using git clone with optimized pack files, then overlaid with working directory state:
+  - Git clone creates an optimized repository copy (1-2 pack files instead of 30+) with full history
+  - Working directory files are overlaid to preserve uncommitted/unstaged changes
+  - This captures all tracked files with current content, staged files, and untracked non-ignored files
+  - The `.tsk` directory is copied separately for project-specific configurations
   - This ensures all tasks have a valid repository copy that exactly matches what `git status` shows
 - `TaskStorage` trait abstracts storage with JSON-based implementation
   - Thread-safe with mutex locking for file access
@@ -99,8 +98,9 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Provides `poll_completed()` for retrieving finished job results
   - Provides `total_workers()`, `active_workers()`, and `available_workers()` for monitoring
 
-**Git Operations** (`src/git.rs`, `src/git_sync.rs`)
-- Repository copying to centralized task directories (includes .tsk directory for Docker configurations)
+**Git Operations** (`src/git.rs`, `src/git_sync.rs`, `src/context/git_operations.rs`)
+- Repository cloning to centralized task directories using `CloneLocal::NoLinks` for optimized pack files
+- Working directory overlay preserves uncommitted/unstaged changes from source
 - Isolated branch creation and result integration
 - Automatic commit and fetch operations
 - `GitSyncManager`: Repository-level synchronization for concurrent git operations
