@@ -32,14 +32,14 @@ thiserror = "2.0"
 libc = "0.2"
 is-terminal = "0.4"
 termion = "4.0"
-rust-embed = { version = "8.7", features = ["debug-embed"] }
-tempfile = "3.21"
+rust-embed = { version = "8.9", features = ["debug-embed"] }
+tempfile = "3.23"
 tar = "0.4"
 nanoid = "0.4"
-bytes = "1.9"
+bytes = "1.11"
 http-body-util = "0.1"
-handlebars = "6.0"
+handlebars = "6.3"
 
 [dev-dependencies]
-assert_cmd = "2.0"
+assert_cmd = "2.1"
 predicates = "3.1"
