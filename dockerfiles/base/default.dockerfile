@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y \
     ripgrep \
     sudo \
     unzip \
+    uv \
     vim \
     && rm -rf /var/lib/apt/lists/*
 
