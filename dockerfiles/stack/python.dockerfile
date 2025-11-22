@@ -1,11 +1,5 @@
 # Python tech stack layer
 
-# Install uv for fast Python package management
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Add uv to PATH
-ENV PATH="/home/agent/.local/bin:${PATH}"
-
 # Create a virtual environment outside of workspace using uv
 # This avoids conflicts with workspace files and keeps the environment clean
 RUN uv venv /home/agent/.venv
