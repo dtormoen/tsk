@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1](https://github.com/dtormoen/tsk/compare/v0.6.0...v0.6.1) - 2025-11-25
+
+### Added
+
+- add uv to base image
+- add quit-when-done mode to server start
+
+### Fixed
+
+- add line buffering to Docker log streaming to prevent parse errors
+- resolve git fetch errors when copying repos from specific commits
+
+### Other
+
+- update deps
+- *(docker)* simplify agent installation and environment setup
+
 ## [0.6.0](https://github.com/dtormoen/tsk/compare/v0.5.4...v0.6.0) - 2025-10-26
 
 This release has a few large changes. First we've added
