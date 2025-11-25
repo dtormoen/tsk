@@ -322,18 +322,22 @@ impl DockerManager {
         // Collect all logs for return value
         let mut all_logs = String::new();
 
+        // Buffer for accumulating partial lines from Docker chunks
+        let mut line_buffer = String::new();
+
         // Get docker client to avoid temporary value issues
         let docker_client = self.ctx.docker_client();
 
         // Process logs while container is running
         loop {
             tokio::select! {
-                Some(log_line) = rx.recv() => {
-                    all_logs.push_str(&log_line);
-                    // Process each line through the log processor
-                    if let Some(formatted) = log_processor.process_line(&log_line) {
-                        println!("{formatted}");
-                    }
+                Some(log_chunk) = rx.recv() => {
+                    // Keep raw chunks in all_logs for full log capture
+                    all_logs.push_str(&log_chunk);
+
+                    // Buffer chunks and process complete lines only
+                    line_buffer.push_str(&log_chunk);
+                    process_complete_lines(&mut line_buffer, log_processor);
                 }
                 exit_code = docker_client.wait_container(container_id) => {
                     let exit_code = exit_code?;
@@ -342,9 +346,16 @@ impl DockerManager {
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
                     // Drain any remaining logs
-                    while let Ok(log_line) = rx.try_recv() {
-                        all_logs.push_str(&log_line);
-                        if let Some(formatted) = log_processor.process_line(&log_line) {
+                    while let Ok(log_chunk) = rx.try_recv() {
+                        all_logs.push_str(&log_chunk);
+                        line_buffer.push_str(&log_chunk);
+                        process_complete_lines(&mut line_buffer, log_processor);
+                    }
+
+                    // Flush remaining buffer content if non-empty
+                    if !line_buffer.trim().is_empty() {
+                        let trimmed = line_buffer.trim_end_matches('\r');
+                        if let Some(formatted) = log_processor.process_line(trimmed) {
                             println!("{formatted}");
                         }
                     }
@@ -362,6 +373,26 @@ impl DockerManager {
                 }
             }
         }
+    }
+}
+
+/// Process complete lines from the buffer and pass them to the log processor.
+///
+/// This function extracts all complete lines (terminated by newline) from the buffer,
+/// processes each through the log processor, and removes them from the buffer.
+/// Any partial line (without a trailing newline) remains in the buffer.
+fn process_complete_lines(line_buffer: &mut String, log_processor: &mut dyn LogProcessor) {
+    while let Some(newline_pos) = line_buffer.find('\n') {
+        let complete_line = &line_buffer[..newline_pos];
+        // Handle CRLF by trimming trailing \r
+        let trimmed = complete_line.trim_end_matches('\r');
+
+        if let Some(formatted) = log_processor.process_line(trimmed) {
+            println!("{formatted}");
+        }
+
+        // Use drain() for efficient in-place removal
+        line_buffer.drain(..=newline_pos);
     }
 }
 
