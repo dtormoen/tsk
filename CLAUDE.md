@@ -45,7 +45,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `retry <task-id>`: Retry a previous task
 
 *Subcommand Groups:*
-- `server start`: Start the TSK server daemon
+- `server start`: Start the TSK server daemon (supports `-w/--workers`, `-q/--quit`, `-s/--sound`)
 - `server stop`: Stop the running TSK server
 - `docker build`: Build required docker images
 - `proxy stop`: Stop the running TSK proxy
@@ -87,6 +87,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Unix socket-based IPC protocol
 - Parallel task execution with configurable workers (default: 1)
 - Quit-when-done mode (`-q/--quit`): Exits automatically when queue is empty
+- Sound notifications (`-s/--sound`): Play sound on task completion (platform-specific)
 - `TaskScheduler`: Manages task scheduling and execution delegation
   - Polls for completed jobs from the worker pool
   - Schedules queued tasks when workers are available

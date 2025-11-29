@@ -211,6 +211,10 @@ enum ServerCommands {
         /// Quit when done - exit when queue is empty and all tasks complete
         #[arg(short, long)]
         quit: bool,
+
+        /// Play sound with task completion notifications
+        #[arg(short, long)]
+        sound: bool,
     },
     /// Stop the running TSK server
     Stop,
@@ -351,9 +355,15 @@ async fn main() {
         Commands::Delete { task_ids } => Box::new(DeleteCommand { task_ids }),
         Commands::Retry { task_ids, edit } => Box::new(RetryCommand { task_ids, edit }),
         Commands::Server(server_args) => match server_args.command {
-            ServerCommands::Start { workers, quit } => {
-                Box::new(ServerStartCommand { workers, quit })
-            }
+            ServerCommands::Start {
+                workers,
+                quit,
+                sound,
+            } => Box::new(ServerStartCommand {
+                workers,
+                quit,
+                sound,
+            }),
             ServerCommands::Stop => Box::new(ServerStopCommand),
         },
         Commands::Docker(docker_args) => match docker_args.command {

@@ -237,7 +237,7 @@ impl AppContextBuilder {
                     .unwrap_or_else(|| Arc::new(GitSyncManager::new())),
                 notification_client: self
                     .notification_client
-                    .unwrap_or_else(|| crate::notifications::create_notification_client()),
+                    .unwrap_or_else(crate::notifications::create_notification_client),
                 terminal_operations: self
                     .terminal_operations
                     .unwrap_or_else(|| Arc::new(terminal::DefaultTerminalOperations::new())),
@@ -284,7 +284,7 @@ impl AppContextBuilder {
                     .unwrap_or_else(|| Arc::new(GitSyncManager::new())),
                 notification_client: self
                     .notification_client
-                    .unwrap_or_else(|| crate::notifications::create_notification_client()),
+                    .unwrap_or_else(crate::notifications::create_notification_client),
                 terminal_operations: self
                     .terminal_operations
                     .unwrap_or_else(|| Arc::new(terminal::DefaultTerminalOperations::new())),
