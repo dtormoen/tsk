@@ -37,8 +37,6 @@ RUN chown -R agent:agent /workspace
 ARG GIT_USER_NAME
 ARG GIT_USER_EMAIL
 
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-
 # Configure git with the settings from build arguments
 USER agent
 RUN git config --global user.name "$GIT_USER_NAME" && \
@@ -47,6 +45,8 @@ RUN git config --global user.name "$GIT_USER_NAME" && \
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PATH="/home/agent/.local/bin:${PATH}"
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Stack layer
 {{{STACK}}}
