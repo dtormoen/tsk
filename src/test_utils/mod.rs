@@ -12,5 +12,5 @@ pub mod tsk_clients;
 
 pub use docker_clients::{FixedResponseDockerClient, NoOpDockerClient, TrackedDockerClient};
 pub use git_test_helpers::create_files_with_gitignore;
-pub use git_test_utils::TestGitRepository;
+pub use git_test_utils::{ExistingGitRepository, TestGitRepository};
 pub use tsk_clients::NoOpTskClient;

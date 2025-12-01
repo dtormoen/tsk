@@ -107,6 +107,13 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `GitSyncManager`: Repository-level synchronization for concurrent git operations
   - Prevents concurrent fetch operations to the same repository
   - Uses repository path-based locking mechanism
+- **Submodule Support**: Full support for repositories with git submodules
+  - Copies `.git/modules/` directory to preserve submodule git data without network access
+  - Fixes gitdir paths in submodule `.git` files to point to correct locations
+  - Agents can work on files across superproject and all submodules
+  - Commits made in submodules are fetched back with the same branch name as the superproject task
+  - Only submodules with actual changes get branches created (unchanged submodules are skipped)
+  - Graceful fallback: if submodule setup fails, contents are treated as regular files
 
 **Dependency Injection** (`src/context/`)
 - `AppContext` provides centralized resource management with builder pattern

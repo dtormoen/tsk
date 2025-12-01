@@ -343,6 +343,7 @@ impl GitOperations for DefaultGitOperations {
                 let output = std::process::Command::new("git")
                     .current_dir(&repo_path)
                     .arg("fetch")
+                    .arg("--no-recurse-submodules")
                     .arg(url)
                     .arg(format!("refs/heads/{branch_name}:refs/heads/{branch_name}"))
                     .output()

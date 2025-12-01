@@ -2,6 +2,13 @@ use crate::context::AppContext;
 use chrono::{DateTime, Local};
 use std::path::{Path, PathBuf};
 
+/// Information about a git submodule parsed from .gitmodules
+#[derive(Debug, Clone)]
+struct SubmoduleInfo {
+    /// The path to the submodule relative to the repository root
+    path: String,
+}
+
 /// Manages repository operations including copying, committing, and fetching changes.
 ///
 /// This struct provides high-level repository management functionality, coordinating
@@ -89,6 +96,29 @@ impl RepoManager {
             .await
             .map_err(|e| format!("Failed to clone repository: {e}"))?;
 
+        // Copy .git/modules from source to preserve submodule git data
+        // This must happen BEFORE branch creation and file overlay so that
+        // submodule .git files have valid targets to point to
+        let src_modules = current_dir.join(".git/modules");
+        let dst_modules = repo_path.join(".git/modules");
+
+        if self
+            .ctx
+            .file_system()
+            .exists(&src_modules)
+            .await
+            .unwrap_or(false)
+            && let Err(e) = self
+                .ctx
+                .file_system()
+                .copy_dir(&src_modules, &dst_modules)
+                .await
+        {
+            eprintln!(
+                "Warning: Failed to copy .git/modules: {e}. Submodules may not work correctly."
+            );
+        }
+
         // Create a new branch in the cloned repository BEFORE overlaying files
         // This ensures that when source_commit is provided, the checkout doesn't
         // overwrite the working directory files we're about to overlay from the source
@@ -109,6 +139,11 @@ impl RepoManager {
                     .await?;
             }
         }
+
+        // Fix submodule paths after copying .git/modules
+        // This must happen BEFORE the file overlay so that when submodule .git files
+        // are overlaid, they point to valid locations in .git/modules
+        self.fix_submodule_paths(&repo_path).await;
 
         // Overlay all non-ignored files from the source working directory
         // This happens AFTER branch creation to preserve unstaged changes over the cloned state
@@ -302,8 +337,94 @@ impl RepoManager {
         Ok((repo_path, branch_name))
     }
 
-    /// Commit any uncommitted changes in the repository
+    /// Commit any uncommitted changes in submodules before the superproject commit.
+    /// This ensures submodule changes are captured and the superproject pointer is updated.
+    /// Returns a list of submodule paths that had changes committed.
+    async fn commit_submodule_changes(
+        &self,
+        repo_path: &Path,
+        message: &str,
+    ) -> Result<Vec<String>, String> {
+        let submodules = self.parse_gitmodules(repo_path).await?;
+
+        if submodules.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut committed_submodules = Vec::new();
+
+        for submodule in submodules {
+            let submodule_path = repo_path.join(&submodule.path);
+
+            // Check if the submodule is a valid git repository
+            if !self
+                .ctx
+                .git_operations()
+                .is_git_repository(&submodule_path)
+                .await
+                .unwrap_or(false)
+            {
+                continue;
+            }
+
+            // Check if submodule has uncommitted changes
+            let status_output = match self.ctx.git_operations().get_status(&submodule_path).await {
+                Ok(output) => output,
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Failed to get status for submodule '{}': {}",
+                        submodule.path, e
+                    );
+                    continue;
+                }
+            };
+
+            if status_output.trim().is_empty() {
+                continue;
+            }
+
+            // Add and commit changes in the submodule
+            if let Err(e) = self.ctx.git_operations().add_all(&submodule_path).await {
+                eprintln!(
+                    "Warning: Failed to stage changes in submodule '{}': {}",
+                    submodule.path, e
+                );
+                continue;
+            }
+
+            if let Err(e) = self
+                .ctx
+                .git_operations()
+                .commit(&submodule_path, message)
+                .await
+            {
+                eprintln!(
+                    "Warning: Failed to commit changes in submodule '{}': {}",
+                    submodule.path, e
+                );
+                continue;
+            }
+
+            println!(
+                "Committed submodule changes in '{}': {}",
+                submodule.path, message
+            );
+            committed_submodules.push(submodule.path);
+        }
+
+        Ok(committed_submodules)
+    }
+
+    /// Commit any uncommitted changes in the repository.
+    /// This first commits changes in any submodules, then commits in the superproject.
     pub async fn commit_changes(&self, repo_path: &Path, message: &str) -> Result<(), String> {
+        // First commit any uncommitted changes in submodules
+        // This must happen before the superproject commit so the submodule pointers are updated
+        if let Err(e) = self.commit_submodule_changes(repo_path, message).await {
+            eprintln!("Warning: Failed to commit submodule changes: {e}");
+            // Continue with superproject commit even if submodule commits fail
+        }
+
         // Check if there are any changes to commit
         let status_output = self.ctx.git_operations().get_status(repo_path).await?;
 
@@ -399,6 +520,16 @@ impl RepoManager {
             })
             .await?;
 
+        // Fetch submodule changes back to original submodules
+        // This ensures commits made by agents in submodules are available in the original repo
+        if let Err(e) = self
+            .fetch_submodule_changes(repo_path, repo_root, branch_name)
+            .await
+        {
+            eprintln!("Warning: Failed to fetch submodule changes: {e}");
+            // Don't fail - superproject changes are still valid
+        }
+
         // Now check if the fetched branch has any commits not in main
         let has_commits = self
             .ctx
@@ -423,13 +554,474 @@ impl RepoManager {
         println!("Fetched changes from copied repository");
         Ok(true)
     }
+
+    /// Fix submodule paths after copying .git/modules to the destination.
+    /// This finds all .git files (submodule indicators) and fixes their gitdir paths,
+    /// then fixes worktree paths in .git/modules/*/config files.
+    async fn fix_submodule_paths(&self, repo_path: &Path) {
+        // Find all .git files that indicate submodules
+        let git_files = self.find_submodule_git_files(repo_path).await;
+
+        for git_file in git_files {
+            if let Err(e) = self.fix_submodule_gitdir_path(&git_file, repo_path).await {
+                eprintln!(
+                    "Warning: Failed to fix gitdir path in {}: {}. Removing broken .git file.",
+                    git_file.display(),
+                    e
+                );
+                // Remove the broken .git file so the submodule is treated as regular files
+                let _ = tokio::fs::remove_file(&git_file).await;
+            }
+        }
+
+        // Fix worktree paths in .git/modules/*/config files
+        if let Err(e) = self.fix_module_worktree_paths(repo_path).await {
+            eprintln!("Warning: Failed to fix module worktree paths: {e}");
+        }
+    }
+
+    /// Find all .git files (not directories) in the repository that contain gitdir:.
+    /// These files indicate submodule directories.
+    async fn find_submodule_git_files(&self, repo_path: &Path) -> Vec<PathBuf> {
+        let mut result = Vec::new();
+        self.find_git_files_recursive(repo_path, repo_path, &mut result)
+            .await;
+        result
+    }
+
+    /// Recursively search for .git files (submodule indicators) in a directory.
+    async fn find_git_files_recursive(
+        &self,
+        base_path: &Path,
+        current_path: &Path,
+        result: &mut Vec<PathBuf>,
+    ) {
+        let Ok(mut entries) = tokio::fs::read_dir(current_path).await else {
+            return;
+        };
+
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            let file_name = path.file_name().unwrap_or_default();
+
+            // Skip the .git directory itself (the main repo's git directory)
+            if file_name == ".git" {
+                // Check if it's a file (submodule indicator) or directory (main repo)
+                // If it's a file with gitdir: prefix, add it to results
+                if let Ok(meta) = tokio::fs::symlink_metadata(&path).await
+                    && meta.is_file()
+                    && let Ok(content) = tokio::fs::read_to_string(&path).await
+                    && content.starts_with("gitdir:")
+                {
+                    result.push(path);
+                }
+                // If it's a directory, skip it (main repo's .git)
+                continue;
+            }
+
+            // Recurse into directories (but not symlinks)
+            if let Ok(meta) = tokio::fs::symlink_metadata(&path).await
+                && meta.is_dir()
+                && !meta.file_type().is_symlink()
+            {
+                Box::pin(self.find_git_files_recursive(base_path, &path, result)).await;
+            }
+        }
+    }
+
+    /// Fix the gitdir path in a submodule .git file if it uses an absolute path.
+    async fn fix_submodule_gitdir_path(
+        &self,
+        git_file: &Path,
+        repo_path: &Path,
+    ) -> Result<(), String> {
+        let content = tokio::fs::read_to_string(git_file)
+            .await
+            .map_err(|e| format!("Failed to read {}: {}", git_file.display(), e))?;
+
+        let gitdir_line = content.trim();
+        if !gitdir_line.starts_with("gitdir: ") {
+            return Err(format!("Invalid .git file format: {}", git_file.display()));
+        }
+
+        let gitdir_path = gitdir_line.strip_prefix("gitdir: ").unwrap_or("").trim();
+
+        // Check if it's an absolute path (starts with / or contains : for Windows)
+        if gitdir_path.starts_with('/') || gitdir_path.contains(':') {
+            // Absolute path needs rewriting
+            // Extract the module path from the absolute path
+            if let Some(modules_pos) = gitdir_path.find("/.git/modules/") {
+                let module_path = &gitdir_path[modules_pos + "/.git/modules/".len()..];
+                let submodule_dir = git_file
+                    .parent()
+                    .ok_or_else(|| "No parent directory".to_string())?;
+                let depth = submodule_dir
+                    .strip_prefix(repo_path)
+                    .map_err(|_| "Path not under repo".to_string())?
+                    .components()
+                    .count();
+
+                let prefix = if depth > 0 {
+                    "../".repeat(depth)
+                } else {
+                    "./".to_string()
+                };
+                let new_gitdir = format!("{}.git/modules/{}", prefix, module_path);
+
+                tokio::fs::write(git_file, format!("gitdir: {}\n", new_gitdir))
+                    .await
+                    .map_err(|e| format!("Failed to write {}: {}", git_file.display(), e))?;
+            } else {
+                return Err(format!(
+                    "Could not extract module path from absolute gitdir: {}",
+                    gitdir_path
+                ));
+            }
+        }
+        // Relative paths should work as-is since the structure is preserved
+
+        Ok(())
+    }
+
+    /// Fix worktree paths in .git/modules/*/config files if they use absolute paths.
+    async fn fix_module_worktree_paths(&self, repo_path: &Path) -> Result<(), String> {
+        let modules_dir = repo_path.join(".git/modules");
+        if !modules_dir.exists() {
+            return Ok(());
+        }
+
+        self.fix_worktree_recursive(&modules_dir, repo_path).await
+    }
+
+    /// Recursively fix worktree paths in module config files.
+    async fn fix_worktree_recursive(
+        &self,
+        modules_dir: &Path,
+        repo_path: &Path,
+    ) -> Result<(), String> {
+        let mut entries = tokio::fs::read_dir(modules_dir)
+            .await
+            .map_err(|e| format!("Failed to read {}: {}", modules_dir.display(), e))?;
+
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+
+            // Check metadata to see if it's a directory
+            let Ok(meta) = tokio::fs::symlink_metadata(&path).await else {
+                continue;
+            };
+
+            if !meta.is_dir() {
+                continue;
+            }
+
+            let config_path = path.join("config");
+            if config_path.exists()
+                && let Err(e) = self
+                    .fix_single_worktree_config(&config_path, repo_path)
+                    .await
+            {
+                eprintln!(
+                    "Warning: Failed to fix worktree in {}: {}",
+                    config_path.display(),
+                    e
+                );
+            }
+
+            // Handle nested modules (sub-submodules)
+            let nested_modules = path.join("modules");
+            if nested_modules.exists() {
+                // Use Box::pin for recursive async call
+                Box::pin(self.fix_worktree_recursive(&nested_modules, repo_path)).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Fix a single module config file's worktree path if it uses an absolute path.
+    async fn fix_single_worktree_config(
+        &self,
+        config_path: &Path,
+        _repo_path: &Path,
+    ) -> Result<(), String> {
+        let content = tokio::fs::read_to_string(config_path)
+            .await
+            .map_err(|e| format!("Read error: {}", e))?;
+
+        for line in content.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("worktree = ") {
+                let worktree_value = trimmed.strip_prefix("worktree = ").unwrap_or("").trim();
+                // Check if absolute path
+                if worktree_value.starts_with('/') || worktree_value.contains(':') {
+                    // Absolute path found - log warning
+                    // Fixing this is complex without knowing the original structure,
+                    // so we just warn for now
+                    eprintln!(
+                        "Warning: Absolute worktree path found in {}: {}. Manual fixing may be required.",
+                        config_path.display(),
+                        worktree_value
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Fetch submodule changes from the copied repository back to the original repository.
+    /// This ensures that commits made by the agent in submodules are available in the original repo.
+    /// The branch_name is used to create matching branch names in the submodule.
+    async fn fetch_submodule_changes(
+        &self,
+        copied_repo: &Path,
+        original_repo: &Path,
+        branch_name: &str,
+    ) -> Result<(), String> {
+        let submodules = self.parse_gitmodules(copied_repo).await?;
+
+        if submodules.is_empty() {
+            return Ok(());
+        }
+
+        for submodule in submodules {
+            // Wrap each submodule fetch in error handling - log warnings but don't fail overall
+            if let Err(e) = self
+                .fetch_single_submodule_changes(copied_repo, original_repo, &submodule, branch_name)
+                .await
+            {
+                eprintln!(
+                    "Warning: Failed to fetch changes for submodule '{}': {}",
+                    submodule.path, e
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Fetch changes for a single submodule from copied repo to original repo.
+    /// The branch_name is used to create a matching branch in the original submodule.
+    async fn fetch_single_submodule_changes(
+        &self,
+        copied_repo: &Path,
+        original_repo: &Path,
+        submodule: &SubmoduleInfo,
+        branch_name: &str,
+    ) -> Result<(), String> {
+        // Find the module git directory by reading the submodule's .git file
+        let copied_submodule_path = copied_repo.join(&submodule.path);
+        let copied_git_file = copied_submodule_path.join(".git");
+
+        if !copied_git_file.exists() {
+            // Submodule wasn't properly set up in copied repo, skip it
+            return Ok(());
+        }
+
+        // Read the .git file to find the module directory
+        let git_content = tokio::fs::read_to_string(&copied_git_file)
+            .await
+            .map_err(|e| format!("Failed to read .git file: {}", e))?;
+
+        let gitdir_line = git_content.trim();
+        if !gitdir_line.starts_with("gitdir: ") {
+            return Err("Invalid .git file format in submodule".to_string());
+        }
+
+        let gitdir_rel_path = gitdir_line.strip_prefix("gitdir: ").unwrap_or("").trim();
+
+        // Resolve the gitdir path relative to the submodule directory
+        let copied_module_git = if gitdir_rel_path.starts_with('/') {
+            // Absolute path (unusual, but handle it)
+            PathBuf::from(gitdir_rel_path)
+        } else {
+            // Relative path - resolve from submodule directory
+            copied_submodule_path.join(gitdir_rel_path)
+        };
+
+        // Canonicalize to resolve .. components
+        let copied_module_git = copied_module_git.canonicalize().map_err(|e| {
+            format!(
+                "Failed to resolve module git path '{}': {}",
+                copied_module_git.display(),
+                e
+            )
+        })?;
+
+        if !copied_module_git.exists() {
+            return Err(format!(
+                "Module git directory does not exist: {}",
+                copied_module_git.display()
+            ));
+        }
+
+        // Check if original submodule exists and is a valid git repository
+        let original_submodule = original_repo.join(&submodule.path);
+        if !original_submodule.exists() {
+            // Submodule doesn't exist in original - nothing to fetch to
+            return Ok(());
+        }
+
+        let is_git_repo = self
+            .ctx
+            .git_operations()
+            .is_git_repository(&original_submodule)
+            .await
+            .unwrap_or(false);
+
+        if !is_git_repo {
+            // Original submodule is not a valid git repo (might be uninitialized)
+            return Ok(());
+        }
+
+        // Add the copied module as a remote and fetch all refs
+        let remote_name = "tsk-submodule-temp";
+        let copied_module_git_str = copied_module_git
+            .to_str()
+            .ok_or("Invalid module git path")?;
+
+        // Add remote
+        if let Err(e) = self
+            .ctx
+            .git_operations()
+            .add_remote(&original_submodule, remote_name, copied_module_git_str)
+            .await
+        {
+            return Err(format!("Failed to add remote: {}", e));
+        }
+
+        // Determine the current branch in the copied submodule (HEAD)
+        // This is what we want to fetch - it contains the agent's commits
+        let head_output = tokio::process::Command::new("git")
+            .current_dir(&copied_submodule_path)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .await;
+
+        let copied_head_sha = match head_output {
+            Ok(output) if output.status.success() => {
+                String::from_utf8_lossy(&output.stdout).trim().to_string()
+            }
+            _ => {
+                // Clean up remote and return error
+                let _ = self
+                    .ctx
+                    .git_operations()
+                    .remove_remote(&original_submodule, remote_name)
+                    .await;
+                return Err("Failed to get HEAD of copied submodule".to_string());
+            }
+        };
+
+        // Get the HEAD SHA from the original submodule to check if there are any new commits
+        let original_head_output = tokio::process::Command::new("git")
+            .current_dir(&original_submodule)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .await;
+
+        let original_head_sha = match original_head_output {
+            Ok(output) if output.status.success() => {
+                String::from_utf8_lossy(&output.stdout).trim().to_string()
+            }
+            _ => {
+                // Clean up remote and return error
+                let _ = self
+                    .ctx
+                    .git_operations()
+                    .remove_remote(&original_submodule, remote_name)
+                    .await;
+                return Err("Failed to get HEAD of original submodule".to_string());
+            }
+        };
+
+        // If the HEADs are the same, there are no new commits in this submodule - skip branch creation
+        if copied_head_sha == original_head_sha {
+            // Clean up remote and return - no branch needed for unchanged submodule
+            let _ = self
+                .ctx
+                .git_operations()
+                .remove_remote(&original_submodule, remote_name)
+                .await;
+            return Ok(());
+        }
+
+        // Fetch the HEAD commit and create a branch with the same name as the superproject branch
+        // This makes submodule branches match the superproject branch for easier correlation
+        // The refspec fetches the specific commit and creates a local branch with the task branch name
+        let refspec = format!("+{}:refs/heads/{}", copied_head_sha, branch_name);
+        let fetch_result = tokio::process::Command::new("git")
+            .current_dir(&original_submodule)
+            .args(["fetch", remote_name, &refspec])
+            .output()
+            .await;
+
+        // Always clean up the remote, regardless of fetch result
+        let _ = self
+            .ctx
+            .git_operations()
+            .remove_remote(&original_submodule, remote_name)
+            .await;
+
+        // Check fetch result
+        match fetch_result {
+            Ok(output) => {
+                if !output.status.success() {
+                    return Err(format!(
+                        "git fetch failed: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    ));
+                }
+            }
+            Err(e) => {
+                return Err(format!("Failed to execute git fetch: {}", e));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Parse the .gitmodules file to extract submodule paths.
+    async fn parse_gitmodules(&self, repo_path: &Path) -> Result<Vec<SubmoduleInfo>, String> {
+        let gitmodules_path = repo_path.join(".gitmodules");
+        if !gitmodules_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let content = tokio::fs::read_to_string(&gitmodules_path)
+            .await
+            .map_err(|e| format!("Failed to read .gitmodules: {}", e))?;
+
+        let mut submodules = Vec::new();
+        let mut current_path: Option<String> = None;
+
+        for line in content.lines() {
+            let line = line.trim();
+            if line.starts_with("[submodule ") {
+                // Save previous submodule if path was found
+                if let Some(path) = current_path.take() {
+                    submodules.push(SubmoduleInfo { path });
+                }
+            } else if let Some(path_value) = line.strip_prefix("path = ") {
+                current_path = Some(path_value.to_string());
+            }
+        }
+
+        // Don't forget the last submodule
+        if let Some(path) = current_path {
+            submodules.push(SubmoduleInfo { path });
+        }
+
+        Ok(submodules)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::context::AppContext;
-    use crate::test_utils::TestGitRepository;
+    use crate::test_utils::{ExistingGitRepository, TestGitRepository};
 
     #[tokio::test]
     async fn test_copy_repo_not_in_git_repo() {
@@ -1175,6 +1767,891 @@ mod tests {
         assert!(
             !main_branches.contains(&branch_name.to_string()),
             "Branch should be cleaned up when no new commits"
+        );
+    }
+
+    /// Integration test to understand current behavior with git submodules.
+    /// This test documents what happens when copying a repo that contains submodules.
+    #[tokio::test]
+    async fn test_copy_repo_with_submodules_current_behavior() {
+        let ctx = AppContext::builder().build();
+
+        // Create a "submodule" repository first (this will be added as a submodule)
+        let submodule_repo = TestGitRepository::new().unwrap();
+        submodule_repo.init().unwrap();
+        submodule_repo
+            .create_file(
+                "lib.rs",
+                "pub fn hello() -> &'static str { \"hello from submodule\" }",
+            )
+            .unwrap();
+        submodule_repo.stage_all().unwrap();
+        submodule_repo.commit("Initial submodule commit").unwrap();
+
+        // Create the main "workspace" repository
+        let main_repo = TestGitRepository::new().unwrap();
+        main_repo.init_with_commit().unwrap();
+
+        // Enable file:// protocol for submodule operations (required by newer git versions)
+        main_repo
+            .run_git_command(&["config", "protocol.file.allow", "always"])
+            .unwrap();
+
+        // Add the submodule to the main repo
+        main_repo
+            .run_git_command(&[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                submodule_repo.path().to_str().unwrap(),
+                "libs/mylib",
+            ])
+            .unwrap();
+        main_repo.stage_all().unwrap();
+        main_repo.commit("Add submodule").unwrap();
+
+        // Verify submodule was added correctly
+        assert!(
+            main_repo.path().join("libs/mylib/lib.rs").exists(),
+            "Submodule files should exist in main repo"
+        );
+        assert!(
+            main_repo.path().join(".gitmodules").exists(),
+            ".gitmodules should exist"
+        );
+
+        // Verify .git file exists in submodule (points to main repo's .git/modules)
+        let submodule_git_path = main_repo.path().join("libs/mylib/.git");
+        assert!(
+            submodule_git_path.exists(),
+            "Submodule .git should exist (as file pointing to main .git/modules)"
+        );
+        let submodule_git_content = std::fs::read_to_string(&submodule_git_path).unwrap();
+        assert!(
+            submodule_git_content.starts_with("gitdir:"),
+            "Submodule .git should be a gitdir reference"
+        );
+
+        // Now copy the repo using TSK's current mechanism
+        let manager = RepoManager::new(&ctx);
+        let task_id = "submod123";
+        let branch_name = "tsk/test/submodules/submod123";
+        let result = manager
+            .copy_repo(task_id, main_repo.path(), None, branch_name)
+            .await;
+
+        assert!(result.is_ok(), "Copy should succeed: {:?}", result);
+        let (copied_path, _) = result.unwrap();
+
+        // Document what happened with the submodule in the copy:
+
+        // 1. Check if .gitmodules was copied
+        let gitmodules_copied = copied_path.join(".gitmodules").exists();
+        println!("SUBMODULE TEST: .gitmodules copied = {gitmodules_copied}");
+
+        // 2. Check if submodule directory exists
+        let submodule_dir_copied = copied_path.join("libs/mylib").exists();
+        println!("SUBMODULE TEST: submodule directory exists = {submodule_dir_copied}");
+
+        // 3. Check if submodule files were copied
+        let submodule_files_copied = copied_path.join("libs/mylib/lib.rs").exists();
+        println!("SUBMODULE TEST: submodule files copied = {submodule_files_copied}");
+
+        // 4. Check if submodule .git was copied (and what it looks like)
+        let copied_submodule_git = copied_path.join("libs/mylib/.git");
+        let submodule_git_state = if copied_submodule_git.exists() {
+            if copied_submodule_git.is_file() {
+                let content = std::fs::read_to_string(&copied_submodule_git).unwrap_or_default();
+                format!("file with content: {}", content.trim())
+            } else if copied_submodule_git.is_dir() {
+                "directory (full .git repo)".to_string()
+            } else {
+                "exists but unknown type".to_string()
+            }
+        } else {
+            "does not exist".to_string()
+        };
+        println!("SUBMODULE TEST: submodule .git state = {submodule_git_state}");
+
+        // 5. Check if the submodule is recognized as a valid git repo
+        let submodule_is_git_repo = ctx
+            .git_operations()
+            .is_git_repository(&copied_path.join("libs/mylib"))
+            .await
+            .unwrap_or(false);
+        println!("SUBMODULE TEST: submodule is valid git repo = {submodule_is_git_repo}");
+
+        // 6. Check .git/modules in copied repo (where git stores actual submodule data)
+        let modules_dir = copied_path.join(".git/modules");
+        let modules_exist = modules_dir.exists();
+        println!("SUBMODULE TEST: .git/modules exists = {modules_exist}");
+
+        // 7. Check git status in copied repo - does it see submodule changes?
+        let copied_repo = git2::Repository::open(&copied_path).unwrap();
+        let mut status_opts = git2::StatusOptions::new();
+        status_opts.include_untracked(true);
+        let statuses = copied_repo.statuses(Some(&mut status_opts)).unwrap();
+
+        println!("SUBMODULE TEST: Status entries in copied repo:");
+        for entry in statuses.iter() {
+            if let Some(path) = entry.path() {
+                println!("  - {} (status: {:?})", path, entry.status());
+            }
+        }
+
+        // Document findings in assertions that will show in test output
+        // These assertions document current behavior - they're expected to show issues
+
+        // .gitmodules should be copied (it's a regular tracked file)
+        assert!(
+            gitmodules_copied,
+            "CURRENT BEHAVIOR: .gitmodules should be copied as a regular file"
+        );
+
+        // Submodule directory and files should exist (copied as regular files)
+        assert!(
+            submodule_dir_copied && submodule_files_copied,
+            "CURRENT BEHAVIOR: Submodule files are copied as regular files"
+        );
+
+        // Submodule support is now implemented - submodule should be a valid git repo
+        assert!(
+            submodule_is_git_repo,
+            "Submodule should be recognized as valid git repo with submodule support"
+        );
+
+        // The .git/modules directory should exist (copied from source)
+        assert!(
+            modules_exist,
+            ".git/modules should exist after copy with submodule support"
+        );
+    }
+
+    /// Test with nested submodules (sub-submodule) to understand behavior with problematic nested structures.
+    #[tokio::test]
+    async fn test_copy_repo_with_nested_submodules_current_behavior() {
+        let ctx = AppContext::builder().build();
+
+        // Create the innermost "sub-submodule" repository
+        let inner_repo = TestGitRepository::new().unwrap();
+        inner_repo.init().unwrap();
+        inner_repo
+            .create_file("inner.txt", "inner content")
+            .unwrap();
+        inner_repo.stage_all().unwrap();
+        inner_repo.commit("Inner commit").unwrap();
+
+        // Create the middle "submodule" repository with the inner as a submodule
+        let middle_repo = TestGitRepository::new().unwrap();
+        middle_repo.init().unwrap();
+        middle_repo
+            .run_git_command(&["config", "protocol.file.allow", "always"])
+            .unwrap();
+        middle_repo
+            .create_file("middle.txt", "middle content")
+            .unwrap();
+        middle_repo.stage_all().unwrap();
+        middle_repo.commit("Middle commit").unwrap();
+
+        // Add inner as submodule of middle
+        middle_repo
+            .run_git_command(&[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                inner_repo.path().to_str().unwrap(),
+                "inner",
+            ])
+            .unwrap();
+        middle_repo.stage_all().unwrap();
+        middle_repo.commit("Add inner submodule").unwrap();
+
+        // Create the main "workspace" repository with middle as a submodule
+        let main_repo = TestGitRepository::new().unwrap();
+        main_repo.init_with_commit().unwrap();
+        main_repo
+            .run_git_command(&["config", "protocol.file.allow", "always"])
+            .unwrap();
+
+        // Add middle as submodule of main
+        main_repo
+            .run_git_command(&[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                middle_repo.path().to_str().unwrap(),
+                "middle",
+            ])
+            .unwrap();
+
+        // Initialize nested submodules recursively
+        main_repo
+            .run_git_command(&[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "update",
+                "--init",
+                "--recursive",
+            ])
+            .unwrap();
+
+        main_repo.stage_all().unwrap();
+        main_repo.commit("Add middle submodule").unwrap();
+
+        // Verify the nested structure was set up correctly
+        assert!(
+            main_repo.path().join("middle/middle.txt").exists(),
+            "Middle submodule files should exist"
+        );
+        assert!(
+            main_repo.path().join("middle/inner/inner.txt").exists(),
+            "Inner (nested) submodule files should exist"
+        );
+
+        // Copy the repo
+        let manager = RepoManager::new(&ctx);
+        let task_id = "nested123";
+        let branch_name = "tsk/test/nested-submodules/nested123";
+        let result = manager
+            .copy_repo(task_id, main_repo.path(), None, branch_name)
+            .await;
+
+        assert!(result.is_ok(), "Copy should succeed: {:?}", result);
+        let (copied_path, _) = result.unwrap();
+
+        // Document what happened with nested submodules
+
+        // Check each level
+        let middle_exists = copied_path.join("middle/middle.txt").exists();
+        let inner_exists = copied_path.join("middle/inner/inner.txt").exists();
+        let middle_git_exists = copied_path.join("middle/.git").exists();
+        let inner_git_exists = copied_path.join("middle/inner/.git").exists();
+
+        println!("NESTED SUBMODULE TEST:");
+        println!("  middle/middle.txt exists = {middle_exists}");
+        println!("  middle/inner/inner.txt exists = {inner_exists}");
+        println!("  middle/.git exists = {middle_git_exists}");
+        println!("  middle/inner/.git exists = {inner_git_exists}");
+
+        // Check if they're valid git repos
+        let middle_is_repo = ctx
+            .git_operations()
+            .is_git_repository(&copied_path.join("middle"))
+            .await
+            .unwrap_or(false);
+        let inner_is_repo = ctx
+            .git_operations()
+            .is_git_repository(&copied_path.join("middle/inner"))
+            .await
+            .unwrap_or(false);
+
+        // Verify files are copied
+        assert!(middle_exists, "Middle submodule files should be copied");
+        assert!(inner_exists, "Inner submodule files should be copied");
+
+        // Submodule support is now implemented - nested submodules should be valid git repos
+        assert!(
+            middle_is_repo,
+            "Middle submodule should be valid git repo with submodule support"
+        );
+        assert!(
+            inner_is_repo,
+            "Inner (nested) submodule should be valid git repo with submodule support"
+        );
+    }
+
+    /// Test the full round-trip: copy repo with submodule, modify submodule, commit, and fetch back.
+    /// This verifies that Phase 1 (copy) and Phase 2 (fetch) work correctly together.
+    #[tokio::test]
+    async fn test_copy_repo_modify_submodule_and_commit() {
+        let ctx = AppContext::builder().build();
+
+        // Create a submodule repository
+        let submodule_repo = TestGitRepository::new().unwrap();
+        submodule_repo.init().unwrap();
+        submodule_repo
+            .run_git_command(&["config", "init.defaultBranch", "main"])
+            .unwrap();
+        submodule_repo
+            .run_git_command(&["checkout", "-b", "main"])
+            .unwrap();
+        submodule_repo
+            .create_file("lib.rs", "// original content")
+            .unwrap();
+        submodule_repo.stage_all().unwrap();
+        submodule_repo.commit("Initial commit").unwrap();
+
+        // Create main repository with submodule
+        let main_repo = TestGitRepository::new().unwrap();
+        main_repo.init().unwrap();
+        main_repo
+            .run_git_command(&["config", "init.defaultBranch", "main"])
+            .unwrap();
+        main_repo
+            .run_git_command(&["checkout", "-b", "main"])
+            .unwrap();
+        main_repo.create_file("README.md", "# Main Repo").unwrap();
+        main_repo.stage_all().unwrap();
+        main_repo.commit("Initial commit").unwrap();
+        main_repo
+            .run_git_command(&["config", "protocol.file.allow", "always"])
+            .unwrap();
+
+        main_repo
+            .run_git_command(&[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                submodule_repo.path().to_str().unwrap(),
+                "lib",
+            ])
+            .unwrap();
+        main_repo.stage_all().unwrap();
+        main_repo.commit("Add submodule").unwrap();
+
+        // Copy the repo
+        let manager = RepoManager::new(&ctx);
+        let task_id = "modsubmod";
+        let branch_name = "tsk/test/modify-submodule/modsubmod";
+        let result = manager
+            .copy_repo(task_id, main_repo.path(), None, branch_name)
+            .await;
+
+        assert!(result.is_ok(), "Failed to copy repo: {:?}", result);
+        let (copied_path, _) = result.unwrap();
+
+        // Verify the submodule is a valid git repository in the copied repo
+        let copied_submodule_is_repo = ctx
+            .git_operations()
+            .is_git_repository(&copied_path.join("lib"))
+            .await
+            .unwrap_or(false);
+        assert!(
+            copied_submodule_is_repo,
+            "Copied submodule should be a valid git repository"
+        );
+
+        // Modify a file in the submodule directory
+        let submodule_file = copied_path.join("lib/lib.rs");
+        std::fs::write(&submodule_file, "// modified by TSK agent").unwrap();
+
+        // Commit changes in the submodule first
+        let copied_submodule = ExistingGitRepository::new(&copied_path.join("lib")).unwrap();
+        copied_submodule.stage_all().unwrap();
+        copied_submodule.commit("Modify lib.rs").unwrap();
+
+        // Now commit in the superproject (updates submodule pointer)
+        let commit_result = manager
+            .commit_changes(&copied_path, "Update submodule with changes")
+            .await;
+
+        assert!(
+            commit_result.is_ok(),
+            "Commit should succeed with submodule support: {:?}",
+            commit_result
+        );
+
+        // Fetch changes back to main repo
+        let fetch_result = manager
+            .fetch_changes(&copied_path, branch_name, main_repo.path())
+            .await;
+
+        assert!(
+            fetch_result.is_ok(),
+            "Fetch should succeed: {:?}",
+            fetch_result
+        );
+        assert!(
+            fetch_result.unwrap(),
+            "Should return true indicating new commits were fetched"
+        );
+
+        // Verify the branch exists in main repo
+        let main_branches = main_repo.branches().unwrap();
+        assert!(
+            main_branches.contains(&branch_name.to_string()),
+            "Branch should exist in main repo after fetch"
+        );
+    }
+
+    /// Integration test reproducing the user-reported issue:
+    /// After modifying files in both the superproject and submodule,
+    /// the submodule's branch should be visible via `git branch` in the original submodule.
+    #[tokio::test]
+    async fn test_submodule_commits_visible_in_original_repo() {
+        let ctx = AppContext::builder().build();
+
+        // Create RepoB (will become a submodule)
+        let repo_b = TestGitRepository::new().unwrap();
+        repo_b.init().unwrap();
+        repo_b
+            .run_git_command(&["config", "init.defaultBranch", "main"])
+            .unwrap();
+        repo_b.run_git_command(&["checkout", "-b", "main"]).unwrap();
+        repo_b.create_file("README.md", "# RepoB").unwrap();
+        repo_b.stage_all().unwrap();
+        repo_b.commit("Initial RepoB commit").unwrap();
+
+        // Create RepoA (superproject) with RepoB as submodule
+        let repo_a = TestGitRepository::new().unwrap();
+        repo_a.init().unwrap();
+        repo_a
+            .run_git_command(&["config", "init.defaultBranch", "main"])
+            .unwrap();
+        repo_a.run_git_command(&["checkout", "-b", "main"]).unwrap();
+        repo_a.create_file("README.md", "# RepoA").unwrap();
+        repo_a.stage_all().unwrap();
+        repo_a.commit("Initial RepoA commit").unwrap();
+        repo_a
+            .run_git_command(&["config", "protocol.file.allow", "always"])
+            .unwrap();
+
+        // Add RepoB as submodule
+        repo_a
+            .run_git_command(&[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                repo_b.path().to_str().unwrap(),
+                "RepoB",
+            ])
+            .unwrap();
+        repo_a.stage_all().unwrap();
+        repo_a.commit("Add RepoB submodule").unwrap();
+
+        // Verify initial structure
+        assert!(
+            repo_a.path().join("README.md").exists(),
+            "RepoA README should exist"
+        );
+        assert!(
+            repo_a.path().join("RepoB/README.md").exists(),
+            "RepoB README should exist in submodule"
+        );
+
+        // Step 1: Copy the repo (simulates `tsk shell` starting)
+        let manager = RepoManager::new(&ctx);
+        let task_id = "submodvisible";
+        let branch_name = "tsk/test/submod-visible/submodvisible";
+        let (copied_path, _) = manager
+            .copy_repo(task_id, repo_a.path(), None, branch_name)
+            .await
+            .expect("Copy should succeed");
+
+        // Step 2: Modify both READMEs (simulates user editing files)
+        std::fs::write(copied_path.join("README.md"), "# RepoA\nhi").unwrap();
+        std::fs::write(copied_path.join("RepoB/README.md"), "# RepoB\nhi").unwrap();
+
+        // Step 3: Commit changes in submodule first
+        let copied_submodule = ExistingGitRepository::new(&copied_path.join("RepoB")).unwrap();
+        copied_submodule.stage_all().unwrap();
+        let submod_commit = copied_submodule.commit("Add hi to RepoB README").unwrap();
+
+        // Step 4: Commit changes in superproject
+        manager
+            .commit_changes(&copied_path, "Add hi to both READMEs")
+            .await
+            .expect("Commit should succeed");
+
+        // VERIFY: tsk-submodule branch does NOT exist before fetch
+        let submodule_in_original = repo_a.path().join("RepoB");
+        let branches_before = std::process::Command::new("git")
+            .current_dir(&submodule_in_original)
+            .args(["branch", "-a"])
+            .output()
+            .expect("git branch should work");
+        let branches_before_str = String::from_utf8_lossy(&branches_before.stdout);
+        assert!(
+            !branches_before_str.contains("tsk-submodule/"),
+            "tsk-submodule branches should NOT exist before fetch"
+        );
+
+        // Step 5: Fetch changes back (simulates exiting `tsk shell`)
+        manager
+            .fetch_changes(&copied_path, branch_name, repo_a.path())
+            .await
+            .expect("Fetch should succeed");
+
+        // VERIFY: Branch exists in RepoA (superproject)
+        let repo_a_branches = repo_a.branches().unwrap();
+        assert!(
+            repo_a_branches.contains(&branch_name.to_string()),
+            "Branch '{}' should exist in RepoA. Available branches: {:?}",
+            branch_name,
+            repo_a_branches
+        );
+
+        // VERIFY: The submodule commit is accessible in the original RepoB
+        // The commit should be reachable (objects fetched)
+        let commit_exists = std::process::Command::new("git")
+            .current_dir(&submodule_in_original)
+            .args(["cat-file", "-t", &submod_commit])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        assert!(
+            commit_exists,
+            "Submodule commit {} should be accessible in original RepoB",
+            submod_commit
+        );
+
+        // VERIFY: The task branch exists in the submodule (same name as superproject branch)
+        // This is the key fix - fetched branches should be visible via `git branch`
+        let submodule_branches_output = std::process::Command::new("git")
+            .current_dir(&submodule_in_original)
+            .args(["branch", "-a"])
+            .output()
+            .expect("git branch should work");
+        let submodule_branches = String::from_utf8_lossy(&submodule_branches_output.stdout);
+
+        println!("Submodule branches after fetch:\n{}", submodule_branches);
+
+        // The branch with the task name should exist in the submodule (matching superproject)
+        assert!(
+            submodule_branches.contains(branch_name),
+            "Branch '{}' should exist in submodule after fetch.\nAvailable branches:\n{}",
+            branch_name,
+            submodule_branches
+        );
+
+        // VERIFY: The commit is accessible via the task branch
+        let log_output = std::process::Command::new("git")
+            .current_dir(&submodule_in_original)
+            .args(["log", "--oneline", "-1", branch_name])
+            .output()
+            .expect("git log should work");
+        let log_message = String::from_utf8_lossy(&log_output.stdout);
+        println!("Submodule {} log: {}", branch_name, log_message);
+
+        assert!(
+            log_message.contains("Add hi to RepoB"),
+            "Submodule branch should point to commit with 'Add hi to RepoB', got: {}",
+            log_message
+        );
+    }
+
+    /// Integration test for the submodule commit bug fix.
+    /// This test verifies that uncommitted changes in submodules are automatically
+    /// committed by `commit_changes()` before committing the superproject.
+    ///
+    /// The key difference from `test_submodule_commits_visible_in_original_repo` is that
+    /// this test does NOT manually commit in the submodule - it relies on `commit_changes()`
+    /// to do it automatically.
+    #[tokio::test]
+    async fn test_uncommitted_submodule_changes_are_committed() {
+        let ctx = AppContext::builder().build();
+
+        // Create RepoB (will become a submodule)
+        let repo_b = TestGitRepository::new().unwrap();
+        repo_b.init().unwrap();
+        repo_b
+            .run_git_command(&["config", "init.defaultBranch", "main"])
+            .unwrap();
+        repo_b.run_git_command(&["checkout", "-b", "main"]).unwrap();
+        repo_b.create_file("README.md", "# RepoB").unwrap();
+        repo_b.stage_all().unwrap();
+        repo_b.commit("Initial RepoB commit").unwrap();
+
+        // Create RepoA (superproject) with RepoB as submodule
+        let repo_a = TestGitRepository::new().unwrap();
+        repo_a.init().unwrap();
+        repo_a
+            .run_git_command(&["config", "init.defaultBranch", "main"])
+            .unwrap();
+        repo_a.run_git_command(&["checkout", "-b", "main"]).unwrap();
+        repo_a.create_file("README.md", "# RepoA").unwrap();
+        repo_a.stage_all().unwrap();
+        repo_a.commit("Initial RepoA commit").unwrap();
+        repo_a
+            .run_git_command(&["config", "protocol.file.allow", "always"])
+            .unwrap();
+
+        // Add RepoB as submodule
+        repo_a
+            .run_git_command(&[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                repo_b.path().to_str().unwrap(),
+                "RepoB",
+            ])
+            .unwrap();
+        repo_a.stage_all().unwrap();
+        repo_a.commit("Add RepoB submodule").unwrap();
+
+        // Step 1: Copy the repo (simulates `tsk shell` starting)
+        let manager = RepoManager::new(&ctx);
+        let task_id = "uncommittedsub";
+        let branch_name = "tsk/test/uncommitted-submodule/uncommittedsub";
+        let (copied_path, _) = manager
+            .copy_repo(task_id, repo_a.path(), None, branch_name)
+            .await
+            .expect("Copy should succeed");
+
+        // Step 2: Modify both READMEs WITHOUT committing (simulates user editing files)
+        // This is the key difference - no manual commits in either repo
+        std::fs::write(copied_path.join("README.md"), "# RepoA\nmodified").unwrap();
+        std::fs::write(
+            copied_path.join("RepoB/README.md"),
+            "# RepoB\nmodified by agent",
+        )
+        .unwrap();
+
+        // Verify submodule has uncommitted changes before commit_changes()
+        let copied_submodule_path = copied_path.join("RepoB");
+        let status_before = std::process::Command::new("git")
+            .current_dir(&copied_submodule_path)
+            .args(["status", "--porcelain"])
+            .output()
+            .expect("git status should work");
+        let status_before_str = String::from_utf8_lossy(&status_before.stdout);
+        assert!(
+            !status_before_str.is_empty(),
+            "Submodule should have uncommitted changes before commit_changes()"
+        );
+
+        // Step 3: Call commit_changes() - this should automatically commit submodule changes
+        manager
+            .commit_changes(&copied_path, "Automatic commit of changes")
+            .await
+            .expect("Commit should succeed");
+
+        // Verify submodule no longer has uncommitted changes
+        let status_after = std::process::Command::new("git")
+            .current_dir(&copied_submodule_path)
+            .args(["status", "--porcelain"])
+            .output()
+            .expect("git status should work");
+        let status_after_str = String::from_utf8_lossy(&status_after.stdout);
+        assert!(
+            status_after_str.is_empty(),
+            "Submodule should have no uncommitted changes after commit_changes(), got: {}",
+            status_after_str
+        );
+
+        // Step 4: Fetch changes back (simulates exiting `tsk shell`)
+        let fetch_result = manager
+            .fetch_changes(&copied_path, branch_name, repo_a.path())
+            .await;
+        assert!(
+            fetch_result.is_ok(),
+            "Fetch should succeed: {:?}",
+            fetch_result
+        );
+        assert!(
+            fetch_result.unwrap(),
+            "Fetch should return true indicating new commits"
+        );
+
+        // VERIFY: Branch exists in RepoA (superproject)
+        let repo_a_branches = repo_a.branches().unwrap();
+        assert!(
+            repo_a_branches.contains(&branch_name.to_string()),
+            "Branch '{}' should exist in RepoA. Available branches: {:?}",
+            branch_name,
+            repo_a_branches
+        );
+
+        // VERIFY: The task branch exists in the original RepoB submodule
+        let submodule_in_original = repo_a.path().join("RepoB");
+        let submodule_branches_output = std::process::Command::new("git")
+            .current_dir(&submodule_in_original)
+            .args(["branch", "-a"])
+            .output()
+            .expect("git branch should work");
+        let submodule_branches = String::from_utf8_lossy(&submodule_branches_output.stdout);
+
+        println!("Submodule branches after fetch:\n{}", submodule_branches);
+
+        // The branch with the task name should exist in the submodule
+        assert!(
+            submodule_branches.contains(branch_name),
+            "Branch '{}' should exist in submodule after fetch.\nAvailable branches:\n{}",
+            branch_name,
+            submodule_branches
+        );
+
+        // VERIFY: The submodule branch contains the file changes
+        let file_content = std::process::Command::new("git")
+            .current_dir(&submodule_in_original)
+            .args(["show", &format!("{}:README.md", branch_name)])
+            .output()
+            .expect("git show should work");
+        let content = String::from_utf8_lossy(&file_content.stdout);
+
+        assert!(
+            content.contains("modified by agent"),
+            "Submodule branch should contain 'modified by agent', got: {}",
+            content
+        );
+
+        // VERIFY: The superproject branch points to the updated submodule commit
+        let superproject_submod_ref = std::process::Command::new("git")
+            .current_dir(repo_a.path())
+            .args(["ls-tree", branch_name, "RepoB"])
+            .output()
+            .expect("git ls-tree should work");
+        let ls_tree_output = String::from_utf8_lossy(&superproject_submod_ref.stdout);
+        println!("Superproject submodule ref: {}", ls_tree_output);
+
+        // The ls-tree output should show a commit reference (not a tree)
+        // Format: "160000 commit <sha>	RepoB"
+        assert!(
+            ls_tree_output.contains("160000 commit"),
+            "Superproject should reference submodule as a commit, got: {}",
+            ls_tree_output
+        );
+    }
+
+    /// Test that unchanged submodules do NOT get branches created during fetch.
+    /// Reproduces the bug where all submodules get branches, even those without changes.
+    #[tokio::test]
+    async fn test_unchanged_submodule_no_branch_created() {
+        let ctx = AppContext::builder().build();
+
+        // Create RepoB (will become a submodule - this one WILL be modified)
+        let repo_b = TestGitRepository::new().unwrap();
+        repo_b.init().unwrap();
+        repo_b
+            .run_git_command(&["config", "init.defaultBranch", "main"])
+            .unwrap();
+        repo_b.run_git_command(&["checkout", "-b", "main"]).unwrap();
+        repo_b.create_file("README.md", "# RepoB").unwrap();
+        repo_b.stage_all().unwrap();
+        repo_b.commit("Initial RepoB commit").unwrap();
+
+        // Create RepoC (will become a submodule - this one will NOT be modified)
+        let repo_c = TestGitRepository::new().unwrap();
+        repo_c.init().unwrap();
+        repo_c
+            .run_git_command(&["config", "init.defaultBranch", "main"])
+            .unwrap();
+        repo_c.run_git_command(&["checkout", "-b", "main"]).unwrap();
+        repo_c.create_file("README.md", "# RepoC").unwrap();
+        repo_c.stage_all().unwrap();
+        repo_c.commit("Initial RepoC commit").unwrap();
+
+        // Create RepoA (superproject) with both RepoB and RepoC as submodules
+        let repo_a = TestGitRepository::new().unwrap();
+        repo_a.init().unwrap();
+        repo_a
+            .run_git_command(&["config", "init.defaultBranch", "main"])
+            .unwrap();
+        repo_a.run_git_command(&["checkout", "-b", "main"]).unwrap();
+        repo_a.create_file("README.md", "# RepoA").unwrap();
+        repo_a.stage_all().unwrap();
+        repo_a.commit("Initial RepoA commit").unwrap();
+        repo_a
+            .run_git_command(&["config", "protocol.file.allow", "always"])
+            .unwrap();
+
+        // Add RepoB as submodule
+        repo_a
+            .run_git_command(&[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                repo_b.path().to_str().unwrap(),
+                "RepoB",
+            ])
+            .unwrap();
+
+        // Add RepoC as submodule
+        repo_a
+            .run_git_command(&[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                repo_c.path().to_str().unwrap(),
+                "RepoC",
+            ])
+            .unwrap();
+
+        repo_a.stage_all().unwrap();
+        repo_a.commit("Add RepoB and RepoC submodules").unwrap();
+
+        // Verify initial structure
+        assert!(
+            repo_a.path().join("RepoB/README.md").exists(),
+            "RepoB README should exist in submodule"
+        );
+        assert!(
+            repo_a.path().join("RepoC/README.md").exists(),
+            "RepoC README should exist in submodule"
+        );
+
+        // Step 1: Copy the repo
+        let manager = RepoManager::new(&ctx);
+        let task_id = "unchanged";
+        let branch_name = "tsk/test/unchanged-submod/unchanged";
+        let (copied_path, _) = manager
+            .copy_repo(task_id, repo_a.path(), None, branch_name)
+            .await
+            .expect("Copy should succeed");
+
+        // Step 2: Modify ONLY RepoB (not RepoC!)
+        std::fs::write(copied_path.join("RepoB/README.md"), "# RepoB\nhi").unwrap();
+        // RepoC is NOT modified
+
+        // Step 3: Commit changes (only RepoB has changes)
+        let copied_submodule_b = ExistingGitRepository::new(&copied_path.join("RepoB")).unwrap();
+        copied_submodule_b.stage_all().unwrap();
+        copied_submodule_b.commit("Add hi to RepoB README").unwrap();
+
+        // Commit in superproject (records updated RepoB submodule pointer)
+        manager
+            .commit_changes(&copied_path, "Update RepoB")
+            .await
+            .expect("Commit should succeed");
+
+        // Step 4: Fetch changes back
+        manager
+            .fetch_changes(&copied_path, branch_name, repo_a.path())
+            .await
+            .expect("Fetch should succeed");
+
+        // VERIFY: Branch exists in RepoB (the one with changes)
+        let submodule_b_in_original = repo_a.path().join("RepoB");
+        let branches_b = std::process::Command::new("git")
+            .current_dir(&submodule_b_in_original)
+            .args(["branch", "-a"])
+            .output()
+            .expect("git branch should work");
+        let branches_b_str = String::from_utf8_lossy(&branches_b.stdout);
+        println!("RepoB branches after fetch:\n{}", branches_b_str);
+
+        assert!(
+            branches_b_str.contains(branch_name),
+            "Branch '{}' SHOULD exist in RepoB (which has changes). Available branches:\n{}",
+            branch_name,
+            branches_b_str
+        );
+
+        // VERIFY: NO branch in RepoC (the one WITHOUT changes)
+        let submodule_c_in_original = repo_a.path().join("RepoC");
+        let branches_c = std::process::Command::new("git")
+            .current_dir(&submodule_c_in_original)
+            .args(["branch", "-a"])
+            .output()
+            .expect("git branch should work");
+        let branches_c_str = String::from_utf8_lossy(&branches_c.stdout);
+        println!("RepoC branches after fetch:\n{}", branches_c_str);
+
+        assert!(
+            !branches_c_str.contains(branch_name),
+            "Branch '{}' should NOT exist in RepoC (which has NO changes). This is the bug! Available branches:\n{}",
+            branch_name,
+            branches_c_str
         );
     }
 }

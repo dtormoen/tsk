@@ -18,6 +18,65 @@ pub struct TestGitRepository {
     repo_path: PathBuf,
 }
 
+/// A wrapper for an existing git repository path that doesn't manage its lifecycle.
+/// Used for working with submodules or copies of repositories within tests.
+pub struct ExistingGitRepository {
+    repo_path: PathBuf,
+}
+
+impl ExistingGitRepository {
+    /// Wraps an existing git repository path.
+    pub fn new(path: &Path) -> Result<Self> {
+        if !path.exists() {
+            anyhow::bail!("Repository path does not exist: {}", path.display());
+        }
+        Ok(Self {
+            repo_path: path.to_path_buf(),
+        })
+    }
+
+    /// Stages all changes in the repository.
+    pub fn stage_all(&self) -> Result<()> {
+        self.run_git_command(&["add", "-A"])
+            .context("Failed to stage files")?;
+        Ok(())
+    }
+
+    /// Creates a commit with the given message.
+    /// Returns the commit SHA.
+    pub fn commit(&self, message: &str) -> Result<String> {
+        self.run_git_command(&["commit", "-m", message])
+            .context("Failed to create commit")?;
+
+        self.get_current_commit()
+    }
+
+    /// Gets the SHA of the current commit.
+    pub fn get_current_commit(&self) -> Result<String> {
+        let output = self
+            .run_git_command(&["rev-parse", "HEAD"])
+            .context("Failed to get current commit")?;
+
+        Ok(output.trim().to_string())
+    }
+
+    /// Runs a git command in the repository directory.
+    pub fn run_git_command(&self, args: &[&str]) -> Result<String> {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(&self.repo_path)
+            .output()
+            .context("Failed to execute git command")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("Git command failed: {}", stderr);
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+}
+
 impl TestGitRepository {
     /// Creates a new temporary directory for testing.
     /// Does not initialize git repository - call `init()` or `init_with_commit()` for that.
