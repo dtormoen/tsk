@@ -84,7 +84,7 @@ impl TaskRunner {
         task: &Task,
     ) -> Result<TaskExecutionResult, TaskExecutionError> {
         // Get the agent for this task
-        let agent = AgentProvider::get_agent(&task.agent, self.ctx.tsk_config())
+        let agent = AgentProvider::get_agent(&task.agent, self.ctx.tsk_env())
             .map_err(|e| format!("Error getting agent: {e}"))?;
 
         // Validate the agent
@@ -217,13 +217,10 @@ mod tests {
         let ctx = AppContext::builder()
             .with_docker_client(docker_client)
             .build();
-        let tsk_config = ctx.tsk_config();
+        let tsk_env = ctx.tsk_env();
 
         // Set up a mock .claude.json file in the test claude directory
-        let claude_json_path = tsk_config
-            .claude_config_dir()
-            .join("..")
-            .join(".claude.json");
+        let claude_json_path = tsk_env.claude_config_dir().join("..").join(".claude.json");
         // Ensure parent directory exists
         if let Some(parent) = claude_json_path.parent() {
             std::fs::create_dir_all(parent).unwrap();
@@ -234,7 +231,7 @@ mod tests {
 
         // Create a task copy directory
         let repo_hash = crate::storage::get_repo_hash(test_repo.path());
-        let task_copy_dir = tsk_config.task_dir("test-task-123", &repo_hash);
+        let task_copy_dir = tsk_env.task_dir("test-task-123", &repo_hash);
 
         // Use the async filesystem operations to copy the repository
         ctx.file_system()

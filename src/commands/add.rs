@@ -99,7 +99,7 @@ impl Command for AddCommand {
                 if let Some(ref instructions_content) = first_task_instructions {
                     // Write instructions to temporary file for this task
                     // Use parent of tasks_file to get data_dir (since data_dir() is test-only)
-                    let tasks_file = ctx.tsk_config().tasks_file();
+                    let tasks_file = ctx.tsk_env().tasks_file();
                     let data_dir = tasks_file
                         .parent()
                         .ok_or("Unable to determine data directory")?;
@@ -142,7 +142,7 @@ impl Command for AddCommand {
                         eprintln!("Falling back to direct file write...");
 
                         // Fall back to direct storage
-                        let storage = get_task_storage(ctx.tsk_config(), ctx.file_system());
+                        let storage = get_task_storage(ctx.tsk_env(), ctx.file_system());
                         storage
                             .add_task(task.clone())
                             .await
@@ -151,7 +151,7 @@ impl Command for AddCommand {
                 }
             } else {
                 // Server not available, write directly
-                let storage = get_task_storage(ctx.tsk_config(), ctx.file_system());
+                let storage = get_task_storage(ctx.tsk_env(), ctx.file_system());
                 storage
                     .add_task(task.clone())
                     .await
@@ -368,7 +368,7 @@ mod tests {
         assert!(result.is_ok(), "Should create tasks for multiple agents");
 
         // Verify tasks were created
-        let storage = crate::task_storage::get_task_storage(ctx.tsk_config(), ctx.file_system());
+        let storage = crate::task_storage::get_task_storage(ctx.tsk_env(), ctx.file_system());
         let tasks = storage.list_tasks().await.unwrap();
         assert_eq!(tasks.len(), 2, "Should create 2 tasks");
 
@@ -436,7 +436,7 @@ mod tests {
         assert!(result.is_ok(), "Should create tasks for duplicate agents");
 
         // Verify tasks were created
-        let storage = crate::task_storage::get_task_storage(ctx.tsk_config(), ctx.file_system());
+        let storage = crate::task_storage::get_task_storage(ctx.tsk_env(), ctx.file_system());
         let tasks = storage.list_tasks().await.unwrap();
         assert_eq!(tasks.len(), 2, "Should create 2 tasks");
 
@@ -489,7 +489,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_command_multiple_agents_with_edit() {
-        use crate::context::tsk_config::TskConfig;
+        use crate::context::tsk_env::TskEnv;
         use crate::test_utils::TestGitRepository;
         use std::sync::Arc;
 
@@ -520,9 +520,9 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_path = temp_dir.path();
 
-        // Create a custom TskConfig with the mock editor
-        let tsk_config = Arc::new(
-            TskConfig::builder()
+        // Create a custom TskEnv with the mock editor
+        let tsk_env = Arc::new(
+            TskEnv::builder()
                 .with_data_dir(temp_path.join("data"))
                 .with_runtime_dir(temp_path.join("runtime"))
                 .with_config_dir(temp_path.join("config"))
@@ -533,9 +533,9 @@ mod tests {
                 .build()
                 .unwrap(),
         );
-        tsk_config.ensure_directories().unwrap();
+        tsk_env.ensure_directories().unwrap();
 
-        let ctx = AppContext::builder().with_tsk_config(tsk_config).build();
+        let ctx = AppContext::builder().with_tsk_env(tsk_env).build();
 
         let cmd = AddCommand {
             name: Some("test-multi-edit".to_string()),
@@ -558,7 +558,7 @@ mod tests {
         );
 
         // Verify tasks were created
-        let storage = crate::task_storage::get_task_storage(ctx.tsk_config(), ctx.file_system());
+        let storage = crate::task_storage::get_task_storage(ctx.tsk_env(), ctx.file_system());
         let tasks = storage.list_tasks().await.unwrap();
         assert_eq!(tasks.len(), 2, "Should create 2 tasks");
 

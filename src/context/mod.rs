@@ -4,8 +4,18 @@ pub mod git_operations;
 pub mod terminal;
 pub mod tsk_client;
 pub mod tsk_config;
+pub mod tsk_env;
 
-use crate::context::tsk_config::TskConfig;
+// Re-export TskConfig types from tsk_config module
+// Types used in production code
+pub use tsk_config::{TskConfig, VolumeMount};
+// Types only used in tests
+#[cfg(test)]
+pub use tsk_config::{BindMount, DockerOptions, NamedVolume, ProjectConfig};
+
+// Re-export TskEnv types
+pub use tsk_env::TskEnv;
+
 use crate::docker::build_lock_manager::DockerBuildLockManager;
 use crate::git_sync::GitSyncManager;
 use crate::notifications::NotificationClient;
@@ -37,6 +47,7 @@ pub struct AppContext {
     terminal_operations: Arc<dyn TerminalOperations>,
     tsk_client: Arc<dyn TskClient>,
     tsk_config: Arc<TskConfig>,
+    tsk_env: Arc<TskEnv>,
     #[cfg(test)]
     _temp_dir: Option<Arc<TempDir>>,
 }
@@ -78,8 +89,13 @@ impl AppContext {
         Arc::clone(&self.tsk_client)
     }
 
+    /// Returns the user configuration loaded from tsk.toml
     pub fn tsk_config(&self) -> Arc<TskConfig> {
         Arc::clone(&self.tsk_config)
+    }
+
+    pub fn tsk_env(&self) -> Arc<TskEnv> {
+        Arc::clone(&self.tsk_env)
     }
 }
 
@@ -93,8 +109,7 @@ pub struct AppContextBuilder {
     terminal_operations: Option<Arc<dyn TerminalOperations>>,
     tsk_client: Option<Arc<dyn TskClient>>,
     tsk_config: Option<Arc<TskConfig>>,
-    #[cfg(test)]
-    tsk_options: Option<tsk_config::TskOptions>,
+    tsk_env: Option<Arc<TskEnv>>,
 }
 
 impl Default for AppContextBuilder {
@@ -115,8 +130,7 @@ impl AppContextBuilder {
             terminal_operations: None,
             tsk_client: None,
             tsk_config: None,
-            #[cfg(test)]
-            tsk_options: None,
+            tsk_env: None,
         }
     }
 
@@ -180,24 +194,21 @@ impl AppContextBuilder {
         self
     }
 
-    /// Configure the TSK configuration for this context
+    /// Configure the TSK environment for this context
     ///
-    /// Used in tests to provide custom TSK configuration
+    /// Used in tests to provide custom TSK environment
     #[allow(dead_code)]
-    pub fn with_tsk_config(mut self, tsk_config: Arc<TskConfig>) -> Self {
-        self.tsk_config = Some(tsk_config);
+    pub fn with_tsk_env(mut self, tsk_env: Arc<TskEnv>) -> Self {
+        self.tsk_env = Some(tsk_env);
         self
     }
 
-    /// Configure the TSK options for this context
+    /// Configure the TSK configuration for this context
     ///
-    /// Used in tests to provide custom TSK options. This creates a TskConfig
-    /// with the provided options while using test-safe defaults for paths.
-    #[cfg(test)]
+    /// Used in tests to provide custom TSK configuration.
     #[allow(dead_code)]
-    pub fn with_tsk_options(mut self, options: tsk_config::TskOptions) -> Self {
-        // Defer TskConfig creation to build() - just store the options
-        self.tsk_options = Some(options);
+    pub fn with_tsk_config(mut self, config: TskConfig) -> Self {
+        self.tsk_config = Some(Arc::new(config));
         self
     }
 
@@ -208,29 +219,26 @@ impl AppContextBuilder {
             let temp_dir = Arc::new(TempDir::new().expect("Failed to create temp dir"));
             let temp_path = temp_dir.path();
 
-            let tsk_config = self.tsk_config.unwrap_or_else(|| {
-                // Create test-safe TSK configuration in temp directory
-                let mut builder = TskConfig::builder()
+            let tsk_env = self.tsk_env.unwrap_or_else(|| {
+                // Create test-safe TSK environment in temp directory
+                let env = TskEnv::builder()
                     .with_data_dir(temp_path.join("data").to_path_buf())
                     .with_runtime_dir(temp_path.join("runtime").to_path_buf())
                     .with_config_dir(temp_path.join("config").to_path_buf())
                     .with_claude_config_dir(temp_path.join("claude").to_path_buf())
                     .with_git_user_name("Test User".to_string())
-                    .with_git_user_email("test@example.com".to_string());
-
-                // Apply custom TskOptions if provided
-                if let Some(options) = self.tsk_options {
-                    builder = builder.with_options(options);
-                }
-
-                let config = builder
+                    .with_git_user_email("test@example.com".to_string())
                     .build()
-                    .expect("Failed to initialize test TSK configuration");
-                config
-                    .ensure_directories()
-                    .expect("Failed to create test TSK configuration");
-                Arc::new(config)
+                    .expect("Failed to initialize test TSK environment");
+                env.ensure_directories()
+                    .expect("Failed to create test TSK environment");
+                Arc::new(env)
             });
+
+            // Use provided tsk_config or create default
+            let tsk_config = self
+                .tsk_config
+                .unwrap_or_else(|| Arc::new(TskConfig::default()));
 
             let tsk_client = self.tsk_client.unwrap_or_else(|| {
                 // Use NoOpTskClient by default in tests
@@ -266,24 +274,29 @@ impl AppContextBuilder {
                     .unwrap_or_else(|| Arc::new(terminal::DefaultTerminalOperations::new())),
                 tsk_client,
                 tsk_config,
+                tsk_env,
                 _temp_dir: Some(temp_dir),
             }
         }
 
         #[cfg(not(test))]
         {
-            let tsk_config = self.tsk_config.unwrap_or_else(|| {
-                let config = TskConfig::new().expect("Failed to initialize TSK configuration");
+            let tsk_env = self.tsk_env.unwrap_or_else(|| {
+                let env = TskEnv::new().expect("Failed to initialize TSK environment");
                 // Ensure directories exist
-                config
-                    .ensure_directories()
-                    .expect("Failed to create TSK configuration");
-                Arc::new(config)
+                env.ensure_directories()
+                    .expect("Failed to create TSK environment");
+                Arc::new(env)
             });
+
+            // Load tsk_config from TOML file or use provided/default
+            let tsk_config = self
+                .tsk_config
+                .unwrap_or_else(|| Arc::new(tsk_config::load_config(tsk_env.config_dir())));
 
             let tsk_client = self
                 .tsk_client
-                .unwrap_or_else(|| Arc::new(tsk_client::DefaultTskClient::new(tsk_config.clone())));
+                .unwrap_or_else(|| Arc::new(tsk_client::DefaultTskClient::new(tsk_env.clone())));
 
             let docker_client = self
                 .docker_client
@@ -313,6 +326,7 @@ impl AppContextBuilder {
                     .unwrap_or_else(|| Arc::new(terminal::DefaultTerminalOperations::new())),
                 tsk_client,
                 tsk_config,
+                tsk_env,
             }
         }
     }

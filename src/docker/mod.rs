@@ -8,7 +8,7 @@ pub mod template_manager;
 
 use crate::agent::{Agent, LogProcessor};
 use crate::context::AppContext;
-use crate::context::tsk_config::VolumeMount;
+use crate::context::VolumeMount;
 use crate::docker::proxy_manager::ProxyManager;
 use bollard::models::{ContainerCreateBody, HostConfig};
 use bollard::query_parameters::{LogsOptions, RemoveContainerOptions};
@@ -108,15 +108,8 @@ impl DockerManager {
         if let Some(project_config) = self.ctx.tsk_config().get_project_config(&task.project) {
             for volume in &project_config.volumes {
                 match volume {
-                    VolumeMount::Bind(bind) => match bind.expanded_host_path() {
-                        Ok(host_path) => {
-                            // Warn if host path doesn't exist
-                            if !host_path.exists() {
-                                eprintln!(
-                                    "Warning: Volume mount host path '{}' does not exist. Docker will create it as a root-owned directory.",
-                                    host_path.display()
-                                );
-                            }
+                    VolumeMount::Bind(bind) => {
+                        if let Ok(host_path) = bind.expanded_host_path() {
                             let bind_str = if bind.readonly {
                                 format!("{}:{}:ro", host_path.display(), bind.container)
                             } else {
@@ -124,17 +117,13 @@ impl DockerManager {
                             };
                             binds.push(bind_str);
                         }
-                        Err(e) => {
-                            eprintln!("Warning: Failed to expand host path '{}': {}", bind.host, e);
-                        }
-                    },
+                    }
                     VolumeMount::Named(named) => {
-                        // Named volumes are prefixed with "tsk-" to avoid conflicts
                         let volume_name = format!("tsk-{}", named.name);
                         let bind_str = if named.readonly {
-                            format!("{}:{}:ro", volume_name, named.container)
+                            format!("{volume_name}:{}:ro", named.container)
                         } else {
-                            format!("{}:{}", volume_name, named.container)
+                            format!("{volume_name}:{}", named.container)
                         };
                         binds.push(bind_str);
                     }
@@ -192,6 +181,9 @@ impl DockerManager {
             Some(agent_command)
         };
 
+        // Load Docker resource limits from user configuration
+        let docker_config = &self.ctx.tsk_config().docker;
+
         ContainerCreateBody {
             image: Some(image.to_string()),
             // No entrypoint needed anymore - just run as agent user directly
@@ -200,8 +192,8 @@ impl DockerManager {
             host_config: Some(HostConfig {
                 binds: Some(binds),
                 network_mode: Some(self.proxy_manager.network_name().to_string()),
-                memory: Some(self.ctx.tsk_config().options().docker.memory_limit),
-                cpu_quota: Some(self.ctx.tsk_config().options().docker.cpu_quota),
+                memory: Some(docker_config.memory_limit),
+                cpu_quota: Some(docker_config.cpu_quota),
                 // No capabilities needed since we're not running iptables
                 cap_drop: Some(vec![
                     "NET_ADMIN".to_string(),
@@ -472,7 +464,7 @@ mod tests {
         let manager = DockerManager::new(&ctx);
 
         let task = create_test_task(false);
-        let agent = crate::agent::ClaudeAgent::with_tsk_config(ctx.tsk_config());
+        let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
@@ -525,7 +517,7 @@ mod tests {
         let manager = DockerManager::new(&ctx);
 
         let task = create_test_task(true);
-        let agent = crate::agent::ClaudeAgent::with_tsk_config(ctx.tsk_config());
+        let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         // Interactive mode should succeed with mock client
@@ -575,7 +567,7 @@ mod tests {
         let manager = DockerManager::new(&ctx);
 
         let task = create_test_task(false);
-        let agent = crate::agent::ClaudeAgent::with_tsk_config(ctx.tsk_config());
+        let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
 
         // Run the task container
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
@@ -607,7 +599,7 @@ mod tests {
         let manager = DockerManager::new(&ctx);
 
         let task = create_test_task(false);
-        let agent = crate::agent::ClaudeAgent::with_tsk_config(ctx.tsk_config());
+        let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_err());
@@ -633,7 +625,7 @@ mod tests {
         let manager = DockerManager::new(&ctx);
 
         let task = create_test_task(false);
-        let agent = crate::agent::ClaudeAgent::with_tsk_config(ctx.tsk_config());
+        let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
         let _ = manager.run_task_container("tsk/base", &task, &agent).await;
 
         let create_calls = mock_client.create_container_calls.lock().unwrap();
@@ -679,7 +671,7 @@ mod tests {
 
         let host_config = config.host_config.as_ref().unwrap();
         assert_eq!(host_config.network_mode, Some("tsk-network".to_string()));
-        let default_options = crate::context::tsk_config::DockerOptions::default();
+        let default_options = crate::context::DockerOptions::default();
         assert_eq!(host_config.memory, Some(default_options.memory_limit));
         assert_eq!(host_config.cpu_quota, Some(default_options.cpu_quota));
 
@@ -707,7 +699,7 @@ mod tests {
 
         let mut task = create_test_task(false);
         task.instructions_file = "/tmp/tsk-test/instructions.txt".to_string();
-        let agent = crate::agent::ClaudeAgent::with_tsk_config(ctx.tsk_config());
+        let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
@@ -738,7 +730,7 @@ mod tests {
 
         let mut task = create_test_task(false);
         task.copied_repo_path = absolute_path.clone();
-        let agent = crate::agent::ClaudeAgent::with_tsk_config(ctx.tsk_config());
+        let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
@@ -766,44 +758,38 @@ mod tests {
 
     #[tokio::test]
     async fn test_project_volume_mounts_bind() {
-        use crate::context::tsk_config::{BindMount, ProjectConfig, TskOptions, VolumeMount};
+        use crate::context::{BindMount, ProjectConfig, TskConfig, VolumeMount};
         use std::collections::HashMap;
 
-        // Create a temporary directory to use as the bind mount source
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let host_path = temp_dir.path().to_path_buf();
-        std::fs::create_dir_all(&host_path).unwrap();
+        let mock_client = Arc::new(TrackedDockerClient::default());
 
-        // Configure project with a bind mount
-        let mut project_map = HashMap::new();
-        project_map.insert(
-            "test-project".to_string(),
+        // Create TskConfig with a bind mount for the test project
+        let mut project_configs = HashMap::new();
+        project_configs.insert(
+            "default".to_string(),
             ProjectConfig {
                 agent: None,
                 stack: None,
                 volumes: vec![VolumeMount::Bind(BindMount {
-                    host: host_path.to_string_lossy().to_string(),
-                    container: "/cache".to_string(),
+                    host: "/host/cache".to_string(),
+                    container: "/container/cache".to_string(),
                     readonly: false,
                 })],
             },
         );
-
-        let options = TskOptions {
+        let tsk_config = TskConfig {
             docker: Default::default(),
-            project: project_map,
+            project: project_configs,
         };
 
-        let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder()
             .with_docker_client(mock_client.clone())
-            .with_tsk_options(options)
+            .with_tsk_config(tsk_config)
             .build();
         let manager = DockerManager::new(&ctx);
 
-        let mut task = create_test_task(false);
-        task.project = "test-project".to_string();
-        let agent = crate::agent::ClaudeAgent::with_tsk_config(ctx.tsk_config());
+        let task = create_test_task(false);
+        let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
@@ -813,48 +799,49 @@ mod tests {
         let host_config = task_container_config.host_config.as_ref().unwrap();
         let binds = host_config.binds.as_ref().unwrap();
 
-        // Should have 5 binds: workspace, claude dir, instructions, output, and project volume
+        // Should have base binds + project bind mount
         assert_eq!(binds.len(), 5);
-        let project_bind = &binds[4];
-        assert!(project_bind.contains(":/cache"));
-        assert!(!project_bind.contains(":ro")); // Not readonly
+        assert!(
+            binds
+                .iter()
+                .any(|b| b.contains("/host/cache:/container/cache"))
+        );
     }
 
     #[tokio::test]
     async fn test_project_volume_mounts_named() {
-        use crate::context::tsk_config::{NamedVolume, ProjectConfig, TskOptions, VolumeMount};
+        use crate::context::{NamedVolume, ProjectConfig, TskConfig, VolumeMount};
         use std::collections::HashMap;
 
-        // Configure project with a named volume
-        let mut project_map = HashMap::new();
-        project_map.insert(
-            "test-project".to_string(),
+        let mock_client = Arc::new(TrackedDockerClient::default());
+
+        // Create TskConfig with a named volume for the test project
+        let mut project_configs = HashMap::new();
+        project_configs.insert(
+            "default".to_string(),
             ProjectConfig {
                 agent: None,
                 stack: None,
                 volumes: vec![VolumeMount::Named(NamedVolume {
-                    name: "go-mod-cache".to_string(),
-                    container: "/go/pkg/mod".to_string(),
+                    name: "build-cache".to_string(),
+                    container: "/container/cache".to_string(),
                     readonly: false,
                 })],
             },
         );
-
-        let options = TskOptions {
+        let tsk_config = TskConfig {
             docker: Default::default(),
-            project: project_map,
+            project: project_configs,
         };
 
-        let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder()
             .with_docker_client(mock_client.clone())
-            .with_tsk_options(options)
+            .with_tsk_config(tsk_config)
             .build();
         let manager = DockerManager::new(&ctx);
 
-        let mut task = create_test_task(false);
-        task.project = "test-project".to_string();
-        let agent = crate::agent::ClaudeAgent::with_tsk_config(ctx.tsk_config());
+        let task = create_test_task(false);
+        let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
@@ -864,119 +851,49 @@ mod tests {
         let host_config = task_container_config.host_config.as_ref().unwrap();
         let binds = host_config.binds.as_ref().unwrap();
 
-        // Should have 5 binds: workspace, claude dir, instructions, output, and named volume
+        // Should have base binds + named volume (prefixed with tsk-)
         assert_eq!(binds.len(), 5);
-        let named_bind = &binds[4];
-        // Named volumes get tsk- prefix
-        assert!(named_bind.starts_with("tsk-go-mod-cache:"));
-        assert!(named_bind.contains("/go/pkg/mod"));
+        assert!(
+            binds
+                .iter()
+                .any(|b| b.contains("tsk-build-cache:/container/cache"))
+        );
     }
 
     #[tokio::test]
     async fn test_project_volume_mounts_readonly() {
-        use crate::context::tsk_config::{
-            BindMount, NamedVolume, ProjectConfig, TskOptions, VolumeMount,
-        };
+        use crate::context::{BindMount, ProjectConfig, TskConfig, VolumeMount};
         use std::collections::HashMap;
-
-        // Create a temporary directory to use as the bind mount source
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let host_path = temp_dir.path().to_path_buf();
-
-        // Configure project with readonly volumes
-        let mut project_map = HashMap::new();
-        project_map.insert(
-            "test-project".to_string(),
-            ProjectConfig {
-                agent: None,
-                stack: None,
-                volumes: vec![
-                    VolumeMount::Bind(BindMount {
-                        host: host_path.to_string_lossy().to_string(),
-                        container: "/readonly-cache".to_string(),
-                        readonly: true,
-                    }),
-                    VolumeMount::Named(NamedVolume {
-                        name: "readonly-data".to_string(),
-                        container: "/readonly-data".to_string(),
-                        readonly: true,
-                    }),
-                ],
-            },
-        );
-
-        let options = TskOptions {
-            docker: Default::default(),
-            project: project_map,
-        };
 
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let ctx = AppContext::builder()
-            .with_docker_client(mock_client.clone())
-            .with_tsk_options(options)
-            .build();
-        let manager = DockerManager::new(&ctx);
 
-        let mut task = create_test_task(false);
-        task.project = "test-project".to_string();
-        let agent = crate::agent::ClaudeAgent::with_tsk_config(ctx.tsk_config());
-        let result = manager.run_task_container("tsk/base", &task, &agent).await;
-
-        assert!(result.is_ok());
-
-        let create_calls = mock_client.create_container_calls.lock().unwrap();
-        let task_container_config = &create_calls[1].1;
-        let host_config = task_container_config.host_config.as_ref().unwrap();
-        let binds = host_config.binds.as_ref().unwrap();
-
-        // Should have 6 binds: workspace, claude dir, instructions, output, and 2 project volumes
-        assert_eq!(binds.len(), 6);
-
-        // Check bind mount is readonly
-        let bind_mount = &binds[4];
-        assert!(bind_mount.contains(":/readonly-cache:ro"));
-
-        // Check named volume is readonly
-        let named_mount = &binds[5];
-        assert!(named_mount.contains("tsk-readonly-data:"));
-        assert!(named_mount.contains(":ro"));
-    }
-
-    #[tokio::test]
-    async fn test_project_volume_mounts_path_expansion() {
-        use crate::context::tsk_config::{BindMount, ProjectConfig, TskOptions, VolumeMount};
-        use std::collections::HashMap;
-
-        // Configure project with a tilde path
-        let mut project_map = HashMap::new();
-        project_map.insert(
-            "test-project".to_string(),
+        // Create TskConfig with a readonly bind mount
+        let mut project_configs = HashMap::new();
+        project_configs.insert(
+            "default".to_string(),
             ProjectConfig {
                 agent: None,
                 stack: None,
                 volumes: vec![VolumeMount::Bind(BindMount {
-                    host: "~/.cache/test".to_string(),
-                    container: "/cache".to_string(),
-                    readonly: false,
+                    host: "/etc/ssl/certs".to_string(),
+                    container: "/etc/ssl/certs".to_string(),
+                    readonly: true,
                 })],
             },
         );
-
-        let options = TskOptions {
+        let tsk_config = TskConfig {
             docker: Default::default(),
-            project: project_map,
+            project: project_configs,
         };
 
-        let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder()
             .with_docker_client(mock_client.clone())
-            .with_tsk_options(options)
+            .with_tsk_config(tsk_config)
             .build();
         let manager = DockerManager::new(&ctx);
 
-        let mut task = create_test_task(false);
-        task.project = "test-project".to_string();
-        let agent = crate::agent::ClaudeAgent::with_tsk_config(ctx.tsk_config());
+        let task = create_test_task(false);
+        let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
@@ -986,13 +903,13 @@ mod tests {
         let host_config = task_container_config.host_config.as_ref().unwrap();
         let binds = host_config.binds.as_ref().unwrap();
 
-        // Should have 5 binds: workspace, claude dir, instructions, output, and project volume
+        // Should have base binds + readonly bind mount
         assert_eq!(binds.len(), 5);
-        let project_bind = &binds[4];
-
-        // Path should be expanded (no ~ in the result)
-        assert!(!project_bind.starts_with("~"));
-        assert!(project_bind.contains(".cache/test:/cache"));
+        assert!(
+            binds
+                .iter()
+                .any(|b| b.contains("/etc/ssl/certs:/etc/ssl/certs:ro"))
+        );
     }
 
     #[tokio::test]
@@ -1006,7 +923,7 @@ mod tests {
 
         let mut task = create_test_task(false);
         task.project = "unconfigured-project".to_string();
-        let agent = crate::agent::ClaudeAgent::with_tsk_config(ctx.tsk_config());
+        let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());

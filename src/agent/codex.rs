@@ -1,5 +1,5 @@
 use super::Agent;
-use crate::context::tsk_config::TskConfig;
+use crate::context::tsk_env::TskEnv;
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -10,26 +10,26 @@ pub use codex_log_processor::CodexLogProcessor;
 
 /// Codex AI agent implementation
 pub struct CodexAgent {
-    tsk_config: Option<Arc<TskConfig>>,
+    tsk_env: Option<Arc<TskEnv>>,
     version_cache: OnceLock<String>,
 }
 
 impl CodexAgent {
-    /// Creates a new CodexAgent with the provided TSK configuration
+    /// Creates a new CodexAgent with the provided TSK environment
     ///
     /// # Arguments
-    /// * `tsk_config` - Arc reference to the TskConfig instance containing environment settings
-    pub fn with_tsk_config(tsk_config: Arc<TskConfig>) -> Self {
+    /// * `tsk_env` - Arc reference to the TskEnv instance containing environment settings
+    pub fn with_tsk_env(tsk_env: Arc<TskEnv>) -> Self {
         Self {
-            tsk_config: Some(tsk_config),
+            tsk_env: Some(tsk_env),
             version_cache: OnceLock::new(),
         }
     }
 
     fn get_codex_config_dir(&self) -> PathBuf {
-        self.tsk_config
+        self.tsk_env
             .as_ref()
-            .expect("TskConfig should always be present")
+            .expect("TskEnv should always be present")
             .codex_config_dir()
             .to_path_buf()
     }
@@ -37,9 +37,7 @@ impl CodexAgent {
 
 impl Default for CodexAgent {
     fn default() -> Self {
-        Self::with_tsk_config(Arc::new(
-            TskConfig::new().expect("Failed to create TskConfig"),
-        ))
+        Self::with_tsk_env(Arc::new(TskEnv::new().expect("Failed to create TskEnv")))
     }
 }
 
@@ -175,8 +173,8 @@ mod tests {
     #[test]
     fn test_codex_agent_properties() {
         let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
-        let agent = CodexAgent::with_tsk_config(tsk_config);
+        let tsk_env = app_context.tsk_env();
+        let agent = CodexAgent::with_tsk_env(tsk_env);
 
         // Test name
         assert_eq!(agent.name(), "codex");
@@ -204,8 +202,8 @@ mod tests {
     #[test]
     fn test_codex_agent_build_command() {
         let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
-        let agent = CodexAgent::with_tsk_config(tsk_config);
+        let tsk_env = app_context.tsk_env();
+        let agent = CodexAgent::with_tsk_env(tsk_env);
 
         // Test non-interactive mode with full path
         let command = agent.build_command("/tmp/instructions.md", false);
@@ -248,8 +246,8 @@ mod tests {
         // In test mode, validation is skipped so this test just verifies
         // that validate() returns Ok in test environments
         let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
-        let agent = CodexAgent::with_tsk_config(tsk_config);
+        let tsk_env = app_context.tsk_env();
+        let agent = CodexAgent::with_tsk_env(tsk_env);
         let result = agent.validate().await;
 
         // In test mode, validation is skipped
@@ -259,8 +257,8 @@ mod tests {
     #[test]
     fn test_codex_agent_create_log_processor() {
         let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
-        let agent = CodexAgent::with_tsk_config(tsk_config);
+        let tsk_env = app_context.tsk_env();
+        let agent = CodexAgent::with_tsk_env(tsk_env);
 
         let log_processor = agent.create_log_processor(None);
 
@@ -272,8 +270,8 @@ mod tests {
     #[test]
     fn test_codex_agent_version() {
         let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
-        let agent = CodexAgent::with_tsk_config(tsk_config);
+        let tsk_env = app_context.tsk_env();
+        let agent = CodexAgent::with_tsk_env(tsk_env);
 
         // In test mode, should return test version
         let version = agent.version();

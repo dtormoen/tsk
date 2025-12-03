@@ -1,5 +1,5 @@
 use crate::context::file_system::FileSystemOperations;
-use crate::context::tsk_config::TskConfig;
+use crate::context::tsk_env::TskEnv;
 use crate::task::{Task, TaskStatus};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -39,8 +39,8 @@ pub struct JsonTaskStorage {
 }
 
 impl JsonTaskStorage {
-    pub fn new(tsk_config: Arc<TskConfig>, file_system: Arc<dyn FileSystemOperations>) -> Self {
-        let file_path = tsk_config.tasks_file();
+    pub fn new(tsk_env: Arc<TskEnv>, file_system: Arc<dyn FileSystemOperations>) -> Self {
+        let file_path = tsk_env.tasks_file();
 
         Self {
             file_path,
@@ -185,10 +185,10 @@ impl TaskStorage for JsonTaskStorage {
 
 // Factory function for getting task storage
 pub fn get_task_storage(
-    tsk_config: Arc<TskConfig>,
+    tsk_env: Arc<TskEnv>,
     file_system: Arc<dyn FileSystemOperations>,
 ) -> Box<dyn TaskStorage> {
-    let storage = JsonTaskStorage::new(tsk_config, file_system);
+    let storage = JsonTaskStorage::new(tsk_env, file_system);
     Box::new(storage)
 }
 
@@ -202,16 +202,16 @@ mod tests {
     #[tokio::test]
     async fn test_json_task_storage() {
         let ctx = AppContext::builder().build();
-        let tsk_config = ctx.tsk_config();
-        tsk_config.ensure_directories().unwrap();
+        let tsk_env = ctx.tsk_env();
+        tsk_env.ensure_directories().unwrap();
 
         let file_system = Arc::new(DefaultFileSystem);
-        let storage = JsonTaskStorage::new(tsk_config.clone(), file_system);
+        let storage = JsonTaskStorage::new(tsk_env.clone(), file_system);
 
         // Test adding a task
         let task = Task::new(
             "abcd1234".to_string(),
-            tsk_config.data_dir().to_path_buf(),
+            tsk_env.data_dir().to_path_buf(),
             "test-task".to_string(),
             "feature".to_string(),
             "instructions.md".to_string(),
@@ -221,7 +221,7 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            tsk_config.data_dir().to_path_buf(),
+            tsk_env.data_dir().to_path_buf(),
             false,
         );
 
@@ -252,7 +252,7 @@ mod tests {
         // Test deleting tasks by status
         let task1 = Task::new(
             "efgh5678".to_string(),
-            tsk_config.data_dir().to_path_buf(),
+            tsk_env.data_dir().to_path_buf(),
             "task1".to_string(),
             "feature".to_string(),
             "instructions.md".to_string(),
@@ -262,12 +262,12 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            tsk_config.data_dir().to_path_buf(),
+            tsk_env.data_dir().to_path_buf(),
             false,
         );
         let mut task2 = Task::new(
             "ijkl9012".to_string(),
-            tsk_config.data_dir().to_path_buf(),
+            tsk_env.data_dir().to_path_buf(),
             "task2".to_string(),
             "bug-fix".to_string(),
             "instructions.md".to_string(),
@@ -277,13 +277,13 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            tsk_config.data_dir().to_path_buf(),
+            tsk_env.data_dir().to_path_buf(),
             false,
         );
         task2.status = TaskStatus::Complete;
         let mut task3 = Task::new(
             "mnop3456".to_string(),
-            tsk_config.data_dir().to_path_buf(),
+            tsk_env.data_dir().to_path_buf(),
             "task3".to_string(),
             "refactor".to_string(),
             "instructions.md".to_string(),
@@ -293,7 +293,7 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            tsk_config.data_dir().to_path_buf(),
+            tsk_env.data_dir().to_path_buf(),
             false,
         );
         task3.status = TaskStatus::Failed;

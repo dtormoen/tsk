@@ -24,10 +24,8 @@ impl Command for TemplateListCommand {
         let project_root = find_repository_root(Path::new(".")).ok();
 
         // Create asset manager on-demand
-        let asset_manager = LayeredAssetManager::new_with_standard_layers(
-            project_root.as_deref(),
-            &ctx.tsk_config(),
-        );
+        let asset_manager =
+            LayeredAssetManager::new_with_standard_layers(project_root.as_deref(), &ctx.tsk_env());
 
         // List all available templates
         let templates = asset_manager.list_templates();
@@ -58,7 +56,7 @@ impl Command for TemplateListCommand {
         }
         println!(
             "  2. User: {}/templates/",
-            ctx.tsk_config().config_dir().display()
+            ctx.tsk_env().config_dir().display()
         );
         println!("  3. Built-in: Embedded in TSK binary");
 
@@ -84,7 +82,7 @@ fn determine_template_source(
 
     // Check user level
     let user_template = ctx
-        .tsk_config()
+        .tsk_env()
         .config_dir()
         .join("templates")
         .join(format!("{template_name}.md"));

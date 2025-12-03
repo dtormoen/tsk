@@ -9,21 +9,21 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::assets::AssetManager;
-use crate::context::tsk_config::TskConfig;
+use crate::context::tsk_env::TskEnv;
 use crate::docker::layers::{DockerLayer, DockerLayerContent, DockerLayerType};
 
 /// Manages Docker templates and layer composition
 pub struct DockerTemplateManager {
     asset_manager: Arc<dyn AssetManager>,
-    tsk_config: Arc<TskConfig>,
+    tsk_env: Arc<TskEnv>,
 }
 
 impl DockerTemplateManager {
     /// Creates a new DockerTemplateManager
-    pub fn new(asset_manager: Arc<dyn AssetManager>, tsk_config: Arc<TskConfig>) -> Self {
+    pub fn new(asset_manager: Arc<dyn AssetManager>, tsk_env: Arc<TskEnv>) -> Self {
         Self {
             asset_manager,
-            tsk_config,
+            tsk_env,
         }
     }
 
@@ -72,7 +72,7 @@ impl DockerTemplateManager {
         }
 
         // Check user directory
-        let user_docker_dir = self.tsk_config.config_dir().join("dockerfiles");
+        let user_docker_dir = self.tsk_env.config_dir().join("dockerfiles");
         if user_docker_dir.exists() {
             self.scan_directory_for_layers(&user_docker_dir, &layer_type, &mut layers);
         }
@@ -227,9 +227,9 @@ mod tests {
 
     fn create_test_manager() -> DockerTemplateManager {
         let ctx = AppContext::builder().build();
-        let tsk_config = ctx.tsk_config();
+        let tsk_env = ctx.tsk_env();
 
-        DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), tsk_config)
+        DockerTemplateManager::new(Arc::new(EmbeddedAssetManager), tsk_env)
     }
 
     #[test]

@@ -36,9 +36,9 @@ impl DockerImageManager {
     pub fn new(ctx: &AppContext, project_root: Option<&std::path::Path>) -> Self {
         let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
             project_root,
-            &ctx.tsk_config(),
+            &ctx.tsk_env(),
         ));
-        let template_manager = DockerTemplateManager::new(asset_manager.clone(), ctx.tsk_config());
+        let template_manager = DockerTemplateManager::new(asset_manager.clone(), ctx.tsk_env());
         let composer = DockerComposer::new(asset_manager);
 
         Self {
@@ -250,14 +250,14 @@ impl DockerImageManager {
             self.print_dry_run_output(&composed, stack, agent, project);
         } else {
             // Normal mode: build the image
-            // Get git configuration from TskConfig
-            let tsk_config = self.ctx.tsk_config();
-            let git_user_name = tsk_config.git_user_name();
-            let git_user_email = tsk_config.git_user_email();
+            // Get git configuration from TskEnv
+            let tsk_env = self.ctx.tsk_env();
+            let git_user_name = tsk_env.git_user_name();
+            let git_user_email = tsk_env.git_user_email();
 
             // Get agent version if available
             let agent_version = if let Ok(agent_instance) =
-                crate::agent::AgentProvider::get_agent(agent, self.ctx.tsk_config())
+                crate::agent::AgentProvider::get_agent(agent, self.ctx.tsk_env())
             {
                 Some(agent_instance.version())
             } else {

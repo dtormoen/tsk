@@ -1,4 +1,4 @@
-use crate::context::tsk_config::TskConfig;
+use crate::context::tsk_env::TskEnv;
 use crate::server::protocol::{Request, Response};
 use crate::task::{Task, TaskStatus};
 use async_trait::async_trait;
@@ -46,9 +46,9 @@ pub struct DefaultTskClient {
 
 impl DefaultTskClient {
     /// Create a new TSK client
-    pub fn new(tsk_config: Arc<TskConfig>) -> Self {
+    pub fn new(tsk_env: Arc<TskEnv>) -> Self {
         Self {
-            socket_path: tsk_config.socket_path(),
+            socket_path: tsk_env.socket_path(),
         }
     }
 
@@ -178,10 +178,10 @@ mod tests {
     #[tokio::test]
     async fn test_client_creation() {
         let ctx = AppContext::builder().build();
-        let config = ctx.tsk_config();
-        config.ensure_directories().unwrap();
+        let tsk_env = ctx.tsk_env();
+        tsk_env.ensure_directories().unwrap();
 
-        let client = DefaultTskClient::new(config);
+        let client = DefaultTskClient::new(tsk_env);
 
         // Server should not be available without starting it
         assert!(!client.is_server_available().await);
@@ -194,10 +194,10 @@ mod tests {
         // The actual EOF scenario is tested implicitly when the server closes
         // connections without sending data, which was the original bug.
         let ctx = AppContext::builder().build();
-        let config = ctx.tsk_config();
-        config.ensure_directories().unwrap();
+        let tsk_env = ctx.tsk_env();
+        tsk_env.ensure_directories().unwrap();
 
-        let client = DefaultTskClient::new(config);
+        let client = DefaultTskClient::new(tsk_env);
 
         // Attempting to list tasks when server is not running should fail gracefully
         let result = client.list_tasks().await;

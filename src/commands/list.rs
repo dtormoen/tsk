@@ -40,7 +40,7 @@ impl Command for ListCommand {
                     eprintln!("Falling back to direct file read...");
 
                     // Fall back to direct storage
-                    let storage = get_task_storage(ctx.tsk_config(), ctx.file_system());
+                    let storage = get_task_storage(ctx.tsk_env(), ctx.file_system());
                     storage
                         .list_tasks()
                         .await
@@ -49,7 +49,7 @@ impl Command for ListCommand {
             }
         } else {
             // Server not available, read directly
-            let storage = get_task_storage(ctx.tsk_config(), ctx.file_system());
+            let storage = get_task_storage(ctx.tsk_env(), ctx.file_system());
             storage
                 .list_tasks()
                 .await
@@ -119,8 +119,8 @@ mod tests {
     async fn setup_test_environment_with_tasks(task_count: usize) -> anyhow::Result<AppContext> {
         // Create AppContext with test defaults
         let ctx = AppContext::builder().build();
-        let config = ctx.tsk_config();
-        config.ensure_directories()?;
+        let tsk_env = ctx.tsk_env();
+        tsk_env.ensure_directories()?;
 
         // Create test repository for task data (but not for the command execution context)
         let test_repo = TestGitRepository::new()?;
@@ -132,7 +132,7 @@ mod tests {
         let mut tasks_json = Vec::new();
         for i in 0..task_count {
             let task_id = format!("task-{}", i + 1);
-            let task_dir_path = config.task_dir(&task_id, &repo_hash);
+            let task_dir_path = tsk_env.task_dir(&task_id, &repo_hash);
             std::fs::create_dir_all(&task_dir_path)?;
 
             let instructions_path = task_dir_path.join("instructions.md");
@@ -161,7 +161,7 @@ mod tests {
 
         // Write tasks.json
         let tasks_json_content = format!("[{}]", tasks_json.join(","));
-        let tasks_file_path = config.tasks_file();
+        let tasks_file_path = tsk_env.tasks_file();
         if let Some(parent) = tasks_file_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -191,11 +191,11 @@ mod tests {
     #[tokio::test]
     async fn test_list_command_verifies_task_counts() {
         let ctx = setup_test_environment_with_tasks(8).await.unwrap();
-        let config = ctx.tsk_config();
+        let tsk_env = ctx.tsk_env();
 
         // Verify the tasks were created correctly
         let file_system = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(config, file_system);
+        let storage = get_task_storage(tsk_env, file_system);
         let tasks = storage.list_tasks().await.unwrap();
 
         assert_eq!(tasks.len(), 8);

@@ -54,7 +54,7 @@ impl RepoManager {
 
         // Create the task directory structure in centralized location
         let repo_hash = crate::storage::get_repo_hash(repo_root);
-        let task_dir = self.ctx.tsk_config().task_dir(task_dir_name, &repo_hash);
+        let task_dir = self.ctx.tsk_env().task_dir(task_dir_name, &repo_hash);
         let repo_path = task_dir.join("repo");
 
         // Create directories if they don't exist

@@ -5,7 +5,7 @@
 
 use crate::context::AppContext;
 use crate::context::docker_client::DockerClient;
-use crate::context::tsk_config::TskConfig;
+use crate::context::tsk_env::TskEnv;
 use anyhow::{Context, Result};
 use bollard::models::{ContainerCreateBody, HostConfig};
 use bollard::query_parameters::RemoveContainerOptions;
@@ -33,7 +33,7 @@ const PROXY_PORT: &str = "3128/tcp";
 /// configuration instead of the default embedded one.
 pub struct ProxyManager {
     docker_client: Arc<dyn DockerClient>,
-    tsk_config: Arc<TskConfig>,
+    tsk_env: Arc<TskEnv>,
 }
 
 impl ProxyManager {
@@ -44,7 +44,7 @@ impl ProxyManager {
     pub fn new(ctx: &AppContext) -> Self {
         Self {
             docker_client: ctx.docker_client(),
-            tsk_config: ctx.tsk_config(),
+            tsk_env: ctx.tsk_env(),
         }
     }
 
@@ -106,7 +106,7 @@ impl ProxyManager {
             .context("Failed to extract proxy Dockerfile")?;
 
         // Check for custom squid.conf in config directory
-        let custom_squid_conf_path = self.tsk_config.config_dir().join("squid.conf");
+        let custom_squid_conf_path = self.tsk_env.config_dir().join("squid.conf");
         if custom_squid_conf_path.exists() {
             println!(
                 "Using custom squid.conf from {}",
@@ -776,7 +776,7 @@ mod tests {
             .build();
 
         // Create a custom squid.conf file in the config directory
-        let custom_squid_conf = ctx.tsk_config().config_dir().join("squid.conf");
+        let custom_squid_conf = ctx.tsk_env().config_dir().join("squid.conf");
         std::fs::write(
             &custom_squid_conf,
             "# Custom squid configuration\nhttp_port 3128\n",

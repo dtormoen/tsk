@@ -1,4 +1,4 @@
-use crate::context::tsk_config::TskConfig;
+use crate::context::tsk_env::TskEnv;
 use is_terminal::IsTerminal;
 use std::io::{self, Write};
 #[cfg(test)]
@@ -19,7 +19,7 @@ pub struct DefaultTerminalOperations {
     state: Mutex<TerminalState>,
     #[cfg(test)]
     #[allow(dead_code)]
-    tsk_config: Option<Arc<TskConfig>>,
+    tsk_env: Option<Arc<TskEnv>>,
 }
 
 struct TerminalState {
@@ -38,14 +38,14 @@ impl DefaultTerminalOperations {
                 original_title: None,
             }),
             #[cfg(test)]
-            tsk_config: None,
+            tsk_env: None,
         }
     }
 
-    /// Create a new terminal operations instance with TSK configuration
+    /// Create a new terminal operations instance with TSK environment
     #[cfg(test)]
-    pub fn with_tsk_config(tsk_config: Arc<TskConfig>) -> Self {
-        let supported = Self::is_supported(Some(&tsk_config));
+    pub fn with_tsk_env(tsk_env: Arc<TskEnv>) -> Self {
+        let supported = Self::is_supported(Some(&tsk_env));
 
         Self {
             state: Mutex::new(TerminalState {
@@ -53,20 +53,20 @@ impl DefaultTerminalOperations {
                 original_title: None,
             }),
             #[cfg(test)]
-            tsk_config: Some(tsk_config),
+            tsk_env: Some(tsk_env),
         }
     }
 
     /// Check if terminal title updates are supported
-    fn is_supported(tsk_config: Option<&TskConfig>) -> bool {
+    fn is_supported(tsk_env: Option<&TskEnv>) -> bool {
         // Check if we're in a TTY
         if !std::io::stdout().is_terminal() {
             return false;
         }
 
         // Check for common terminal environment variables
-        let term = if let Some(config) = tsk_config {
-            config.terminal_type().map(|s| s.to_string())
+        let term = if let Some(env) = tsk_env {
+            env.terminal_type().map(|s| s.to_string())
         } else {
             std::env::var("TERM").ok()
         };
@@ -167,44 +167,43 @@ mod tests {
 
     #[test]
     fn test_terminal_support_detection() {
-        use crate::context::tsk_config::TskConfig;
+        use crate::context::tsk_env::TskEnv;
 
         // Test with xterm-256color terminal
-        let config_xterm = TskConfig::builder()
+        let env_xterm = TskEnv::builder()
             .with_terminal_type(Some("xterm-256color".to_string()))
             .with_git_user_name("Test User".to_string())
             .with_git_user_email("test@example.com".to_string())
             .build()
             .unwrap();
         assert!(
-            DefaultTerminalOperations::is_supported(Some(&config_xterm))
+            DefaultTerminalOperations::is_supported(Some(&env_xterm))
                 || !std::io::stdout().is_terminal()
         );
 
         // Test with dumb terminal
-        let config_dumb = TskConfig::builder()
+        let env_dumb = TskEnv::builder()
             .with_terminal_type(Some("dumb".to_string()))
             .with_git_user_name("Test User".to_string())
             .with_git_user_email("test@example.com".to_string())
             .build()
             .unwrap();
-        assert!(!DefaultTerminalOperations::is_supported(Some(&config_dumb)));
+        assert!(!DefaultTerminalOperations::is_supported(Some(&env_dumb)));
 
         // Test with no terminal type set
-        let config_none = TskConfig::builder()
+        let env_none = TskEnv::builder()
             .with_terminal_type(None)
             .with_git_user_name("Test User".to_string())
             .with_git_user_email("test@example.com".to_string())
             .build()
             .unwrap();
-        assert!(!DefaultTerminalOperations::is_supported(Some(&config_none)));
+        assert!(!DefaultTerminalOperations::is_supported(Some(&env_none)));
 
-        // Test terminal operations with TSK configuration
-        let terminal_with_config =
-            DefaultTerminalOperations::with_tsk_config(Arc::new(config_xterm));
+        // Test terminal operations with TSK environment
+        let terminal_with_env = DefaultTerminalOperations::with_tsk_env(Arc::new(env_xterm));
         // Should not panic
-        terminal_with_config.set_title("Test");
-        terminal_with_config.restore_title();
+        terminal_with_env.set_title("Test");
+        terminal_with_env.restore_title();
     }
 
     #[test]

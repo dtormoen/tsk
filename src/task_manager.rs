@@ -5,7 +5,7 @@ use crate::task_storage::{TaskStorage, get_task_storage};
 use std::sync::Arc;
 
 #[cfg(test)]
-use crate::context::tsk_config::TskConfig;
+use crate::context::tsk_env::TskEnv;
 
 /// Manages task execution and storage operations.
 ///
@@ -32,7 +32,7 @@ impl TaskManager {
 
         Ok(Self {
             task_runner,
-            task_storage: get_task_storage(ctx.tsk_config(), ctx.file_system()),
+            task_storage: get_task_storage(ctx.tsk_env(), ctx.file_system()),
             file_system: ctx.file_system(),
         })
     }
@@ -231,9 +231,9 @@ mod tests {
     use crate::test_utils::TestGitRepository;
     use std::sync::Arc;
 
-    /// Helper function to set up a test environment with TSK configuration, git repository, and AppContext
-    async fn setup_test_environment()
-    -> anyhow::Result<(Arc<TskConfig>, TestGitRepository, AppContext)> {
+    /// Helper function to set up a test environment with TSK environment, git repository, and AppContext
+    async fn setup_test_environment() -> anyhow::Result<(Arc<TskEnv>, TestGitRepository, AppContext)>
+    {
         // Create a test git repository
         let test_repo = TestGitRepository::new()?;
         test_repo.init_with_commit()?;
@@ -241,20 +241,20 @@ mod tests {
         // Create AppContext - automatically gets test defaults
         let ctx = AppContext::builder().build();
 
-        // Get the TSK configuration from the context
-        let config = ctx.tsk_config();
+        // Get the TSK environment from the context
+        let tsk_env = ctx.tsk_env();
 
-        Ok((config, test_repo, ctx))
+        Ok((tsk_env, test_repo, ctx))
     }
 
     /// Helper function to set up task directory structure with files
     async fn setup_task_directory(
-        config: &TskConfig,
+        tsk_env: &TskEnv,
         task_id: &str,
         repo_hash: &str,
         instructions_content: &str,
     ) -> anyhow::Result<std::path::PathBuf> {
-        let task_dir_path = config.task_dir(task_id, repo_hash);
+        let task_dir_path = tsk_env.task_dir(task_id, repo_hash);
         std::fs::create_dir_all(&task_dir_path)?;
 
         let instructions_path = task_dir_path.join("instructions.md");
@@ -274,12 +274,12 @@ mod tests {
 
         // Create AppContext - automatically gets test defaults
         let ctx = AppContext::builder().build();
-        let config = ctx.tsk_config();
+        let tsk_env = ctx.tsk_env();
 
         // Create a task
         let task_id = "test-task-123".to_string();
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
-        let task_dir_path = config.task_dir(&task_id, &repo_hash);
+        let task_dir_path = tsk_env.task_dir(&task_id, &repo_hash);
         let copied_repo_path = task_dir_path.join("repo");
 
         // Create the task directory and file
@@ -287,7 +287,7 @@ mod tests {
         std::fs::write(task_dir_path.join("test.txt"), "test content").unwrap();
 
         // Create tasks.json with the task
-        let tasks_json_path = config.tasks_file();
+        let tasks_json_path = tsk_env.tasks_file();
         let task_json = format!(
             r#"[{{"id":"{}","repo_root":"{}","name":"test-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude","timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
             task_id,
@@ -640,10 +640,10 @@ mod tests {
     async fn test_with_storage_no_git_repo() {
         // Create AppContext - automatically gets test defaults
         let ctx = AppContext::builder().build();
-        let config = ctx.tsk_config();
+        let tsk_env = ctx.tsk_env();
 
         // Create empty tasks.json
-        let tasks_json_path = config.tasks_file();
+        let tasks_json_path = tsk_env.tasks_file();
         if let Some(parent) = tasks_json_path.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }

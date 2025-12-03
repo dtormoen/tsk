@@ -459,7 +459,7 @@ mod tests {
     async fn test_scheduler_lifecycle() {
         let ctx = AppContext::builder().build();
         let storage = Arc::new(Mutex::new(get_task_storage(
-            ctx.tsk_config(),
+            ctx.tsk_env(),
             ctx.file_system(),
         )));
 
@@ -486,16 +486,16 @@ mod tests {
     async fn test_scheduler_processes_tasks() {
         // Test that scheduler processes tasks without deadlock and can handle multiple tasks
         let ctx = AppContext::builder().build();
-        let config = ctx.tsk_config();
+        let tsk_env = ctx.tsk_env();
 
         let (test_repo, commit_sha) = setup_test_repo().unwrap();
 
         // Create two tasks
-        let task1 = create_test_task("task-1", test_repo.path(), &commit_sha, config.data_dir());
-        let task2 = create_test_task("task-2", test_repo.path(), &commit_sha, config.data_dir());
+        let task1 = create_test_task("task-1", test_repo.path(), &commit_sha, tsk_env.data_dir());
+        let task2 = create_test_task("task-2", test_repo.path(), &commit_sha, tsk_env.data_dir());
 
         // Set up storage with the first task
-        let storage = get_task_storage(config, ctx.file_system());
+        let storage = get_task_storage(tsk_env, ctx.file_system());
         storage.add_task(task1.clone()).await.unwrap();
 
         let storage = Arc::new(Mutex::new(storage));
@@ -554,7 +554,7 @@ mod tests {
         let ctx = Arc::new(AppContext::builder().build());
 
         let storage = Arc::new(Mutex::new(get_task_storage(
-            ctx.tsk_config(),
+            ctx.tsk_env(),
             ctx.file_system(),
         )));
 
@@ -594,7 +594,7 @@ mod tests {
         // Test that the scheduler doesn't schedule the same task twice
         let ctx = AppContext::builder().build();
         let storage = Arc::new(Mutex::new(get_task_storage(
-            ctx.tsk_config(),
+            ctx.tsk_env(),
             ctx.file_system(),
         )));
         let quit_signal = Arc::new(tokio::sync::Notify::new());

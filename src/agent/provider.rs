@@ -1,23 +1,23 @@
 use super::{Agent, ClaudeAgent, CodexAgent, NoOpAgent};
-use crate::context::tsk_config::TskConfig;
+use crate::context::tsk_env::TskEnv;
 use std::sync::Arc;
 
 /// Provider for creating and managing AI agents
 pub struct AgentProvider;
 
 impl AgentProvider {
-    /// Get an agent by name with TSK configuration for configuration
+    /// Get an agent by name with TSK environment for configuration
     ///
     /// # Arguments
     /// * `name` - The name of the agent to create
-    /// * `tsk_config` - TSK configuration containing environment settings
+    /// * `tsk_env` - TSK environment containing environment settings
     ///
     /// # Returns
     /// An `Arc<dyn Agent>` for the requested agent type
-    pub fn get_agent(name: &str, tsk_config: Arc<TskConfig>) -> anyhow::Result<Arc<dyn Agent>> {
+    pub fn get_agent(name: &str, tsk_env: Arc<TskEnv>) -> anyhow::Result<Arc<dyn Agent>> {
         match name {
-            "claude" => Ok(Arc::new(ClaudeAgent::with_tsk_config(tsk_config))),
-            "codex" => Ok(Arc::new(CodexAgent::with_tsk_config(tsk_config))),
+            "claude" => Ok(Arc::new(ClaudeAgent::with_tsk_env(tsk_env))),
+            "codex" => Ok(Arc::new(CodexAgent::with_tsk_env(tsk_env))),
             "no-op" => Ok(Arc::new(NoOpAgent)),
             _ => Err(anyhow::anyhow!("Unknown agent: {}", name)),
         }
@@ -48,8 +48,8 @@ mod tests {
     fn test_agent_provider_get_agent() {
         // Test getting a valid agent
         let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
-        let agent = AgentProvider::get_agent("claude", tsk_config);
+        let tsk_env = app_context.tsk_env();
+        let agent = AgentProvider::get_agent("claude", tsk_env);
         assert!(agent.is_ok());
         let agent = agent.unwrap();
         assert_eq!(agent.name(), "claude");
@@ -59,8 +59,8 @@ mod tests {
     fn test_agent_provider_get_invalid_agent() {
         // Test getting an invalid agent
         let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
-        let agent = AgentProvider::get_agent("invalid-agent", tsk_config);
+        let tsk_env = app_context.tsk_env();
+        let agent = AgentProvider::get_agent("invalid-agent", tsk_env);
         assert!(agent.is_err());
         let err = agent.err().unwrap();
         assert!(err.to_string().contains("Unknown agent"));
@@ -90,8 +90,8 @@ mod tests {
     fn test_agent_provider_get_codex_agent() {
         // Test getting the codex agent
         let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
-        let agent = AgentProvider::get_agent("codex", tsk_config);
+        let tsk_env = app_context.tsk_env();
+        let agent = AgentProvider::get_agent("codex", tsk_env);
         assert!(agent.is_ok());
         let agent = agent.unwrap();
         assert_eq!(agent.name(), "codex");
@@ -101,8 +101,8 @@ mod tests {
     fn test_agent_provider_get_no_op_agent() {
         // Test getting the no-op agent
         let app_context = AppContext::builder().build();
-        let tsk_config = app_context.tsk_config();
-        let agent = AgentProvider::get_agent("no-op", tsk_config);
+        let tsk_env = app_context.tsk_env();
+        let agent = AgentProvider::get_agent("no-op", tsk_env);
         assert!(agent.is_ok());
         let agent = agent.unwrap();
         assert_eq!(agent.name(), "no-op");

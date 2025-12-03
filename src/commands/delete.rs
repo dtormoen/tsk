@@ -63,8 +63,8 @@ mod tests {
     ) -> anyhow::Result<(AppContext, TestGitRepository)> {
         // Create AppContext with test defaults
         let ctx = AppContext::builder().build();
-        let config = ctx.tsk_config();
-        config.ensure_directories()?;
+        let tsk_env = ctx.tsk_env();
+        tsk_env.ensure_directories()?;
 
         // Create a test git repository
         let test_repo = TestGitRepository::new()?;
@@ -75,7 +75,7 @@ mod tests {
         // Create tasks
         let mut tasks_json = Vec::new();
         for (i, task_id) in task_ids.iter().enumerate() {
-            let task_dir_path = config.task_dir(task_id, &repo_hash);
+            let task_dir_path = tsk_env.task_dir(task_id, &repo_hash);
             std::fs::create_dir_all(&task_dir_path)?;
             std::fs::write(task_dir_path.join("test.txt"), "test content")?;
             std::fs::write(
@@ -97,7 +97,7 @@ mod tests {
 
         // Write tasks.json
         let tasks_json_content = format!("[{}]", tasks_json.join(","));
-        let tasks_file_path = config.tasks_file();
+        let tasks_file_path = tsk_env.tasks_file();
         if let Some(parent) = tasks_file_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -112,7 +112,7 @@ mod tests {
         let (ctx, _test_repo) = setup_test_environment_with_tasks(vec![task_id])
             .await
             .unwrap();
-        let config = ctx.tsk_config();
+        let tsk_env = ctx.tsk_env();
 
         let cmd = DeleteCommand {
             task_ids: vec![task_id.to_string()],
@@ -123,12 +123,12 @@ mod tests {
 
         // Verify task directory is deleted
         let repo_hash = crate::storage::get_repo_hash(_test_repo.path());
-        let task_dir = config.task_dir(task_id, &repo_hash);
+        let task_dir = tsk_env.task_dir(task_id, &repo_hash);
         assert!(!task_dir.exists());
 
         // Verify task is removed from storage
         let file_system = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(config, file_system);
+        let storage = get_task_storage(tsk_env, file_system);
         let task = storage.get_task(task_id).await.unwrap();
         assert!(task.is_none());
     }
@@ -139,7 +139,7 @@ mod tests {
         let (ctx, _test_repo) = setup_test_environment_with_tasks(task_ids.clone())
             .await
             .unwrap();
-        let config = ctx.tsk_config();
+        let tsk_env = ctx.tsk_env();
 
         let cmd = DeleteCommand {
             task_ids: task_ids.iter().map(|s| s.to_string()).collect(),
@@ -151,13 +151,13 @@ mod tests {
         // Verify all task directories are deleted
         let repo_hash = crate::storage::get_repo_hash(_test_repo.path());
         for task_id in &task_ids {
-            let task_dir = config.task_dir(task_id, &repo_hash);
+            let task_dir = tsk_env.task_dir(task_id, &repo_hash);
             assert!(!task_dir.exists());
         }
 
         // Verify all tasks are removed from storage
         let file_system = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(config, file_system);
+        let storage = get_task_storage(tsk_env, file_system);
         for task_id in &task_ids {
             let task = storage.get_task(task_id).await.unwrap();
             assert!(task.is_none());
@@ -170,7 +170,7 @@ mod tests {
         let (ctx, _test_repo) = setup_test_environment_with_tasks(existing_tasks.clone())
             .await
             .unwrap();
-        let config = ctx.tsk_config();
+        let tsk_env = ctx.tsk_env();
 
         // Try to delete both existing and non-existing tasks
         let cmd = DeleteCommand {
@@ -193,7 +193,7 @@ mod tests {
         // Verify existing tasks were still deleted
         let repo_hash = crate::storage::get_repo_hash(_test_repo.path());
         for task_id in &existing_tasks {
-            let task_dir = config.task_dir(task_id, &repo_hash);
+            let task_dir = tsk_env.task_dir(task_id, &repo_hash);
             assert!(!task_dir.exists());
         }
     }

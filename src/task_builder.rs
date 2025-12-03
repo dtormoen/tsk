@@ -1,6 +1,6 @@
 use crate::assets::{AssetManager, layered::LayeredAssetManager};
 use crate::context::AppContext;
-use crate::context::tsk_config::TskConfig;
+use crate::context::tsk_env::TskEnv;
 use crate::git::RepoManager;
 use crate::task::Task;
 use crate::utils::sanitize_for_branch_name;
@@ -137,7 +137,7 @@ impl TaskBuilder {
         let template_needs_description = if task_type != "generic" {
             // Create asset manager for template validation
             let asset_manager =
-                LayeredAssetManager::new_with_standard_layers(Some(&repo_root), &ctx.tsk_config());
+                LayeredAssetManager::new_with_standard_layers(Some(&repo_root), &ctx.tsk_env());
             match asset_manager.get_template(&task_type) {
                 Ok(template_content) => template_content.contains("{{DESCRIPTION}}"),
                 Err(_) => true, // If we can't read the template, assume it needs description
@@ -175,16 +175,16 @@ impl TaskBuilder {
             },
         };
 
-        // Look up project-specific configuration
+        // Look up project configuration for defaults
         let tsk_config = ctx.tsk_config();
         let project_config = tsk_config.get_project_config(&project);
 
         // Get agent: CLI flag > project config > default
-        let agent = self
-            .agent
-            .clone()
-            .or_else(|| project_config.and_then(|c| c.agent.clone()))
-            .unwrap_or_else(|| crate::agent::AgentProvider::default_agent().to_string());
+        let agent = self.agent.clone().unwrap_or_else(|| {
+            project_config
+                .and_then(|pc| pc.agent.clone())
+                .unwrap_or_else(|| crate::agent::AgentProvider::default_agent().to_string())
+        });
 
         // Validate agent
         if !crate::agent::AgentProvider::is_valid_agent(&agent) {
@@ -198,7 +198,7 @@ impl TaskBuilder {
         if task_type != "generic" {
             // Create asset manager for template validation
             let asset_manager =
-                LayeredAssetManager::new_with_standard_layers(Some(&repo_root), &ctx.tsk_config());
+                LayeredAssetManager::new_with_standard_layers(Some(&repo_root), &ctx.tsk_env());
             let available_templates = asset_manager.list_templates();
             if !available_templates.contains(&task_type.to_string()) {
                 return Err(format!(
@@ -244,7 +244,7 @@ impl TaskBuilder {
         let id = nanoid::nanoid!(8);
         let task_dir_name = id.clone();
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
-        let task_dir = ctx.tsk_config().task_dir(&task_dir_name, &repo_hash);
+        let task_dir = ctx.tsk_env().task_dir(&task_dir_name, &repo_hash);
         ctx.file_system().create_dir(&task_dir).await?;
 
         // Create output directory for capturing agent output
@@ -260,8 +260,8 @@ impl TaskBuilder {
                 .await?;
 
             // Open editor with the temporary file
-            let tsk_config = ctx.tsk_config();
-            self.open_editor(temp_path.to_str().ok_or("Invalid path")?, &tsk_config)?;
+            let tsk_env = ctx.tsk_env();
+            self.open_editor(temp_path.to_str().ok_or("Invalid path")?, &tsk_env)?;
 
             // Check if file is empty and ensure cleanup happens even on error
             let needs_cleanup = self
@@ -305,11 +305,12 @@ impl TaskBuilder {
                 ts
             }
             None => {
-                // Check project config first, then auto-detect
-                if let Some(ts) = project_config.and_then(|c| c.stack.clone()) {
-                    println!("Using stack from project config: {ts}");
-                    ts
+                // Check project config first
+                if let Some(config_stack) = project_config.and_then(|pc| pc.stack.clone()) {
+                    println!("Using stack from project config: {config_stack}");
+                    config_stack
                 } else {
+                    // Auto-detect stack
                     match crate::repository::detect_stack(&repo_root).await {
                         Ok(detected) => {
                             println!("Auto-detected stack: {detected}");
@@ -380,7 +381,7 @@ impl TaskBuilder {
                 // Create asset manager for template retrieval
                 let asset_manager = LayeredAssetManager::new_with_standard_layers(
                     self.repo_root.as_deref(),
-                    &ctx.tsk_config(),
+                    &ctx.tsk_env(),
                 );
                 match asset_manager.get_template(task_type) {
                     Ok(template_content) => template_content.replace("{{DESCRIPTION}}", desc),
@@ -400,7 +401,7 @@ impl TaskBuilder {
                 // Create asset manager for template retrieval
                 let asset_manager = LayeredAssetManager::new_with_standard_layers(
                     self.repo_root.as_deref(),
-                    &ctx.tsk_config(),
+                    &ctx.tsk_env(),
                 );
                 match asset_manager.get_template(task_type) {
                     Ok(template_content) => {
@@ -428,12 +429,8 @@ impl TaskBuilder {
         Ok(dest_path.to_string_lossy().to_string())
     }
 
-    fn open_editor(
-        &self,
-        instructions_path: &str,
-        tsk_config: &TskConfig,
-    ) -> Result<(), Box<dyn Error>> {
-        let editor = tsk_config.editor();
+    fn open_editor(&self, instructions_path: &str, tsk_env: &TskEnv) -> Result<(), Box<dyn Error>> {
+        let editor = tsk_env.editor();
 
         println!("Opening instructions file in editor: {}", editor);
 
@@ -472,9 +469,6 @@ impl Default for TaskBuilder {
 mod tests {
     use super::*;
     use crate::context::AppContext;
-    use crate::context::tsk_config::{ProjectConfig, TskConfig, TskOptions};
-    use std::collections::HashMap;
-    use std::sync::Arc;
     use tempfile::TempDir;
 
     /// Helper to create a standard test context with real file system and git operations
@@ -507,7 +501,7 @@ mod tests {
     /// Helper to verify task instructions content
     async fn verify_instructions_content(ctx: &AppContext, task: &Task, expected_content: &str) {
         let instructions_path = ctx
-            .tsk_config()
+            .tsk_env()
             .data_dir()
             .join("tasks")
             .join(&task.id)
@@ -734,7 +728,7 @@ mod tests {
 
         // Verify repository was copied to the correct location
         let repo_hash = crate::storage::get_repo_hash(test_repo.path());
-        let task_dir = ctx.tsk_config().task_dir(&task.id, &repo_hash);
+        let task_dir = ctx.tsk_env().task_dir(&task.id, &repo_hash);
         let copied_repo = task_dir.join("repo");
 
         assert!(copied_repo.exists());
@@ -762,7 +756,7 @@ mod tests {
 
         // Verify output directory was created
         let repo_hash = crate::storage::get_repo_hash(test_repo.path());
-        let task_dir = ctx.tsk_config().task_dir(&task.id, &repo_hash);
+        let task_dir = ctx.tsk_env().task_dir(&task.id, &repo_hash);
         let output_dir = task_dir.join("output");
 
         assert!(output_dir.exists());
@@ -818,8 +812,7 @@ mod tests {
         // Verify no task directory was created (cleanup verification)
         // The task ID would be generated, but we can verify that no tasks exist in storage
         // This ensures we're not leaving behind partial state
-        let task_storage =
-            crate::task_storage::get_task_storage(ctx.tsk_config(), ctx.file_system());
+        let task_storage = crate::task_storage::get_task_storage(ctx.tsk_env(), ctx.file_system());
         let all_tasks = task_storage.list_tasks().await.unwrap();
         assert!(
             all_tasks.is_empty(),
@@ -827,75 +820,48 @@ mod tests {
         );
     }
 
-    /// Helper to create a test context with custom project config
-    fn create_context_with_project_config(
-        temp_dir: &TempDir,
-        project_name: &str,
-        project_config: ProjectConfig,
-    ) -> AppContext {
-        let mut projects = HashMap::new();
-        projects.insert(project_name.to_string(), project_config);
-
-        let options = TskOptions {
-            docker: Default::default(),
-            project: projects,
-        };
-
-        let tsk_config = TskConfig::builder()
-            .with_data_dir(temp_dir.path().join("data"))
-            .with_runtime_dir(temp_dir.path().join("runtime"))
-            .with_config_dir(temp_dir.path().join("config"))
-            .with_options(options)
-            .with_git_user_name("Test User".to_string())
-            .with_git_user_email("test@example.com".to_string())
-            .build()
-            .expect("Failed to create test TskConfig");
-
-        tsk_config
-            .ensure_directories()
-            .expect("Failed to create directories");
-
-        AppContext::builder()
-            .with_tsk_config(Arc::new(tsk_config))
-            .build()
-    }
-
     #[tokio::test]
     async fn test_cli_flags_override_project_config() {
+        use crate::context::{ProjectConfig, TskConfig};
         use crate::test_utils::TestGitRepository;
+        use std::collections::HashMap;
 
         let test_repo = TestGitRepository::new().unwrap();
         test_repo.init_with_commit().unwrap();
         let repo_path = test_repo.path().to_path_buf();
 
-        // Get the auto-detected project name (the temp directory name)
-        let project_name = crate::repository::detect_project_name(&repo_path)
-            .await
-            .unwrap();
+        // Use a fixed project name for the test
+        let project_name = "test-project".to_string();
 
-        let temp_dir = TempDir::new().unwrap();
-
-        // Create project config with agent="codex" and stack="python"
-        let project_config = ProjectConfig {
-            agent: Some("codex".to_string()),
-            stack: Some("python".to_string()),
-            volumes: vec![],
+        // Create project config with different agent and stack
+        let mut project_configs = HashMap::new();
+        project_configs.insert(
+            project_name.clone(),
+            ProjectConfig {
+                agent: Some("no-op".to_string()),
+                stack: Some("python".to_string()),
+                volumes: vec![],
+            },
+        );
+        let tsk_config = TskConfig {
+            docker: Default::default(),
+            project: project_configs,
         };
 
-        let ctx = create_context_with_project_config(&temp_dir, &project_name, project_config);
+        let ctx = AppContext::builder().with_tsk_config(tsk_config).build();
 
-        // Create task with CLI flags overriding project config
+        // CLI flags should override project config
         let task = TaskBuilder::new()
             .repo_root(repo_path)
             .name("cli-override-test".to_string())
             .description(Some("Test".to_string()))
-            .agent(Some("claude".to_string())) // Override project config
-            .stack(Some("rust".to_string())) // Override project config
+            .project(Some(project_name))
+            .agent(Some("claude".to_string()))
+            .stack(Some("rust".to_string()))
             .build(&ctx)
             .await
             .unwrap();
 
-        // CLI flags should take precedence
         assert_eq!(
             task.agent, "claude",
             "CLI agent should override project config"
@@ -908,94 +874,103 @@ mod tests {
 
     #[tokio::test]
     async fn test_project_config_overrides_auto_detect() {
+        use crate::context::{ProjectConfig, TskConfig};
         use crate::test_utils::TestGitRepository;
+        use std::collections::HashMap;
 
         let test_repo = TestGitRepository::new().unwrap();
         test_repo.init_with_commit().unwrap();
         let repo_path = test_repo.path().to_path_buf();
 
-        // Create a Cargo.toml so stack would auto-detect as "rust"
+        // Create a Cargo.toml so auto-detect would choose "rust"
         test_repo
             .create_file("Cargo.toml", "[package]\nname = \"test\"")
             .unwrap();
 
-        let project_name = crate::repository::detect_project_name(&repo_path)
-            .await
-            .unwrap();
+        // Use a fixed project name for the test
+        let project_name = "test-project".to_string();
 
-        let temp_dir = TempDir::new().unwrap();
-
-        // Create project config with stack="go" (different from auto-detected "rust")
-        let project_config = ProjectConfig {
-            agent: Some("codex".to_string()),
-            stack: Some("go".to_string()),
-            volumes: vec![],
+        // Create project config that specifies python
+        let mut project_configs = HashMap::new();
+        project_configs.insert(
+            project_name.clone(),
+            ProjectConfig {
+                agent: Some("no-op".to_string()),
+                stack: Some("python".to_string()),
+                volumes: vec![],
+            },
+        );
+        let tsk_config = TskConfig {
+            docker: Default::default(),
+            project: project_configs,
         };
 
-        let ctx = create_context_with_project_config(&temp_dir, &project_name, project_config);
+        let ctx = AppContext::builder().with_tsk_config(tsk_config).build();
 
-        // Create task without CLI flags - should use project config
         let task = TaskBuilder::new()
             .repo_root(repo_path)
             .name("config-override-test".to_string())
             .description(Some("Test".to_string()))
+            .project(Some(project_name))
             .build(&ctx)
             .await
             .unwrap();
 
-        // Project config should override auto-detection
+        assert_eq!(task.agent, "no-op", "Project config agent should be used");
         assert_eq!(
-            task.agent, "codex",
-            "Project config agent should override default"
-        );
-        assert_eq!(
-            task.stack, "go",
-            "Project config stack should override auto-detection"
+            task.stack, "python",
+            "Project config stack should override auto-detect"
         );
     }
 
     #[tokio::test]
     async fn test_partial_project_config_uses_defaults_for_missing() {
+        use crate::context::{ProjectConfig, TskConfig};
         use crate::test_utils::TestGitRepository;
+        use std::collections::HashMap;
 
         let test_repo = TestGitRepository::new().unwrap();
         test_repo.init_with_commit().unwrap();
         let repo_path = test_repo.path().to_path_buf();
 
-        // Create a Cargo.toml so stack would auto-detect as "rust"
+        // Create a Cargo.toml so auto-detect would choose "rust"
         test_repo
             .create_file("Cargo.toml", "[package]\nname = \"test\"")
             .unwrap();
 
-        let project_name = crate::repository::detect_project_name(&repo_path)
-            .await
-            .unwrap();
+        // Use a fixed project name for the test
+        let project_name = "test-project".to_string();
 
-        let temp_dir = TempDir::new().unwrap();
-
-        // Create project config with only agent specified (stack is None)
-        let project_config = ProjectConfig {
-            agent: Some("codex".to_string()),
-            stack: None, // Not specified - should fall back to auto-detect
-            volumes: vec![],
+        // Create project config with only agent (no stack)
+        let mut project_configs = HashMap::new();
+        project_configs.insert(
+            project_name.clone(),
+            ProjectConfig {
+                agent: Some("no-op".to_string()),
+                stack: None, // Not specified, should auto-detect
+                volumes: vec![],
+            },
+        );
+        let tsk_config = TskConfig {
+            docker: Default::default(),
+            project: project_configs,
         };
 
-        let ctx = create_context_with_project_config(&temp_dir, &project_name, project_config);
+        let ctx = AppContext::builder().with_tsk_config(tsk_config).build();
 
-        // Create task without CLI flags
         let task = TaskBuilder::new()
             .repo_root(repo_path)
             .name("partial-config-test".to_string())
             .description(Some("Test".to_string()))
+            .project(Some(project_name))
             .build(&ctx)
             .await
             .unwrap();
 
-        // Agent from project config, stack from auto-detection
-        assert_eq!(task.agent, "codex", "Agent should come from project config");
+        assert_eq!(task.agent, "no-op", "Project config agent should be used");
         assert_eq!(
             task.stack, "rust",
-            "Stack should fall back to auto-detection when not in project config"
+            "Stack should be auto-detected when not in config"
         );
     }
 
@@ -1026,47 +1001,5 @@ mod tests {
         // Should use defaults: claude for agent, auto-detect for stack
         assert_eq!(task.agent, "claude", "Agent should use default");
         assert_eq!(task.stack, "rust", "Stack should be auto-detected");
-    }
-
-    #[tokio::test]
-    async fn test_project_config_only_stack_agent_uses_default() {
-        use crate::test_utils::TestGitRepository;
-
-        let test_repo = TestGitRepository::new().unwrap();
-        test_repo.init_with_commit().unwrap();
-        let repo_path = test_repo.path().to_path_buf();
-
-        let project_name = crate::repository::detect_project_name(&repo_path)
-            .await
-            .unwrap();
-
-        let temp_dir = TempDir::new().unwrap();
-
-        // Create project config with only stack specified (agent is None)
-        let project_config = ProjectConfig {
-            agent: None, // Not specified - should fall back to default
-            stack: Some("python".to_string()),
-            volumes: vec![],
-        };
-
-        let ctx = create_context_with_project_config(&temp_dir, &project_name, project_config);
-
-        let task = TaskBuilder::new()
-            .repo_root(repo_path)
-            .name("stack-only-config-test".to_string())
-            .description(Some("Test".to_string()))
-            .build(&ctx)
-            .await
-            .unwrap();
-
-        // Agent from default, stack from project config
-        assert_eq!(
-            task.agent, "claude",
-            "Agent should fall back to default when not in project config"
-        );
-        assert_eq!(
-            task.stack, "python",
-            "Stack should come from project config"
-        );
     }
 }

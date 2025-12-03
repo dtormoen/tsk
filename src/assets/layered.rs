@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::assets::{
     AssetManager, embedded::EmbeddedAssetManager, filesystem::FileSystemAssetManager,
 };
-use crate::context::tsk_config::TskConfig;
+use crate::context::tsk_env::TskEnv;
 
 /// A layered implementation of AssetManager that checks multiple sources in priority order
 pub struct LayeredAssetManager {
@@ -24,7 +24,7 @@ impl LayeredAssetManager {
     /// 1. Project-level assets (.tsk/)
     /// 2. User-level assets (~/.config/tsk/)
     /// 3. Built-in assets (embedded)
-    pub fn new_with_standard_layers(project_root: Option<&Path>, tsk_config: &TskConfig) -> Self {
+    pub fn new_with_standard_layers(project_root: Option<&Path>, tsk_env: &TskEnv) -> Self {
         let mut layers: Vec<Arc<dyn AssetManager>> = Vec::new();
 
         // Project layer (highest priority)
@@ -36,7 +36,7 @@ impl LayeredAssetManager {
         }
 
         // User layer - use the entire config directory to support both templates and dockerfiles
-        let user_config_dir = tsk_config.config_dir();
+        let user_config_dir = tsk_env.config_dir();
         if user_config_dir.exists() {
             layers.push(Arc::new(FileSystemAssetManager::new(
                 user_config_dir.to_path_buf(),
@@ -220,7 +220,7 @@ mod tests {
 
         let manager = LayeredAssetManager::new_with_standard_layers(
             Some(temp_dir.path()),
-            &app_context.tsk_config(),
+            &app_context.tsk_env(),
         );
 
         // Should get project template
@@ -233,10 +233,10 @@ mod tests {
 
         // Create app context which sets up test directories automatically
         let ctx = AppContext::builder().build();
-        let tsk_config = ctx.tsk_config();
+        let tsk_env = ctx.tsk_env();
 
         // Use the data dir from AppContext for the project directory
-        let project_dir = tsk_config.data_dir().parent().unwrap().join("project");
+        let project_dir = tsk_env.data_dir().parent().unwrap().join("project");
 
         // Create project templates
         let project_tsk = project_dir.join(".tsk");
@@ -249,14 +249,13 @@ mod tests {
         );
 
         // Create user templates in the TSK config directory
-        let user_tsk = tsk_config.config_dir();
+        let user_tsk = tsk_env.config_dir();
         create_templates(
             user_tsk,
             &[("feat", "User feat template"), ("doc", "User doc template")],
         );
 
-        let manager =
-            LayeredAssetManager::new_with_standard_layers(Some(&project_dir), &tsk_config);
+        let manager = LayeredAssetManager::new_with_standard_layers(Some(&project_dir), &tsk_env);
 
         // Test priority: project > user > built-in
         assert_eq!(
@@ -327,10 +326,8 @@ mod tests {
         let project_tsk = repo_dir.join(".tsk");
         create_templates(&project_tsk, &[("custom", "Custom project template")]);
 
-        let asset_manager = LayeredAssetManager::new_with_standard_layers(
-            Some(&repo_dir),
-            &app_context.tsk_config(),
-        );
+        let asset_manager =
+            LayeredAssetManager::new_with_standard_layers(Some(&repo_dir), &app_context.tsk_env());
 
         // Verify it can access the custom template
         assert_eq!(
@@ -347,19 +344,18 @@ mod tests {
 
         // Create app context which sets up test directories automatically
         let ctx = AppContext::builder().build();
-        let tsk_config = ctx.tsk_config();
+        let tsk_env = ctx.tsk_env();
 
-        let project_dir = tsk_config.data_dir().parent().unwrap().join("project");
+        let project_dir = tsk_env.data_dir().parent().unwrap().join("project");
 
         // Create project and user templates with overlap
         create_templates(&project_dir.join(".tsk"), &[("feat", "Project feat")]);
         create_templates(
-            tsk_config.config_dir(),
+            tsk_env.config_dir(),
             &[("feat", "User feat"), ("custom", "User custom")],
         );
 
-        let manager =
-            LayeredAssetManager::new_with_standard_layers(Some(&project_dir), &tsk_config);
+        let manager = LayeredAssetManager::new_with_standard_layers(Some(&project_dir), &tsk_env);
         let templates = manager.list_templates();
 
         // Should only have one "feat" entry (deduplicated)
@@ -374,9 +370,9 @@ mod tests {
 
         // Create app context which sets up test directories automatically
         let ctx = AppContext::builder().build();
-        let tsk_config = ctx.tsk_config();
+        let tsk_env = ctx.tsk_env();
 
-        let project_dir = tsk_config.data_dir().parent().unwrap().join("project");
+        let project_dir = tsk_env.data_dir().parent().unwrap().join("project");
 
         // Create project dockerfiles
         create_dockerfiles(
@@ -386,15 +382,14 @@ mod tests {
 
         // Create user dockerfiles
         create_dockerfiles(
-            tsk_config.config_dir(),
+            tsk_env.config_dir(),
             &[
                 ("project/myapp", "FROM ubuntu:user\n"),
                 ("project/otherapp", "FROM ubuntu:user-only\n"),
             ],
         );
 
-        let manager =
-            LayeredAssetManager::new_with_standard_layers(Some(&project_dir), &tsk_config);
+        let manager = LayeredAssetManager::new_with_standard_layers(Some(&project_dir), &tsk_env);
 
         // Test that project dockerfile takes precedence
         let myapp_content =

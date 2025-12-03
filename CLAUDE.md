@@ -76,14 +76,15 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Layered image system: base → tech-stack → agent → project
 - Automatic fallback to default project layer when specific layer is missing
 
-**Storage** (`src/storage/`)
-- `TskConfig`: Manages TSK configuration and XDG-compliant directory structure
+**Storage** (`src/context/`)
+- `TskEnv`: Manages XDG-compliant directory paths (data_dir, runtime_dir, config_dir) and runtime environment settings (git config, editor)
+- `TskConfig`: User configuration loaded from tsk.toml (docker limits, project-specific settings)
 - Centralized task storage across all repositories
 - Runtime directory for server socket and PID file
 
 **Configuration File** (`$XDG_CONFIG_HOME/tsk/tsk.toml`)
 - Optional TOML configuration file for user-configurable options
-- Loaded at startup via `TskConfig::options()`
+- Loaded at startup and accessible via `AppContext::tsk_config()`
 - Missing file or invalid TOML uses defaults (fail-open with warnings)
 - Supports Docker container resource limits and project-specific settings:
   ```toml
@@ -146,7 +147,8 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Factory pattern prevents accidental operations in tests
 - `FileSystemOperations` trait abstracts all file system operations for testability
 - `GitOperations` trait abstracts all git operations for improved testability and separation of concerns
-- `TskConfig` provides TSK configuration and XDG-compliant directory paths for centralized storage
+- `TskEnv` provides XDG-compliant directory paths and runtime environment settings
+- `TskConfig` provides user configuration loaded from tsk.toml
 
 **Agents** (`src/agent/`)
 - `Agent` trait defines the interface for AI agents that execute tasks
@@ -187,7 +189,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Tests should use temporary directories that are automatically cleaned up
 - Make tests thread safe so they can be run in parallel
 - Always use `AppContext::builder()` for test setup rather than creating objects contained in the `AppContext` directly
-  - Exception: Tests in `src/context/*` that are directly testing XdgConfig or TskConfig functionality
+  - Exception: Tests in `src/context/*` that are directly testing TskEnv or TskConfig functionality
   - Use `let ctx = AppContext::builder().build();` to automatically set up test-safe temporary directories and configurations
 - Keep tests simple and concise while still testing core functionality. Improving existing tests is always preferred over adding new ones
 - Avoid using `#[allow(dead_code)]`
