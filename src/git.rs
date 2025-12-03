@@ -2178,8 +2178,13 @@ mod tests {
 
         // Commit changes in the submodule first
         let copied_submodule = ExistingGitRepository::new(&copied_path.join("lib")).unwrap();
+        copied_submodule.configure_test_user().unwrap();
         copied_submodule.stage_all().unwrap();
         copied_submodule.commit("Modify lib.rs").unwrap();
+
+        // Configure git user for the superproject (needed for commit_changes)
+        let copied_superproject = ExistingGitRepository::new(&copied_path).unwrap();
+        copied_superproject.configure_test_user().unwrap();
 
         // Now commit in the superproject (updates submodule pointer)
         let commit_result = manager
@@ -2289,8 +2294,13 @@ mod tests {
 
         // Step 3: Commit changes in submodule first
         let copied_submodule = ExistingGitRepository::new(&copied_path.join("RepoB")).unwrap();
+        copied_submodule.configure_test_user().unwrap();
         copied_submodule.stage_all().unwrap();
         let submod_commit = copied_submodule.commit("Add hi to RepoB README").unwrap();
+
+        // Configure git user for the superproject (needed for commit_changes)
+        let copied_superproject = ExistingGitRepository::new(&copied_path).unwrap();
+        copied_superproject.configure_test_user().unwrap();
 
         // Step 4: Commit changes in superproject
         manager
@@ -2459,6 +2469,12 @@ mod tests {
             !status_before_str.is_empty(),
             "Submodule should have uncommitted changes before commit_changes()"
         );
+
+        // Configure git user for both superproject and submodule (needed for auto-commit)
+        let copied_superproject = ExistingGitRepository::new(&copied_path).unwrap();
+        copied_superproject.configure_test_user().unwrap();
+        let copied_submodule = ExistingGitRepository::new(&copied_submodule_path).unwrap();
+        copied_submodule.configure_test_user().unwrap();
 
         // Step 3: Call commit_changes() - this should automatically commit submodule changes
         manager
@@ -2650,8 +2666,13 @@ mod tests {
 
         // Step 3: Commit changes (only RepoB has changes)
         let copied_submodule_b = ExistingGitRepository::new(&copied_path.join("RepoB")).unwrap();
+        copied_submodule_b.configure_test_user().unwrap();
         copied_submodule_b.stage_all().unwrap();
         copied_submodule_b.commit("Add hi to RepoB README").unwrap();
+
+        // Configure git user for the superproject (needed for commit_changes)
+        let copied_superproject = ExistingGitRepository::new(&copied_path).unwrap();
+        copied_superproject.configure_test_user().unwrap();
 
         // Commit in superproject (records updated RepoB submodule pointer)
         manager
