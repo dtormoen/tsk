@@ -14,9 +14,6 @@ use bollard::query_parameters::{LogsOptions, RemoveContainerOptions};
 use futures_util::stream::StreamExt;
 use std::path::PathBuf;
 
-// Container resource limits
-const CONTAINER_MEMORY_LIMIT: i64 = 12 * 1024 * 1024 * 1024; // 12GB
-const CONTAINER_CPU_QUOTA: i64 = 800000; // 8 CPUs
 const CONTAINER_WORKING_DIR: &str = "/workspace";
 const CONTAINER_USER: &str = "agent";
 
@@ -164,8 +161,8 @@ impl DockerManager {
             host_config: Some(HostConfig {
                 binds: Some(binds),
                 network_mode: Some(self.proxy_manager.network_name().to_string()),
-                memory: Some(CONTAINER_MEMORY_LIMIT),
-                cpu_quota: Some(CONTAINER_CPU_QUOTA),
+                memory: Some(self.ctx.tsk_config().options().docker.memory_limit),
+                cpu_quota: Some(self.ctx.tsk_config().options().docker.cpu_quota),
                 // No capabilities needed since we're not running iptables
                 cap_drop: Some(vec![
                     "NET_ADMIN".to_string(),
@@ -643,8 +640,9 @@ mod tests {
 
         let host_config = config.host_config.as_ref().unwrap();
         assert_eq!(host_config.network_mode, Some("tsk-network".to_string()));
-        assert_eq!(host_config.memory, Some(CONTAINER_MEMORY_LIMIT));
-        assert_eq!(host_config.cpu_quota, Some(CONTAINER_CPU_QUOTA));
+        let default_options = crate::context::tsk_config::DockerOptions::default();
+        assert_eq!(host_config.memory, Some(default_options.memory_limit));
+        assert_eq!(host_config.cpu_quota, Some(default_options.cpu_quota));
 
         let binds = host_config.binds.as_ref().unwrap();
         assert_eq!(binds.len(), 4); // workspace, claude dir, instructions, and output

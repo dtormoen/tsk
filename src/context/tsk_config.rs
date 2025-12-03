@@ -1,3 +1,4 @@
+use serde::Deserialize;
 use std::env;
 use std::path::{Path, PathBuf};
 #[cfg(not(test))]
@@ -14,6 +15,32 @@ pub enum TskConfigError {
     GitConfig(String),
 }
 
+/// User-configurable options loaded from tsk.toml
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct TskOptions {
+    pub docker: DockerOptions,
+}
+
+/// Docker container resource configuration
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct DockerOptions {
+    /// Container memory limit in bytes (default: 12GB)
+    pub memory_limit: i64,
+    /// CPU quota in microseconds per 100ms period (default: 800000 = 8 CPUs)
+    pub cpu_quota: i64,
+}
+
+impl Default for DockerOptions {
+    fn default() -> Self {
+        Self {
+            memory_limit: 12 * 1024 * 1024 * 1024, // 12GB
+            cpu_quota: 800_000,                    // 8 CPUs
+        }
+    }
+}
+
 /// Provides access to XDG Base Directory compliant paths for TSK
 #[derive(Debug, Clone)]
 pub struct TskConfig {
@@ -26,6 +53,7 @@ pub struct TskConfig {
     terminal_type: Option<String>,
     git_user_name: String,
     git_user_email: String,
+    options: TskOptions,
 }
 
 impl TskConfig {
@@ -45,6 +73,7 @@ impl TskConfig {
         let terminal_type = Self::resolve_terminal_type(None);
         let git_user_name = Self::resolve_git_user_name(None)?;
         let git_user_email = Self::resolve_git_user_email(None)?;
+        let options = Self::resolve_options(&config_dir, None);
 
         Ok(Self {
             data_dir,
@@ -56,6 +85,7 @@ impl TskConfig {
             terminal_type,
             git_user_name,
             git_user_email,
+            options,
         })
     }
 
@@ -117,6 +147,11 @@ impl TskConfig {
     /// Get the path to the tasks.json file
     pub fn tasks_file(&self) -> PathBuf {
         self.data_dir.join("tasks.json")
+    }
+
+    /// Get the user-configurable options
+    pub fn options(&self) -> &TskOptions {
+        &self.options
     }
 
     /// Get the path to a task's directory
@@ -279,6 +314,30 @@ impl TskConfig {
         // Fall back to git config
         get_git_config("user.email")
     }
+
+    fn resolve_options(config_dir: &Path, override_options: Option<&TskOptions>) -> TskOptions {
+        // Check override first
+        if let Some(options) = override_options {
+            return options.clone();
+        }
+
+        // Try to load from config file
+        let config_file = config_dir.join("tsk.toml");
+        if config_file.exists() {
+            match std::fs::read_to_string(&config_file) {
+                Ok(content) => match toml::from_str(&content) {
+                    Ok(options) => return options,
+                    Err(e) => {
+                        eprintln!("Warning: Failed to parse {}: {}", config_file.display(), e);
+                    }
+                },
+                Err(e) => {
+                    eprintln!("Warning: Failed to read {}: {}", config_file.display(), e);
+                }
+            }
+        }
+        TskOptions::default()
+    }
 }
 
 impl Default for TskConfig {
@@ -300,6 +359,7 @@ pub struct TskConfigBuilder {
     terminal_type: Option<Option<String>>,
     git_user_name: Option<String>,
     git_user_email: Option<String>,
+    options: Option<TskOptions>,
 }
 
 #[cfg(test)]
@@ -316,6 +376,7 @@ impl TskConfigBuilder {
             terminal_type: None,
             git_user_name: None,
             git_user_email: None,
+            options: None,
         }
     }
 
@@ -373,6 +434,12 @@ impl TskConfigBuilder {
         self
     }
 
+    /// Sets the TSK options
+    pub fn with_options(mut self, options: TskOptions) -> Self {
+        self.options = Some(options);
+        self
+    }
+
     /// Builds the TskConfig instance
     pub fn build(self) -> Result<TskConfig, TskConfigError> {
         let data_dir = TskConfig::resolve_data_dir(self.data_dir.as_ref())?;
@@ -385,6 +452,7 @@ impl TskConfigBuilder {
         let terminal_type = TskConfig::resolve_terminal_type(self.terminal_type.as_ref());
         let git_user_name = TskConfig::resolve_git_user_name(self.git_user_name.as_ref())?;
         let git_user_email = TskConfig::resolve_git_user_email(self.git_user_email.as_ref())?;
+        let options = TskConfig::resolve_options(&config_dir, self.options.as_ref());
 
         Ok(TskConfig {
             data_dir,
@@ -396,6 +464,7 @@ impl TskConfigBuilder {
             terminal_type,
             git_user_name,
             git_user_email,
+            options,
         })
     }
 }
@@ -643,5 +712,143 @@ mod tests {
             assert!(!config.editor().is_empty());
             assert!(config.data_dir().to_string_lossy().contains("tsk"));
         }
+    }
+
+    #[test]
+    fn test_docker_options_default() {
+        let options = DockerOptions::default();
+        assert_eq!(options.memory_limit, 12 * 1024 * 1024 * 1024); // 12GB
+        assert_eq!(options.cpu_quota, 800_000); // 8 CPUs
+    }
+
+    #[test]
+    fn test_tsk_options_default() {
+        let options = TskOptions::default();
+        assert_eq!(options.docker.memory_limit, 12 * 1024 * 1024 * 1024);
+        assert_eq!(options.docker.cpu_quota, 800_000);
+    }
+
+    #[test]
+    fn test_tsk_config_with_custom_options() {
+        let custom_options = TskOptions {
+            docker: DockerOptions {
+                memory_limit: 4 * 1024 * 1024 * 1024, // 4GB
+                cpu_quota: 200_000,                   // 2 CPUs
+            },
+        };
+
+        let config = TskConfig::builder()
+            .with_options(custom_options)
+            .with_git_user_name("Test".to_string())
+            .with_git_user_email("test@example.com".to_string())
+            .build()
+            .unwrap();
+
+        assert_eq!(config.options().docker.memory_limit, 4 * 1024 * 1024 * 1024);
+        assert_eq!(config.options().docker.cpu_quota, 200_000);
+    }
+
+    #[test]
+    fn test_options_from_toml_file() {
+        use std::io::Write;
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_dir = temp_dir.path().join("tsk");
+        std::fs::create_dir_all(&config_dir).unwrap();
+
+        let toml_content = r#"
+[docker]
+memory_limit = 8589934592
+cpu_quota = 400000
+"#;
+        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+
+        let config = TskConfig::builder()
+            .with_config_dir(temp_dir.path().to_path_buf())
+            .with_git_user_name("Test".to_string())
+            .with_git_user_email("test@example.com".to_string())
+            .build()
+            .unwrap();
+
+        assert_eq!(config.options().docker.memory_limit, 8589934592); // 8GB
+        assert_eq!(config.options().docker.cpu_quota, 400_000); // 4 CPUs
+    }
+
+    #[test]
+    fn test_options_partial_toml() {
+        use std::io::Write;
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_dir = temp_dir.path().join("tsk");
+        std::fs::create_dir_all(&config_dir).unwrap();
+
+        // Only specify memory_limit, cpu_quota should use default
+        let toml_content = r#"
+[docker]
+memory_limit = 4294967296
+"#;
+        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+
+        let config = TskConfig::builder()
+            .with_config_dir(temp_dir.path().to_path_buf())
+            .with_git_user_name("Test".to_string())
+            .with_git_user_email("test@example.com".to_string())
+            .build()
+            .unwrap();
+
+        assert_eq!(config.options().docker.memory_limit, 4294967296); // 4GB
+        assert_eq!(config.options().docker.cpu_quota, 800_000); // Default 8 CPUs
+    }
+
+    #[test]
+    fn test_options_missing_toml_uses_defaults() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+
+        let config = TskConfig::builder()
+            .with_config_dir(temp_dir.path().to_path_buf())
+            .with_git_user_name("Test".to_string())
+            .with_git_user_email("test@example.com".to_string())
+            .build()
+            .unwrap();
+
+        // Should use defaults when no config file exists
+        assert_eq!(
+            config.options().docker.memory_limit,
+            12 * 1024 * 1024 * 1024
+        );
+        assert_eq!(config.options().docker.cpu_quota, 800_000);
+    }
+
+    #[test]
+    fn test_options_invalid_toml_type_uses_defaults() {
+        use std::io::Write;
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_dir = temp_dir.path().join("tsk");
+        std::fs::create_dir_all(&config_dir).unwrap();
+
+        // Invalid type: string instead of i64
+        let toml_content = r#"
+[docker]
+memory_limit = "not-a-number"
+"#;
+        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+
+        let config = TskConfig::builder()
+            .with_config_dir(temp_dir.path().to_path_buf())
+            .with_git_user_name("Test".to_string())
+            .with_git_user_email("test@example.com".to_string())
+            .build()
+            .unwrap();
+
+        // Should use defaults when TOML contains invalid types
+        assert_eq!(
+            config.options().docker.memory_limit,
+            12 * 1024 * 1024 * 1024
+        );
+        assert_eq!(config.options().docker.cpu_quota, 800_000);
     }
 }

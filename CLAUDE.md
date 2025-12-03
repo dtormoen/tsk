@@ -81,6 +81,17 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Centralized task storage across all repositories
 - Runtime directory for server socket and PID file
 
+**Configuration File** (`$XDG_CONFIG_HOME/tsk/tsk.toml`)
+- Optional TOML configuration file for user-configurable options
+- Loaded at startup via `TskConfig::options()`
+- Missing file or invalid TOML uses defaults (fail-open with warnings)
+- Currently supports Docker container resource limits:
+  ```toml
+  [docker]
+  memory_limit = 12884901888  # bytes (default: 12GB)
+  cpu_quota = 800000          # microseconds per 100ms (default: 8 CPUs)
+  ```
+
 **Server Mode** (`src/server/`, `src/client/`)
 - `TskServer`: Continuous task execution daemon
 - `TskClient`: Client for communicating with server

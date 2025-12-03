@@ -39,6 +39,7 @@ nanoid = "0.4"
 bytes = "1.11"
 http-body-util = "0.1"
 handlebars = "6.3"
+toml = "0.8"
 
 [dev-dependencies]
 assert_cmd = "2.1"
