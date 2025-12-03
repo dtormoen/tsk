@@ -85,12 +85,26 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Optional TOML configuration file for user-configurable options
 - Loaded at startup via `TskConfig::options()`
 - Missing file or invalid TOML uses defaults (fail-open with warnings)
-- Currently supports Docker container resource limits:
+- Supports Docker container resource limits and project-specific settings:
   ```toml
   [docker]
   memory_limit = 12884901888  # bytes (default: 12GB)
   cpu_quota = 800000          # microseconds per 100ms (default: 8 CPUs)
+
+  # Project-specific configuration (matches project name from --project or auto-detection)
+  [project.my-go-project]
+  agent = "claude"            # Default agent for this project
+  stack = "go"                # Default stack for this project
+  volumes = [
+      # Bind mount: map host path to container path (supports ~ expansion)
+      { host = "~/.cache/go-mod", container = "/go/pkg/mod" },
+      # Named volume: Docker-managed volume (prefixed with "tsk-")
+      { name = "go-build-cache", container = "/home/agent/.cache/go-build" },
+      # Read-only mount
+      { host = "/etc/ssl/certs", container = "/etc/ssl/certs", readonly = true }
+  ]
   ```
+- **Priority order**: CLI flags > project config > auto-detection > defaults
 
 **Server Mode** (`src/server/`, `src/client/`)
 - `TskServer`: Continuous task execution daemon

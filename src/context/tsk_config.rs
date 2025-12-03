@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
 #[cfg(not(test))]
@@ -20,6 +21,9 @@ pub enum TskConfigError {
 #[serde(default)]
 pub struct TskOptions {
     pub docker: DockerOptions,
+    /// Project-specific configurations keyed by project name
+    #[serde(default)]
+    pub project: HashMap<String, ProjectConfig>,
 }
 
 /// Docker container resource configuration
@@ -37,6 +41,76 @@ impl Default for DockerOptions {
         Self {
             memory_limit: 12 * 1024 * 1024 * 1024, // 12GB
             cpu_quota: 800_000,                    // 8 CPUs
+        }
+    }
+}
+
+/// Project-specific configuration section
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ProjectConfig {
+    /// Default agent for this project (e.g., "claude", "codex")
+    pub agent: Option<String>,
+    /// Default stack for this project (e.g., "go", "rust", "python")
+    pub stack: Option<String>,
+    /// Volume mounts for Docker containers
+    #[serde(default)]
+    pub volumes: Vec<VolumeMount>,
+}
+
+/// Volume mount configuration
+///
+/// Supports two types of mounts:
+/// 1. Bind mounts: Map a host path to a container path
+/// 2. Named volumes: Use a Docker-managed named volume
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum VolumeMount {
+    /// Bind mount from host filesystem
+    Bind(BindMount),
+    /// Docker-managed named volume
+    Named(NamedVolume),
+}
+
+/// Bind mount configuration
+#[derive(Debug, Clone, Deserialize)]
+pub struct BindMount {
+    /// Host path (supports ~ expansion)
+    pub host: String,
+    /// Container path
+    pub container: String,
+    /// Read-only flag (default: false)
+    #[serde(default)]
+    pub readonly: bool,
+}
+
+/// Named volume configuration (Docker-managed)
+#[derive(Debug, Clone, Deserialize)]
+pub struct NamedVolume {
+    /// Docker volume name (will be prefixed with "tsk-" to avoid conflicts)
+    pub name: String,
+    /// Container path
+    pub container: String,
+    /// Read-only flag (default: false)
+    #[serde(default)]
+    pub readonly: bool,
+}
+
+impl BindMount {
+    /// Expand ~ in host path to actual home directory
+    pub fn expanded_host_path(&self) -> Result<PathBuf, TskConfigError> {
+        if self.host.starts_with("~/") {
+            let home = env::var("HOME")
+                .or_else(|_| env::var("USERPROFILE"))
+                .map_err(|_| TskConfigError::NoHomeDirectory)?;
+            Ok(PathBuf::from(home).join(&self.host[2..]))
+        } else if self.host == "~" {
+            let home = env::var("HOME")
+                .or_else(|_| env::var("USERPROFILE"))
+                .map_err(|_| TskConfigError::NoHomeDirectory)?;
+            Ok(PathBuf::from(home))
+        } else {
+            Ok(PathBuf::from(&self.host))
         }
     }
 }
@@ -152,6 +226,11 @@ impl TskConfig {
     /// Get the user-configurable options
     pub fn options(&self) -> &TskOptions {
         &self.options
+    }
+
+    /// Get project-specific configuration, if any exists
+    pub fn get_project_config(&self, project_name: &str) -> Option<&ProjectConfig> {
+        self.options.project.get(project_name)
     }
 
     /// Get the path to a task's directory
@@ -735,6 +814,7 @@ mod tests {
                 memory_limit: 4 * 1024 * 1024 * 1024, // 4GB
                 cpu_quota: 200_000,                   // 2 CPUs
             },
+            project: HashMap::new(),
         };
 
         let config = TskConfig::builder()
@@ -850,5 +930,196 @@ memory_limit = "not-a-number"
             12 * 1024 * 1024 * 1024
         );
         assert_eq!(config.options().docker.cpu_quota, 800_000);
+    }
+
+    #[test]
+    fn test_project_config_from_toml() {
+        use std::io::Write;
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_dir = temp_dir.path().join("tsk");
+        std::fs::create_dir_all(&config_dir).unwrap();
+
+        let toml_content = r#"
+[docker]
+memory_limit = 8589934592
+
+[project.my-go-project]
+agent = "claude"
+stack = "go"
+volumes = [
+    { host = "~/.cache/go-build", container = "/home/agent/.cache/go-build" },
+    { host = "/tmp/shared", container = "/shared", readonly = true }
+]
+
+[project.my-rust-project]
+stack = "rust"
+"#;
+        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+
+        let config = TskConfig::builder()
+            .with_config_dir(temp_dir.path().to_path_buf())
+            .with_git_user_name("Test".to_string())
+            .with_git_user_email("test@example.com".to_string())
+            .build()
+            .unwrap();
+
+        // Check project config exists and has correct values
+        let go_config = config.get_project_config("my-go-project");
+        assert!(go_config.is_some());
+        let go_config = go_config.unwrap();
+        assert_eq!(go_config.agent, Some("claude".to_string()));
+        assert_eq!(go_config.stack, Some("go".to_string()));
+        assert_eq!(go_config.volumes.len(), 2);
+
+        // Check rust project has only stack set
+        let rust_config = config.get_project_config("my-rust-project");
+        assert!(rust_config.is_some());
+        let rust_config = rust_config.unwrap();
+        assert_eq!(rust_config.agent, None);
+        assert_eq!(rust_config.stack, Some("rust".to_string()));
+        assert!(rust_config.volumes.is_empty());
+
+        // Non-existent project returns None
+        assert!(config.get_project_config("non-existent").is_none());
+    }
+
+    #[test]
+    fn test_bind_mount_path_expansion() {
+        // Test with ~ expansion
+        let bind_mount = BindMount {
+            host: "~/.cache/go-build".to_string(),
+            container: "/home/agent/.cache/go-build".to_string(),
+            readonly: false,
+        };
+
+        let expanded = bind_mount.expanded_host_path().unwrap();
+        assert!(!expanded.to_string_lossy().starts_with("~"));
+        assert!(expanded.to_string_lossy().ends_with(".cache/go-build"));
+
+        // Test with just ~
+        let bind_mount_home = BindMount {
+            host: "~".to_string(),
+            container: "/home/agent".to_string(),
+            readonly: false,
+        };
+
+        let expanded_home = bind_mount_home.expanded_host_path().unwrap();
+        assert!(!expanded_home.to_string_lossy().starts_with("~"));
+        assert!(!expanded_home.to_string_lossy().is_empty());
+
+        // Test with absolute path (no expansion)
+        let bind_mount_abs = BindMount {
+            host: "/tmp/shared".to_string(),
+            container: "/shared".to_string(),
+            readonly: true,
+        };
+
+        let expanded_abs = bind_mount_abs.expanded_host_path().unwrap();
+        assert_eq!(expanded_abs.to_string_lossy(), "/tmp/shared");
+    }
+
+    #[test]
+    fn test_named_volume_config_from_toml() {
+        use std::io::Write;
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_dir = temp_dir.path().join("tsk");
+        std::fs::create_dir_all(&config_dir).unwrap();
+
+        let toml_content = r#"
+[project.my-go-project]
+stack = "go"
+volumes = [
+    { name = "go-mod-cache", container = "/go/pkg/mod" },
+    { name = "go-build-cache", container = "/home/agent/.cache/go-build", readonly = true }
+]
+"#;
+        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+
+        let config = TskConfig::builder()
+            .with_config_dir(temp_dir.path().to_path_buf())
+            .with_git_user_name("Test".to_string())
+            .with_git_user_email("test@example.com".to_string())
+            .build()
+            .unwrap();
+
+        let go_config = config.get_project_config("my-go-project").unwrap();
+        assert_eq!(go_config.volumes.len(), 2);
+
+        // Check first named volume
+        match &go_config.volumes[0] {
+            VolumeMount::Named(named) => {
+                assert_eq!(named.name, "go-mod-cache");
+                assert_eq!(named.container, "/go/pkg/mod");
+                assert!(!named.readonly);
+            }
+            VolumeMount::Bind(_) => panic!("Expected Named volume"),
+        }
+
+        // Check second named volume with readonly
+        match &go_config.volumes[1] {
+            VolumeMount::Named(named) => {
+                assert_eq!(named.name, "go-build-cache");
+                assert_eq!(named.container, "/home/agent/.cache/go-build");
+                assert!(named.readonly);
+            }
+            VolumeMount::Bind(_) => panic!("Expected Named volume"),
+        }
+    }
+
+    #[test]
+    fn test_mixed_volume_config_from_toml() {
+        use std::io::Write;
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_dir = temp_dir.path().join("tsk");
+        std::fs::create_dir_all(&config_dir).unwrap();
+
+        let toml_content = r#"
+[project.mixed-project]
+volumes = [
+    { host = "~/.cache/shared", container = "/cache" },
+    { name = "data-volume", container = "/data" }
+]
+"#;
+        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+
+        let config = TskConfig::builder()
+            .with_config_dir(temp_dir.path().to_path_buf())
+            .with_git_user_name("Test".to_string())
+            .with_git_user_email("test@example.com".to_string())
+            .build()
+            .unwrap();
+
+        let project_config = config.get_project_config("mixed-project").unwrap();
+        assert_eq!(project_config.volumes.len(), 2);
+
+        // First should be bind mount
+        match &project_config.volumes[0] {
+            VolumeMount::Bind(bind) => {
+                assert_eq!(bind.host, "~/.cache/shared");
+                assert_eq!(bind.container, "/cache");
+            }
+            VolumeMount::Named(_) => panic!("Expected Bind mount"),
+        }
+
+        // Second should be named volume
+        match &project_config.volumes[1] {
+            VolumeMount::Named(named) => {
+                assert_eq!(named.name, "data-volume");
+                assert_eq!(named.container, "/data");
+            }
+            VolumeMount::Bind(_) => panic!("Expected Named volume"),
+        }
+    }
+
+    #[test]
+    fn test_tsk_options_default_has_empty_project_map() {
+        let options = TskOptions::default();
+        assert!(options.project.is_empty());
     }
 }

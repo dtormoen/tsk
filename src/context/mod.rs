@@ -93,6 +93,8 @@ pub struct AppContextBuilder {
     terminal_operations: Option<Arc<dyn TerminalOperations>>,
     tsk_client: Option<Arc<dyn TskClient>>,
     tsk_config: Option<Arc<TskConfig>>,
+    #[cfg(test)]
+    tsk_options: Option<tsk_config::TskOptions>,
 }
 
 impl Default for AppContextBuilder {
@@ -113,6 +115,8 @@ impl AppContextBuilder {
             terminal_operations: None,
             tsk_client: None,
             tsk_config: None,
+            #[cfg(test)]
+            tsk_options: None,
         }
     }
 
@@ -185,6 +189,18 @@ impl AppContextBuilder {
         self
     }
 
+    /// Configure the TSK options for this context
+    ///
+    /// Used in tests to provide custom TSK options. This creates a TskConfig
+    /// with the provided options while using test-safe defaults for paths.
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub fn with_tsk_options(mut self, options: tsk_config::TskOptions) -> Self {
+        // Defer TskConfig creation to build() - just store the options
+        self.tsk_options = Some(options);
+        self
+    }
+
     pub fn build(self) -> AppContext {
         #[cfg(test)]
         {
@@ -194,13 +210,20 @@ impl AppContextBuilder {
 
             let tsk_config = self.tsk_config.unwrap_or_else(|| {
                 // Create test-safe TSK configuration in temp directory
-                let config = TskConfig::builder()
+                let mut builder = TskConfig::builder()
                     .with_data_dir(temp_path.join("data").to_path_buf())
                     .with_runtime_dir(temp_path.join("runtime").to_path_buf())
                     .with_config_dir(temp_path.join("config").to_path_buf())
                     .with_claude_config_dir(temp_path.join("claude").to_path_buf())
                     .with_git_user_name("Test User".to_string())
-                    .with_git_user_email("test@example.com".to_string())
+                    .with_git_user_email("test@example.com".to_string());
+
+                // Apply custom TskOptions if provided
+                if let Some(options) = self.tsk_options {
+                    builder = builder.with_options(options);
+                }
+
+                let config = builder
                     .build()
                     .expect("Failed to initialize test TSK configuration");
                 config
