@@ -450,7 +450,19 @@ impl RepoManager {
         repo_path: &Path,
         branch_name: &str,
         repo_root: &Path,
+        source_commit: &str,
     ) -> Result<bool, String> {
+        // Check if there are any changes by comparing HEAD with source commit
+        let current_head = self
+            .ctx
+            .git_operations()
+            .get_current_commit(repo_path)
+            .await?;
+        if current_head == source_commit {
+            println!("No changes detected - skipping branch creation");
+            return Ok(false);
+        }
+
         let repo_path_str = repo_path
             .to_str()
             .ok_or_else(|| "Invalid repo path".to_string())?;
@@ -1136,12 +1148,19 @@ mod tests {
         task_repo.checkout_new_branch(branch_name).unwrap();
 
         // Don't add any new commits - just the branch
+        // The source_commit is the current HEAD (same as before creating the branch)
+        let source_commit = task_repo.get_current_commit().unwrap();
 
         let manager = RepoManager::new(&ctx);
 
         // Fetch changes from task repo to main repo (should return false as there are no new commits)
         let result = manager
-            .fetch_changes(task_repo.path(), branch_name, main_repo.path())
+            .fetch_changes(
+                task_repo.path(),
+                branch_name,
+                main_repo.path(),
+                &source_commit,
+            )
             .await;
 
         assert!(result.is_ok(), "Error: {result:?}");
@@ -1206,6 +1225,9 @@ mod tests {
         let branch_name = "tsk/test/test-task/efgh5678";
         task_repo.checkout_new_branch(branch_name).unwrap();
 
+        // Capture source_commit before adding new commits
+        let source_commit = task_repo.get_current_commit().unwrap();
+
         // Add a new commit
         task_repo
             .create_file("new_feature.rs", "fn new_feature() {}")
@@ -1217,7 +1239,12 @@ mod tests {
 
         // Fetch changes from task repo to main repo (should return true as there are new commits)
         let result = manager
-            .fetch_changes(task_repo.path(), branch_name, main_repo.path())
+            .fetch_changes(
+                task_repo.path(),
+                branch_name,
+                main_repo.path(),
+                &source_commit,
+            )
             .await;
 
         assert!(result.is_ok(), "Error: {result:?}");
@@ -1747,8 +1774,14 @@ mod tests {
         // The branch exists and points to first_commit, but we haven't added any new work
 
         // Try to fetch changes - should handle gracefully (no new commits)
+        // The source_commit is the first_commit (the commit from which the branch was created)
         let fetch_result = manager
-            .fetch_changes(&copied_repo_path, branch_name, main_repo.path())
+            .fetch_changes(
+                &copied_repo_path,
+                branch_name,
+                main_repo.path(),
+                &first_commit,
+            )
             .await;
 
         // The fetch should succeed (validation passes) but return false (no new commits)
@@ -2114,6 +2147,9 @@ mod tests {
         main_repo.stage_all().unwrap();
         main_repo.commit("Add submodule").unwrap();
 
+        // Capture source_commit before copying
+        let source_commit = main_repo.get_current_commit().unwrap();
+
         // Copy the repo
         let manager = RepoManager::new(&ctx);
         let task_id = "modsubmod";
@@ -2158,7 +2194,7 @@ mod tests {
 
         // Fetch changes back to main repo
         let fetch_result = manager
-            .fetch_changes(&copied_path, branch_name, main_repo.path())
+            .fetch_changes(&copied_path, branch_name, main_repo.path(), &source_commit)
             .await;
 
         assert!(
@@ -2225,6 +2261,9 @@ mod tests {
         repo_a.stage_all().unwrap();
         repo_a.commit("Add RepoB submodule").unwrap();
 
+        // Capture source_commit before copying
+        let source_commit = repo_a.get_current_commit().unwrap();
+
         // Verify initial structure
         assert!(
             repo_a.path().join("README.md").exists(),
@@ -2274,7 +2313,7 @@ mod tests {
 
         // Step 5: Fetch changes back (simulates exiting `tsk shell`)
         manager
-            .fetch_changes(&copied_path, branch_name, repo_a.path())
+            .fetch_changes(&copied_path, branch_name, repo_a.path(), &source_commit)
             .await
             .expect("Fetch should succeed");
 
@@ -2387,6 +2426,9 @@ mod tests {
         repo_a.stage_all().unwrap();
         repo_a.commit("Add RepoB submodule").unwrap();
 
+        // Capture source_commit before copying
+        let source_commit = repo_a.get_current_commit().unwrap();
+
         // Step 1: Copy the repo (simulates `tsk shell` starting)
         let manager = RepoManager::new(&ctx);
         let task_id = "uncommittedsub";
@@ -2439,7 +2481,7 @@ mod tests {
 
         // Step 4: Fetch changes back (simulates exiting `tsk shell`)
         let fetch_result = manager
-            .fetch_changes(&copied_path, branch_name, repo_a.path())
+            .fetch_changes(&copied_path, branch_name, repo_a.path(), &source_commit)
             .await;
         assert!(
             fetch_result.is_ok(),
@@ -2580,6 +2622,9 @@ mod tests {
         repo_a.stage_all().unwrap();
         repo_a.commit("Add RepoB and RepoC submodules").unwrap();
 
+        // Capture source_commit before copying
+        let source_commit = repo_a.get_current_commit().unwrap();
+
         // Verify initial structure
         assert!(
             repo_a.path().join("RepoB/README.md").exists(),
@@ -2616,7 +2661,7 @@ mod tests {
 
         // Step 4: Fetch changes back
         manager
-            .fetch_changes(&copied_path, branch_name, repo_a.path())
+            .fetch_changes(&copied_path, branch_name, repo_a.path(), &source_commit)
             .await
             .expect("Fetch should succeed");
 

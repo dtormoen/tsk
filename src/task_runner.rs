@@ -150,7 +150,12 @@ impl TaskRunner {
         // Fetch changes back to main repository
         match self
             .repo_manager
-            .fetch_changes(repo_path, &branch_name, &task.repo_root)
+            .fetch_changes(
+                repo_path,
+                &branch_name,
+                &task.repo_root,
+                &task.source_commit,
+            )
             .await
         {
             Ok(true) => {

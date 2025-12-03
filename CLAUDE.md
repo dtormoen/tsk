@@ -112,7 +112,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Fixes gitdir paths in submodule `.git` files to point to correct locations
   - Agents can work on files across superproject and all submodules
   - Commits made in submodules are fetched back with the same branch name as the superproject task
-  - Only submodules with actual changes get branches created (unchanged submodules are skipped)
+  - Only repositories (base and submodules) with actual changes get branches created
   - Graceful fallback: if submodule setup fails, contents are treated as regular files
 
 **Dependency Injection** (`src/context/`)
