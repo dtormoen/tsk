@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2](https://github.com/dtormoen/tsk/compare/v0.6.1...v0.6.2) - 2025-12-03
+
+### Added
+
+- skip branch creation when task produces no changes
+- add full git submodule support for task execution
+- add sound notifications on task completion
+
+### Fixed
+
+- configure git identity in submodule tests for CI
+- properly add uv to base image
+
 ## [0.6.1](https://github.com/dtormoen/tsk/compare/v0.6.0...v0.6.1) - 2025-11-25
 
 ### Added
