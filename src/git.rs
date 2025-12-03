@@ -2178,6 +2178,7 @@ mod tests {
 
         // Commit changes in the submodule first
         let copied_submodule = ExistingGitRepository::new(&copied_path.join("lib")).unwrap();
+        copied_submodule.configure_test_user().unwrap();
         copied_submodule.stage_all().unwrap();
         copied_submodule.commit("Modify lib.rs").unwrap();
 
@@ -2289,6 +2290,7 @@ mod tests {
 
         // Step 3: Commit changes in submodule first
         let copied_submodule = ExistingGitRepository::new(&copied_path.join("RepoB")).unwrap();
+        copied_submodule.configure_test_user().unwrap();
         copied_submodule.stage_all().unwrap();
         let submod_commit = copied_submodule.commit("Add hi to RepoB README").unwrap();
 
@@ -2650,6 +2652,7 @@ mod tests {
 
         // Step 3: Commit changes (only RepoB has changes)
         let copied_submodule_b = ExistingGitRepository::new(&copied_path.join("RepoB")).unwrap();
+        copied_submodule_b.configure_test_user().unwrap();
         copied_submodule_b.stage_all().unwrap();
         copied_submodule_b.commit("Add hi to RepoB README").unwrap();
 

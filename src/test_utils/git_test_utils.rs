@@ -35,6 +35,14 @@ impl ExistingGitRepository {
         })
     }
 
+    /// Configures git user identity for testing.
+    /// This is needed in CI environments where global git config is not set.
+    pub fn configure_test_user(&self) -> Result<()> {
+        self.run_git_command(&["config", "user.email", "test@example.com"])?;
+        self.run_git_command(&["config", "user.name", "Test User"])?;
+        Ok(())
+    }
+
     /// Stages all changes in the repository.
     pub fn stage_all(&self) -> Result<()> {
         self.run_git_command(&["add", "-A"])
