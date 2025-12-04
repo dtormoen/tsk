@@ -107,7 +107,7 @@ mod tests {
 
         // Test 1: Command without description should fail normally (when not piped)
         let cmd = AddCommand {
-            name: "test-no-desc".to_string(),
+            name: Some("test-no-desc".to_string()),
             r#type: "generic".to_string(),
             description: None,
             prompt: None,
@@ -124,7 +124,7 @@ mod tests {
 
         // Test 2: Command with CLI description should work
         let cmd_with_desc = AddCommand {
-            name: "test-with-desc".to_string(),
+            name: Some("test-with-desc".to_string()),
             r#type: "generic".to_string(),
             description: Some("CLI description".to_string()),
             prompt: None,
@@ -162,7 +162,7 @@ mod tests {
 
         // Test: Command without description should work for templates without placeholder
         let cmd = RunCommand {
-            name: "test-ack".to_string(),
+            name: Some("test-ack".to_string()),
             r#type: "ack".to_string(),
             description: None,
             prompt: None,

@@ -9,7 +9,7 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 
 pub struct AddCommand {
-    pub name: String,
+    pub name: Option<String>,
     pub r#type: String,
     pub description: Option<String>,
     pub prompt: Option<String>,
@@ -23,7 +23,10 @@ pub struct AddCommand {
 #[async_trait]
 impl Command for AddCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
-        println!("Adding task to queue: {}", self.name);
+        // Resolve name: use provided name or default to task type
+        let name = self.name.clone().unwrap_or_else(|| self.r#type.clone());
+
+        println!("Adding task to queue: {}", name);
 
         // Parse comma-separated agents or use default
         let agents: Vec<String> = match &self.agent {
@@ -62,7 +65,7 @@ impl Command for AddCommand {
                 // First task: create normally
                 let task = TaskBuilder::new()
                     .repo_root(repo_root.clone())
-                    .name(self.name.clone())
+                    .name(name.clone())
                     .task_type(self.r#type.clone())
                     .description(final_description.clone())
                     .instructions_file(self.prompt.as_ref().map(PathBuf::from))
@@ -87,7 +90,7 @@ impl Command for AddCommand {
                 // Subsequent tasks: reuse instructions if edit mode
                 let builder = TaskBuilder::new()
                     .repo_root(repo_root.clone())
-                    .name(self.name.clone())
+                    .name(name.clone())
                     .task_type(self.r#type.clone())
                     .agent(Some(agent.clone()))
                     .stack(self.stack.clone())
@@ -207,7 +210,7 @@ mod tests {
     #[tokio::test]
     async fn test_add_command_validation_no_input() {
         let cmd = AddCommand {
-            name: "test".to_string(),
+            name: Some("test".to_string()),
             r#type: "generic".to_string(),
             description: None,
             prompt: None,
@@ -232,7 +235,7 @@ mod tests {
     #[tokio::test]
     async fn test_add_command_invalid_task_type() {
         let cmd = AddCommand {
-            name: "test".to_string(),
+            name: Some("test".to_string()),
             r#type: "nonexistent".to_string(),
             description: Some("test description".to_string()),
             prompt: None,
@@ -272,7 +275,7 @@ mod tests {
 
         // Create AddCommand without description (should succeed for templates without placeholder)
         let cmd = AddCommand {
-            name: "test-ack".to_string(),
+            name: Some("test-ack".to_string()),
             r#type: "ack".to_string(),
             description: None,
             prompt: None,
@@ -310,7 +313,7 @@ mod tests {
 
         // Create AddCommand with repo path
         let cmd = AddCommand {
-            name: "test-repo-path".to_string(),
+            name: Some("test-repo-path".to_string()),
             r#type: "generic".to_string(),
             description: Some("Test with repo path".to_string()),
             prompt: None,
@@ -350,7 +353,7 @@ mod tests {
         let ctx = AppContext::builder().build();
 
         let cmd = AddCommand {
-            name: "test-multi".to_string(),
+            name: Some("test-multi".to_string()),
             r#type: "generic".to_string(),
             description: Some("Test with multiple agents".to_string()),
             prompt: None,
@@ -389,7 +392,7 @@ mod tests {
         let ctx = AppContext::builder().build();
 
         let cmd = AddCommand {
-            name: "test-invalid".to_string(),
+            name: Some("test-invalid".to_string()),
             r#type: "generic".to_string(),
             description: Some("Test description".to_string()),
             prompt: None,
@@ -418,7 +421,7 @@ mod tests {
         let ctx = AppContext::builder().build();
 
         let cmd = AddCommand {
-            name: "test-duplicate".to_string(),
+            name: Some("test-duplicate".to_string()),
             r#type: "generic".to_string(),
             description: Some("Test with duplicate agents".to_string()),
             prompt: None,
@@ -440,6 +443,48 @@ mod tests {
         // Both should use codex
         assert_eq!(tasks[0].agent, "codex");
         assert_eq!(tasks[1].agent, "codex");
+    }
+
+    #[tokio::test]
+    async fn test_add_command_name_defaults_to_type() {
+        use crate::test_utils::TestGitRepository;
+
+        // Create a test git repository
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+
+        // Create template file
+        let template_content = "# Task: {{TYPE}}\n{{DESCRIPTION}}";
+        test_repo
+            .create_file(".tsk/templates/generic.md", template_content)
+            .unwrap();
+
+        let ctx = AppContext::builder().build();
+
+        // Create AddCommand with name: None - should default to type value
+        let cmd = AddCommand {
+            name: None,
+            r#type: "generic".to_string(),
+            description: Some("Test description".to_string()),
+            prompt: None,
+            edit: false,
+            agent: None,
+            stack: None,
+            project: None,
+            repo: Some(test_repo.path().to_string_lossy().to_string()),
+        };
+
+        let result = cmd.execute(&ctx).await;
+        assert!(result.is_ok(), "Command should succeed: {:?}", result.err());
+
+        // Verify the created task has name defaulted to type
+        let storage = crate::task_storage::get_task_storage(ctx.tsk_config(), ctx.file_system());
+        let tasks = storage.list_tasks().await.unwrap();
+        assert_eq!(tasks.len(), 1, "Should create 1 task");
+        assert_eq!(
+            tasks[0].name, "generic",
+            "Task name should default to type value"
+        );
     }
 
     #[tokio::test]
@@ -493,7 +538,7 @@ mod tests {
         let ctx = AppContext::builder().with_tsk_config(tsk_config).build();
 
         let cmd = AddCommand {
-            name: "test-multi-edit".to_string(),
+            name: Some("test-multi-edit".to_string()),
             r#type: "generic".to_string(),
             description: Some("Test with multiple agents in edit mode".to_string()),
             prompt: None,

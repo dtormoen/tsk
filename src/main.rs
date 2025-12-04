@@ -54,9 +54,9 @@ struct Cli {
 enum Commands {
     /// Immediately run a task in a sandbox container synchronously
     Run {
-        /// Unique identifier for the task
+        /// Unique identifier for the task (defaults to task type if not specified)
         #[arg(short, long)]
-        name: String,
+        name: Option<String>,
 
         /// Task type (defaults to 'generic' if not specified)
         #[arg(short = 't', long, default_value = "generic")]
@@ -130,9 +130,9 @@ enum Commands {
     },
     /// Queue a task for later execution by the TSK server
     Add {
-        /// Unique identifier for the task
+        /// Unique identifier for the task (defaults to task type if not specified)
         #[arg(short, long)]
-        name: String,
+        name: Option<String>,
 
         /// Task type (defaults to 'generic' if not specified)
         #[arg(short = 't', long, default_value = "generic")]

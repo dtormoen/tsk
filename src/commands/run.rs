@@ -9,7 +9,7 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 
 pub struct RunCommand {
-    pub name: String,
+    pub name: Option<String>,
     pub r#type: String,
     pub description: Option<String>,
     pub prompt: Option<String>,
@@ -23,7 +23,10 @@ pub struct RunCommand {
 #[async_trait]
 impl Command for RunCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
-        println!("Running task: {}", self.name);
+        // Resolve name: use provided name or default to task type
+        let name = self.name.clone().unwrap_or_else(|| self.r#type.clone());
+
+        println!("Running task: {}", name);
         println!("Type: {}", self.r#type);
 
         // Parse comma-separated agents or use default
@@ -65,7 +68,7 @@ impl Command for RunCommand {
         // Create task using TaskBuilder
         let task = TaskBuilder::new()
             .repo_root(repo_root.clone())
-            .name(self.name.clone())
+            .name(name.clone())
             .task_type(self.r#type.clone())
             .description(final_description)
             .instructions_file(self.prompt.as_ref().map(PathBuf::from))
@@ -80,7 +83,7 @@ impl Command for RunCommand {
 
         // Update terminal title for the task
         ctx.terminal_operations()
-            .set_title(&format!("TSK: {}", self.name));
+            .set_title(&format!("TSK: {}", name));
 
         // Execute the task
         let task_manager = TaskManager::new(ctx)?;
@@ -116,7 +119,7 @@ mod tests {
         test_repo.init_with_commit().unwrap();
 
         let cmd = RunCommand {
-            name: "test".to_string(),
+            name: Some("test".to_string()),
             r#type: "generic".to_string(),
             description: None,
             prompt: None,
@@ -157,7 +160,7 @@ mod tests {
 
         // Create RunCommand without description (should succeed for templates without placeholder)
         let cmd = RunCommand {
-            name: "test-ack".to_string(),
+            name: Some("test-ack".to_string()),
             r#type: "ack".to_string(),
             description: None,
             prompt: None,
@@ -189,7 +192,7 @@ mod tests {
         test_repo.init_with_commit().unwrap();
 
         let cmd = RunCommand {
-            name: "test-multi".to_string(),
+            name: Some("test-multi".to_string()),
             r#type: "generic".to_string(),
             description: Some("Test description".to_string()),
             prompt: None,
@@ -212,6 +215,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_run_command_name_defaults_to_type() {
+        use crate::test_utils::TestGitRepository;
+
+        // Create a test git repository
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+
+        // Create template file without {{DESCRIPTION}} placeholder
+        let template_content = "Say ack and exit.";
+        test_repo
+            .create_file(".tsk/templates/ack.md", template_content)
+            .unwrap();
+
+        let ctx = AppContext::builder().build();
+
+        // Create RunCommand with name: None - should default to type value
+        let cmd = RunCommand {
+            name: None,
+            r#type: "ack".to_string(),
+            description: None,
+            prompt: None,
+            edit: false,
+            agent: None,
+            stack: None,
+            project: None,
+            repo: Some(test_repo.path().to_string_lossy().to_string()),
+        };
+
+        // Execute should succeed, using type as the name
+        let result = cmd.execute(&ctx).await;
+        assert!(
+            result.is_ok(),
+            "Should succeed with name defaulting to type: {:?}",
+            result.err()
+        );
+    }
+
+    #[tokio::test]
     async fn test_run_command_with_single_agent() {
         use crate::test_utils::TestGitRepository;
 
@@ -223,7 +264,7 @@ mod tests {
             .unwrap();
 
         let cmd = RunCommand {
-            name: "test-single".to_string(),
+            name: Some("test-single".to_string()),
             r#type: "ack".to_string(),
             description: None,
             prompt: None,
