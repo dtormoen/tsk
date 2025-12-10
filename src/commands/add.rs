@@ -478,7 +478,7 @@ mod tests {
         assert!(result.is_ok(), "Command should succeed: {:?}", result.err());
 
         // Verify the created task has name defaulted to type
-        let storage = crate::task_storage::get_task_storage(ctx.tsk_config(), ctx.file_system());
+        let storage = crate::task_storage::get_task_storage(ctx.tsk_env(), ctx.file_system());
         let tasks = storage.list_tasks().await.unwrap();
         assert_eq!(tasks.len(), 1, "Should create 1 task");
         assert_eq!(

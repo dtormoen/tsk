@@ -192,8 +192,8 @@ impl DockerManager {
             host_config: Some(HostConfig {
                 binds: Some(binds),
                 network_mode: Some(self.proxy_manager.network_name().to_string()),
-                memory: Some(docker_config.memory_limit),
-                cpu_quota: Some(docker_config.cpu_quota),
+                memory: Some(docker_config.memory_limit_bytes()),
+                cpu_quota: Some(docker_config.cpu_quota_microseconds()),
                 // No capabilities needed since we're not running iptables
                 cap_drop: Some(vec![
                     "NET_ADMIN".to_string(),
@@ -672,8 +672,14 @@ mod tests {
         let host_config = config.host_config.as_ref().unwrap();
         assert_eq!(host_config.network_mode, Some("tsk-network".to_string()));
         let default_options = crate::context::DockerOptions::default();
-        assert_eq!(host_config.memory, Some(default_options.memory_limit));
-        assert_eq!(host_config.cpu_quota, Some(default_options.cpu_quota));
+        assert_eq!(
+            host_config.memory,
+            Some(default_options.memory_limit_bytes())
+        );
+        assert_eq!(
+            host_config.cpu_quota,
+            Some(default_options.cpu_quota_microseconds())
+        );
 
         let binds = host_config.binds.as_ref().unwrap();
         assert_eq!(binds.len(), 4); // workspace, claude dir, instructions, and output

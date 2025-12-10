@@ -39,18 +39,34 @@ impl TskConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct DockerOptions {
-    /// Container memory limit in bytes (default: 12GB)
-    pub memory_limit: i64,
-    /// CPU quota in microseconds per 100ms period (default: 800000 = 8 CPUs)
-    pub cpu_quota: i64,
+    /// Container memory limit in gigabytes (default: 12.0)
+    pub memory_limit_gb: f64,
+    /// Number of CPUs available to container (default: 8)
+    pub cpu_limit: u32,
 }
 
 impl Default for DockerOptions {
     fn default() -> Self {
         Self {
-            memory_limit: 12 * 1024 * 1024 * 1024, // 12GB
-            cpu_quota: 800_000,                    // 8 CPUs
+            memory_limit_gb: 12.0, // 12GB
+            cpu_limit: 8,          // 8 CPUs
         }
+    }
+}
+
+impl DockerOptions {
+    /// Convert memory limit from gigabytes to bytes for Docker/Bollard API
+    pub fn memory_limit_bytes(&self) -> i64 {
+        (self.memory_limit_gb * 1024.0 * 1024.0 * 1024.0) as i64
+    }
+
+    /// Convert CPU limit to microseconds per 100ms period for Docker/Bollard API
+    ///
+    /// Docker uses cpu_quota to limit CPU usage. The value represents microseconds
+    /// per 100ms period (cpu_period defaults to 100000 microseconds).
+    /// So 100,000 = 1 CPU, 200,000 = 2 CPUs, etc.
+    pub fn cpu_quota_microseconds(&self) -> i64 {
+        self.cpu_limit as i64 * 100_000
     }
 }
 
@@ -154,15 +170,37 @@ mod tests {
     #[test]
     fn test_docker_options_default() {
         let options = DockerOptions::default();
-        assert_eq!(options.memory_limit, 12 * 1024 * 1024 * 1024); // 12GB
-        assert_eq!(options.cpu_quota, 800_000); // 8 CPUs
+        assert_eq!(options.memory_limit_gb, 12.0);
+        assert_eq!(options.cpu_limit, 8);
+    }
+
+    #[test]
+    fn test_docker_options_conversion_methods() {
+        let options = DockerOptions::default();
+        // 12 GB = 12 * 1024 * 1024 * 1024 bytes
+        assert_eq!(options.memory_limit_bytes(), 12 * 1024 * 1024 * 1024);
+        // 8 CPUs = 8 * 100,000 microseconds
+        assert_eq!(options.cpu_quota_microseconds(), 800_000);
+
+        // Test with custom values
+        let custom_options = DockerOptions {
+            memory_limit_gb: 5.5,
+            cpu_limit: 4,
+        };
+        // 5.5 GB in bytes
+        assert_eq!(
+            custom_options.memory_limit_bytes(),
+            (5.5 * 1024.0 * 1024.0 * 1024.0) as i64
+        );
+        // 4 CPUs = 400,000 microseconds
+        assert_eq!(custom_options.cpu_quota_microseconds(), 400_000);
     }
 
     #[test]
     fn test_tsk_config_default() {
         let config = TskConfig::default();
-        assert_eq!(config.docker.memory_limit, 12 * 1024 * 1024 * 1024);
-        assert_eq!(config.docker.cpu_quota, 800_000);
+        assert_eq!(config.docker.memory_limit_gb, 12.0);
+        assert_eq!(config.docker.cpu_limit, 8);
         assert!(config.project.is_empty());
     }
 
@@ -179,16 +217,19 @@ mod tests {
 
         let toml_content = r#"
 [docker]
-memory_limit = 8589934592
-cpu_quota = 400000
+memory_limit_gb = 8.0
+cpu_limit = 4
 "#;
         let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
         file.write_all(toml_content.as_bytes()).unwrap();
 
         let config = load_config(config_dir);
 
-        assert_eq!(config.docker.memory_limit, 8589934592); // 8GB
-        assert_eq!(config.docker.cpu_quota, 400_000); // 4 CPUs
+        assert_eq!(config.docker.memory_limit_gb, 8.0);
+        assert_eq!(config.docker.cpu_limit, 4);
+        // Verify conversion methods work correctly
+        assert_eq!(config.docker.memory_limit_bytes(), 8 * 1024 * 1024 * 1024);
+        assert_eq!(config.docker.cpu_quota_microseconds(), 400_000);
     }
 
     #[test]
@@ -196,18 +237,18 @@ cpu_quota = 400000
         let temp_dir = tempfile::TempDir::new().unwrap();
         let config_dir = temp_dir.path();
 
-        // Only specify memory_limit, cpu_quota should use default
+        // Only specify memory_limit_gb, cpu_limit should use default
         let toml_content = r#"
 [docker]
-memory_limit = 4294967296
+memory_limit_gb = 4.0
 "#;
         let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
         file.write_all(toml_content.as_bytes()).unwrap();
 
         let config = load_config(config_dir);
 
-        assert_eq!(config.docker.memory_limit, 4294967296); // 4GB
-        assert_eq!(config.docker.cpu_quota, 800_000); // Default 8 CPUs
+        assert_eq!(config.docker.memory_limit_gb, 4.0);
+        assert_eq!(config.docker.cpu_limit, 8); // Default 8 CPUs
     }
 
     #[test]
@@ -217,8 +258,8 @@ memory_limit = 4294967296
         let config = load_config(temp_dir.path());
 
         // Should use defaults when no config file exists
-        assert_eq!(config.docker.memory_limit, 12 * 1024 * 1024 * 1024);
-        assert_eq!(config.docker.cpu_quota, 800_000);
+        assert_eq!(config.docker.memory_limit_gb, 12.0);
+        assert_eq!(config.docker.cpu_limit, 8);
     }
 
     #[test]
@@ -226,10 +267,10 @@ memory_limit = 4294967296
         let temp_dir = tempfile::TempDir::new().unwrap();
         let config_dir = temp_dir.path();
 
-        // Invalid type: string instead of i64
+        // Invalid type: string instead of f64
         let toml_content = r#"
 [docker]
-memory_limit = "not-a-number"
+memory_limit_gb = "not-a-number"
 "#;
         let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
         file.write_all(toml_content.as_bytes()).unwrap();
@@ -237,8 +278,8 @@ memory_limit = "not-a-number"
         let config = load_config(config_dir);
 
         // Should use defaults when TOML contains invalid types
-        assert_eq!(config.docker.memory_limit, 12 * 1024 * 1024 * 1024);
-        assert_eq!(config.docker.cpu_quota, 800_000);
+        assert_eq!(config.docker.memory_limit_gb, 12.0);
+        assert_eq!(config.docker.cpu_limit, 8);
     }
 
     #[test]
@@ -248,7 +289,7 @@ memory_limit = "not-a-number"
 
         let toml_content = r#"
 [docker]
-memory_limit = 8589934592
+memory_limit_gb = 8.0
 
 [project.my-go-project]
 agent = "claude"

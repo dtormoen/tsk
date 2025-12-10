@@ -89,8 +89,8 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Supports Docker container resource limits and project-specific settings:
   ```toml
   [docker]
-  memory_limit = 12884901888  # bytes (default: 12GB)
-  cpu_quota = 800000          # microseconds per 100ms (default: 8 CPUs)
+  memory_limit_gb = 12.0  # gigabytes (default: 12.0)
+  cpu_limit = 8           # number of CPUs (default: 8)
 
   # Project-specific configuration (matches project name from --project or auto-detection)
   [project.my-go-project]
