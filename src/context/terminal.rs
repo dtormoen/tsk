@@ -172,8 +172,6 @@ mod tests {
         // Test with xterm-256color terminal
         let env_xterm = TskEnv::builder()
             .with_terminal_type(Some("xterm-256color".to_string()))
-            .with_git_user_name("Test User".to_string())
-            .with_git_user_email("test@example.com".to_string())
             .build()
             .unwrap();
         assert!(
@@ -184,19 +182,12 @@ mod tests {
         // Test with dumb terminal
         let env_dumb = TskEnv::builder()
             .with_terminal_type(Some("dumb".to_string()))
-            .with_git_user_name("Test User".to_string())
-            .with_git_user_email("test@example.com".to_string())
             .build()
             .unwrap();
         assert!(!DefaultTerminalOperations::is_supported(Some(&env_dumb)));
 
         // Test with no terminal type set
-        let env_none = TskEnv::builder()
-            .with_terminal_type(None)
-            .with_git_user_name("Test User".to_string())
-            .with_git_user_email("test@example.com".to_string())
-            .build()
-            .unwrap();
+        let env_none = TskEnv::builder().with_terminal_type(None).build().unwrap();
         assert!(!DefaultTerminalOperations::is_supported(Some(&env_none)));
 
         // Test terminal operations with TSK environment

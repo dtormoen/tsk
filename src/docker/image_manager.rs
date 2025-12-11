@@ -5,6 +5,7 @@
 //! and simplified APIs for the rest of the system.
 
 use anyhow::{Context, Result};
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::assets::layered::LayeredAssetManager;
@@ -13,6 +14,43 @@ use crate::docker::build_lock_manager::DockerBuildLockManager;
 use crate::docker::composer::{ComposedDockerfile, DockerComposer};
 use crate::docker::layers::{DockerImageConfig, DockerLayerType};
 use crate::docker::template_manager::DockerTemplateManager;
+
+/// Retrieves a git configuration value from a repository or global config.
+///
+/// When `build_root` is `Some`, opens the repository and reads its config,
+/// which automatically includes global config as a fallback.
+/// When `build_root` is `None`, uses global git config directly.
+///
+/// # Arguments
+/// * `build_root` - Optional path to the repository directory
+/// * `key` - The git config key to retrieve (e.g., "user.name", "user.email")
+///
+/// # Returns
+/// The configuration value as a string, or an error with instructions for configuring git.
+fn get_git_config_from_repo(build_root: Option<&Path>, key: &str) -> Result<String> {
+    let config = match build_root {
+        Some(repo_path) => {
+            // Open repository and get its config (includes global fallback)
+            let repo = git2::Repository::open(repo_path)
+                .with_context(|| format!("Failed to open repository at {}", repo_path.display()))?;
+            repo.config()
+                .with_context(|| "Failed to get repository config")?
+        }
+        None => {
+            // No repository context, use global config directly
+            git2::Config::open_default().with_context(|| "Failed to open global git config")?
+        }
+    };
+
+    config.get_string(key).with_context(|| {
+        format!(
+            "Git config '{}' not set. Please configure git:\n\
+             git config --global user.name \"Your Name\"\n\
+             git config --global user.email \"your@email.com\"",
+            key
+        )
+    })
+}
 
 /// Manages Docker images for TSK
 ///
@@ -250,10 +288,9 @@ impl DockerImageManager {
             self.print_dry_run_output(&composed, stack, agent, project);
         } else {
             // Normal mode: build the image
-            // Get git configuration from TskEnv
-            let tsk_env = self.ctx.tsk_env();
-            let git_user_name = tsk_env.git_user_name();
-            let git_user_email = tsk_env.git_user_email();
+            // Get git configuration from the repository (or global config as fallback)
+            let git_user_name = get_git_config_from_repo(build_root, "user.name")?;
+            let git_user_email = get_git_config_from_repo(build_root, "user.email")?;
 
             // Get agent version if available
             let agent_version = if let Ok(agent_instance) =
@@ -267,8 +304,8 @@ impl DockerImageManager {
             // Build the image
             self.build_docker_image(
                 &composed,
-                git_user_name,
-                git_user_email,
+                &git_user_name,
+                &git_user_email,
                 agent_version.as_deref(),
                 no_cache,
                 build_root,
@@ -727,5 +764,46 @@ mod tests {
 
         // They should have different tags
         assert_ne!(image1, image2);
+    }
+
+    #[test]
+    fn test_get_git_config_from_repo_with_repository() {
+        use crate::test_utils::git_test_utils::TestGitRepository;
+
+        // Create a test repository with git config
+        let repo = TestGitRepository::new().unwrap();
+        repo.init().unwrap();
+
+        // Set custom user config in the repository
+        repo.run_git_command(&["config", "user.name", "Custom Repo User"])
+            .unwrap();
+        repo.run_git_command(&["config", "user.email", "repo@example.com"])
+            .unwrap();
+
+        // Test reading config from the repository
+        let name = get_git_config_from_repo(Some(repo.path()), "user.name").unwrap();
+        assert_eq!(name, "Custom Repo User");
+
+        let email = get_git_config_from_repo(Some(repo.path()), "user.email").unwrap();
+        assert_eq!(email, "repo@example.com");
+    }
+
+    #[test]
+    fn test_get_git_config_from_repo_without_repository() {
+        // Test with None (uses global config)
+        // This test may fail if global git config is not set, which is expected behavior
+        let result = get_git_config_from_repo(None, "user.name");
+
+        // The result depends on whether global git config is set
+        // In CI environments this should be set, in local dev it might not be
+        if let Ok(name) = result {
+            // If global config is set, it should return a non-empty string
+            assert!(!name.is_empty());
+        } else {
+            // If global config is not set, error message should contain instructions
+            let err = result.unwrap_err();
+            assert!(err.to_string().contains("user.name"));
+            assert!(err.to_string().contains("git config --global"));
+        }
     }
 }

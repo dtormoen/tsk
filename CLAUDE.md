@@ -77,7 +77,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Automatic fallback to default project layer when specific layer is missing
 
 **Storage** (`src/context/`)
-- `TskEnv`: Manages XDG-compliant directory paths (data_dir, runtime_dir, config_dir) and runtime environment settings (git config, editor)
+- `TskEnv`: Manages XDG-compliant directory paths (data_dir, runtime_dir, config_dir) and runtime environment settings (editor, terminal type)
 - `TskConfig`: User configuration loaded from tsk.toml (docker limits, project-specific settings)
 - Centralized task storage across all repositories
 - Runtime directory for server socket and PID file
@@ -147,7 +147,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Factory pattern prevents accidental operations in tests
 - `FileSystemOperations` trait abstracts all file system operations for testability
 - `GitOperations` trait abstracts all git operations for improved testability and separation of concerns
-- `TskEnv` provides XDG-compliant directory paths and runtime environment settings
+- `TskEnv` provides XDG-compliant directory paths and runtime environment settings (editor, terminal type)
 - `TskConfig` provides user configuration loaded from tsk.toml
 
 **Agents** (`src/agent/`)
@@ -211,6 +211,6 @@ TSK implements a command pattern with dependency injection for testability. The 
 - **Proxy Image** (`dockerfiles/tsk-proxy/`): Squid proxy for controlled network access
   - Custom proxy configuration: Place a `squid.conf` file in the TSK config directory (`~/.config/tsk/squid.conf` by default) to override the default proxy configuration
   - The custom configuration will be used when building/rebuilding the proxy image
-- Git configuration inherited via Docker build args from host user
+- Git configuration resolved dynamically from the repository being built (respects per-repo author settings)
 - Automatic image rebuilding when missing during task execution
 - Agent version tracking: Docker images are rebuilt when agent versions change (via `TSK_AGENT_VERSION` ARG)

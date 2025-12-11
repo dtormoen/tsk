@@ -1,7 +1,5 @@
 use std::env;
 use std::path::{Path, PathBuf};
-#[cfg(not(test))]
-use std::process::Command;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -10,14 +8,12 @@ pub enum TskEnvError {
     NoHomeDirectory,
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("Git configuration error: {0}")]
-    GitConfig(String),
 }
 
 /// Provides access to XDG Base Directory compliant paths for TSK
 ///
 /// This struct contains runtime environment configuration including
-/// XDG-compliant paths, git configuration, and editor settings.
+/// XDG-compliant paths and editor settings.
 /// It does NOT contain user-configurable options from tsk.toml -
 /// those are managed separately.
 #[derive(Debug, Clone)]
@@ -29,8 +25,6 @@ pub struct TskEnv {
     codex_config_dir: PathBuf,
     editor: String,
     terminal_type: Option<String>,
-    git_user_name: String,
-    git_user_email: String,
 }
 
 impl TskEnv {
@@ -48,8 +42,6 @@ impl TskEnv {
         let codex_config_dir = Self::resolve_codex_config_dir(None)?;
         let editor = Self::resolve_editor(None);
         let terminal_type = Self::resolve_terminal_type(None);
-        let git_user_name = Self::resolve_git_user_name(None)?;
-        let git_user_email = Self::resolve_git_user_email(None)?;
 
         Ok(Self {
             data_dir,
@@ -59,8 +51,6 @@ impl TskEnv {
             codex_config_dir,
             editor,
             terminal_type,
-            git_user_name,
-            git_user_email,
         })
     }
 
@@ -107,16 +97,6 @@ impl TskEnv {
     /// Gets the terminal type if set
     pub fn terminal_type(&self) -> Option<&str> {
         self.terminal_type.as_deref()
-    }
-
-    /// Gets the git user name for Docker builds
-    pub fn git_user_name(&self) -> &str {
-        &self.git_user_name
-    }
-
-    /// Gets the git user email for Docker builds
-    pub fn git_user_email(&self) -> &str {
-        &self.git_user_email
     }
 
     /// Get the path to the tasks.json file
@@ -262,26 +242,6 @@ impl TskEnv {
         // Check TERM environment variable
         env::var("TERM").ok()
     }
-
-    fn resolve_git_user_name(override_name: Option<&String>) -> Result<String, TskEnvError> {
-        // Check override first
-        if let Some(name) = override_name {
-            return Ok(name.clone());
-        }
-
-        // Fall back to git config
-        get_git_config("user.name")
-    }
-
-    fn resolve_git_user_email(override_email: Option<&String>) -> Result<String, TskEnvError> {
-        // Check override first
-        if let Some(email) = override_email {
-            return Ok(email.clone());
-        }
-
-        // Fall back to git config
-        get_git_config("user.email")
-    }
 }
 
 impl Default for TskEnv {
@@ -301,8 +261,6 @@ pub struct TskEnvBuilder {
     codex_config_dir: Option<PathBuf>,
     editor: Option<String>,
     terminal_type: Option<Option<String>>,
-    git_user_name: Option<String>,
-    git_user_email: Option<String>,
 }
 
 #[cfg(test)]
@@ -317,8 +275,6 @@ impl TskEnvBuilder {
             codex_config_dir: None,
             editor: None,
             terminal_type: None,
-            git_user_name: None,
-            git_user_email: None,
         }
     }
 
@@ -364,18 +320,6 @@ impl TskEnvBuilder {
         self
     }
 
-    /// Sets the git user name
-    pub fn with_git_user_name(mut self, name: String) -> Self {
-        self.git_user_name = Some(name);
-        self
-    }
-
-    /// Sets the git user email
-    pub fn with_git_user_email(mut self, email: String) -> Self {
-        self.git_user_email = Some(email);
-        self
-    }
-
     /// Builds the TskEnv instance
     pub fn build(self) -> Result<TskEnv, TskEnvError> {
         let data_dir = TskEnv::resolve_data_dir(self.data_dir.as_ref())?;
@@ -385,8 +329,6 @@ impl TskEnvBuilder {
         let codex_config_dir = TskEnv::resolve_codex_config_dir(self.codex_config_dir.as_ref())?;
         let editor = TskEnv::resolve_editor(self.editor.as_ref());
         let terminal_type = TskEnv::resolve_terminal_type(self.terminal_type.as_ref());
-        let git_user_name = TskEnv::resolve_git_user_name(self.git_user_name.as_ref())?;
-        let git_user_email = TskEnv::resolve_git_user_email(self.git_user_email.as_ref())?;
 
         Ok(TskEnv {
             data_dir,
@@ -396,8 +338,6 @@ impl TskEnvBuilder {
             codex_config_dir,
             editor,
             terminal_type,
-            git_user_name,
-            git_user_email,
         })
     }
 }
@@ -406,52 +346,6 @@ impl TskEnvBuilder {
 impl Default for TskEnvBuilder {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Get git configuration value
-fn get_git_config(key: &str) -> Result<String, TskEnvError> {
-    #[cfg(test)]
-    {
-        Err(TskEnvError::GitConfig(format!(
-            "Git config '{}' should not be accessed directly in tests. \
-             Use AppContext::builder().build() to create a correct test context with tsk_env. \
-             The test AppContext automatically sets git user.name and user.email.",
-            key
-        )))
-    }
-
-    #[cfg(not(test))]
-    {
-        let output = Command::new("git")
-            .args(["config", "--global", key])
-            .output()
-            .map_err(|e| TskEnvError::GitConfig(format!("Failed to execute git config: {}", e)))?;
-
-        if !output.status.success() {
-            return Err(TskEnvError::GitConfig(format!(
-                "Git config '{}' not set. Please configure git with your name and email:\n\
-                 git config --global user.name \"Your Name\"\n\
-                 git config --global user.email \"your.email@example.com\"",
-                key
-            )));
-        }
-
-        let value = String::from_utf8(output.stdout)
-            .map_err(|_| {
-                TskEnvError::GitConfig("Git config output is not valid UTF-8".to_string())
-            })?
-            .trim()
-            .to_string();
-
-        if value.is_empty() {
-            return Err(TskEnvError::GitConfig(format!(
-                "Git config '{}' is empty. Please configure git with your name and email.",
-                key
-            )));
-        }
-
-        Ok(value)
     }
 }
 
@@ -465,8 +359,6 @@ mod tests {
             .with_data_dir(PathBuf::from("/custom/data"))
             .with_runtime_dir(PathBuf::from("/custom/runtime"))
             .with_config_dir(PathBuf::from("/custom/config"))
-            .with_git_user_name("Test User".to_string())
-            .with_git_user_email("test@example.com".to_string())
             .build()
             .expect("Failed to create TSK environment");
 
@@ -488,10 +380,7 @@ mod tests {
     #[test]
     fn test_tsk_env_fallback() {
         // Test that fallback paths work when no overrides are provided
-        // In tests, we need to provide git config
         let env = TskEnv::builder()
-            .with_git_user_name("Test User".to_string())
-            .with_git_user_email("test@example.com".to_string())
             .build()
             .expect("Failed to create TSK environment");
 
@@ -507,8 +396,6 @@ mod tests {
         let env = TskEnv::builder()
             .with_data_dir(PathBuf::from("/override/data"))
             .with_config_dir(PathBuf::from("/override/config"))
-            .with_git_user_name("Test User".to_string())
-            .with_git_user_email("test@example.com".to_string())
             .build()
             .expect("Failed to create TSK environment");
 
@@ -523,8 +410,6 @@ mod tests {
         // Test that env overrides work without environment manipulation
         let env = TskEnv::builder()
             .with_data_dir(PathBuf::from("/config/data"))
-            .with_git_user_name("Test User".to_string())
-            .with_git_user_email("test@example.com".to_string())
             .build()
             .expect("Failed to create TSK environment");
 
@@ -554,8 +439,6 @@ mod tests {
             .with_claude_config_dir(PathBuf::from("/test/.claude"))
             .with_editor("emacs".to_string())
             .with_terminal_type(Some("xterm-256color".to_string()))
-            .with_git_user_name("Test User".to_string())
-            .with_git_user_email("test@example.com".to_string())
             .build()
             .expect("Failed to create TSK environment");
 
@@ -569,8 +452,6 @@ mod tests {
         let env = TskEnv::builder()
             .with_editor("nano".to_string())
             .with_terminal_type(None)
-            .with_git_user_name("Test User".to_string())
-            .with_git_user_email("test@example.com".to_string())
             .build()
             .expect("Failed to create TSK environment");
 
@@ -588,8 +469,6 @@ mod tests {
     fn test_tsk_env_builder_with_codex_config_dir() {
         let env = TskEnv::builder()
             .with_codex_config_dir(PathBuf::from("/test/.codex"))
-            .with_git_user_name("Test User".to_string())
-            .with_git_user_email("test@example.com".to_string())
             .build()
             .expect("Failed to create TSK environment");
 
@@ -597,39 +476,8 @@ mod tests {
     }
 
     #[test]
-    fn test_git_configuration_overrides() {
-        let env = TskEnv::builder()
-            .with_git_user_name("Override User".to_string())
-            .with_git_user_email("override@example.com".to_string())
-            .build()
-            .expect("Failed to create TSK environment");
-
-        assert_eq!(env.git_user_name(), "Override User");
-        assert_eq!(env.git_user_email(), "override@example.com");
-    }
-
-    #[test]
-    fn test_git_configuration_partial_override() {
-        // Test that we can override just the name and git email will fall back to git config
-        let builder = TskEnv::builder().with_git_user_name("Partial Override".to_string());
-
-        // This test may fail if git is not configured on the system
-        match builder.build() {
-            Ok(env) => {
-                assert_eq!(env.git_user_name(), "Partial Override");
-                // git_user_email will be from git config or will cause error
-                assert!(!env.git_user_email().is_empty());
-            }
-            Err(e) => {
-                // Expected if git user.email is not configured
-                assert!(e.to_string().contains("Git config"));
-            }
-        }
-    }
-
-    #[test]
     fn test_default_implementation() {
-        // Default should work if git is configured, or fail gracefully
+        // Default should work based on environment settings
         let result = std::panic::catch_unwind(TskEnv::default);
         if let Ok(env) = result {
             assert!(!env.editor().is_empty());

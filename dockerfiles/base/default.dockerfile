@@ -33,19 +33,11 @@ RUN usermod -l agent ubuntu && \
 WORKDIR /workspace
 RUN chown -R agent:agent /workspace
 
-# Build arguments for git configuration
-ARG GIT_USER_NAME
-ARG GIT_USER_EMAIL
-
-# Configure git with the settings from build arguments
-USER agent
-RUN git config --global user.name "$GIT_USER_NAME" && \
-    git config --global user.email "$GIT_USER_EMAIL"
-
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PATH="/home/agent/.local/bin:${PATH}"
 
+USER agent
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Stack layer
@@ -55,6 +47,15 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 # Project layer
 {{{PROJECT}}}
 # End of Project layer
+
+# Build arguments for git configuration
+ARG GIT_USER_NAME
+ARG GIT_USER_EMAIL
+
+# Configure git with the settings from build arguments
+USER agent
+RUN git config --global user.name "$GIT_USER_NAME" && \
+    git config --global user.email "$GIT_USER_EMAIL"
 
 # Agent version ARG to invalidate cache when agent updates
 ARG TSK_AGENT_VERSION

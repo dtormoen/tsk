@@ -226,8 +226,6 @@ impl AppContextBuilder {
                     .with_runtime_dir(temp_path.join("runtime").to_path_buf())
                     .with_config_dir(temp_path.join("config").to_path_buf())
                     .with_claude_config_dir(temp_path.join("claude").to_path_buf())
-                    .with_git_user_name("Test User".to_string())
-                    .with_git_user_email("test@example.com".to_string())
                     .build()
                     .expect("Failed to initialize test TSK environment");
                 env.ensure_directories()

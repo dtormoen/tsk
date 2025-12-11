@@ -527,8 +527,6 @@ mod tests {
                 .with_runtime_dir(temp_path.join("runtime"))
                 .with_config_dir(temp_path.join("config"))
                 .with_claude_config_dir(temp_path.join("claude"))
-                .with_git_user_name("Test User".to_string())
-                .with_git_user_email("test@example.com".to_string())
                 .with_editor(script_path.to_str().unwrap().to_string())
                 .build()
                 .unwrap(),
