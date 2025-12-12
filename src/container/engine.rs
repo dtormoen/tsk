@@ -30,7 +30,9 @@ impl std::str::FromStr for ContainerEngine {
         match s.to_lowercase().as_str() {
             "docker" => Ok(ContainerEngine::Docker),
             "podman" => Ok(ContainerEngine::Podman),
-            _ => Err(format!("Unknown container engine: {s}. Use 'docker' or 'podman'.")),
+            _ => Err(format!(
+                "Unknown container engine: {s}. Use 'docker' or 'podman'."
+            )),
         }
     }
 }
@@ -38,6 +40,7 @@ impl std::str::FromStr for ContainerEngine {
 /// Configuration for a container engine
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
+    #[allow(dead_code)] // Used in production code
     pub engine: ContainerEngine,
     pub socket_path: PathBuf,
 }
@@ -45,7 +48,10 @@ pub struct EngineConfig {
 impl EngineConfig {
     /// Create a new engine configuration
     pub fn new(engine: ContainerEngine, socket_path: PathBuf) -> Self {
-        Self { engine, socket_path }
+        Self {
+            engine,
+            socket_path,
+        }
     }
 }
 

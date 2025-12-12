@@ -17,6 +17,7 @@ pub enum TskConfigError {
     #[error("Failed to parse configuration: {0}")]
     ConfigParse(String),
     #[error("Neither Docker nor Podman found. Please install one.")]
+    #[allow(dead_code)] // Used in resolve_engine_config
     NoContainerEngine,
 }
 
@@ -180,10 +181,8 @@ impl TskConfig {
         if !config_path.exists() {
             return Ok(ConfigFile::default());
         }
-        let content = std::fs::read_to_string(&config_path)
-            .map_err(TskConfigError::Io)?;
-        toml::from_str(&content)
-            .map_err(|e| TskConfigError::ConfigParse(e.to_string()))
+        let content = std::fs::read_to_string(&config_path).map_err(TskConfigError::Io)?;
+        toml::from_str(&content).map_err(|e| TskConfigError::ConfigParse(e.to_string()))
     }
 
     /// Save the configuration file
@@ -191,8 +190,7 @@ impl TskConfig {
         let config_path = self.config_file();
         let content = toml::to_string_pretty(config)
             .map_err(|e| TskConfigError::ConfigParse(e.to_string()))?;
-        std::fs::write(&config_path, content)
-            .map_err(TskConfigError::Io)
+        std::fs::write(&config_path, content).map_err(TskConfigError::Io)
     }
 
     /// Resolve the container engine configuration
@@ -203,6 +201,7 @@ impl TskConfig {
     /// 3. Auto-detection (prefer Podman)
     ///
     /// Returns the engine config and whether a fallback was used
+    #[allow(dead_code)] // Used in production code
     pub fn resolve_engine_config(
         &self,
         cli_override: Option<ContainerEngine>,
@@ -217,11 +216,10 @@ impl TskConfig {
         } else if let Some(ref name) = config_file.engine.name {
             // Use configured engine
             name.parse::<ContainerEngine>()
-                .map_err(|e| TskConfigError::ConfigParse(e))?
+                .map_err(TskConfigError::ConfigParse)?
         } else {
             // Auto-detect and persist
-            let detected = detect_engine()
-                .ok_or_else(|| TskConfigError::NoContainerEngine)?;
+            let detected = detect_engine().ok_or(TskConfigError::NoContainerEngine)?;
 
             println!("Detected {}, saving to config...", detected);
             config_file.engine.name = Some(detected.to_string());
@@ -773,7 +771,12 @@ mod tests {
     fn test_config_file_path() {
         let ctx = AppContext::builder().build();
         let config = ctx.tsk_config();
-        assert!(config.config_file().to_string_lossy().contains("config.toml"));
+        assert!(
+            config
+                .config_file()
+                .to_string_lossy()
+                .contains("config.toml")
+        );
     }
 
     #[test]

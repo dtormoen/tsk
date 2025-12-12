@@ -10,19 +10,20 @@ use bollard::query_parameters::RemoveContainerOptions;
 use std::io::{self, Write};
 use std::sync::Arc;
 
+#[allow(dead_code)] // Used in tests
 const PROXY_CONTAINER_NAME: &str = "tsk-proxy";
+#[allow(dead_code)] // Used in tests
 const TSK_NETWORK_NAME: &str = "tsk-network";
 
 /// Check if orphan cleanup is needed and prompt the user
 ///
 /// Returns true if cleanup was performed or skipped, false if error
+#[allow(dead_code)] // Future integration
 pub async fn check_and_cleanup_orphans(
     tsk_config: &TskConfig,
     current_engine: ContainerEngine,
 ) -> Result<(), String> {
-    let config_file = tsk_config
-        .load_config_file()
-        .map_err(|e| e.to_string())?;
+    let config_file = tsk_config.load_config_file().map_err(|e| e.to_string())?;
 
     // Check if we switched engines
     let last_used = match &config_file.engine.last_used {
@@ -55,9 +56,8 @@ pub async fn check_and_cleanup_orphans(
     Ok(())
 }
 
-async fn check_orphan_container(
-    client: &Arc<DefaultDockerClient>,
-) -> bool {
+#[allow(dead_code)] // Used by check_and_cleanup_orphans
+async fn check_orphan_container(client: &Arc<DefaultDockerClient>) -> bool {
     use crate::context::docker_client::DockerClient;
 
     // Try to inspect the proxy container
@@ -68,13 +68,17 @@ async fn check_orphan_container(
     }
 }
 
+#[allow(dead_code)] // Used by check_and_cleanup_orphans
 async fn prompt_cleanup(
     client: &Arc<DefaultDockerClient>,
     other_engine: ContainerEngine,
 ) -> Result<(), String> {
     use crate::context::docker_client::DockerClient;
 
-    println!("\nFound orphaned {} containers from previous engine:", other_engine);
+    println!(
+        "\nFound orphaned {} containers from previous engine:",
+        other_engine
+    );
     println!("  - {} (container)", PROXY_CONTAINER_NAME);
     println!("  - {} (network)", TSK_NETWORK_NAME);
     print!("Remove them? [Y/n]: ");
@@ -105,8 +109,10 @@ async fn prompt_cleanup(
 
         // Note: Network removal would require additional DockerClient method
         // For now, just inform the user
-        println!("Note: Run '{} network rm {}' to remove the orphaned network",
-            other_engine, TSK_NETWORK_NAME);
+        println!(
+            "Note: Run '{} network rm {}' to remove the orphaned network",
+            other_engine, TSK_NETWORK_NAME
+        );
     } else {
         println!("Skipping cleanup");
     }

@@ -142,7 +142,10 @@ impl AppContextBuilder {
     /// Configure the container engine override for this context
     ///
     /// This overrides the configured/detected engine for the current session
-    pub fn with_engine_override(mut self, engine: Option<crate::container::ContainerEngine>) -> Self {
+    pub fn with_engine_override(
+        mut self,
+        engine: Option<crate::container::ContainerEngine>,
+    ) -> Self {
         self.engine_override = engine;
         self
     }
