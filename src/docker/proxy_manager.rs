@@ -60,6 +60,10 @@ impl ProxyManager {
     /// * `Ok(())` if proxy is running and healthy
     /// * `Err` if proxy cannot be started or becomes unhealthy
     pub async fn ensure_proxy(&self) -> Result<()> {
+        // Check for orphaned containers on first proxy startup
+        // This handles the case where the user switched container engines
+        // TODO: Implement orphan cleanup check here
+
         // First ensure the proxy image exists
         self.ensure_proxy_image()
             .await

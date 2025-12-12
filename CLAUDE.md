@@ -175,6 +175,8 @@ TSK implements a command pattern with dependency injection for testability. The 
 
 ### Docker Infrastructure
 
+Note: While the module is named "docker", TSK's container operations work with both Docker and Podman via the Bollard library's compatible API.
+
 - **Layered Images**: Four-layer system for flexible customization
   - Base layer: Ubuntu 24.04 base OS and common tools (stored as `dockerfiles/base/default.dockerfile`)
   - Stack layer: Language-specific toolchains (stored as `dockerfiles/stack/{name}.dockerfile` for rust, python, node, go, java, lua, etc.)
@@ -187,3 +189,24 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Git configuration inherited via Docker build args from host user
 - Automatic image rebuilding when missing during task execution
 - Agent version tracking: Docker images are rebuilt when agent versions change (via `TSK_AGENT_VERSION` ARG)
+
+### Container Engine Support
+
+TSK supports both Docker and Podman as container engines:
+
+- **Auto-detection**: On first run, TSK detects available engines (prefers Podman)
+- **Configuration**: Engine choice is persisted in `~/.config/tsk/config.toml`
+- **Override**: Use `tsk --engine docker` or `tsk --engine podman` to override
+
+**Configuration file format:**
+```toml
+[engine]
+name = "podman"           # Configured engine
+last_used = "podman"      # Last actually used engine
+# socket_path = "/custom/path.sock"  # Optional custom socket
+```
+
+**Socket paths (auto-detected):**
+- Docker: `/var/run/docker.sock`
+- Podman rootless: `$XDG_RUNTIME_DIR/podman/podman.sock`
+- Podman rootful: `/var/run/podman/podman.sock`

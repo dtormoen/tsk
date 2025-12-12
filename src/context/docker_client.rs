@@ -121,6 +121,25 @@ impl DefaultDockerClient {
             ),
         }
     }
+
+    /// Create a new DockerClient connected to a specific socket path
+    ///
+    /// This allows connecting to Docker or Podman via their respective sockets.
+    #[allow(dead_code)] // Used in production code
+    pub fn with_socket(socket_path: &std::path::Path) -> Self {
+        let socket_str = socket_path.to_string_lossy();
+        match Docker::connect_with_socket(&socket_str, 120, bollard::API_DEFAULT_VERSION) {
+            Ok(docker) => Self { docker },
+            Err(e) => panic!(
+                "Failed to connect to container engine at {}: {e}\n\n\
+                Please ensure Docker or Podman is installed and running:\n\
+                  - Docker: Check 'docker ps' or start Docker Desktop\n\
+                  - Podman: Check 'podman ps' or run 'systemctl --user start podman.socket'\n\n\
+                If the daemon is running, check socket permissions.",
+                socket_str
+            ),
+        }
+    }
 }
 
 impl Default for DefaultDockerClient {
