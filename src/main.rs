@@ -4,6 +4,7 @@ use clap::{Args, Parser, Subcommand};
 mod agent;
 mod assets;
 mod commands;
+mod container;
 mod context;
 mod docker;
 mod git;
