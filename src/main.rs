@@ -35,6 +35,10 @@ use commands::{
 };
 use context::AppContext;
 
+fn parse_container_engine(s: &str) -> Result<container::ContainerEngine, String> {
+    s.parse()
+}
+
 #[derive(Parser)]
 #[command(name = "tsk")]
 #[command(author, version, about = "TSK - Task delegation to AI agents", long_about = None)]
@@ -46,6 +50,10 @@ use context::AppContext;
 {all-args}{after-help}
 "#)]
 struct Cli {
+    /// Container engine to use (docker or podman)
+    #[arg(long, global = true, value_parser = parse_container_engine)]
+    engine: Option<container::ContainerEngine>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -285,7 +293,9 @@ async fn main() {
     let cli = Cli::parse();
 
     // Create the AppContext using the builder pattern
-    let app_context = AppContext::builder().build();
+    let app_context = AppContext::builder()
+        .with_engine_override(cli.engine)
+        .build();
 
     let command: Box<dyn Command> = match cli.command {
         Commands::Add {
