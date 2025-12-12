@@ -86,6 +86,7 @@ impl AppContext {
 pub struct AppContextBuilder {
     docker_build_lock_manager: Option<Arc<DockerBuildLockManager>>,
     docker_client: Option<Arc<dyn DockerClient>>,
+    engine_override: Option<crate::container::ContainerEngine>,
     file_system: Option<Arc<dyn FileSystemOperations>>,
     git_operations: Option<Arc<dyn GitOperations>>,
     git_sync_manager: Option<Arc<GitSyncManager>>,
@@ -106,6 +107,7 @@ impl AppContextBuilder {
         Self {
             docker_build_lock_manager: None,
             docker_client: None,
+            engine_override: None,
             file_system: None,
             git_operations: None,
             git_sync_manager: None,
@@ -134,6 +136,14 @@ impl AppContextBuilder {
     #[allow(dead_code)] // Used in tests
     pub fn with_docker_client(mut self, docker_client: Arc<dyn DockerClient>) -> Self {
         self.docker_client = Some(docker_client);
+        self
+    }
+
+    /// Configure the container engine override for this context
+    ///
+    /// This overrides the configured/detected engine for the current session
+    pub fn with_engine_override(mut self, engine: Option<crate::container::ContainerEngine>) -> Self {
+        self.engine_override = engine;
         self
     }
 
@@ -262,9 +272,19 @@ impl AppContextBuilder {
                 .tsk_client
                 .unwrap_or_else(|| Arc::new(tsk_client::DefaultTskClient::new(tsk_config.clone())));
 
-            let docker_client = self
-                .docker_client
-                .unwrap_or_else(|| Arc::new(docker_client::DefaultDockerClient::new()));
+            let docker_client = self.docker_client.unwrap_or_else(|| {
+                // Resolve engine configuration
+                let engine_config = tsk_config
+                    .resolve_engine_config(self.engine_override)
+                    .unwrap_or_else(|e| {
+                        eprintln!("Error: {e}");
+                        std::process::exit(1);
+                    });
+
+                Arc::new(docker_client::DefaultDockerClient::with_socket(
+                    &engine_config.0.socket_path,
+                ))
+            });
 
             let file_system = self
                 .file_system
