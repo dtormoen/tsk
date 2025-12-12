@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use thiserror::Error;
 
+use crate::container::{ContainerEngine, EngineConfig, default_socket_path, detect_engine};
+
 #[derive(Debug, Error)]
 pub enum TskConfigError {
     #[error("Failed to determine home directory")]
@@ -12,6 +14,28 @@ pub enum TskConfigError {
     Io(#[from] std::io::Error),
     #[error("Git configuration error: {0}")]
     GitConfig(String),
+    #[error("Failed to parse configuration: {0}")]
+    ConfigParse(String),
+    #[error("Neither Docker nor Podman found. Please install one.")]
+    NoContainerEngine,
+}
+
+/// Configuration file structure for config.toml
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct ConfigFile {
+    #[serde(default)]
+    pub engine: EngineSection,
+}
+
+/// Engine configuration section in config.toml
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct EngineSection {
+    /// The configured container engine (docker or podman)
+    pub name: Option<String>,
+    /// The last-used engine (for orphan cleanup detection)
+    pub last_used: Option<String>,
+    /// Optional custom socket path
+    pub socket_path: Option<String>,
 }
 
 /// Provides access to XDG Base Directory compliant paths for TSK
@@ -143,6 +167,107 @@ impl TskConfig {
         std::fs::create_dir_all(&self.runtime_dir)?;
         std::fs::create_dir_all(&self.config_dir)?;
         Ok(())
+    }
+
+    /// Get the path to the config.toml file
+    pub fn config_file(&self) -> PathBuf {
+        self.config_dir.join("config.toml")
+    }
+
+    /// Load the configuration file
+    pub fn load_config_file(&self) -> Result<ConfigFile, TskConfigError> {
+        let config_path = self.config_file();
+        if !config_path.exists() {
+            return Ok(ConfigFile::default());
+        }
+        let content = std::fs::read_to_string(&config_path)
+            .map_err(TskConfigError::Io)?;
+        toml::from_str(&content)
+            .map_err(|e| TskConfigError::ConfigParse(e.to_string()))
+    }
+
+    /// Save the configuration file
+    pub fn save_config_file(&self, config: &ConfigFile) -> Result<(), TskConfigError> {
+        let config_path = self.config_file();
+        let content = toml::to_string_pretty(config)
+            .map_err(|e| TskConfigError::ConfigParse(e.to_string()))?;
+        std::fs::write(&config_path, content)
+            .map_err(TskConfigError::Io)
+    }
+
+    /// Resolve the container engine configuration
+    ///
+    /// Priority order:
+    /// 1. CLI override (if provided)
+    /// 2. Config file setting
+    /// 3. Auto-detection (prefer Podman)
+    ///
+    /// Returns the engine config and whether a fallback was used
+    pub fn resolve_engine_config(
+        &self,
+        cli_override: Option<ContainerEngine>,
+    ) -> Result<(EngineConfig, bool), TskConfigError> {
+        let mut config_file = self.load_config_file()?;
+        let mut used_fallback = false;
+
+        // Determine the engine to use
+        let engine = if let Some(engine) = cli_override {
+            // CLI override takes precedence
+            engine
+        } else if let Some(ref name) = config_file.engine.name {
+            // Use configured engine
+            name.parse::<ContainerEngine>()
+                .map_err(|e| TskConfigError::ConfigParse(e))?
+        } else {
+            // Auto-detect and persist
+            let detected = detect_engine()
+                .ok_or_else(|| TskConfigError::NoContainerEngine)?;
+
+            println!("Detected {}, saving to config...", detected);
+            config_file.engine.name = Some(detected.to_string());
+            config_file.engine.last_used = Some(detected.to_string());
+            self.save_config_file(&config_file)?;
+
+            detected
+        };
+
+        // Resolve socket path
+        let socket_path = if let Some(ref path) = config_file.engine.socket_path {
+            PathBuf::from(path)
+        } else {
+            // Check if configured engine is available
+            if let Some(path) = default_socket_path(engine) {
+                path
+            } else {
+                // Engine not available, try fallback
+                let other_engine = match engine {
+                    ContainerEngine::Docker => ContainerEngine::Podman,
+                    ContainerEngine::Podman => ContainerEngine::Docker,
+                };
+
+                if let Some(path) = default_socket_path(other_engine) {
+                    eprintln!(
+                        "Warning: {} (configured) is unavailable, falling back to {}",
+                        engine, other_engine
+                    );
+                    used_fallback = true;
+                    // Update last_used but NOT name (keep user's config)
+                    config_file.engine.last_used = Some(other_engine.to_string());
+                    self.save_config_file(&config_file)?;
+                    path
+                } else {
+                    return Err(TskConfigError::NoContainerEngine);
+                }
+            }
+        };
+
+        // Update last_used if not a fallback
+        if !used_fallback && config_file.engine.last_used.as_deref() != Some(&engine.to_string()) {
+            config_file.engine.last_used = Some(engine.to_string());
+            self.save_config_file(&config_file)?;
+        }
+
+        Ok((EngineConfig::new(engine, socket_path), used_fallback))
     }
 
     fn resolve_data_dir(override_dir: Option<&PathBuf>) -> Result<PathBuf, TskConfigError> {
@@ -458,6 +583,7 @@ fn get_git_config(key: &str) -> Result<String, TskConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::AppContext;
 
     #[test]
     fn test_tsk_config_with_builder() {
@@ -546,8 +672,6 @@ mod tests {
 
     #[test]
     fn test_task_dir_generation() {
-        use crate::context::AppContext;
-
         let ctx = AppContext::builder().build();
         let config = ctx.tsk_config();
         let task_dir = config.task_dir("task-123", "repo-abc");
@@ -643,5 +767,38 @@ mod tests {
             assert!(!config.editor().is_empty());
             assert!(config.data_dir().to_string_lossy().contains("tsk"));
         }
+    }
+
+    #[test]
+    fn test_config_file_path() {
+        let ctx = AppContext::builder().build();
+        let config = ctx.tsk_config();
+        assert!(config.config_file().to_string_lossy().contains("config.toml"));
+    }
+
+    #[test]
+    fn test_load_missing_config_file() {
+        let ctx = AppContext::builder().build();
+        let config = ctx.tsk_config();
+        let result = config.load_config_file();
+        assert!(result.is_ok());
+        let config_file = result.unwrap();
+        assert!(config_file.engine.name.is_none());
+    }
+
+    #[test]
+    fn test_save_and_load_config_file() {
+        let ctx = AppContext::builder().build();
+        let config = ctx.tsk_config();
+
+        let mut config_file = ConfigFile::default();
+        config_file.engine.name = Some("podman".to_string());
+        config_file.engine.last_used = Some("podman".to_string());
+
+        config.save_config_file(&config_file).unwrap();
+
+        let loaded = config.load_config_file().unwrap();
+        assert_eq!(loaded.engine.name, Some("podman".to_string()));
+        assert_eq!(loaded.engine.last_used, Some("podman".to_string()));
     }
 }
