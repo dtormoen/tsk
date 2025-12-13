@@ -37,6 +37,7 @@ cargo install tsk-ai
 gh repo clone dtormoen/tsk
 cd tsk
 cargo install .
+```
 
 ## Commands
 
@@ -59,7 +60,6 @@ cargo install .
 - `tsk template list` - View available task type templates and where they are installed
 
 Run `tsk help` or `tsk help <command>` for detailed options.
-```
 
 ## Quick Start Guide
 
@@ -175,19 +175,51 @@ Each configuration directory can contain:
 - `dockerfiles`: A folder containing dockerfiles and layers that are used to create sandboxes
 - `templates`: A folder of task template markdown files which can be used via the `-t/--type` flag
 
+### Configuration File
+
+TSK can be configured via `~/.config/tsk/tsk.toml`. All settings are optional.
+
+```toml
+# Docker container resource limits
+[docker]
+memory_limit_gb = 12.0  # Container memory limit (default: 12.0)
+cpu_limit = 8           # Number of CPUs (default: 8)
+
+# Project-specific configuration (matches directory name)
+[project.my-project]
+agent = "claude"        # Default agent (claude or codex)
+stack = "go"            # Default stack for auto-detection override
+volumes = [
+    # Bind mount: Share host directories with containers (supports ~ expansion)
+    { host = "~/.cache/go-mod", container = "/go/pkg/mod" },
+    # Named volume: Docker-managed persistent storage (prefixed with tsk-)
+    { name = "go-build-cache", container = "/home/agent/.cache/go-build" },
+    # Read-only mount: Provide artifacts without modification risk
+    { host = "~/debug-logs", container = "/debug-logs", readonly = true }
+]
+```
+
+Volume mounts are particularly useful for:
+- **Build caches**: Share Go module cache (`/go/pkg/mod`) or Rust target directories to speed up builds
+- **Persistent state**: Use named volumes for build caches that persist across tasks
+- **Read-only artifacts**: Mount debugging artifacts, config files, or other resources without risk of modification
+
+Configuration priority: CLI flags > project config > auto-detection > defaults
+
 ### Customizing the TSK Sandbox Environment
 
 Each TSK sandbox docker image has 4 main parts:
 - A [base dockerfile](./dockerfiles/base/default.dockerfile) that includes the OS and a set of basic development tools e.g. `git`
 - A `stack` snippet that defines language specific build steps. See:
+  - [default](./dockerfiles/stack/default.dockerfile) - minimal fallback stack
   - [go](./dockerfiles/stack/go.dockerfile)
   - [java](./dockerfiles/stack/java.dockerfile)
   - [lua](./dockerfiles/stack/lua.dockerfile)
   - [node](./dockerfiles/stack/node.dockerfile)
   - [python](./dockerfiles/stack/python.dockerfile)
   - [rust](./dockerfiles/stack/rust.dockerfile)
-- A `project` snippet that defines project specific build steps. This does nothing by default, but can be used to add extra build steps for your project.
 - An `agent` snippet that installs an agent, e.g. `claude` or `codex`.
+- A `project` snippet that defines project specific build steps (applied last for project-specific customizations). This does nothing by default, but can be used to add extra build steps for your project.
 
 It is very difficult to make these images general purpose enough to cover all repositories. You may need some special customization. See [dockerfiles](./dockerfiles) for the built-in dockerfiles as well as the [TSK custom project layer](./.tsk/dockerfiles/project/tsk.dockerfile) to see how you can integrate custom build steps into your project by creating a `.tsk/dockerfiles/project/<yourproject>.dockerfile` or `~/.config/tsk/dockerfiles/project/<yourproject>.dockerfile` snippet.
 
