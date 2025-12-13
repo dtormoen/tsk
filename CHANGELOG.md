@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.3](https://github.com/dtormoen/tsk/compare/v0.6.2...v0.6.3) - 2025-12-13
+
+### Added
+
+- human-friendly Docker resource configuration
+- add project-specific configuration with volume mounts
+- add TOML configuration file support
+- make --name optional for add and run commands
+
+### Fixed
+
+- provide test defaults for git config in CI environments
+
+### Other
+
+- add configuration file documentation to README
+- resolve git author dynamically from repository
+- rename TskConfig to TskEnv and TskOptions to TskConfig
+
 ## [0.6.2](https://github.com/dtormoen/tsk/compare/v0.6.1...v0.6.2) - 2025-12-03
 
 ### Added
