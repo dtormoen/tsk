@@ -51,8 +51,8 @@ impl DockerManager {
             format!("HTTPS_PROXY={proxy_url}"),
             format!("http_proxy={proxy_url}"),
             format!("https_proxy={proxy_url}"),
-            "NO_PROXY=localhost,127.0.0.1".to_string(),
-            "no_proxy=localhost,127.0.0.1".to_string(),
+            "NO_PROXY=localhost,127.0.0.1,host.docker.internal".to_string(),
+            "no_proxy=localhost,127.0.0.1,host.docker.internal".to_string(),
         ]
     }
 
@@ -152,6 +152,7 @@ impl DockerManager {
     /// * `image` - The Docker image to use
     /// * `task` - The task containing all necessary configuration
     /// * `agent` - The agent to get volumes and environment variables from
+    /// * `network_name` - The Docker network name for the container to join
     ///
     /// # Returns
     /// A `ContainerCreateBody` configured with appropriate settings for the mode
@@ -160,6 +161,7 @@ impl DockerManager {
         image: &str,
         task: &crate::task::Task,
         agent: &dyn Agent,
+        network_name: &str,
     ) -> ContainerCreateBody {
         let binds = self.build_bind_volumes(task, agent);
         let instructions_file_path = PathBuf::from(&task.instructions_file);
@@ -191,7 +193,8 @@ impl DockerManager {
             cmd: command,
             host_config: Some(HostConfig {
                 binds: Some(binds),
-                network_mode: Some(self.proxy_manager.network_name().to_string()),
+                network_mode: Some(network_name.to_string()),
+                extra_hosts: Some(vec!["host.docker.internal:host-gateway".to_string()]),
                 memory: Some(docker_config.memory_limit_bytes()),
                 cpu_quota: Some(docker_config.cpu_quota_microseconds()),
                 // No capabilities needed since we're not running iptables
@@ -246,17 +249,47 @@ impl DockerManager {
             ));
         }
 
-        let config = self.create_container_config(docker_image_tag, task, agent);
+        // Create isolated network for this agent
+        let network_name = self
+            .proxy_manager
+            .create_agent_network(&task.id)
+            .await
+            .map_err(|e| format!("Failed to create agent network: {e}"))?;
+
+        // Connect proxy to the agent's network before starting container
+        if let Err(e) = self
+            .proxy_manager
+            .connect_proxy_to_network(&network_name)
+            .await
+        {
+            // Clean up network on failure
+            self.proxy_manager
+                .cleanup_agent_network(&network_name)
+                .await;
+            return Err(format!("Failed to connect proxy to agent network: {e}"));
+        }
+
+        let config = self.create_container_config(docker_image_tag, task, agent, &network_name);
         let container_name = self.build_container_name(task);
         let options = bollard::query_parameters::CreateContainerOptionsBuilder::default()
             .name(&container_name)
             .build();
 
-        let container_id = self
+        let container_id = match self
             .ctx
             .docker_client()
             .create_container(Some(options), config)
-            .await?;
+            .await
+        {
+            Ok(id) => id,
+            Err(e) => {
+                // Clean up network on failure
+                self.proxy_manager
+                    .cleanup_agent_network(&network_name)
+                    .await;
+                return Err(e);
+            }
+        };
 
         // Copy agent files into container before starting
         for (tar_data, dest_path) in agent.files_to_copy() {
@@ -268,10 +301,18 @@ impl DockerManager {
 
         let result = if task.is_interactive {
             println!("\nStarting interactive session...");
-            self.ctx
+            if let Err(e) = self
+                .ctx
                 .docker_client()
                 .start_container(&container_id)
-                .await?;
+                .await
+            {
+                let _ = self.remove_container(&container_id).await;
+                self.proxy_manager
+                    .cleanup_agent_network(&network_name)
+                    .await;
+                return Err(e);
+            }
 
             let attach_result = self
                 .ctx
@@ -280,6 +321,9 @@ impl DockerManager {
                 .await;
 
             let _ = self.remove_container(&container_id).await;
+            self.proxy_manager
+                .cleanup_agent_network(&network_name)
+                .await;
 
             if let Err(e) = attach_result {
                 eprintln!("Interactive session ended with error: {e}");
@@ -291,22 +335,36 @@ impl DockerManager {
         } else {
             // Non-interactive mode: start, stream logs, process results
             println!("Starting agent sand box container: {container_id}");
-            self.ctx
+            if let Err(e) = self
+                .ctx
                 .docker_client()
                 .start_container(&container_id)
-                .await?;
+                .await
+            {
+                let _ = self.remove_container(&container_id).await;
+                self.proxy_manager
+                    .cleanup_agent_network(&network_name)
+                    .await;
+                return Err(e);
+            }
 
             // Stream logs and process them
             let mut log_processor = agent.create_log_processor(Some(task));
             let output = self
                 .stream_container_logs(&container_id, &mut *log_processor)
-                .await?;
+                .await;
 
             let task_result = log_processor.get_final_result().cloned();
 
-            self.remove_container(&container_id).await?;
+            let _ = self.remove_container(&container_id).await;
+            self.proxy_manager
+                .cleanup_agent_network(&network_name)
+                .await;
 
-            Ok((output, task_result))
+            match output {
+                Ok(output) => Ok((output, task_result)),
+                Err(e) => Err(e),
+            }
         };
 
         // After task completion (success or failure), try to stop proxy if idle
@@ -615,10 +673,19 @@ mod tests {
         assert!(error_msg.contains("Container exited with non-zero status: 1"));
         assert!(error_msg.contains("Container logs")); // Should include the output
 
-        // Note: Currently, when stream_container_logs returns an error, the container
-        // is not removed. This could be improved to ensure cleanup always happens.
+        // Cleanup now always happens even on error
         let remove_calls = mock_client.remove_container_calls.lock().unwrap();
-        assert_eq!(remove_calls.len(), 0);
+        assert_eq!(remove_calls.len(), 1);
+        assert_eq!(remove_calls[0].0, "test-container-id-1");
+        drop(remove_calls);
+
+        // Network cleanup should also happen
+        let disconnect_calls = mock_client.disconnect_network_calls.lock().unwrap();
+        assert_eq!(disconnect_calls.len(), 1);
+        drop(disconnect_calls);
+
+        let remove_network_calls = mock_client.remove_network_calls.lock().unwrap();
+        assert_eq!(remove_network_calls.len(), 1);
     }
 
     #[tokio::test]
@@ -706,7 +773,14 @@ mod tests {
         assert!(config.entrypoint.is_none());
 
         let host_config = config.host_config.as_ref().unwrap();
-        assert_eq!(host_config.network_mode, Some("tsk-network".to_string()));
+        // Network mode should use task-specific isolated network
+        assert_eq!(
+            host_config.network_mode,
+            Some("tsk-agent-test-task-id".to_string())
+        );
+        // extra_hosts should include host.docker.internal for host service access
+        let extra_hosts = host_config.extra_hosts.as_ref().unwrap();
+        assert!(extra_hosts.contains(&"host.docker.internal:host-gateway".to_string()));
         let default_options = crate::context::DockerOptions::default();
         assert_eq!(
             host_config.memory,
@@ -729,6 +803,44 @@ mod tests {
         let env = config.env.as_ref().unwrap();
         assert!(env.contains(&"HTTP_PROXY=http://tsk-proxy:3128".to_string()));
         assert!(env.contains(&"HTTPS_PROXY=http://tsk-proxy:3128".to_string()));
+        // NO_PROXY should include host.docker.internal for host service access
+        assert!(env.contains(&"NO_PROXY=localhost,127.0.0.1,host.docker.internal".to_string()));
+        assert!(env.contains(&"no_proxy=localhost,127.0.0.1,host.docker.internal".to_string()));
+        drop(create_calls);
+
+        // Verify network lifecycle operations were called
+        let create_internal_network_calls =
+            mock_client.create_internal_network_calls.lock().unwrap();
+        assert_eq!(create_internal_network_calls.len(), 1);
+        assert_eq!(create_internal_network_calls[0], "tsk-agent-test-task-id");
+        drop(create_internal_network_calls);
+
+        let connect_calls = mock_client.connect_network_calls.lock().unwrap();
+        assert_eq!(connect_calls.len(), 1);
+        assert_eq!(
+            connect_calls[0],
+            (
+                "tsk-proxy".to_string(),
+                "tsk-agent-test-task-id".to_string()
+            )
+        );
+        drop(connect_calls);
+
+        // Verify network cleanup was called
+        let disconnect_calls = mock_client.disconnect_network_calls.lock().unwrap();
+        assert_eq!(disconnect_calls.len(), 1);
+        assert_eq!(
+            disconnect_calls[0],
+            (
+                "tsk-proxy".to_string(),
+                "tsk-agent-test-task-id".to_string()
+            )
+        );
+        drop(disconnect_calls);
+
+        let remove_network_calls = mock_client.remove_network_calls.lock().unwrap();
+        assert_eq!(remove_network_calls.len(), 1);
+        assert_eq!(remove_network_calls[0], "tsk-agent-test-task-id");
     }
 
     #[tokio::test]

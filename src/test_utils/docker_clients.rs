@@ -63,6 +63,30 @@ impl DockerClient for NoOpDockerClient {
         Ok(true)
     }
 
+    async fn create_internal_network(&self, _name: &str) -> Result<String, String> {
+        Ok("noop-internal-network-id".to_string())
+    }
+
+    async fn connect_container_to_network(
+        &self,
+        _container: &str,
+        _network: &str,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    async fn disconnect_container_from_network(
+        &self,
+        _container: &str,
+        _network: &str,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    async fn remove_network(&self, _name: &str) -> Result<(), String> {
+        Ok(())
+    }
+
     async fn build_image(
         &self,
         _options: BuildImageOptions,
@@ -93,14 +117,6 @@ impl DockerClient for NoOpDockerClient {
         _tar_data: Vec<u8>,
     ) -> Result<(), String> {
         Ok(())
-    }
-
-    async fn count_network_containers(
-        &self,
-        _network_name: &str,
-        _exclude_container: &str,
-    ) -> Result<usize, String> {
-        Ok(0)
     }
 }
 
@@ -189,6 +205,30 @@ impl DockerClient for FixedResponseDockerClient {
         Ok(self.network_exists)
     }
 
+    async fn create_internal_network(&self, _name: &str) -> Result<String, String> {
+        Ok("fixed-internal-network-id".to_string())
+    }
+
+    async fn connect_container_to_network(
+        &self,
+        _container: &str,
+        _network: &str,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    async fn disconnect_container_from_network(
+        &self,
+        _container: &str,
+        _network: &str,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    async fn remove_network(&self, _name: &str) -> Result<(), String> {
+        Ok(())
+    }
+
     async fn build_image(
         &self,
         _options: BuildImageOptions,
@@ -221,14 +261,6 @@ impl DockerClient for FixedResponseDockerClient {
     ) -> Result<(), String> {
         Ok(())
     }
-
-    async fn count_network_containers(
-        &self,
-        _network_name: &str,
-        _exclude_container: &str,
-    ) -> Result<usize, String> {
-        Ok(0)
-    }
 }
 
 type CreateContainerCall = (Option<CreateContainerOptions>, ContainerCreateBody);
@@ -244,14 +276,19 @@ pub struct TrackedDockerClient {
     pub logs_calls: Arc<Mutex<Vec<LogsCall>>>,
     pub remove_container_calls: Arc<Mutex<Vec<RemoveContainerCall>>>,
     pub upload_to_container_calls: Arc<Mutex<Vec<UploadToContainerCall>>>,
+    pub connect_network_calls: Arc<Mutex<Vec<(String, String)>>>,
+    pub disconnect_network_calls: Arc<Mutex<Vec<(String, String)>>>,
+    pub create_internal_network_calls: Arc<Mutex<Vec<String>>>,
+    pub remove_network_calls: Arc<Mutex<Vec<String>>>,
 
     pub exit_code: i64,
     pub logs_output: String,
     pub network_exists: bool,
     pub create_network_error: Option<String>,
+    pub create_internal_network_error: Option<String>,
+    pub remove_network_error: Option<String>,
     pub image_exists_returns: bool,
     pub inspect_container_response: String,
-    pub network_container_count: usize,
 }
 
 impl Default for TrackedDockerClient {
@@ -263,14 +300,19 @@ impl Default for TrackedDockerClient {
             logs_calls: Arc::new(Mutex::new(Vec::new())),
             remove_container_calls: Arc::new(Mutex::new(Vec::new())),
             upload_to_container_calls: Arc::new(Mutex::new(Vec::new())),
+            connect_network_calls: Arc::new(Mutex::new(Vec::new())),
+            disconnect_network_calls: Arc::new(Mutex::new(Vec::new())),
+            create_internal_network_calls: Arc::new(Mutex::new(Vec::new())),
+            remove_network_calls: Arc::new(Mutex::new(Vec::new())),
             exit_code: 0,
             logs_output: "Container logs".to_string(),
             network_exists: true,
             create_network_error: None,
+            create_internal_network_error: None,
+            remove_network_error: None,
             image_exists_returns: true,
             inspect_container_response: r#"{"State": {"Health": {"Status": "healthy"}}}"#
                 .to_string(),
-            network_container_count: 0,
         }
     }
 }
@@ -385,6 +427,56 @@ impl DockerClient for TrackedDockerClient {
         Ok(self.network_exists)
     }
 
+    async fn create_internal_network(&self, name: &str) -> Result<String, String> {
+        self.create_internal_network_calls
+            .lock()
+            .unwrap()
+            .push(name.to_string());
+
+        if let Some(ref error) = self.create_internal_network_error {
+            Err(error.clone())
+        } else {
+            Ok(format!("internal-network-{name}"))
+        }
+    }
+
+    async fn connect_container_to_network(
+        &self,
+        container: &str,
+        network: &str,
+    ) -> Result<(), String> {
+        self.connect_network_calls
+            .lock()
+            .unwrap()
+            .push((container.to_string(), network.to_string()));
+        Ok(())
+    }
+
+    async fn disconnect_container_from_network(
+        &self,
+        container: &str,
+        network: &str,
+    ) -> Result<(), String> {
+        self.disconnect_network_calls
+            .lock()
+            .unwrap()
+            .push((container.to_string(), network.to_string()));
+        Ok(())
+    }
+
+    async fn remove_network(&self, name: &str) -> Result<(), String> {
+        self.remove_network_calls
+            .lock()
+            .unwrap()
+            .push(name.to_string());
+
+        if let Some(ref error) = self.remove_network_error {
+            Err(error.clone())
+        } else {
+            Ok(())
+        }
+    }
+
     async fn build_image(
         &self,
         _options: BuildImageOptions,
@@ -421,13 +513,5 @@ impl DockerClient for TrackedDockerClient {
             tar_data,
         ));
         Ok(())
-    }
-
-    async fn count_network_containers(
-        &self,
-        _network_name: &str,
-        _exclude_container: &str,
-    ) -> Result<usize, String> {
-        Ok(self.network_container_count)
     }
 }

@@ -12,8 +12,10 @@ use bollard::query_parameters::RemoveContainerOptions;
 use std::path::Path;
 use std::sync::Arc;
 
-/// Network name for TSK containers
-const TSK_NETWORK_NAME: &str = "tsk-network";
+/// Network name for proxy's external access
+const TSK_EXTERNAL_NETWORK: &str = "tsk-external";
+/// Network name prefix for agent isolated networks
+const TSK_AGENT_NETWORK_PREFIX: &str = "tsk-agent-";
 /// Container name for the proxy
 const PROXY_CONTAINER_NAME: &str = "tsk-proxy";
 /// Docker image name for the proxy
@@ -222,18 +224,48 @@ impl ProxyManager {
         }
     }
 
-    /// Counts the number of agent containers connected to the TSK network
+    /// Counts the number of agent networks the proxy is connected to
     ///
-    /// This excludes the proxy container itself from the count.
+    /// With per-container network isolation, each agent has its own isolated network.
+    /// This method counts networks matching the `tsk-agent-*` pattern by counting
+    /// networks the proxy is connected to (excluding the external network).
+    ///
+    /// Note: This uses a heuristic approach since Docker's API doesn't directly
+    /// support counting networks by prefix. We inspect the proxy container and
+    /// count its network connections.
     ///
     /// # Returns
-    /// * `Ok(count)` - Number of agent containers connected
-    /// * `Err` if unable to inspect the network
+    /// * `Ok(count)` - Number of agent networks the proxy is connected to
+    /// * `Err` if unable to inspect the proxy container
     pub async fn count_connected_agents(&self) -> Result<usize> {
-        self.docker_client
-            .count_network_containers(TSK_NETWORK_NAME, PROXY_CONTAINER_NAME)
+        // Inspect the proxy container to get its network connections
+        match self
+            .docker_client
+            .inspect_container(PROXY_CONTAINER_NAME)
             .await
-            .map_err(|e| anyhow::anyhow!(e))
+        {
+            Ok(json_data) => {
+                let data: serde_json::Value = serde_json::from_str(&json_data)
+                    .map_err(|e| anyhow::anyhow!("Failed to parse container info: {e}"))?;
+
+                // Count networks, excluding the external network
+                let count = data
+                    .get("NetworkSettings")
+                    .and_then(|ns| ns.get("Networks"))
+                    .and_then(|n| n.as_object())
+                    .map(|networks| {
+                        networks
+                            .keys()
+                            .filter(|name| name.starts_with(TSK_AGENT_NETWORK_PREFIX))
+                            .count()
+                    })
+                    .unwrap_or(0);
+
+                Ok(count)
+            }
+            Err(e) if e.contains("No such container") => Ok(0),
+            Err(e) => Err(anyhow::anyhow!(e)),
+        }
     }
 
     /// Conditionally stops the proxy if no agents are connected
@@ -263,16 +295,16 @@ impl ProxyManager {
         }
     }
 
-    /// Ensures the TSK network exists
+    /// Ensures the TSK external network exists for proxy internet access
     async fn ensure_network(&self) -> Result<()> {
         if !self
             .docker_client
-            .network_exists(TSK_NETWORK_NAME)
+            .network_exists(TSK_EXTERNAL_NETWORK)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to check if network exists: {e}"))?
         {
             self.docker_client
-                .create_network(TSK_NETWORK_NAME)
+                .create_network(TSK_EXTERNAL_NETWORK)
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to create network: {e}"))?;
         }
@@ -286,7 +318,7 @@ impl ProxyManager {
             image: Some(PROXY_IMAGE.to_string()),
             exposed_ports: Some(vec![PROXY_PORT.to_string()]),
             host_config: Some(HostConfig {
-                network_mode: Some(TSK_NETWORK_NAME.to_string()),
+                network_mode: Some(TSK_EXTERNAL_NETWORK.to_string()),
                 restart_policy: Some(bollard::models::RestartPolicy {
                     name: Some(bollard::models::RestartPolicyNameEnum::UNLESS_STOPPED),
                     maximum_retry_count: None,
@@ -432,11 +464,6 @@ impl ProxyManager {
         Ok(tar_data)
     }
 
-    /// Gets the network name used by the proxy
-    pub fn network_name(&self) -> &str {
-        TSK_NETWORK_NAME
-    }
-
     /// Gets the proxy URL for environment configuration
     pub fn proxy_url(&self) -> String {
         format!(
@@ -444,6 +471,73 @@ impl ProxyManager {
             PROXY_CONTAINER_NAME,
             PROXY_PORT.trim_end_matches("/tcp")
         )
+    }
+
+    /// Creates an internal network for a specific agent container
+    ///
+    /// The network is created with the `internal` flag, meaning it has no
+    /// external route to the internet. The agent can only reach the proxy.
+    ///
+    /// # Arguments
+    /// * `task_id` - The task identifier used in the network name
+    ///
+    /// # Returns
+    /// The network name on success
+    pub async fn create_agent_network(&self, task_id: &str) -> Result<String> {
+        let network_name = Self::agent_network_name(task_id);
+
+        self.docker_client
+            .create_internal_network(&network_name)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create agent network: {e}"))?;
+
+        Ok(network_name)
+    }
+
+    /// Connects the proxy container to an agent's isolated network
+    ///
+    /// This must be called BEFORE starting the agent container so the agent
+    /// can reach the proxy. The proxy remains connected to all active agent
+    /// networks simultaneously.
+    ///
+    /// # Arguments
+    /// * `network_name` - The agent network name (from create_agent_network)
+    pub async fn connect_proxy_to_network(&self, network_name: &str) -> Result<()> {
+        self.docker_client
+            .connect_container_to_network(PROXY_CONTAINER_NAME, network_name)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to connect proxy to network: {e}"))
+    }
+
+    /// Cleans up an agent's network after task completion
+    ///
+    /// Disconnects the proxy from the network and removes it.
+    /// Logs warnings on failure but does not return errors (cleanup is best-effort).
+    ///
+    /// # Arguments
+    /// * `network_name` - The agent network name to clean up
+    pub async fn cleanup_agent_network(&self, network_name: &str) {
+        // Disconnect proxy from network
+        if let Err(e) = self
+            .docker_client
+            .disconnect_container_from_network(PROXY_CONTAINER_NAME, network_name)
+            .await
+        {
+            eprintln!("Warning: Failed to disconnect proxy from network {network_name}: {e}");
+        }
+
+        // Remove the network
+        if let Err(e) = self.docker_client.remove_network(network_name).await {
+            eprintln!("Warning: Failed to remove network {network_name}: {e}");
+        }
+    }
+
+    /// Gets the network name for a specific agent task
+    ///
+    /// # Arguments
+    /// * `task_id` - The task identifier
+    pub fn agent_network_name(task_id: &str) -> String {
+        format!("{TSK_AGENT_NETWORK_PREFIX}{task_id}")
     }
 }
 
@@ -602,12 +696,28 @@ mod tests {
                 Ok(())
             }
 
-            async fn count_network_containers(
+            async fn create_internal_network(&self, _name: &str) -> Result<String, String> {
+                Ok("internal-network-id".to_string())
+            }
+
+            async fn connect_container_to_network(
                 &self,
-                _network_name: &str,
-                _exclude_container: &str,
-            ) -> Result<usize, String> {
-                Ok(0)
+                _container: &str,
+                _network: &str,
+            ) -> Result<(), String> {
+                Ok(())
+            }
+
+            async fn disconnect_container_from_network(
+                &self,
+                _container: &str,
+                _network: &str,
+            ) -> Result<(), String> {
+                Ok(())
+            }
+
+            async fn remove_network(&self, _name: &str) -> Result<(), String> {
+                Ok(())
             }
         }
 
@@ -735,7 +845,122 @@ mod tests {
         let manager = ProxyManager::new(&ctx);
 
         assert_eq!(manager.proxy_url(), "http://tsk-proxy:3128");
-        assert_eq!(manager.network_name(), "tsk-network");
+    }
+
+    #[test]
+    fn test_agent_network_name() {
+        assert_eq!(
+            ProxyManager::agent_network_name("test-task-123"),
+            "tsk-agent-test-task-123"
+        );
+        assert_eq!(
+            ProxyManager::agent_network_name("2024-01-15-feat-auth"),
+            "tsk-agent-2024-01-15-feat-auth"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_agent_network() {
+        let mock_client = Arc::new(TrackedDockerClient::default());
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .build();
+
+        let manager = ProxyManager::new(&ctx);
+        let result = manager.create_agent_network("test-task-123").await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "tsk-agent-test-task-123");
+
+        let calls = mock_client.create_internal_network_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0], "tsk-agent-test-task-123");
+    }
+
+    #[tokio::test]
+    async fn test_create_agent_network_error() {
+        let mock_client = Arc::new(TrackedDockerClient {
+            create_internal_network_error: Some("Network creation failed".to_string()),
+            ..Default::default()
+        });
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .build();
+
+        let manager = ProxyManager::new(&ctx);
+        let result = manager.create_agent_network("test-task-123").await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to create agent network")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_connect_proxy_to_network() {
+        let mock_client = Arc::new(TrackedDockerClient::default());
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .build();
+
+        let manager = ProxyManager::new(&ctx);
+        let result = manager.connect_proxy_to_network("tsk-agent-test-123").await;
+
+        assert!(result.is_ok());
+
+        let calls = mock_client.connect_network_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0],
+            ("tsk-proxy".to_string(), "tsk-agent-test-123".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_agent_network() {
+        let mock_client = Arc::new(TrackedDockerClient::default());
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .build();
+
+        let manager = ProxyManager::new(&ctx);
+        manager.cleanup_agent_network("tsk-agent-test-123").await;
+
+        let disconnect_calls = mock_client.disconnect_network_calls.lock().unwrap();
+        assert_eq!(disconnect_calls.len(), 1);
+        assert_eq!(
+            disconnect_calls[0],
+            ("tsk-proxy".to_string(), "tsk-agent-test-123".to_string())
+        );
+
+        let remove_calls = mock_client.remove_network_calls.lock().unwrap();
+        assert_eq!(remove_calls.len(), 1);
+        assert_eq!(remove_calls[0], "tsk-agent-test-123");
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_agent_network_handles_errors_gracefully() {
+        let mock_client = Arc::new(TrackedDockerClient {
+            remove_network_error: Some("Network in use".to_string()),
+            ..Default::default()
+        });
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .build();
+
+        let manager = ProxyManager::new(&ctx);
+        // This should not panic or return an error - cleanup is best-effort
+        manager.cleanup_agent_network("tsk-agent-test-123").await;
+
+        // Verify both operations were attempted
+        let disconnect_calls = mock_client.disconnect_network_calls.lock().unwrap();
+        assert_eq!(disconnect_calls.len(), 1);
+
+        let remove_calls = mock_client.remove_network_calls.lock().unwrap();
+        assert_eq!(remove_calls.len(), 1);
     }
 
     #[tokio::test]
@@ -843,12 +1068,28 @@ mod tests {
                 Ok(())
             }
 
-            async fn count_network_containers(
+            async fn create_internal_network(&self, _name: &str) -> Result<String, String> {
+                Ok("internal-network-id".to_string())
+            }
+
+            async fn connect_container_to_network(
                 &self,
-                _network_name: &str,
-                _exclude_container: &str,
-            ) -> Result<usize, String> {
-                Ok(0)
+                _container: &str,
+                _network: &str,
+            ) -> Result<(), String> {
+                Ok(())
+            }
+
+            async fn disconnect_container_from_network(
+                &self,
+                _container: &str,
+                _network: &str,
+            ) -> Result<(), String> {
+                Ok(())
+            }
+
+            async fn remove_network(&self, _name: &str) -> Result<(), String> {
+                Ok(())
             }
         }
 
@@ -971,8 +1212,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_count_connected_agents() {
+        use serde_json::json;
+
+        // Mock response showing proxy connected to 3 agent networks
         let mock_client = Arc::new(TrackedDockerClient {
-            network_container_count: 3,
+            inspect_container_response: json!({
+                "NetworkSettings": {
+                    "Networks": {
+                        "tsk-external": {},
+                        "tsk-agent-task1": {},
+                        "tsk-agent-task2": {},
+                        "tsk-agent-task3": {}
+                    }
+                }
+            })
+            .to_string(),
             ..Default::default()
         });
 
@@ -984,6 +1238,7 @@ mod tests {
         let result = manager.count_connected_agents().await;
 
         assert!(result.is_ok());
+        // Should count 3 agent networks (excluding tsk-external)
         assert_eq!(result.unwrap(), 3);
     }
 
@@ -991,14 +1246,19 @@ mod tests {
     async fn test_maybe_stop_proxy_no_agents() {
         use serde_json::json;
 
+        // Proxy running with only external network (no agent networks)
         let mock_client = Arc::new(TrackedDockerClient {
             inspect_container_response: json!({
                 "State": {
                     "Running": true
+                },
+                "NetworkSettings": {
+                    "Networks": {
+                        "tsk-external": {}
+                    }
                 }
             })
             .to_string(),
-            network_container_count: 0,
             ..Default::default()
         });
 
@@ -1022,14 +1282,21 @@ mod tests {
     async fn test_maybe_stop_proxy_with_agents() {
         use serde_json::json;
 
+        // Proxy running with agent networks connected
         let mock_client = Arc::new(TrackedDockerClient {
             inspect_container_response: json!({
                 "State": {
                     "Running": true
+                },
+                "NetworkSettings": {
+                    "Networks": {
+                        "tsk-external": {},
+                        "tsk-agent-task1": {},
+                        "tsk-agent-task2": {}
+                    }
                 }
             })
             .to_string(),
-            network_container_count: 2, // Other agents connected
             ..Default::default()
         });
 

@@ -47,6 +47,50 @@ pub trait DockerClient: Send + Sync {
 
     async fn network_exists(&self, name: &str) -> Result<bool, String>;
 
+    /// Create an internal network (no external route)
+    ///
+    /// Internal networks cannot reach the internet directly, making them ideal
+    /// for isolating agent containers that must route through the proxy.
+    ///
+    /// # Arguments
+    /// * `name` - The network name (e.g., "tsk-agent-abc123")
+    ///
+    /// # Returns
+    /// The network ID on success
+    async fn create_internal_network(&self, name: &str) -> Result<String, String>;
+
+    /// Connect a running container to an additional network
+    ///
+    /// Used to connect the proxy container to each agent's isolated network.
+    ///
+    /// # Arguments
+    /// * `container` - Container ID or name
+    /// * `network` - Network name to connect to
+    async fn connect_container_to_network(
+        &self,
+        container: &str,
+        network: &str,
+    ) -> Result<(), String>;
+
+    /// Disconnect a container from a network
+    ///
+    /// Used during cleanup to disconnect proxy from agent networks before removal.
+    ///
+    /// # Arguments
+    /// * `container` - Container ID or name
+    /// * `network` - Network name to disconnect from
+    async fn disconnect_container_from_network(
+        &self,
+        container: &str,
+        network: &str,
+    ) -> Result<(), String>;
+
+    /// Remove a Docker network
+    ///
+    /// # Arguments
+    /// * `name` - The network name to remove
+    async fn remove_network(&self, name: &str) -> Result<(), String>;
+
     /// Build a Docker image from a tar archive containing a Dockerfile and associated files with streaming output
     ///
     /// # Arguments
@@ -117,20 +161,6 @@ pub trait DockerClient: Send + Sync {
         dest_path: &str,
         tar_data: Vec<u8>,
     ) -> Result<(), String>;
-
-    /// Count containers connected to a Docker network
-    ///
-    /// # Arguments
-    /// * `network_name` - The name of the Docker network to inspect
-    /// * `exclude_container` - Container name prefix to exclude from the count
-    ///
-    /// # Returns
-    /// The number of containers connected to the network (excluding those matching the prefix)
-    async fn count_network_containers(
-        &self,
-        network_name: &str,
-        exclude_container: &str,
-    ) -> Result<usize, String>;
 }
 
 #[derive(Clone)]
@@ -306,6 +336,65 @@ impl DockerClient for DefaultDockerClient {
             .map_err(|e| format!("Failed to list networks: {e}"))?;
 
         Ok(!networks.is_empty())
+    }
+
+    async fn create_internal_network(&self, name: &str) -> Result<String, String> {
+        let options = NetworkCreateRequest {
+            name: name.to_string(),
+            internal: Some(true),
+            ..Default::default()
+        };
+
+        let response = self
+            .docker
+            .create_network(options)
+            .await
+            .map_err(|e| format!("Failed to create internal network: {e}"))?;
+
+        Ok(response.id)
+    }
+
+    async fn connect_container_to_network(
+        &self,
+        container: &str,
+        network: &str,
+    ) -> Result<(), String> {
+        use bollard::models::NetworkConnectRequest;
+
+        let request = NetworkConnectRequest {
+            container: container.to_string(),
+            ..Default::default()
+        };
+
+        self.docker
+            .connect_network(network, request)
+            .await
+            .map_err(|e| format!("Failed to connect container to network: {e}"))
+    }
+
+    async fn disconnect_container_from_network(
+        &self,
+        container: &str,
+        network: &str,
+    ) -> Result<(), String> {
+        use bollard::models::NetworkDisconnectRequest;
+
+        let request = NetworkDisconnectRequest {
+            container: container.to_string(),
+            force: Some(false),
+        };
+
+        self.docker
+            .disconnect_network(network, request)
+            .await
+            .map_err(|e| format!("Failed to disconnect container from network: {e}"))
+    }
+
+    async fn remove_network(&self, name: &str) -> Result<(), String> {
+        self.docker
+            .remove_network(name)
+            .await
+            .map_err(|e| format!("Failed to remove network: {e}"))
     }
 
     async fn build_image(
@@ -556,42 +645,5 @@ impl DockerClient for DefaultDockerClient {
             .upload_to_container(id, Some(options), body)
             .await
             .map_err(|e| format!("Failed to upload to container: {e}"))
-    }
-
-    async fn count_network_containers(
-        &self,
-        network_name: &str,
-        exclude_container: &str,
-    ) -> Result<usize, String> {
-        use bollard::query_parameters::InspectNetworkOptionsBuilder;
-
-        let options = InspectNetworkOptionsBuilder::default().build();
-        let network = self
-            .docker
-            .inspect_network(network_name, Some(options))
-            .await
-            .map_err(|e| format!("Failed to inspect network: {e}"))?;
-
-        let count = network
-            .containers
-            .map(|containers| {
-                containers
-                    .iter()
-                    .filter(|(_id, info)| {
-                        // Filter out containers whose name starts with exclude_container
-                        // Docker may return names with a leading '/', so we normalize by stripping it
-                        info.name
-                            .as_ref()
-                            .map(|name| {
-                                let normalized = name.trim_start_matches('/');
-                                !normalized.starts_with(exclude_container)
-                            })
-                            .unwrap_or(true)
-                    })
-                    .count()
-            })
-            .unwrap_or(0);
-
-        Ok(count)
     }
 }
