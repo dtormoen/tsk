@@ -68,14 +68,16 @@ TSK implements a command pattern with dependency injection for testability. The 
 
 **Docker Integration** (`src/docker/`)
 - `DockerImageManager`: Centralized Docker image management with intelligent layering
-- `ProxyManager`: Dedicated proxy lifecycle management with automatic cleanup
+- `ProxyManager`: Dedicated proxy lifecycle management with automatic cleanup and network isolation
   - Skips proxy build if proxy is already running (faster startup)
   - Config changes picked up when proxy stops and restarts
   - Automatically stops proxy when no agents are connected and no tasks are queued
   - Uses Docker network inspection to count connected agent containers
 - `DockerManager`: Container execution with unified support for interactive and non-interactive modes
 - Security-first containers with dropped capabilities
-- Network isolation via proxy (Squid) for API-only access
+- **Per-container network isolation**: Each agent runs in an isolated internal network that can only communicate with the proxy
+- Proxy-based URL filtering (Squid) for API-only access with domain whitelist
+- Host service access via `host.docker.internal` (automatically added to NO_PROXY)
 - Volume mounting for repository copies and agent config
 - Layered image system: base → tech-stack → agent → project
 - Automatic fallback to default project layer when specific layer is missing
