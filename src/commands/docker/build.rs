@@ -17,11 +17,23 @@ pub struct DockerBuildCommand {
     pub project: Option<String>,
     /// Whether to only print the resolved Dockerfile without building
     pub dry_run: bool,
+    /// Whether to only build the proxy image
+    pub proxy_only: bool,
 }
 
 #[async_trait]
 impl Command for DockerBuildCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
+        // Handle proxy-only build
+        if self.proxy_only {
+            println!("Building tsk/proxy image...");
+            use crate::docker::proxy_manager::ProxyManager;
+            let proxy_manager = ProxyManager::new(ctx);
+            proxy_manager.build_proxy(self.no_cache).await?;
+            println!("Successfully built Docker image: tsk/proxy");
+            return Ok(());
+        }
+
         // Auto-detect stack if not provided
         let stack = match &self.stack {
             Some(ts) => {
@@ -120,6 +132,7 @@ mod tests {
             agent: None,
             project: None,
             dry_run: false,
+            proxy_only: false,
         };
     }
 
@@ -132,6 +145,7 @@ mod tests {
             agent: Some("claude".to_string()),
             project: Some("web-api".to_string()),
             dry_run: false,
+            proxy_only: false,
         };
     }
 
@@ -144,6 +158,20 @@ mod tests {
             agent: Some("claude".to_string()),
             project: Some("test-project".to_string()),
             dry_run: true,
+            proxy_only: false,
+        };
+    }
+
+    #[test]
+    fn test_docker_build_command_proxy_only() {
+        // Test that DockerBuildCommand can be instantiated with proxy_only
+        let _command = DockerBuildCommand {
+            no_cache: false,
+            stack: None,
+            agent: None,
+            project: None,
+            dry_run: false,
+            proxy_only: true,
         };
     }
 }

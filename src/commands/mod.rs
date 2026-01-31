@@ -46,6 +46,7 @@ mod tests {
             agent: None,
             project: None,
             dry_run: false,
+            proxy_only: false,
         };
     }
 }

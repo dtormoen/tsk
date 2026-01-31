@@ -47,7 +47,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 *Subcommand Groups:*
 - `server start`: Start the TSK server daemon (supports `-w/--workers`, `-q/--quit`, `-s/--sound`)
 - `server stop`: Stop the running TSK server
-- `docker build`: Build required docker images
+- `docker build`: Build required docker images (supports `--proxy-only` to build only the proxy)
 - `proxy stop`: Stop the running TSK proxy
 - `template list`: List available task type templates
 

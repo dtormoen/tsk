@@ -250,6 +250,10 @@ enum DockerCommands {
         /// Print the resolved Dockerfile without building
         #[arg(long)]
         dry_run: bool,
+
+        /// Only build the proxy image (skip project/stack/agent images)
+        #[arg(long, conflicts_with_all = ["stack", "agent", "project", "dry_run"])]
+        proxy_only: bool,
     },
 }
 
@@ -373,12 +377,14 @@ async fn main() {
                 agent,
                 project,
                 dry_run,
+                proxy_only,
             } => Box::new(DockerBuildCommand {
                 no_cache,
                 stack,
                 agent,
                 project,
                 dry_run,
+                proxy_only,
             }),
         },
         Commands::Proxy(proxy_args) => match proxy_args.command {
