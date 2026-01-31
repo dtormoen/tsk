@@ -296,8 +296,11 @@ impl DockerClient for DefaultDockerClient {
             while let Some(build_info) = stream.next().await {
                 match build_info {
                     Ok(info) => {
-                        if let Some(error) = info.error {
-                            let _ = tx.send(Err(format!("Docker build error: {error}")));
+                        if let Some(error_detail) = info.error_detail {
+                            let error_msg = error_detail
+                                .message
+                                .unwrap_or_else(|| "Unknown error".to_string());
+                            let _ = tx.send(Err(format!("Docker build error: {error_msg}")));
                             break;
                         } else if let Some(stream_msg) = info.stream
                             && !stream_msg.is_empty()

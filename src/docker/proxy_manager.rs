@@ -9,7 +9,6 @@ use crate::context::tsk_env::TskEnv;
 use anyhow::{Context, Result};
 use bollard::models::{ContainerCreateBody, HostConfig};
 use bollard::query_parameters::RemoveContainerOptions;
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -228,11 +227,7 @@ impl ProxyManager {
         // Create proxy container configuration
         let proxy_config = ContainerCreateBody {
             image: Some(PROXY_IMAGE.to_string()),
-            exposed_ports: Some(
-                vec![(PROXY_PORT.to_string(), HashMap::new())]
-                    .into_iter()
-                    .collect(),
-            ),
+            exposed_ports: Some(vec![PROXY_PORT.to_string()]),
             host_config: Some(HostConfig {
                 network_mode: Some(TSK_NETWORK_NAME.to_string()),
                 restart_policy: Some(bollard::models::RestartPolicy {
