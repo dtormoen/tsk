@@ -1,6 +1,5 @@
 #[cfg(target_os = "linux")]
-use notify_rust::Hint;
-use notify_rust::{Notification, Timeout};
+use notify_rust::{Hint, Notification, Timeout};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -15,12 +14,14 @@ pub trait NotificationClient: Send + Sync {
 
 /// Desktop notification client using notify-rust
 pub struct DesktopNotificationClient {
+    #[cfg(target_os = "linux")]
     timeout_seconds: u32,
     sound_enabled: AtomicBool,
 }
 
 impl DesktopNotificationClient {
     /// Create a new desktop notification client
+    #[cfg(target_os = "linux")]
     pub fn new(timeout_seconds: u32, sound_enabled: bool) -> Self {
         Self {
             timeout_seconds,
@@ -28,15 +29,32 @@ impl DesktopNotificationClient {
         }
     }
 
-    /// Play sound on macOS using afplay (fire-and-forget)
+    /// Create a new desktop notification client
+    #[cfg(not(target_os = "linux"))]
+    pub fn new(_timeout_seconds: u32, sound_enabled: bool) -> Self {
+        Self {
+            sound_enabled: AtomicBool::new(sound_enabled),
+        }
+    }
+
+    /// Show notification on macOS using osascript (fire-and-forget)
     #[cfg(target_os = "macos")]
-    fn play_macos_sound(&self, success: bool) {
-        let sound = if success {
-            "/System/Library/Sounds/Glass.aiff"
+    fn show_macos_notification(&self, title: &str, message: &str, sound_enabled: bool) {
+        let sound_part = if sound_enabled {
+            " sound name \"Glass\""
         } else {
-            "/System/Library/Sounds/Basso.aiff"
+            ""
         };
-        let _ = std::process::Command::new("afplay").arg(sound).spawn();
+        let script = format!(
+            "display notification \"{}\" with title \"{}\"{}",
+            message.replace('\"', "\\\"").replace('\n', " "),
+            title.replace('\"', "\\\""),
+            sound_part
+        );
+        let _ = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .spawn();
     }
 }
 
@@ -48,42 +66,50 @@ impl NotificationClient for DesktopNotificationClient {
             "Task Failed"
         };
         let body = format!(
-            "Task '{}' has {}\n{}",
+            "Task '{}' has {}{}",
             task_name,
             if success {
                 "completed successfully"
             } else {
                 "failed"
             },
-            message.unwrap_or("")
+            message.map(|m| format!(": {}", m)).unwrap_or_default()
         );
 
-        let mut notification = Notification::new();
-        notification.summary(summary);
-        notification.body(&body);
-        notification.timeout(Timeout::Milliseconds(self.timeout_seconds * 1000));
+        // On macOS, use osascript which is reliable and non-blocking
+        #[cfg(target_os = "macos")]
+        {
+            self.show_macos_notification(
+                summary,
+                &body,
+                self.sound_enabled.load(Ordering::Relaxed),
+            );
+        }
 
-        // Add sound hint for Linux (freedesktop-compliant desktops)
+        // On Linux, use notify-rust with sound hints
         #[cfg(target_os = "linux")]
-        if self.sound_enabled.load(Ordering::Relaxed) {
+        {
+            let timeout_seconds = self.timeout_seconds;
+            let sound_enabled = self.sound_enabled.load(Ordering::Relaxed);
             let sound_name = if success {
                 "message-new-instant"
             } else {
                 "dialog-warning"
             };
-            notification.hint(Hint::SoundName(sound_name.into()));
-        }
 
-        if let Err(e) = notification.show() {
-            // Fall back to terminal output
-            eprintln!("TSK: {} - {}", summary, body.replace('\n', " "));
-            eprintln!("(Desktop notification failed: {e})");
-        }
+            let mut notification = Notification::new();
+            notification.summary(summary);
+            notification.body(&body);
+            notification.timeout(Timeout::Milliseconds(timeout_seconds * 1000));
 
-        // Play sound separately on macOS (hints don't work there)
-        #[cfg(target_os = "macos")]
-        if self.sound_enabled.load(Ordering::Relaxed) {
-            self.play_macos_sound(success);
+            if sound_enabled {
+                notification.hint(Hint::SoundName(sound_name.into()));
+            }
+
+            if let Err(e) = notification.show() {
+                eprintln!("TSK: {} - {}", summary, body.replace('\n', " "));
+                eprintln!("(Desktop notification failed: {e})");
+            }
         }
     }
 

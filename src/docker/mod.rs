@@ -356,6 +356,12 @@ impl DockerManager {
         // Get docker client to avoid temporary value issues
         let docker_client = self.ctx.docker_client();
 
+        // Create the wait future ONCE and pin it so it persists across loop iterations.
+        // This is critical - tokio::select! in a loop drops unselected futures each iteration,
+        // so without pinning, wait_container would be called multiple times.
+        let wait_future = docker_client.wait_container(container_id);
+        tokio::pin!(wait_future);
+
         // Process logs while container is running
         loop {
             tokio::select! {
@@ -367,7 +373,7 @@ impl DockerManager {
                     line_buffer.push_str(&log_chunk);
                     process_complete_lines(&mut line_buffer, log_processor);
                 }
-                exit_code = docker_client.wait_container(container_id) => {
+                exit_code = &mut wait_future => {
                     let exit_code = exit_code?;
 
                     // Give a bit of time for remaining logs
