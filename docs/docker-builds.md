@@ -199,6 +199,8 @@ TSK implements multiple security layers:
 ### Network Isolation
 - Containers use a dedicated Docker network (`tsk-network`)
 - Internet access only through Squid proxy container (`tsk-proxy`)
+- Proxy build is skipped if proxy is already running (config changes picked up when proxy stops and restarts)
+- Proxy automatically stops when no agent containers are connected
 - Proxy allows API access and package registry access while blocking general browsing
 - Proxy allows access to:
   - **AI APIs**: api.anthropic.com, api.openai.com, sentry.io, statsig.com

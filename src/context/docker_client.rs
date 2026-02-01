@@ -117,6 +117,20 @@ pub trait DockerClient: Send + Sync {
         dest_path: &str,
         tar_data: Vec<u8>,
     ) -> Result<(), String>;
+
+    /// Count containers connected to a Docker network
+    ///
+    /// # Arguments
+    /// * `network_name` - The name of the Docker network to inspect
+    /// * `exclude_container` - Container name prefix to exclude from the count
+    ///
+    /// # Returns
+    /// The number of containers connected to the network (excluding those matching the prefix)
+    async fn count_network_containers(
+        &self,
+        network_name: &str,
+        exclude_container: &str,
+    ) -> Result<usize, String>;
 }
 
 #[derive(Clone)]
@@ -542,5 +556,42 @@ impl DockerClient for DefaultDockerClient {
             .upload_to_container(id, Some(options), body)
             .await
             .map_err(|e| format!("Failed to upload to container: {e}"))
+    }
+
+    async fn count_network_containers(
+        &self,
+        network_name: &str,
+        exclude_container: &str,
+    ) -> Result<usize, String> {
+        use bollard::query_parameters::InspectNetworkOptionsBuilder;
+
+        let options = InspectNetworkOptionsBuilder::default().build();
+        let network = self
+            .docker
+            .inspect_network(network_name, Some(options))
+            .await
+            .map_err(|e| format!("Failed to inspect network: {e}"))?;
+
+        let count = network
+            .containers
+            .map(|containers| {
+                containers
+                    .iter()
+                    .filter(|(_id, info)| {
+                        // Filter out containers whose name starts with exclude_container
+                        // Docker may return names with a leading '/', so we normalize by stripping it
+                        info.name
+                            .as_ref()
+                            .map(|name| {
+                                let normalized = name.trim_start_matches('/');
+                                !normalized.starts_with(exclude_container)
+                            })
+                            .unwrap_or(true)
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+
+        Ok(count)
     }
 }

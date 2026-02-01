@@ -266,7 +266,7 @@ impl DockerManager {
                 .await?;
         }
 
-        if task.is_interactive {
+        let result = if task.is_interactive {
             println!("\nStarting interactive session...");
             self.ctx
                 .docker_client()
@@ -307,7 +307,16 @@ impl DockerManager {
             self.remove_container(&container_id).await?;
 
             Ok((output, task_result))
+        };
+
+        // After task completion (success or failure), try to stop proxy if idle
+        // This handles single-run mode (tsk run, tsk shell)
+        // Errors during proxy cleanup are logged but don't affect the task result
+        if let Err(e) = self.proxy_manager.maybe_stop_proxy().await {
+            eprintln!("Warning: Failed to check/stop idle proxy: {e}");
         }
+
+        result
     }
 
     /// Stream container logs and process them through the log processor

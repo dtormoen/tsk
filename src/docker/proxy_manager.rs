@@ -50,19 +50,26 @@ impl ProxyManager {
     /// Ensures the proxy is running and healthy
     ///
     /// This method:
-    /// 1. Ensures the proxy image is built
-    /// 2. Ensures the network exists
-    /// 3. Starts the proxy container if not running
-    /// 4. Waits for the proxy to become healthy
+    /// 1. Checks if proxy is already running (skips build if so)
+    /// 2. Builds the proxy image if needed
+    /// 3. Ensures the network exists
+    /// 4. Starts the proxy container if not running
+    /// 5. Waits for the proxy to become healthy
+    ///
+    /// Config changes are picked up when the proxy is stopped (manually or
+    /// automatically when no agents are connected) and then restarted.
     ///
     /// # Returns
     /// * `Ok(())` if proxy is running and healthy
     /// * `Err` if proxy cannot be started or becomes unhealthy
     pub async fn ensure_proxy(&self) -> Result<()> {
-        // First ensure the proxy image exists
-        self.ensure_proxy_image()
-            .await
-            .context("Failed to ensure proxy image exists")?;
+        // Skip build if proxy is already running - config changes will be
+        // picked up when the proxy is stopped and restarted
+        if !self.is_proxy_running().await? {
+            self.build_proxy(false)
+                .await
+                .context("Failed to build proxy image")?;
+        }
 
         // Ensure network exists
         self.ensure_network()
@@ -189,21 +196,71 @@ impl ProxyManager {
         }
     }
 
-    /// Ensures the proxy image exists, building it if necessary
-    async fn ensure_proxy_image(&self) -> Result<()> {
-        // Check if proxy image exists
-        if self
+    /// Checks if the proxy container is currently running
+    ///
+    /// # Returns
+    /// * `Ok(true)` if proxy container is running
+    /// * `Ok(false)` if proxy container is not running or doesn't exist
+    /// * `Err` if unable to inspect the container
+    pub async fn is_proxy_running(&self) -> Result<bool> {
+        match self
             .docker_client
-            .image_exists(PROXY_IMAGE)
+            .inspect_container(PROXY_CONTAINER_NAME)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to check if proxy image exists: {e}"))?
         {
-            return Ok(());
+            Ok(json_data) => {
+                let data: serde_json::Value = serde_json::from_str(&json_data)
+                    .map_err(|e| anyhow::anyhow!("Failed to parse container info: {e}"))?;
+                Ok(data
+                    .get("State")
+                    .and_then(|s| s.get("Running"))
+                    .and_then(|r| r.as_bool())
+                    .unwrap_or(false))
+            }
+            Err(e) if e.contains("No such container") => Ok(false),
+            Err(e) => Err(anyhow::anyhow!(e)),
+        }
+    }
+
+    /// Counts the number of agent containers connected to the TSK network
+    ///
+    /// This excludes the proxy container itself from the count.
+    ///
+    /// # Returns
+    /// * `Ok(count)` - Number of agent containers connected
+    /// * `Err` if unable to inspect the network
+    pub async fn count_connected_agents(&self) -> Result<usize> {
+        self.docker_client
+            .count_network_containers(TSK_NETWORK_NAME, PROXY_CONTAINER_NAME)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    /// Conditionally stops the proxy if no agents are connected
+    ///
+    /// This method checks if any agent containers are using the proxy network.
+    /// If no agents are connected, it stops the proxy to ensure a fresh rebuild
+    /// on next use.
+    ///
+    /// # Returns
+    /// * `Ok(true)` if proxy was stopped
+    /// * `Ok(false)` if proxy is still in use or was not running
+    /// * `Err` if unable to check status or stop proxy
+    pub async fn maybe_stop_proxy(&self) -> Result<bool> {
+        // Check if proxy is even running
+        if !self.is_proxy_running().await? {
+            return Ok(false);
         }
 
-        // Image doesn't exist, build it
-        println!("Proxy image not found, building it...");
-        self.build_proxy(false).await
+        // Count connected agents
+        let agent_count = self.count_connected_agents().await?;
+
+        if agent_count == 0 {
+            self.stop_proxy().await?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 
     /// Ensures the TSK network exists
@@ -544,6 +601,14 @@ mod tests {
             ) -> Result<(), String> {
                 Ok(())
             }
+
+            async fn count_network_containers(
+                &self,
+                _network_name: &str,
+                _exclude_container: &str,
+            ) -> Result<usize, String> {
+                Ok(0)
+            }
         }
 
         let mock_client = Arc::new(NoContainerDockerClient);
@@ -777,6 +842,14 @@ mod tests {
             ) -> Result<(), String> {
                 Ok(())
             }
+
+            async fn count_network_containers(
+                &self,
+                _network_name: &str,
+                _exclude_container: &str,
+            ) -> Result<usize, String> {
+                Ok(0)
+            }
         }
 
         let docker_client = Arc::new(CaptureDockerClient {
@@ -841,9 +914,137 @@ mod tests {
 
         let manager = ProxyManager::new(&ctx);
 
-        // Just verify it doesn't error and uses default configuration
-        // The TrackedDockerClient will return Ok for image_exists so build won't actually happen
-        let result = manager.ensure_proxy_image().await;
+        // Just verify build_proxy doesn't error with default configuration
+        let result = manager.build_proxy(false).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_is_proxy_running_true() {
+        use serde_json::json;
+
+        let mock_client = Arc::new(TrackedDockerClient {
+            inspect_container_response: json!({
+                "State": {
+                    "Running": true
+                }
+            })
+            .to_string(),
+            ..Default::default()
+        });
+
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client)
+            .build();
+
+        let manager = ProxyManager::new(&ctx);
+        let result = manager.is_proxy_running().await;
+
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_is_proxy_running_false() {
+        use serde_json::json;
+
+        let mock_client = Arc::new(TrackedDockerClient {
+            inspect_container_response: json!({
+                "State": {
+                    "Running": false
+                }
+            })
+            .to_string(),
+            ..Default::default()
+        });
+
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client)
+            .build();
+
+        let manager = ProxyManager::new(&ctx);
+        let result = manager.is_proxy_running().await;
+
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_count_connected_agents() {
+        let mock_client = Arc::new(TrackedDockerClient {
+            network_container_count: 3,
+            ..Default::default()
+        });
+
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client)
+            .build();
+
+        let manager = ProxyManager::new(&ctx);
+        let result = manager.count_connected_agents().await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_maybe_stop_proxy_no_agents() {
+        use serde_json::json;
+
+        let mock_client = Arc::new(TrackedDockerClient {
+            inspect_container_response: json!({
+                "State": {
+                    "Running": true
+                }
+            })
+            .to_string(),
+            network_container_count: 0,
+            ..Default::default()
+        });
+
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .build();
+
+        let manager = ProxyManager::new(&ctx);
+        let result = manager.maybe_stop_proxy().await;
+
+        assert!(result.is_ok());
+        assert!(result.unwrap()); // Should have stopped
+
+        // Verify remove_container was called
+        let remove_calls = mock_client.remove_container_calls.lock().unwrap();
+        assert_eq!(remove_calls.len(), 1);
+        assert_eq!(remove_calls[0].0, "tsk-proxy");
+    }
+
+    #[tokio::test]
+    async fn test_maybe_stop_proxy_with_agents() {
+        use serde_json::json;
+
+        let mock_client = Arc::new(TrackedDockerClient {
+            inspect_container_response: json!({
+                "State": {
+                    "Running": true
+                }
+            })
+            .to_string(),
+            network_container_count: 2, // Other agents connected
+            ..Default::default()
+        });
+
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .build();
+
+        let manager = ProxyManager::new(&ctx);
+        let result = manager.maybe_stop_proxy().await;
+
+        assert!(result.is_ok());
+        assert!(!result.unwrap()); // Should NOT have stopped
+
+        // Verify remove_container was NOT called
+        let remove_calls = mock_client.remove_container_calls.lock().unwrap();
+        assert_eq!(remove_calls.len(), 0);
     }
 }

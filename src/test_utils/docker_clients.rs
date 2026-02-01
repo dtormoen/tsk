@@ -94,6 +94,14 @@ impl DockerClient for NoOpDockerClient {
     ) -> Result<(), String> {
         Ok(())
     }
+
+    async fn count_network_containers(
+        &self,
+        _network_name: &str,
+        _exclude_container: &str,
+    ) -> Result<usize, String> {
+        Ok(0)
+    }
 }
 
 #[derive(Clone)]
@@ -213,6 +221,14 @@ impl DockerClient for FixedResponseDockerClient {
     ) -> Result<(), String> {
         Ok(())
     }
+
+    async fn count_network_containers(
+        &self,
+        _network_name: &str,
+        _exclude_container: &str,
+    ) -> Result<usize, String> {
+        Ok(0)
+    }
 }
 
 type CreateContainerCall = (Option<CreateContainerOptions>, ContainerCreateBody);
@@ -235,6 +251,7 @@ pub struct TrackedDockerClient {
     pub create_network_error: Option<String>,
     pub image_exists_returns: bool,
     pub inspect_container_response: String,
+    pub network_container_count: usize,
 }
 
 impl Default for TrackedDockerClient {
@@ -253,6 +270,7 @@ impl Default for TrackedDockerClient {
             image_exists_returns: true,
             inspect_container_response: r#"{"State": {"Health": {"Status": "healthy"}}}"#
                 .to_string(),
+            network_container_count: 0,
         }
     }
 }
@@ -403,5 +421,13 @@ impl DockerClient for TrackedDockerClient {
             tar_data,
         ));
         Ok(())
+    }
+
+    async fn count_network_containers(
+        &self,
+        _network_name: &str,
+        _exclude_container: &str,
+    ) -> Result<usize, String> {
+        Ok(self.network_container_count)
     }
 }

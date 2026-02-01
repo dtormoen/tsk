@@ -68,7 +68,11 @@ TSK implements a command pattern with dependency injection for testability. The 
 
 **Docker Integration** (`src/docker/`)
 - `DockerImageManager`: Centralized Docker image management with intelligent layering
-- `ProxyManager`: Dedicated proxy lifecycle management (build, start, health checks, stop)
+- `ProxyManager`: Dedicated proxy lifecycle management with automatic cleanup
+  - Skips proxy build if proxy is already running (faster startup)
+  - Config changes picked up when proxy stops and restarts
+  - Automatically stops proxy when no agents are connected and no tasks are queued
+  - Uses Docker network inspection to count connected agent containers
 - `DockerManager`: Container execution with unified support for interactive and non-interactive modes
 - Security-first containers with dropped capabilities
 - Network isolation via proxy (Squid) for API-only access
@@ -211,7 +215,8 @@ TSK implements a command pattern with dependency injection for testability. The 
 - **Custom Project Dockerfiles**: Place project-specific Dockerfiles in `.tsk/dockerfiles/project/{project-name}.dockerfile`
 - **Proxy Image** (`dockerfiles/tsk-proxy/`): Squid proxy for controlled network access
   - Custom proxy configuration: Place a `squid.conf` file in the TSK config directory (`~/.config/tsk/squid.conf` by default) to override the default proxy configuration
-  - The custom configuration will be used when building/rebuilding the proxy image
+  - Proxy is automatically rebuilt on each startup to pick up config changes (Docker layer caching makes unchanged rebuilds fast)
+  - Proxy automatically stops when no agent containers are connected and no tasks are queued
 - Git configuration resolved dynamically from the repository being built (respects per-repo author settings)
 - Automatic image rebuilding when missing during task execution
 - Agent version tracking: Docker images are rebuilt when agent versions change (via `TSK_AGENT_VERSION` ARG)
