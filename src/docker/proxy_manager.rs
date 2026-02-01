@@ -335,7 +335,12 @@ impl ProxyManager {
                 // Security hardening options
                 readonly_rootfs: Some(true),
                 cap_drop: Some(vec!["ALL".to_string()]),
-                cap_add: Some(vec!["NET_ADMIN".to_string()]),
+                cap_add: Some(vec![
+                    "NET_ADMIN".to_string(), // For iptables firewall rules
+                    "SETUID".to_string(),    // For su-exec to drop privileges
+                    "SETGID".to_string(),    // For su-exec to drop privileges
+                    "CHOWN".to_string(),     // For fixing tmpfs ownership at startup
+                ]),
                 security_opt: Some(vec!["no-new-privileges:true".to_string()]),
                 tmpfs: Some(HashMap::from([
                     ("/var/cache/squid".to_string(), "size=10m".to_string()),
