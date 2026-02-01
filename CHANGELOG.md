@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.4](https://github.com/dtormoen/tsk/compare/v0.6.3...v0.6.4) - 2026-02-01
+
+### Added
+
+- add --proxy-only flag to docker build command
+
+### Fixed
+
+- use different method for notifications on MacOS to prevent hang
+
+### Other
+
+- upgrade dependencies
+
 ## [0.6.3](https://github.com/dtormoen/tsk/compare/v0.6.2...v0.6.3) - 2025-12-13
 
 ### Added
