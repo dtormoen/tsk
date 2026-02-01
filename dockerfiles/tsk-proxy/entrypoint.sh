@@ -1,6 +1,9 @@
 #!/bin/sh
 set -e
 
+# Fix ownership of tmpfs mounts (they're mounted as root, but squid needs to write)
+chown squid:squid /var/cache/squid /var/log/squid /var/run/squid
+
 # Clean up any stale PID file from previous runs
 if [ -f /var/run/squid/squid.pid ]; then
     echo "Removing stale PID file from previous run..."
