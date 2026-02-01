@@ -240,7 +240,7 @@ It is very difficult to make these images general purpose enough to cover all re
 
 You can run `tsk docker build --dry-run` to see the dockerfile that `tsk` will dynamically generate for your repository. You can also run `tsk run --type tech-stack` or `tsk run --type project-layer` to try to generate a `stack` or `project` snippet for your project, but this has not been heavily tested.
 
-See the [Docker Builds Guide](docs/docker-builds.md) for a more in-depth walk through.
+See the [Docker Builds Guide](docs/docker-builds.md) for a more in-depth walk through, and the [Network Isolation Guide](docs/network-isolation.md) for details on how TSK secures agent network access.
 
 I'm working on improving this part of `tsk` to be as seamless and easy to set up as possible, but it's still a work in progress. I welcome all feedback on how to make this easier and more intuitive!
 

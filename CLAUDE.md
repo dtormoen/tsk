@@ -75,8 +75,8 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Uses Docker network inspection to count connected agent containers
 - `DockerManager`: Container execution with unified support for interactive and non-interactive modes
 - Security-first containers with dropped capabilities
-- **Per-container network isolation**: Each agent runs in an isolated internal network that can only communicate with the proxy
-- Proxy-based URL filtering (Squid) for API-only access with domain whitelist
+- **Per-container network isolation**: Each agent runs in an isolated internal network that can only communicate with the proxy (see [Network Isolation Guide](docs/network-isolation.md))
+- Proxy-based URL filtering (Squid) for API-only access with domain allowlist
 - Host service access via TCP port forwarding through the proxy container (configured in `[proxy]` section of tsk.toml)
 - Volume mounting for repository copies and agent config
 - Layered image system: base → tech-stack → agent → project
