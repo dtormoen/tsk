@@ -27,3 +27,6 @@ upgrade-deps:
 update-deps:
     cargo update
 
+# Run network isolation tests (must be run inside a TSK container)
+network-isolation-test:
+    ./scripts/network-isolation-test.sh
