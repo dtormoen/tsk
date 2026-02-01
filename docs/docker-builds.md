@@ -197,18 +197,13 @@ TSK implements multiple security layers:
 - Limited filesystem permissions
 
 ### Network Isolation
-- Containers use a dedicated Docker network (`tsk-network`)
-- Internet access only through Squid proxy container (`tsk-proxy`)
+- Each agent runs in a dedicated internal Docker network (`tsk-agent-{task-id}`)
+- Internal networks have no external gateway - agents cannot route to the internet directly
+- The `tsk-proxy` container bridges agent networks to the outside world
 - Proxy build is skipped if proxy is already running (config changes picked up when proxy stops and restarts)
 - Proxy automatically stops when no agent containers are connected
-- Proxy allows API access and package registry access while blocking general browsing
-- Proxy allows access to:
-  - **AI APIs**: api.anthropic.com, api.openai.com, sentry.io, statsig.com
-  - **Python**: PyPI (pypi.org, pypi.python.org, files.pythonhosted.org)
-  - **Rust**: crates.io, index.crates.io, static.crates.io
-  - **Go**: proxy.golang.org, sum.golang.org, pkg.go.dev, golang.org, google.golang.org
-  - **Java**: Maven Central (repo.maven.apache.org, repo1.maven.org), Gradle repositories
-  - **Node.js**: registry.npmjs.org, nodejs.org, npmjs.com
+- Squid proxy enforces a domain allowlist for AI APIs and package registries
+- See [Network Isolation](network-isolation.md) for full details
 
 ### Resource Limits and Container Configuration
 - Memory limited to 12GB
