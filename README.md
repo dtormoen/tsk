@@ -6,11 +6,11 @@ Currently Claude Code and Codex coding agents are supported.
 
 ![TSK Demo](./docs/images/tsk-demo.gif)
 
-## What it does
+## Overview
 
 TSK enables a "lead engineer + AI team" workflow:
-1. **Assign tasks** to AI agents with natural language descriptions and task type templates to automate prompt boilerplate
-2. **Agents work autonomously** in parallel isolated Docker containers
+1. **Assign tasks** to AI agents using task type templates to automate prompt boilerplate and enable powerful multi-agent workflows
+2. **Agents work autonomously** in parallel isolated Docker containers with file system and network isolation
 3. **Get git branches** back with their changes for review
 4. **Review and merge** using your normal git workflow
 
@@ -39,35 +39,13 @@ cd tsk
 cargo install .
 ```
 
-## Commands
-
-### Task Commands
-- `tsk run` - Execute a task immediately
-- `tsk shell` - Start a sandbox container with an interactive shell
-- `tsk add` - Queue a task
-- `tsk list` - View task status and branches
-- `tsk clean` - Clean up completed tasks
-- `tsk delete <task-id>...` - Delete one or more tasks
-- `tsk retry <task-id>...` - Retry one or more tasks
-
-### Server Commands
-- `tsk server start` - Start the TSK server daemon
-- `tsk server stop` - Stop the running TSK server
-
-### Configuration Commands
-- `tsk docker build` - Build required docker images
-- `tsk proxy stop` - Stop the TSK proxy container
-- `tsk template list` - View available task type templates and where they are installed
-
-Run `tsk help` or `tsk help <command>` for detailed options.
-
 ## Quick Start Guide
 
 TSK can be used in multiple ways. Here are some of the main workflows to get started. Try testing these in the TSK repository!
 
 ### Interactive Sandboxes
 
-Start up sandbox with an interactive shell so you can work interactively with a coding agent. `claude` is the default, but you can also specify `--agent codex` to use `codex`.
+Start up sandbox with an interactive shell so you can work interactively with a coding agent. This is similar to a git worktrees workflow, but provides stronger isolation. `claude` is the default coding agent, but you can also specify `--agent codex` to use `codex`.
 
 ```bash
 tsk shell
@@ -164,6 +142,28 @@ gh issue view <issue-number> | tsk add -t issue-bot -n fix-my-issue
 
 Now it's easy to solve GitHub issues with a simple task template. Try this with code reviews as well to easily respond to feedback.
 
+## Commands
+
+### Task Commands
+- `tsk run` - Execute a task immediately
+- `tsk shell` - Start a sandbox container with an interactive shell
+- `tsk add` - Queue a task
+- `tsk list` - View task status and branches
+- `tsk clean` - Clean up completed tasks
+- `tsk delete <task-id>...` - Delete one or more tasks
+- `tsk retry <task-id>...` - Retry one or more tasks
+
+### Server Commands
+- `tsk server start` - Start the TSK server daemon
+- `tsk server stop` - Stop the running TSK server
+
+### Configuration Commands
+- `tsk docker build` - Build required docker images
+- `tsk proxy stop` - Stop the TSK proxy container
+- `tsk template list` - View available task type templates and where they are installed
+
+Run `tsk help` or `tsk help <command>` for detailed options.
+
 ## Configuring TSK
 
 TSK has 3 levels of configuration in priority order:
@@ -185,6 +185,11 @@ TSK can be configured via `~/.config/tsk/tsk.toml`. All settings are optional.
 memory_limit_gb = 12.0  # Container memory limit (default: 12.0)
 cpu_limit = 8           # Number of CPUs (default: 8)
 
+# Git-town integration (https://git-town.com/)
+# When enabled, task branches automatically record their parent branch
+[git_town]
+enabled = true  # default: false
+
 # Project-specific configuration (matches directory name)
 [project.my-project]
 agent = "claude"        # Default agent (claude or codex)
@@ -203,6 +208,8 @@ Volume mounts are particularly useful for:
 - **Build caches**: Share Go module cache (`/go/pkg/mod`) or Rust target directories to speed up builds
 - **Persistent state**: Use named volumes for build caches that persist across tasks
 - **Read-only artifacts**: Mount debugging artifacts, config files, or other resources without risk of modification
+
+The `[git_town]` section enables integration with [git-town](https://www.git-town.com/), a tool for branch-based workflow automation. When enabled, TSK sets the parent branch metadata on task branches, allowing git-town commands like `git town sync` to work correctly with TSK-created branches.
 
 Configuration priority: CLI flags > project config > auto-detection > defaults
 
