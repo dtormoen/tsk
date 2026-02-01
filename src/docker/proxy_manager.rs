@@ -10,6 +10,7 @@ use crate::context::tsk_env::TskEnv;
 use anyhow::{Context, Result};
 use bollard::models::{ContainerCreateBody, HostConfig};
 use bollard::query_parameters::RemoveContainerOptions;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -331,6 +332,16 @@ impl ProxyManager {
                     name: Some(bollard::models::RestartPolicyNameEnum::UNLESS_STOPPED),
                     maximum_retry_count: None,
                 }),
+                // Security hardening options
+                readonly_rootfs: Some(true),
+                cap_drop: Some(vec!["ALL".to_string()]),
+                cap_add: Some(vec!["NET_ADMIN".to_string()]),
+                security_opt: Some(vec!["no-new-privileges:true".to_string()]),
+                tmpfs: Some(HashMap::from([
+                    ("/var/cache/squid".to_string(), "size=10m".to_string()),
+                    ("/var/log/squid".to_string(), "size=50m".to_string()),
+                    ("/var/run/squid".to_string(), "size=1m".to_string()),
+                ])),
                 ..Default::default()
             }),
             ..Default::default()
