@@ -4,6 +4,7 @@
 //! handling proxy container lifecycle, health checks, and network configuration.
 
 use crate::context::AppContext;
+use crate::context::TskConfig;
 use crate::context::docker_client::DockerClient;
 use crate::context::tsk_env::TskEnv;
 use anyhow::{Context, Result};
@@ -34,6 +35,7 @@ const PROXY_PORT: &str = "3128/tcp";
 /// configuration instead of the default embedded one.
 pub struct ProxyManager {
     docker_client: Arc<dyn DockerClient>,
+    tsk_config: Arc<TskConfig>,
     tsk_env: Arc<TskEnv>,
 }
 
@@ -45,6 +47,7 @@ impl ProxyManager {
     pub fn new(ctx: &AppContext) -> Self {
         Self {
             docker_client: ctx.docker_client(),
+            tsk_config: ctx.tsk_config(),
             tsk_env: ctx.tsk_env(),
         }
     }
@@ -317,8 +320,13 @@ impl ProxyManager {
         let proxy_config = ContainerCreateBody {
             image: Some(PROXY_IMAGE.to_string()),
             exposed_ports: Some(vec![PROXY_PORT.to_string()]),
+            env: Some(vec![format!(
+                "TSK_HOST_SERVICES={}",
+                self.tsk_config.proxy.host_services_env()
+            )]),
             host_config: Some(HostConfig {
                 network_mode: Some(TSK_EXTERNAL_NETWORK.to_string()),
+                extra_hosts: Some(vec!["host.docker.internal:host-gateway".to_string()]),
                 restart_policy: Some(bollard::models::RestartPolicy {
                     name: Some(bollard::models::RestartPolicyNameEnum::UNLESS_STOPPED),
                     maximum_retry_count: None,
@@ -566,14 +574,57 @@ mod tests {
 
         let create_calls = mock_client.create_container_calls.lock().unwrap();
         assert_eq!(create_calls.len(), 1);
+
+        let (options, config) = &create_calls[0];
         assert_eq!(
-            create_calls[0].0.as_ref().unwrap().name,
+            options.as_ref().unwrap().name,
             Some(PROXY_CONTAINER_NAME.to_string())
         );
+
+        // Verify extra_hosts is set for host.docker.internal access
+        let host_config = config.host_config.as_ref().unwrap();
+        let extra_hosts = host_config.extra_hosts.as_ref().unwrap();
+        assert!(extra_hosts.contains(&"host.docker.internal:host-gateway".to_string()));
+
+        // Verify env includes TSK_HOST_SERVICES (empty by default)
+        let env = config.env.as_ref().unwrap();
+        assert!(env.iter().any(|e| e.starts_with("TSK_HOST_SERVICES=")));
 
         let start_calls = mock_client.start_container_calls.lock().unwrap();
         assert_eq!(start_calls.len(), 1);
         assert_eq!(start_calls[0], PROXY_CONTAINER_NAME);
+    }
+
+    #[tokio::test]
+    async fn test_ensure_proxy_with_host_services() {
+        use crate::context::tsk_config::ProxyConfig;
+
+        let mock_client = Arc::new(TrackedDockerClient::default());
+        let tsk_config = TskConfig {
+            docker: Default::default(),
+            git_town: Default::default(),
+            proxy: ProxyConfig {
+                host_services: vec![5432, 6379],
+            },
+            project: Default::default(),
+        };
+
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .with_tsk_config(tsk_config)
+            .build();
+
+        let manager = ProxyManager::new(&ctx);
+        let result = manager.ensure_proxy().await;
+
+        assert!(result.is_ok());
+
+        let create_calls = mock_client.create_container_calls.lock().unwrap();
+        let (_, config) = &create_calls[0];
+
+        // Verify env includes configured host services
+        let env = config.env.as_ref().unwrap();
+        assert!(env.contains(&"TSK_HOST_SERVICES=5432,6379".to_string()));
     }
 
     #[tokio::test]

@@ -855,6 +855,7 @@ mod tests {
         let tsk_config = TskConfig {
             docker: Default::default(),
             git_town: Default::default(),
+            proxy: Default::default(),
             project: project_configs,
         };
 
@@ -913,6 +914,7 @@ mod tests {
         let tsk_config = TskConfig {
             docker: Default::default(),
             git_town: Default::default(),
+            proxy: Default::default(),
             project: project_configs,
         };
 
@@ -965,6 +967,7 @@ mod tests {
         let tsk_config = TskConfig {
             docker: Default::default(),
             git_town: Default::default(),
+            proxy: Default::default(),
             project: project_configs,
         };
 

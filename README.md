@@ -185,6 +185,12 @@ TSK can be configured via `~/.config/tsk/tsk.toml`. All settings are optional.
 memory_limit_gb = 12.0  # Container memory limit (default: 12.0)
 cpu_limit = 8           # Number of CPUs (default: 8)
 
+# Proxy configuration
+[proxy]
+# Forward ports from containers to host services (agents connect to tsk-proxy:<port>)
+# Default: [] (no port forwarding)
+host_services = [5432, 6379]  # e.g., PostgreSQL, Redis
+
 # Git-town integration (https://git-town.com/)
 # When enabled, task branches automatically record their parent branch
 [git_town]
@@ -208,6 +214,8 @@ Volume mounts are particularly useful for:
 - **Build caches**: Share Go module cache (`/go/pkg/mod`) or Rust target directories to speed up builds
 - **Persistent state**: Use named volumes for build caches that persist across tasks
 - **Read-only artifacts**: Mount debugging artifacts, config files, or other resources without risk of modification
+
+The `[proxy]` section lets you expose host services to task containers. Agents connect to `tsk-proxy:<port>` to reach services running on your host machine (e.g., local databases or dev servers).
 
 The `[git_town]` section enables integration with [git-town](https://www.git-town.com/), a tool for branch-based workflow automation. When enabled, TSK sets the parent branch metadata on task branches, allowing git-town commands like `git town sync` to work correctly with TSK-created branches.
 
