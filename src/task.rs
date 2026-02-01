@@ -48,6 +48,10 @@ pub struct Task {
     pub error_message: Option<String>,
     /// Git commit SHA from which the task was created
     pub source_commit: String,
+    /// Git branch from which the task was created (for git-town parent tracking)
+    /// None if created from detached HEAD state
+    #[serde(default)]
+    pub source_branch: Option<String>,
     /// Stack for Docker image selection (e.g., "rust", "python", "default")
     #[serde(alias = "tech_stack")]
     pub stack: String,
@@ -72,6 +76,7 @@ impl Task {
         agent: String,
         branch_name: String,
         source_commit: String,
+        source_branch: Option<String>,
         stack: String,
         project: String,
         created_at: DateTime<Local>,
@@ -92,6 +97,7 @@ impl Task {
             branch_name,
             error_message: None,
             source_commit,
+            source_branch,
             stack,
             project,
             copied_repo_path,
@@ -139,6 +145,7 @@ mod tests {
             "claude".to_string(),
             "tsk/feat/test-task/test-id".to_string(),
             "abc123".to_string(),
+            Some("main".to_string()),
             "rust".to_string(),
             "test-project".to_string(),
             chrono::Local::now(),
@@ -154,5 +161,28 @@ mod tests {
         assert!(task.completed_at.is_none());
         assert!(task.error_message.is_none());
         assert!(!task.is_interactive);
+        assert_eq!(task.source_branch, Some("main".to_string()));
+    }
+
+    #[test]
+    fn test_task_creation_detached_head() {
+        let task = Task::new(
+            "test-id".to_string(),
+            PathBuf::from("/test"),
+            "test-task".to_string(),
+            "feat".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/feat/test-task/test-id".to_string(),
+            "abc123".to_string(),
+            None,
+            "rust".to_string(),
+            "test-project".to_string(),
+            chrono::Local::now(),
+            PathBuf::from("/test/copied"),
+            false,
+        );
+
+        assert!(task.source_branch.is_none());
     }
 }

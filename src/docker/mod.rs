@@ -471,6 +471,7 @@ mod tests {
             branch_name: "tsk/feature/test-task/test-task-id".to_string(),
             error_message: None,
             source_commit: "abc123".to_string(),
+            source_branch: Some("main".to_string()),
             stack: "default".to_string(),
             project: "default".to_string(),
             copied_repo_path: repo_path,
@@ -820,6 +821,7 @@ mod tests {
         );
         let tsk_config = TskConfig {
             docker: Default::default(),
+            git_town: Default::default(),
             project: project_configs,
         };
 
@@ -872,6 +874,7 @@ mod tests {
         );
         let tsk_config = TskConfig {
             docker: Default::default(),
+            git_town: Default::default(),
             project: project_configs,
         };
 
@@ -924,6 +927,7 @@ mod tests {
         );
         let tsk_config = TskConfig {
             docker: Default::default(),
+            git_town: Default::default(),
             project: project_configs,
         };
 

@@ -96,6 +96,10 @@ TSK implements a command pattern with dependency injection for testability. The 
   memory_limit_gb = 12.0  # gigabytes (default: 12.0)
   cpu_limit = 8           # number of CPUs (default: 8)
 
+  [git_town]
+  enabled = true  # Enable git-town parent branch tracking (default: false)
+
+
   # Project-specific configuration (matches project name from --project or auto-detection)
   [project.my-go-project]
   agent = "claude"            # Default agent for this project
@@ -144,6 +148,12 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Commits made in submodules are fetched back with the same branch name as the superproject task
   - Only repositories (base and submodules) with actual changes get branches created
   - Graceful fallback: if submodule setup fails, contents are treated as regular files
+- **Git-Town Integration**: Optional parent branch tracking for git-town users
+  - Enable with `git_town.enabled = true` in tsk.toml
+  - When enabled, task branches automatically record their parent branch
+  - Parent is the branch checked out when the task was created
+  - Uses git config: `git-town-branch.<branch>.parent`
+  - Graceful failure: if parent cannot be set, logs warning and continues
 
 **Dependency Injection** (`src/context/`)
 - `AppContext` provides centralized resource management with builder pattern

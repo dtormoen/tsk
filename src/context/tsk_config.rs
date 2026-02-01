@@ -21,6 +21,9 @@ use super::tsk_env::TskEnvError;
 pub struct TskConfig {
     /// Docker container resource configuration
     pub docker: DockerOptions,
+    /// Git-town integration configuration
+    #[serde(default)]
+    pub git_town: GitTownConfig,
     /// Project-specific configurations keyed by project name
     #[serde(default)]
     pub project: HashMap<String, ProjectConfig>,
@@ -68,6 +71,18 @@ impl DockerOptions {
     pub fn cpu_quota_microseconds(&self) -> i64 {
         self.cpu_limit as i64 * 100_000
     }
+}
+
+/// Git-town integration configuration
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct GitTownConfig {
+    /// Enable git-town parent branch tracking
+    ///
+    /// When enabled, TSK will set the git-town parent branch configuration
+    /// for task branches, using the branch that was checked out when the
+    /// task was created as the parent.
+    pub enabled: bool,
 }
 
 /// Project-specific configuration section
@@ -441,5 +456,67 @@ volumes = [
             }
             VolumeMount::Bind(_) => panic!("Expected Named volume"),
         }
+    }
+
+    #[test]
+    fn test_git_town_config_default() {
+        let config = GitTownConfig::default();
+        assert!(!config.enabled);
+    }
+
+    #[test]
+    fn test_tsk_config_default_has_disabled_git_town() {
+        let config = TskConfig::default();
+        assert!(!config.git_town.enabled);
+    }
+
+    #[test]
+    fn test_git_town_config_enabled_from_toml() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_dir = temp_dir.path();
+
+        let toml_content = r#"
+[git_town]
+enabled = true
+"#;
+        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+
+        let config = load_config(config_dir);
+        assert!(config.git_town.enabled);
+    }
+
+    #[test]
+    fn test_git_town_config_disabled_from_toml() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_dir = temp_dir.path();
+
+        let toml_content = r#"
+[git_town]
+enabled = false
+"#;
+        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+
+        let config = load_config(config_dir);
+        assert!(!config.git_town.enabled);
+    }
+
+    #[test]
+    fn test_git_town_config_missing_uses_default() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_dir = temp_dir.path();
+
+        // Config with other sections but no git_town
+        let toml_content = r#"
+[docker]
+memory_limit_gb = 8.0
+"#;
+        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+
+        let config = load_config(config_dir);
+        // Should use default (disabled)
+        assert!(!config.git_town.enabled);
     }
 }

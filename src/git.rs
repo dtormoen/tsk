@@ -443,6 +443,46 @@ impl RepoManager {
         Ok(())
     }
 
+    /// Set git-town parent branch configuration
+    ///
+    /// This writes to git config without triggering any git operations.
+    /// Should be called within a repo lock to prevent concurrent config writes.
+    ///
+    /// # Arguments
+    ///
+    /// * `repo_path` - Path to the repository where the config should be set
+    /// * `branch_name` - Name of the branch to set the parent for
+    /// * `parent_branch` - Name of the parent branch
+    pub async fn set_git_town_parent(
+        &self,
+        repo_path: &Path,
+        branch_name: &str,
+        parent_branch: &str,
+    ) -> Result<(), String> {
+        tokio::task::spawn_blocking({
+            let repo_path = repo_path.to_owned();
+            let branch_name = branch_name.to_owned();
+            let parent_branch = parent_branch.to_owned();
+            move || -> Result<(), String> {
+                let repo = git2::Repository::open(&repo_path)
+                    .map_err(|e| format!("Failed to open repository: {e}"))?;
+
+                let mut config = repo
+                    .config()
+                    .map_err(|e| format!("Failed to get repository config: {e}"))?;
+
+                let key = format!("git-town-branch.{}.parent", branch_name);
+                config
+                    .set_str(&key, &parent_branch)
+                    .map_err(|e| format!("Failed to set git-town parent: {e}"))?;
+
+                Ok(())
+            }
+        })
+        .await
+        .map_err(|e| format!("Task join error: {e}"))?
+    }
+
     /// Fetch changes from the copied repository back to the main repository
     /// Returns false if no changes were fetched (branch has no new commits)
     pub async fn fetch_changes(
@@ -451,6 +491,8 @@ impl RepoManager {
         branch_name: &str,
         repo_root: &Path,
         source_commit: &str,
+        source_branch: Option<&str>,
+        git_town_enabled: bool,
     ) -> Result<bool, String> {
         // Check if there are any changes by comparing HEAD with source commit
         let current_head = self
@@ -517,6 +559,16 @@ impl RepoManager {
                             .git_operations()
                             .remove_remote(&main_repo, &remote_name)
                             .await?;
+
+                        // Set git-town parent if enabled and source branch is known
+                        if git_town_enabled
+                            && let Some(parent) = source_branch
+                            && let Err(e) = self
+                                .set_git_town_parent(&main_repo, branch_name, parent)
+                                .await
+                        {
+                            eprintln!("Warning: Failed to set git-town parent: {e}");
+                        }
                     }
                     Err(e) => {
                         // Remove the temporary remote before returning error
@@ -1059,6 +1111,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_set_git_town_parent() {
+        // Create a git repository with an initial commit
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+
+        // Create a branch to set the parent for
+        let branch_name = "tsk/feat/test-feature/abc123";
+        test_repo.checkout_new_branch(branch_name).unwrap();
+
+        let ctx = AppContext::builder().build();
+        let manager = RepoManager::new(&ctx);
+
+        // Set the git-town parent
+        let result = manager
+            .set_git_town_parent(test_repo.path(), branch_name, "main")
+            .await;
+
+        assert!(result.is_ok(), "Error: {result:?}");
+
+        // Verify the config was set correctly
+        let repo = git2::Repository::open(test_repo.path()).unwrap();
+        let config = repo.config().unwrap();
+        let key = format!("git-town-branch.{}.parent", branch_name);
+        let parent = config.get_string(&key).unwrap();
+        assert_eq!(parent, "main");
+    }
+
+    #[tokio::test]
+    async fn test_set_git_town_parent_idempotent() {
+        // Create a git repository with an initial commit
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+
+        let branch_name = "tsk/feat/test-feature/abc123";
+        test_repo.checkout_new_branch(branch_name).unwrap();
+
+        let ctx = AppContext::builder().build();
+        let manager = RepoManager::new(&ctx);
+
+        // Set the parent twice - should not fail
+        let result1 = manager
+            .set_git_town_parent(test_repo.path(), branch_name, "main")
+            .await;
+        assert!(result1.is_ok());
+
+        let result2 = manager
+            .set_git_town_parent(test_repo.path(), branch_name, "develop")
+            .await;
+        assert!(result2.is_ok());
+
+        // Verify the config was updated to the second value
+        let repo = git2::Repository::open(test_repo.path()).unwrap();
+        let config = repo.config().unwrap();
+        let key = format!("git-town-branch.{}.parent", branch_name);
+        let parent = config.get_string(&key).unwrap();
+        assert_eq!(parent, "develop");
+    }
+
+    #[tokio::test]
     async fn test_commit_changes_no_changes() {
         // Create a git repository with an initial commit
         let test_repo = TestGitRepository::new().unwrap();
@@ -1160,6 +1271,8 @@ mod tests {
                 branch_name,
                 main_repo.path(),
                 &source_commit,
+                Some("main"),
+                false,
             )
             .await;
 
@@ -1244,6 +1357,8 @@ mod tests {
                 branch_name,
                 main_repo.path(),
                 &source_commit,
+                Some("main"),
+                false,
             )
             .await;
 
@@ -1255,6 +1370,100 @@ mod tests {
         assert!(
             main_branches.contains(&branch_name.to_string()),
             "Branch should exist after fetch"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fetch_changes_with_git_town_enabled() {
+        let ctx = AppContext::builder().build();
+
+        // Create main repository with a feature branch
+        let main_repo = TestGitRepository::new().unwrap();
+        main_repo.init().unwrap();
+        main_repo
+            .run_git_command(&["config", "init.defaultBranch", "main"])
+            .unwrap();
+        main_repo
+            .run_git_command(&["checkout", "-b", "main"])
+            .unwrap();
+        main_repo
+            .create_file("README.md", "# Test Repository\n")
+            .unwrap();
+        main_repo.stage_all().unwrap();
+        main_repo.commit("Initial commit").unwrap();
+
+        // Create a feature branch (this would be the source branch)
+        main_repo.checkout_new_branch("feature-branch").unwrap();
+        main_repo.create_file("feature.md", "# Feature\n").unwrap();
+        main_repo.stage_all().unwrap();
+        main_repo.commit("Add feature file").unwrap();
+
+        // Create task repository (simulating a copied repository)
+        let task_repo = TestGitRepository::new().unwrap();
+        task_repo.init().unwrap();
+
+        // Set up task repo to have main repo as origin
+        task_repo
+            .run_git_command(&[
+                "remote",
+                "add",
+                "origin",
+                main_repo.path().to_str().unwrap(),
+            ])
+            .unwrap();
+
+        // Fetch and checkout feature-branch
+        task_repo.run_git_command(&["fetch", "origin"]).unwrap();
+        task_repo
+            .run_git_command(&["checkout", "-b", "feature-branch", "origin/feature-branch"])
+            .unwrap();
+
+        // Create a task branch with new commits
+        let branch_name = "tsk/feat/test-task/abc12345";
+        task_repo.checkout_new_branch(branch_name).unwrap();
+
+        // Capture source_commit before adding new commits
+        let source_commit = task_repo.get_current_commit().unwrap();
+
+        // Add a new commit
+        task_repo
+            .create_file("task_changes.rs", "fn task_work() {}")
+            .unwrap();
+        task_repo.stage_all().unwrap();
+        task_repo.commit("Task changes").unwrap();
+
+        let manager = RepoManager::new(&ctx);
+
+        // Fetch changes with git_town_enabled = true
+        let result = manager
+            .fetch_changes(
+                task_repo.path(),
+                branch_name,
+                main_repo.path(),
+                &source_commit,
+                Some("feature-branch"),
+                true, // git_town_enabled
+            )
+            .await;
+
+        assert!(result.is_ok(), "Error: {result:?}");
+        assert!(result.unwrap(), "Should return true when new commits exist");
+
+        // Verify the branch exists in main repo
+        let main_branches = main_repo.branches().unwrap();
+        assert!(
+            main_branches.contains(&branch_name.to_string()),
+            "Branch should exist after fetch"
+        );
+
+        // Verify git-town parent was set correctly
+        let config_output = main_repo
+            .run_git_command(&["config", &format!("git-town-branch.{}.parent", branch_name)])
+            .unwrap();
+        assert_eq!(
+            config_output.trim(),
+            "feature-branch",
+            "Git-town parent should be set to feature-branch"
         );
     }
 
@@ -1781,6 +1990,8 @@ mod tests {
                 branch_name,
                 main_repo.path(),
                 &first_commit,
+                Some("main"),
+                false,
             )
             .await;
 
@@ -2199,7 +2410,14 @@ mod tests {
 
         // Fetch changes back to main repo
         let fetch_result = manager
-            .fetch_changes(&copied_path, branch_name, main_repo.path(), &source_commit)
+            .fetch_changes(
+                &copied_path,
+                branch_name,
+                main_repo.path(),
+                &source_commit,
+                Some("main"),
+                false,
+            )
             .await;
 
         assert!(
@@ -2323,7 +2541,14 @@ mod tests {
 
         // Step 5: Fetch changes back (simulates exiting `tsk shell`)
         manager
-            .fetch_changes(&copied_path, branch_name, repo_a.path(), &source_commit)
+            .fetch_changes(
+                &copied_path,
+                branch_name,
+                repo_a.path(),
+                &source_commit,
+                Some("main"),
+                false,
+            )
             .await
             .expect("Fetch should succeed");
 
@@ -2497,7 +2722,14 @@ mod tests {
 
         // Step 4: Fetch changes back (simulates exiting `tsk shell`)
         let fetch_result = manager
-            .fetch_changes(&copied_path, branch_name, repo_a.path(), &source_commit)
+            .fetch_changes(
+                &copied_path,
+                branch_name,
+                repo_a.path(),
+                &source_commit,
+                Some("main"),
+                false,
+            )
             .await;
         assert!(
             fetch_result.is_ok(),
@@ -2682,7 +2914,14 @@ mod tests {
 
         // Step 4: Fetch changes back
         manager
-            .fetch_changes(&copied_path, branch_name, repo_a.path(), &source_commit)
+            .fetch_changes(
+                &copied_path,
+                branch_name,
+                repo_a.path(),
+                &source_commit,
+                Some("main"),
+                false,
+            )
             .await
             .expect("Fetch should succeed");
 

@@ -437,6 +437,7 @@ mod tests {
             "claude".to_string(),
             format!("tsk/test/{id}"),
             commit_sha.to_string(),
+            Some("main".to_string()),
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),

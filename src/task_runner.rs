@@ -155,6 +155,8 @@ impl TaskRunner {
                 &branch_name,
                 &task.repo_root,
                 &task.source_commit,
+                task.source_branch.as_deref(),
+                self.ctx.tsk_config().git_town.enabled,
             )
             .await
         {
@@ -256,6 +258,7 @@ mod tests {
             branch_name: "tsk/feature/test-task/test-task-123".to_string(),
             error_message: None,
             source_commit: test_repo.get_current_commit().unwrap(),
+            source_branch: Some("main".to_string()),
             stack: "default".to_string(),
             project: "default".to_string(),
             copied_repo_path: task_copy_dir,

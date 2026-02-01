@@ -115,7 +115,6 @@ impl TaskBuilder {
     }
 
     /// Sets whether the task should run in interactive mode
-    #[allow(dead_code)]
     pub fn with_interactive(mut self, is_interactive: bool) -> Self {
         self.is_interactive = is_interactive;
         self
@@ -298,6 +297,15 @@ impl TaskBuilder {
             }
         };
 
+        // Capture the current branch for git-town parent tracking
+        // Returns None if in detached HEAD state
+        let source_branch = ctx
+            .git_operations()
+            .get_current_branch(&repo_root)
+            .await
+            .ok()
+            .flatten();
+
         // Resolve stack: CLI flag > project config > auto-detect > default
         let stack = match self.stack {
             Some(ts) => {
@@ -353,6 +361,7 @@ impl TaskBuilder {
             agent,
             branch_name,
             source_commit,
+            source_branch,
             stack,
             project,
             created_at,
@@ -845,6 +854,7 @@ mod tests {
         );
         let tsk_config = TskConfig {
             docker: Default::default(),
+            git_town: Default::default(),
             project: project_configs,
         };
 
@@ -902,6 +912,7 @@ mod tests {
         );
         let tsk_config = TskConfig {
             docker: Default::default(),
+            git_town: Default::default(),
             project: project_configs,
         };
 
@@ -953,6 +964,7 @@ mod tests {
         );
         let tsk_config = TskConfig {
             docker: Default::default(),
+            git_town: Default::default(),
             project: project_configs,
         };
 

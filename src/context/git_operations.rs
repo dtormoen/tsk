@@ -110,6 +110,18 @@ pub trait GitOperations: Send + Sync {
         source_repo_path: &Path,
         destination_path: &Path,
     ) -> Result<(), String>;
+
+    /// Get the current branch name
+    ///
+    /// Returns the name of the currently checked out branch, or None if
+    /// the repository is in a detached HEAD state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The repository cannot be opened
+    /// - HEAD cannot be resolved
+    async fn get_current_branch(&self, repo_path: &Path) -> Result<Option<String>, String>;
 }
 
 pub struct DefaultGitOperations;
@@ -619,6 +631,29 @@ impl GitOperations for DefaultGitOperations {
         .await
         .map_err(|e| format!("Task join error: {e}"))?
     }
+
+    async fn get_current_branch(&self, repo_path: &Path) -> Result<Option<String>, String> {
+        tokio::task::spawn_blocking({
+            let repo_path = repo_path.to_owned();
+            move || -> Result<Option<String>, String> {
+                let repo = Repository::open(&repo_path)
+                    .map_err(|e| format!("Failed to open repository: {e}"))?;
+
+                let head = repo
+                    .head()
+                    .map_err(|e| format!("Failed to get HEAD: {e}"))?;
+
+                if head.is_branch() {
+                    Ok(head.shorthand().map(|s| s.to_string()))
+                } else {
+                    // Detached HEAD state
+                    Ok(None)
+                }
+            }
+        })
+        .await
+        .map_err(|e| format!("Task join error: {e}"))?
+    }
 }
 
 #[cfg(test)]
@@ -949,5 +984,101 @@ mod integration_tests {
                 pack_files.len()
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_get_current_branch_on_branch() {
+        let git_ops = DefaultGitOperations;
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path();
+
+        // Initialize a real git repository
+        let repo = git2::Repository::init(repo_path).unwrap();
+
+        // Configure git user for commit
+        let mut config = repo.config().unwrap();
+        config.set_str("user.name", "Test User").unwrap();
+        config.set_str("user.email", "test@example.com").unwrap();
+
+        // Create and commit a file
+        std::fs::write(repo_path.join("test.txt"), "Hello, world!").unwrap();
+        git_ops.add_all(repo_path).await.unwrap();
+        git_ops.commit(repo_path, "Initial commit").await.unwrap();
+
+        // Get current branch - should be main or master
+        let branch = git_ops.get_current_branch(repo_path).await.unwrap();
+        assert!(branch.is_some());
+        // The default branch could be "main" or "master" depending on git version/config
+        let branch_name = branch.unwrap();
+        assert!(
+            branch_name == "main" || branch_name == "master",
+            "Expected main or master, got: {}",
+            branch_name
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_current_branch_custom_branch() {
+        let git_ops = DefaultGitOperations;
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path();
+
+        // Initialize a real git repository
+        let repo = git2::Repository::init(repo_path).unwrap();
+
+        // Configure git user for commit
+        let mut config = repo.config().unwrap();
+        config.set_str("user.name", "Test User").unwrap();
+        config.set_str("user.email", "test@example.com").unwrap();
+
+        // Create and commit a file
+        std::fs::write(repo_path.join("test.txt"), "Hello, world!").unwrap();
+        git_ops.add_all(repo_path).await.unwrap();
+        git_ops.commit(repo_path, "Initial commit").await.unwrap();
+
+        // Create and checkout a new branch
+        git_ops
+            .create_branch(repo_path, "feature-branch")
+            .await
+            .unwrap();
+
+        // Get current branch - should be feature-branch
+        let branch = git_ops.get_current_branch(repo_path).await.unwrap();
+        assert_eq!(branch, Some("feature-branch".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_get_current_branch_detached_head() {
+        let git_ops = DefaultGitOperations;
+        let temp_dir = TempDir::new().unwrap();
+        let repo_path = temp_dir.path();
+
+        // Initialize a real git repository
+        let repo = git2::Repository::init(repo_path).unwrap();
+
+        // Configure git user for commit
+        let mut config = repo.config().unwrap();
+        config.set_str("user.name", "Test User").unwrap();
+        config.set_str("user.email", "test@example.com").unwrap();
+
+        // Create and commit a file
+        std::fs::write(repo_path.join("test.txt"), "Hello, world!").unwrap();
+        git_ops.add_all(repo_path).await.unwrap();
+        git_ops.commit(repo_path, "Initial commit").await.unwrap();
+
+        // Get the commit SHA and checkout to detach HEAD
+        let commit_sha = git_ops.get_current_commit(repo_path).await.unwrap();
+
+        // Checkout to the specific commit (detached HEAD)
+        let oid = git2::Oid::from_str(&commit_sha).unwrap();
+        repo.set_head_detached(oid).unwrap();
+
+        // Get current branch - should be None for detached HEAD
+        let branch = git_ops.get_current_branch(repo_path).await.unwrap();
+        assert!(
+            branch.is_none(),
+            "Expected None for detached HEAD, got: {:?}",
+            branch
+        );
     }
 }
