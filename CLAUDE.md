@@ -156,6 +156,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - `validate()`: Checks agent configuration (e.g., Claude credentials)
   - `warmup()`: Performs pre-execution setup (e.g., refreshing OAuth tokens)
   - `version()`: Returns the agent's version string (used to trigger Docker rebuilds when agents are upgraded)
+  - `files_to_copy()`: Returns files to copy into container before starting (used for agent config files)
 - Available agents:
   - `claude`: Claude AI agent (default) - automatically detects version from `claude --version`
   - `codex`: Codex AI agent - automatically detects version from `codex --version`

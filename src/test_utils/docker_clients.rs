@@ -85,6 +85,15 @@ impl DockerClient for NoOpDockerClient {
         // No-op for tests - interactive sessions are not supported in test environment
         Ok(())
     }
+
+    async fn upload_to_container(
+        &self,
+        _id: &str,
+        _dest_path: &str,
+        _tar_data: Vec<u8>,
+    ) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
@@ -195,11 +204,21 @@ impl DockerClient for FixedResponseDockerClient {
         // No-op for tests - interactive sessions are not supported in test environment
         Ok(())
     }
+
+    async fn upload_to_container(
+        &self,
+        _id: &str,
+        _dest_path: &str,
+        _tar_data: Vec<u8>,
+    ) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 type CreateContainerCall = (Option<CreateContainerOptions>, ContainerCreateBody);
 type LogsCall = (String, Option<LogsOptions>);
 type RemoveContainerCall = (String, Option<RemoveContainerOptions>);
+type UploadToContainerCall = (String, String, Vec<u8>);
 
 #[derive(Clone)]
 pub struct TrackedDockerClient {
@@ -208,6 +227,7 @@ pub struct TrackedDockerClient {
     pub wait_container_calls: Arc<Mutex<Vec<String>>>,
     pub logs_calls: Arc<Mutex<Vec<LogsCall>>>,
     pub remove_container_calls: Arc<Mutex<Vec<RemoveContainerCall>>>,
+    pub upload_to_container_calls: Arc<Mutex<Vec<UploadToContainerCall>>>,
 
     pub exit_code: i64,
     pub logs_output: String,
@@ -225,6 +245,7 @@ impl Default for TrackedDockerClient {
             wait_container_calls: Arc::new(Mutex::new(Vec::new())),
             logs_calls: Arc::new(Mutex::new(Vec::new())),
             remove_container_calls: Arc::new(Mutex::new(Vec::new())),
+            upload_to_container_calls: Arc::new(Mutex::new(Vec::new())),
             exit_code: 0,
             logs_output: "Container logs".to_string(),
             network_exists: true,
@@ -367,6 +388,20 @@ impl DockerClient for TrackedDockerClient {
 
     async fn attach_container(&self, _id: &str) -> Result<(), String> {
         // No-op for tests - interactive sessions are not supported in test environment
+        Ok(())
+    }
+
+    async fn upload_to_container(
+        &self,
+        id: &str,
+        dest_path: &str,
+        tar_data: Vec<u8>,
+    ) -> Result<(), String> {
+        self.upload_to_container_calls.lock().unwrap().push((
+            id.to_string(),
+            dest_path.to_string(),
+            tar_data,
+        ));
         Ok(())
     }
 }

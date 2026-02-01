@@ -535,6 +535,15 @@ mod tests {
             async fn attach_container(&self, _id: &str) -> Result<(), String> {
                 Ok(())
             }
+
+            async fn upload_to_container(
+                &self,
+                _id: &str,
+                _dest_path: &str,
+                _tar_data: Vec<u8>,
+            ) -> Result<(), String> {
+                Ok(())
+            }
         }
 
         let mock_client = Arc::new(NoContainerDockerClient);
@@ -757,6 +766,15 @@ mod tests {
             }
 
             async fn attach_container(&self, _id: &str) -> Result<(), String> {
+                Ok(())
+            }
+
+            async fn upload_to_container(
+                &self,
+                _id: &str,
+                _dest_path: &str,
+                _tar_data: Vec<u8>,
+            ) -> Result<(), String> {
                 Ok(())
             }
         }

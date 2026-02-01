@@ -41,6 +41,34 @@ impl Default for ClaudeAgent {
     }
 }
 
+/// Creates a tar archive containing a single file
+///
+/// # Arguments
+/// * `filename` - The name of the file to store in the archive
+/// * `contents` - The file contents as bytes
+///
+/// # Returns
+/// The tar archive data as a byte vector
+fn create_tar_with_file(filename: &str, contents: &[u8]) -> Vec<u8> {
+    let mut builder = tar::Builder::new(Vec::new());
+
+    let mut header = tar::Header::new_gnu();
+    header.set_path(filename).expect("Invalid filename");
+    header.set_size(contents.len() as u64);
+    header.set_mode(0o644);
+    // UID/GID 1000 matches the 'agent' user in TSK Docker images
+    header.set_uid(1000);
+    header.set_gid(1000);
+    header.set_mtime(0);
+    header.set_cksum();
+
+    builder
+        .append(&header, contents)
+        .expect("Failed to append file to tar");
+
+    builder.into_inner().expect("Failed to finish tar archive")
+}
+
 #[async_trait]
 impl Agent for ClaudeAgent {
     fn build_command(&self, instruction_path: &str, is_interactive: bool) -> Vec<String> {
@@ -206,6 +234,37 @@ impl Agent for ClaudeAgent {
             })
             .clone()
     }
+
+    fn files_to_copy(&self) -> Vec<(Vec<u8>, String)> {
+        // Get the home directory (parent of .claude config dir)
+        let claude_config_dir = self.get_claude_config_dir();
+        let home_dir = match claude_config_dir.parent() {
+            Some(dir) => dir,
+            None => return vec![],
+        };
+
+        let claude_json_path = home_dir.join(".claude.json");
+
+        // Read the file if it exists
+        if claude_json_path.exists() {
+            match std::fs::read(&claude_json_path) {
+                Ok(contents) => {
+                    let tar_data = create_tar_with_file(".claude.json", &contents);
+                    vec![(tar_data, "/home/agent".to_string())]
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Failed to read {}: {}",
+                        claude_json_path.display(),
+                        e
+                    );
+                    vec![]
+                }
+            }
+        } else {
+            vec![]
+        }
+    }
 }
 
 #[cfg(test)]
@@ -329,5 +388,97 @@ mod tests {
         // Test that calling version multiple times returns the same cached value
         let version2 = agent.version();
         assert_eq!(version, version2);
+    }
+
+    #[test]
+    fn test_create_tar_with_file() {
+        use std::io::Read;
+        use tar::Archive;
+
+        let contents = b"test file contents";
+        let tar_data = super::create_tar_with_file("test.txt", contents);
+
+        // Verify it's a valid tar archive
+        let mut archive = Archive::new(tar_data.as_slice());
+        let entries: Vec<_> = archive.entries().unwrap().collect();
+        assert_eq!(entries.len(), 1);
+
+        // Re-create archive to read the entry
+        let mut archive = Archive::new(tar_data.as_slice());
+        let mut entry = archive.entries().unwrap().next().unwrap().unwrap();
+
+        // Verify filename
+        assert_eq!(entry.path().unwrap().to_str().unwrap(), "test.txt");
+
+        // Verify contents
+        let mut extracted_contents = Vec::new();
+        entry.read_to_end(&mut extracted_contents).unwrap();
+        assert_eq!(extracted_contents, contents);
+    }
+
+    #[test]
+    fn test_create_tar_with_file_empty_contents() {
+        use tar::Archive;
+
+        let tar_data = super::create_tar_with_file("empty.txt", b"");
+
+        let mut archive = Archive::new(tar_data.as_slice());
+        let entry = archive.entries().unwrap().next().unwrap().unwrap();
+        assert_eq!(entry.size(), 0);
+    }
+
+    #[test]
+    fn test_files_to_copy_with_existing_file() {
+        use std::fs;
+
+        let app_context = AppContext::builder().build();
+        let tsk_env = app_context.tsk_env();
+        let agent = ClaudeAgent::with_tsk_env(tsk_env.clone());
+
+        // Get the home directory where we'll create the test file
+        let home_dir = tsk_env.claude_config_dir().parent().unwrap();
+        let claude_json_path = home_dir.join(".claude.json");
+
+        // Create test file
+        let test_content = r#"{"test": "data"}"#;
+        fs::write(&claude_json_path, test_content).unwrap();
+
+        // Test files_to_copy
+        let files = agent.files_to_copy();
+        assert_eq!(files.len(), 1);
+
+        let (tar_data, dest_path) = &files[0];
+        assert_eq!(dest_path, "/home/agent");
+
+        // Verify tar contains the correct file
+        use std::io::Read;
+        use tar::Archive;
+
+        let mut archive = Archive::new(tar_data.as_slice());
+        let mut entry = archive.entries().unwrap().next().unwrap().unwrap();
+
+        assert_eq!(entry.path().unwrap().to_str().unwrap(), ".claude.json");
+
+        let mut extracted_contents = String::new();
+        entry.read_to_string(&mut extracted_contents).unwrap();
+        assert_eq!(extracted_contents, test_content);
+    }
+
+    #[test]
+    fn test_files_to_copy_without_file() {
+        let app_context = AppContext::builder().build();
+        let tsk_env = app_context.tsk_env();
+        let agent = ClaudeAgent::with_tsk_env(tsk_env.clone());
+
+        // Ensure the file doesn't exist
+        let home_dir = tsk_env.claude_config_dir().parent().unwrap();
+        let claude_json_path = home_dir.join(".claude.json");
+        if claude_json_path.exists() {
+            std::fs::remove_file(&claude_json_path).unwrap();
+        }
+
+        // Test files_to_copy returns empty when file doesn't exist
+        let files = agent.files_to_copy();
+        assert!(files.is_empty());
     }
 }

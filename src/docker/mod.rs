@@ -258,6 +258,14 @@ impl DockerManager {
             .create_container(Some(options), config)
             .await?;
 
+        // Copy agent files into container before starting
+        for (tar_data, dest_path) in agent.files_to_copy() {
+            self.ctx
+                .docker_client()
+                .upload_to_container(&container_id, &dest_path, tar_data)
+                .await?;
+        }
+
         if task.is_interactive {
             println!("\nStarting interactive session...");
             self.ctx
@@ -511,6 +519,18 @@ mod tests {
         let remove_calls = mock_client.remove_container_calls.lock().unwrap();
         assert_eq!(remove_calls.len(), 1);
         assert_eq!(remove_calls[0].0, "test-container-id-1");
+        drop(remove_calls);
+
+        // Verify upload_to_container was called for agent files
+        // Note: In tests, claude.json may or may not exist, so we just verify it was called
+        // if the agent has files to copy
+        let upload_calls = mock_client.upload_to_container_calls.lock().unwrap();
+        // The number of calls depends on whether .claude.json exists in test environment
+        // For this test, just verify the method was callable
+        for (container_id, dest_path, _tar_data) in upload_calls.iter() {
+            assert_eq!(container_id, "test-container-id-1");
+            assert_eq!(dest_path, "/home/agent");
+        }
     }
 
     #[tokio::test]

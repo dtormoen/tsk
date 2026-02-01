@@ -69,6 +69,20 @@ pub trait Agent: Send + Sync {
     fn version(&self) -> String {
         "unknown".to_string()
     }
+
+    /// Returns files to copy into the container before starting
+    ///
+    /// Each tuple contains:
+    /// - A tar archive with the files to copy
+    /// - The destination directory path in the container
+    ///
+    /// The tar archive will be extracted to the destination path using
+    /// Docker's upload_to_container API (equivalent to `docker cp`).
+    ///
+    /// The default implementation returns an empty vec.
+    fn files_to_copy(&self) -> Vec<(Vec<u8>, String)> {
+        vec![]
+    }
 }
 
 #[cfg(test)]

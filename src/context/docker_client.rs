@@ -96,6 +96,27 @@ pub trait DockerClient: Send + Sync {
     /// The container must be created with `tty: true` and appropriate attach options
     /// for this method to work properly.
     async fn attach_container(&self, id: &str) -> Result<(), String>;
+
+    /// Upload a tar archive to a container
+    ///
+    /// Extracts the contents of the tar archive to the specified path inside
+    /// the container. This is equivalent to `docker cp` and is used to copy
+    /// files into containers before they start.
+    ///
+    /// # Arguments
+    /// * `id` - Container ID or name
+    /// * `dest_path` - Destination path in the container where the tar will be extracted
+    /// * `tar_data` - The tar archive data to upload
+    ///
+    /// # Returns
+    /// * `Ok(())` - When the upload completes successfully
+    /// * `Err(String)` - Error message if the upload fails
+    async fn upload_to_container(
+        &self,
+        id: &str,
+        dest_path: &str,
+        tar_data: Vec<u8>,
+    ) -> Result<(), String>;
 }
 
 #[derive(Clone)]
@@ -499,5 +520,27 @@ impl DockerClient for DefaultDockerClient {
         }
 
         Ok(())
+    }
+
+    async fn upload_to_container(
+        &self,
+        id: &str,
+        dest_path: &str,
+        tar_data: Vec<u8>,
+    ) -> Result<(), String> {
+        use bollard::body_full;
+        use bollard::query_parameters::UploadToContainerOptionsBuilder;
+        use bytes::Bytes;
+
+        let options = UploadToContainerOptionsBuilder::default()
+            .path(dest_path)
+            .build();
+
+        let body = body_full(Bytes::from(tar_data));
+
+        self.docker
+            .upload_to_container(id, Some(options), body)
+            .await
+            .map_err(|e| format!("Failed to upload to container: {e}"))
     }
 }
