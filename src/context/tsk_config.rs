@@ -24,6 +24,9 @@ pub struct TskConfig {
     /// Git-town integration configuration
     #[serde(default)]
     pub git_town: GitTownConfig,
+    /// Proxy configuration for host service access
+    #[serde(default)]
+    pub proxy: ProxyConfig,
     /// Project-specific configurations keyed by project name
     #[serde(default)]
     pub project: HashMap<String, ProjectConfig>,
@@ -35,6 +38,11 @@ impl TskConfig {
     /// Returns `None` if no configuration exists for the given project.
     pub fn get_project_config(&self, project_name: &str) -> Option<&ProjectConfig> {
         self.project.get(project_name)
+    }
+
+    /// Returns true if any host service ports are configured for proxy forwarding
+    pub fn has_host_services(&self) -> bool {
+        !self.proxy.host_services.is_empty()
     }
 }
 
@@ -83,6 +91,32 @@ pub struct GitTownConfig {
     /// for task branches, using the branch that was checked out when the
     /// task was created as the parent.
     pub enabled: bool,
+}
+
+/// Proxy configuration for network isolation and host service access
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct ProxyConfig {
+    /// Host service ports to forward from proxy to host.docker.internal
+    /// Agents connect to tsk-proxy:<port> to access these services
+    #[serde(default)]
+    pub host_services: Vec<u16>,
+}
+
+impl ProxyConfig {
+    /// Returns host_services as a comma-separated string for environment variables
+    /// Returns empty string if no services are configured
+    pub fn host_services_env(&self) -> String {
+        if self.host_services.is_empty() {
+            String::new()
+        } else {
+            self.host_services
+                .iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        }
+    }
 }
 
 /// Project-specific configuration section
@@ -518,5 +552,47 @@ memory_limit_gb = 8.0
         let config = load_config(config_dir);
         // Should use default (disabled)
         assert!(!config.git_town.enabled);
+    }
+
+    #[test]
+    fn test_proxy_config_default() {
+        let config = ProxyConfig::default();
+        assert!(config.host_services.is_empty());
+        assert_eq!(config.host_services_env(), "");
+    }
+
+    #[test]
+    fn test_proxy_config_host_services_env() {
+        let config = ProxyConfig {
+            host_services: vec![5432, 6379, 3000],
+        };
+        assert_eq!(config.host_services_env(), "5432,6379,3000");
+    }
+
+    #[test]
+    fn test_proxy_config_from_toml() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_dir = temp_dir.path();
+
+        let toml_content = r#"
+[proxy]
+host_services = [5432, 6379, 3000]
+
+[docker]
+memory_limit_gb = 8.0
+"#;
+        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+
+        let config = load_config(config_dir);
+
+        assert_eq!(config.proxy.host_services, vec![5432, 6379, 3000]);
+        assert_eq!(config.proxy.host_services_env(), "5432,6379,3000");
+    }
+
+    #[test]
+    fn test_tsk_config_default_has_empty_proxy() {
+        let config = TskConfig::default();
+        assert!(config.proxy.host_services.is_empty());
     }
 }

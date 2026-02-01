@@ -77,7 +77,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Security-first containers with dropped capabilities
 - **Per-container network isolation**: Each agent runs in an isolated internal network that can only communicate with the proxy
 - Proxy-based URL filtering (Squid) for API-only access with domain whitelist
-- Host service access via `host.docker.internal` (automatically added to NO_PROXY)
+- Host service access via TCP port forwarding through the proxy container (configured in `[proxy]` section of tsk.toml)
 - Volume mounting for repository copies and agent config
 - Layered image system: base → tech-stack → agent → project
 - Automatic fallback to default project layer when specific layer is missing
@@ -101,6 +101,9 @@ TSK implements a command pattern with dependency injection for testability. The 
   [git_town]
   enabled = true  # Enable git-town parent branch tracking (default: false)
 
+  [proxy]
+  # Ports forwarded from proxy to host.docker.internal (agents connect to tsk-proxy:<port>)
+  host_services = [5432, 6379, 3000]  # PostgreSQL, Redis, dev server
 
   # Project-specific configuration (matches project name from --project or auto-detection)
   [project.my-go-project]

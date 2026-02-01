@@ -46,14 +46,27 @@ impl DockerManager {
     /// Build proxy environment variables
     fn build_proxy_env_vars(&self) -> Vec<String> {
         let proxy_url = self.proxy_manager.proxy_url();
-        vec![
+        let mut env = vec![
             format!("HTTP_PROXY={proxy_url}"),
             format!("HTTPS_PROXY={proxy_url}"),
             format!("http_proxy={proxy_url}"),
             format!("https_proxy={proxy_url}"),
-            "NO_PROXY=localhost,127.0.0.1,host.docker.internal".to_string(),
-            "no_proxy=localhost,127.0.0.1,host.docker.internal".to_string(),
-        ]
+            // Include tsk-proxy so HTTP clients bypass Squid when connecting
+            // to socat forwarders for host services
+            "NO_PROXY=localhost,127.0.0.1,tsk-proxy".to_string(),
+            "no_proxy=localhost,127.0.0.1,tsk-proxy".to_string(),
+        ];
+
+        // Add host service environment variables if configured
+        if self.ctx.tsk_config().has_host_services() {
+            env.push(format!(
+                "TSK_HOST_SERVICES={}",
+                self.ctx.tsk_config().proxy.host_services_env()
+            ));
+            env.push("TSK_HOST_SERVICES_HOST=tsk-proxy".to_string());
+        }
+
+        env
     }
 
     /// Remove a container with force option
@@ -194,7 +207,6 @@ impl DockerManager {
             host_config: Some(HostConfig {
                 binds: Some(binds),
                 network_mode: Some(network_name.to_string()),
-                extra_hosts: Some(vec!["host.docker.internal:host-gateway".to_string()]),
                 memory: Some(docker_config.memory_limit_bytes()),
                 cpu_quota: Some(docker_config.cpu_quota_microseconds()),
                 // No capabilities needed since we're not running iptables
@@ -778,9 +790,8 @@ mod tests {
             host_config.network_mode,
             Some("tsk-agent-test-task-id".to_string())
         );
-        // extra_hosts should include host.docker.internal for host service access
-        let extra_hosts = host_config.extra_hosts.as_ref().unwrap();
-        assert!(extra_hosts.contains(&"host.docker.internal:host-gateway".to_string()));
+        // Agent containers should NOT have extra_hosts (no direct host access)
+        assert!(host_config.extra_hosts.is_none());
         let default_options = crate::context::DockerOptions::default();
         assert_eq!(
             host_config.memory,
@@ -803,9 +814,8 @@ mod tests {
         let env = config.env.as_ref().unwrap();
         assert!(env.contains(&"HTTP_PROXY=http://tsk-proxy:3128".to_string()));
         assert!(env.contains(&"HTTPS_PROXY=http://tsk-proxy:3128".to_string()));
-        // NO_PROXY should include host.docker.internal for host service access
-        assert!(env.contains(&"NO_PROXY=localhost,127.0.0.1,host.docker.internal".to_string()));
-        assert!(env.contains(&"no_proxy=localhost,127.0.0.1,host.docker.internal".to_string()));
+        assert!(env.contains(&"NO_PROXY=localhost,127.0.0.1,tsk-proxy".to_string()));
+        assert!(env.contains(&"no_proxy=localhost,127.0.0.1,tsk-proxy".to_string()));
         drop(create_calls);
 
         // Verify network lifecycle operations were called
@@ -934,6 +944,7 @@ mod tests {
         let tsk_config = TskConfig {
             docker: Default::default(),
             git_town: Default::default(),
+            proxy: Default::default(),
             project: project_configs,
         };
 
@@ -987,6 +998,7 @@ mod tests {
         let tsk_config = TskConfig {
             docker: Default::default(),
             git_town: Default::default(),
+            proxy: Default::default(),
             project: project_configs,
         };
 
@@ -1040,6 +1052,7 @@ mod tests {
         let tsk_config = TskConfig {
             docker: Default::default(),
             git_town: Default::default(),
+            proxy: Default::default(),
             project: project_configs,
         };
 

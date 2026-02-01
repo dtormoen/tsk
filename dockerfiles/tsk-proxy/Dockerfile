@@ -1,6 +1,6 @@
 FROM alpine:latest
 
-RUN apk add --no-cache squid curl
+RUN apk add --no-cache squid curl socat
 
 # Copy our squid configuration and entrypoint script
 COPY squid.conf /etc/squid/squid.conf
