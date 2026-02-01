@@ -1,6 +1,6 @@
 FROM alpine:latest
 
-RUN apk add --no-cache squid curl socat
+RUN apk add --no-cache squid socat iptables su-exec
 
 # Copy our squid configuration and entrypoint script
 COPY squid.conf /etc/squid/squid.conf
@@ -19,6 +19,5 @@ EXPOSE 3128
 HEALTHCHECK --interval=2s --timeout=3s --start-period=10s --retries=3 \
     CMD nc -z localhost 3128 || exit 1
 
-# Run squid in foreground as squid user
-USER squid
+# Run entrypoint as root for iptables setup, then drop to squid user via su-exec
 ENTRYPOINT ["/entrypoint.sh"]
