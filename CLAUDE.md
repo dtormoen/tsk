@@ -117,6 +117,11 @@ TSK implements a command pattern with dependency injection for testability. The 
       # Read-only mount
       { host = "/etc/ssl/certs", container = "/etc/ssl/certs", readonly = true }
   ]
+  env = [
+      # Environment variables passed to the container
+      { name = "DATABASE_URL", value = "postgres://tsk-proxy:5432/mydb" },
+      { name = "REDIS_URL", value = "redis://tsk-proxy:6379" },
+  ]
   ```
 - **Priority order**: CLI flags > project config > auto-detection > defaults
 

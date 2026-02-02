@@ -185,6 +185,13 @@ impl DockerManager {
             env_vars.push(format!("{key}={value}"));
         }
 
+        // Add project-specific environment variables from config
+        if let Some(project_config) = self.ctx.tsk_config().get_project_config(&task.project) {
+            for env_var in &project_config.env {
+                env_vars.push(format!("{}={}", env_var.name, env_var.value));
+            }
+        }
+
         let agent_command = agent.build_command(
             instructions_file_path.to_str().unwrap_or("instructions.md"),
             task.is_interactive,
@@ -939,6 +946,7 @@ mod tests {
                     container: "/container/cache".to_string(),
                     readonly: false,
                 })],
+                env: vec![],
             },
         );
         let tsk_config = TskConfig {
@@ -993,6 +1001,7 @@ mod tests {
                     container: "/container/cache".to_string(),
                     readonly: false,
                 })],
+                env: vec![],
             },
         );
         let tsk_config = TskConfig {
@@ -1047,6 +1056,7 @@ mod tests {
                     container: "/etc/ssl/certs".to_string(),
                     readonly: true,
                 })],
+                env: vec![],
             },
         );
         let tsk_config = TskConfig {
@@ -1105,5 +1115,90 @@ mod tests {
 
         // Should only have base binds: workspace, claude dir, instructions, output
         assert_eq!(binds.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn test_project_env_vars() {
+        use crate::context::{EnvVar, ProjectConfig, TskConfig};
+        use std::collections::HashMap;
+
+        let mock_client = Arc::new(TrackedDockerClient::default());
+
+        // Create TskConfig with environment variables for the test project
+        let mut project_configs = HashMap::new();
+        project_configs.insert(
+            "default".to_string(),
+            ProjectConfig {
+                agent: None,
+                stack: None,
+                volumes: vec![],
+                env: vec![
+                    EnvVar {
+                        name: "DATABASE_URL".to_string(),
+                        value: "postgres://tsk-proxy:5432/mydb".to_string(),
+                    },
+                    EnvVar {
+                        name: "DEBUG".to_string(),
+                        value: "true".to_string(),
+                    },
+                ],
+            },
+        );
+        let tsk_config = TskConfig {
+            docker: Default::default(),
+            git_town: Default::default(),
+            proxy: Default::default(),
+            project: project_configs,
+        };
+
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .with_tsk_config(tsk_config)
+            .build();
+        let manager = DockerManager::new(&ctx);
+
+        let task = create_test_task(false);
+        let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
+
+        assert!(result.is_ok());
+
+        let create_calls = mock_client.create_container_calls.lock().unwrap();
+        let task_container_config = &create_calls[1].1;
+        let env = task_container_config.env.as_ref().unwrap();
+
+        // Should have project env vars added
+        assert!(
+            env.iter()
+                .any(|e| e == "DATABASE_URL=postgres://tsk-proxy:5432/mydb")
+        );
+        assert!(env.iter().any(|e| e == "DEBUG=true"));
+    }
+
+    #[tokio::test]
+    async fn test_no_project_env_vars_when_project_not_configured() {
+        // Test that env vars don't include project env vars when project is not in config
+        let mock_client = Arc::new(TrackedDockerClient::default());
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .build();
+        let manager = DockerManager::new(&ctx);
+
+        let mut task = create_test_task(false);
+        task.project = "unconfigured-project".to_string();
+        let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
+
+        assert!(result.is_ok());
+
+        let create_calls = mock_client.create_container_calls.lock().unwrap();
+        let task_container_config = &create_calls[1].1;
+        let env = task_container_config.env.as_ref().unwrap();
+
+        // Should not have any project-specific env vars (only proxy and agent env vars)
+        assert!(
+            !env.iter()
+                .any(|e| e.starts_with("DATABASE_URL=") || e.starts_with("DEBUG="))
+        );
     }
 }

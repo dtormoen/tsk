@@ -208,12 +208,19 @@ volumes = [
     # Read-only mount: Provide artifacts without modification risk
     { host = "~/debug-logs", container = "/debug-logs", readonly = true }
 ]
+env = [
+    # Environment variables passed to the container
+    { name = "DATABASE_URL", value = "postgres://tsk-proxy:5432/mydb" },
+    { name = "REDIS_URL", value = "redis://tsk-proxy:6379" },
+]
 ```
 
 Volume mounts are particularly useful for:
 - **Build caches**: Share Go module cache (`/go/pkg/mod`) or Rust target directories to speed up builds
 - **Persistent state**: Use named volumes for build caches that persist across tasks
 - **Read-only artifacts**: Mount debugging artifacts, config files, or other resources without risk of modification
+
+Environment variables (`env`) let you pass configuration to task containers, such as database URLs or API keys. Use `tsk-proxy:<port>` to connect to host services forwarded through the proxy.
 
 The `[proxy]` section lets you expose host services to task containers. Agents connect to `tsk-proxy:<port>` to reach services running on your host machine (e.g., local databases or dev servers).
 

@@ -850,6 +850,7 @@ mod tests {
                 agent: Some("no-op".to_string()),
                 stack: Some("python".to_string()),
                 volumes: vec![],
+                env: vec![],
             },
         );
         let tsk_config = TskConfig {
@@ -909,6 +910,7 @@ mod tests {
                 agent: Some("no-op".to_string()),
                 stack: Some("python".to_string()),
                 volumes: vec![],
+                env: vec![],
             },
         );
         let tsk_config = TskConfig {
@@ -962,6 +964,7 @@ mod tests {
                 agent: Some("no-op".to_string()),
                 stack: None, // Not specified, should auto-detect
                 volumes: vec![],
+                env: vec![],
             },
         );
         let tsk_config = TskConfig {

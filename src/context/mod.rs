@@ -11,7 +11,7 @@ pub mod tsk_env;
 pub use tsk_config::{TskConfig, VolumeMount};
 // Types only used in tests
 #[cfg(test)]
-pub use tsk_config::{BindMount, DockerOptions, NamedVolume, ProjectConfig};
+pub use tsk_config::{BindMount, DockerOptions, EnvVar, NamedVolume, ProjectConfig};
 
 // Re-export TskEnv types
 pub use tsk_env::TskEnv;

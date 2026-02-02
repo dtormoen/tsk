@@ -130,6 +130,18 @@ pub struct ProjectConfig {
     /// Volume mounts for Docker containers
     #[serde(default)]
     pub volumes: Vec<VolumeMount>,
+    /// Environment variables for Docker containers
+    #[serde(default)]
+    pub env: Vec<EnvVar>,
+}
+
+/// Environment variable configuration
+#[derive(Debug, Clone, Deserialize)]
+pub struct EnvVar {
+    /// Environment variable name
+    pub name: String,
+    /// Environment variable value
+    pub value: String,
 }
 
 /// Volume mount configuration
@@ -374,6 +386,57 @@ stack = "rust"
 
         // Non-existent project returns None
         assert!(config.get_project_config("non-existent").is_none());
+    }
+
+    #[test]
+    fn test_project_env_vars_from_toml() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_dir = temp_dir.path();
+
+        let toml_content = r#"
+[project.my-app]
+agent = "claude"
+stack = "go"
+env = [
+    { name = "DATABASE_URL", value = "postgres://tsk-proxy:5432/mydb" },
+    { name = "REDIS_URL", value = "redis://tsk-proxy:6379" },
+    { name = "DEBUG", value = "true" },
+]
+"#;
+        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+
+        let config = load_config(config_dir);
+
+        let app_config = config.get_project_config("my-app");
+        assert!(app_config.is_some());
+        let app_config = app_config.unwrap();
+
+        assert_eq!(app_config.env.len(), 3);
+        assert_eq!(app_config.env[0].name, "DATABASE_URL");
+        assert_eq!(app_config.env[0].value, "postgres://tsk-proxy:5432/mydb");
+        assert_eq!(app_config.env[1].name, "REDIS_URL");
+        assert_eq!(app_config.env[1].value, "redis://tsk-proxy:6379");
+        assert_eq!(app_config.env[2].name, "DEBUG");
+        assert_eq!(app_config.env[2].value, "true");
+    }
+
+    #[test]
+    fn test_project_config_empty_env_by_default() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_dir = temp_dir.path();
+
+        let toml_content = r#"
+[project.my-app]
+agent = "claude"
+"#;
+        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+
+        let config = load_config(config_dir);
+
+        let app_config = config.get_project_config("my-app").unwrap();
+        assert!(app_config.env.is_empty());
     }
 
     #[test]
