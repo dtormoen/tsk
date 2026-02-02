@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.5](https://github.com/dtormoen/tsk/compare/v0.6.4...v0.6.5) - 2026-02-02
+
+### Added
+
+- add git-town parent branch tracking support
+- automatic proxy lifecycle management
+
+### Fixed
+
+- copy ~/.claude.json into containers before starting
+- add required endpoint for tsk shell
+
+### Other
+
+- improve README structure and document new config options
+
 ## [0.6.4](https://github.com/dtormoen/tsk/compare/v0.6.3...v0.6.4) - 2026-02-01
 
 ### Added
