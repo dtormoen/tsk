@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/dtormoen/tsk/compare/v0.6.5...v0.7.0) - 2026-02-03
+
+This version fixes mutltiple ways agents could bypass the proxy and as a result, could
+potentially break workflows that relied on that ability. Agents containers now have their
+own separate networks without any external access other the proxy and the proxy has a
+more restrictive firewall configuration.
+
+To help ensure that there is a way for common workflows to work, this release adds the
+ability to forward specific ports to localhost so you can run local services like development
+databases or service endpoints and expose those specific endpoints. This release also adds an
+way to pass environment varibles to agents via the tsk.toml config file without needing to
+create/edit dockerfiles.
+
+Here is an example tsk.toml which configures `my-project` to pass env variables for Postgres
+and Redis which are running on localhost:
+
+```toml
+[proxy]
+host_services = [5432, 6379]  # e.g., PostgreSQL, Redis
+
+[project.my-project]
+env = [
+    # Environment variables passed to the container
+    { name = "DATABASE_URL", value = "postgres://tsk-proxy:5432/mydb" },
+    { name = "REDIS_URL", value = "redis://tsk-proxy:6379" },
+]
+```
+
+### Added
+
+- add per-project environment variable configuration
+- harden proxy container with iptables firewall and security options
+- add host service TCP port forwarding via socat
+- [**breaking**] implement per-container network isolation for agents
+
+### Fixed
+
+- correct proxy container permissions for tmpfs and squid operation
+
+### Other
+
+- add network isolation guide with architecture diagrams
+- add network isolation test script for container security
+
 ## [0.6.5](https://github.com/dtormoen/tsk/compare/v0.6.4...v0.6.5) - 2026-02-02
 
 ### Added
