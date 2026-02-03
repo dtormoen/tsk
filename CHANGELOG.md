@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/dtormoen/tsk/compare/v0.6.5...v0.7.0) - 2026-02-03
+
+### Added
+
+- add per-project environment variable configuration
+- harden proxy container with iptables firewall and security options
+- add host service TCP port forwarding via socat
+- [**breaking**] implement per-container network isolation for agents
+
+### Fixed
+
+- correct proxy container permissions for tmpfs and squid operation
+
+### Other
+
+- add network isolation guide with architecture diagrams
+- add network isolation test script for container security
+
 ## [0.6.5](https://github.com/dtormoen/tsk/compare/v0.6.4...v0.6.5) - 2026-02-02
 
 ### Added
