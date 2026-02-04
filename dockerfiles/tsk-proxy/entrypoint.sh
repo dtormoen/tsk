@@ -44,7 +44,7 @@ if [ -n "$TSK_HOST_SERVICES" ]; then
     echo "Starting TCP forwarders for host services: $TSK_HOST_SERVICES"
     for port in $(echo "$TSK_HOST_SERVICES" | tr ',' ' '); do
         echo "  Forwarding port $port -> host.docker.internal:$port"
-        su-exec squid socat TCP-LISTEN:$port,fork,reuseaddr TCP:host.docker.internal:$port &
+        su-exec squid socat "TCP-LISTEN:$port,fork,reuseaddr,backlog=128,max-children=100,nodelay,keepalive" "TCP:host.docker.internal:$port,nodelay,keepalive" &
     done
 fi
 
