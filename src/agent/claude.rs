@@ -167,7 +167,15 @@ impl Agent for ClaudeAgent {
 
         // Step 1: Force Claude CLI to refresh token
         let output = Command::new("claude")
-            .args(["-p", "--model", "sonnet", "say hi and nothing else"])
+            .args([
+                "-p",
+                "--no-session-persistence",
+                "--tools",
+                "",
+                "--model",
+                "sonnet",
+                "say hi and nothing else",
+            ])
             .output()
             .map_err(|e| format!("Failed to run Claude CLI: {e}"))?;
 
