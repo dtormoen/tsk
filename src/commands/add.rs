@@ -18,6 +18,7 @@ pub struct AddCommand {
     pub stack: Option<String>,
     pub project: Option<String>,
     pub repo: Option<String>,
+    pub parent_id: Option<String>,
 }
 
 #[async_trait]
@@ -73,6 +74,7 @@ impl Command for AddCommand {
                     .agent(Some(agent.clone()))
                     .stack(self.stack.clone())
                     .project(self.project.clone())
+                    .parent_id(self.parent_id.clone())
                     .build(ctx)
                     .await?;
 
@@ -94,7 +96,8 @@ impl Command for AddCommand {
                     .task_type(self.r#type.clone())
                     .agent(Some(agent.clone()))
                     .stack(self.stack.clone())
-                    .project(self.project.clone());
+                    .project(self.project.clone())
+                    .parent_id(self.parent_id.clone());
 
                 if let Some(ref instructions_content) = first_task_instructions {
                     // Write instructions to temporary file for this task
@@ -219,6 +222,7 @@ mod tests {
             stack: None,
             project: None,
             repo: Some(".".to_string()),
+            parent_id: None,
         };
 
         let ctx = create_test_context();
@@ -244,6 +248,7 @@ mod tests {
             stack: None,
             project: None,
             repo: Some(".".to_string()),
+            parent_id: None,
         };
 
         let ctx = create_test_context();
@@ -284,6 +289,7 @@ mod tests {
             stack: None,
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
+            parent_id: None,
         };
 
         // Execute should succeed
@@ -322,6 +328,7 @@ mod tests {
             stack: None,
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
+            parent_id: None,
         };
 
         // Execute should succeed without changing directories
@@ -362,6 +369,7 @@ mod tests {
             stack: None,
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
+            parent_id: None,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -401,6 +409,7 @@ mod tests {
             stack: None,
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
+            parent_id: None,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -430,6 +439,7 @@ mod tests {
             stack: None,
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
+            parent_id: None,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -472,6 +482,7 @@ mod tests {
             stack: None,
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
+            parent_id: None,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -545,6 +556,7 @@ mod tests {
             stack: None,
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
+            parent_id: None,
         };
 
         let result = cmd.execute(&ctx).await;

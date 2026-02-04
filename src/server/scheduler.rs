@@ -1,4 +1,5 @@
 use crate::context::AppContext;
+use crate::git::RepoManager;
 use crate::server::worker_pool::{AsyncJob, JobError, JobResult, WorkerPool};
 use crate::task::{Task, TaskStatus};
 use crate::task_manager::TaskManager;
@@ -8,6 +9,19 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{Duration, Instant, sleep};
+
+/// Represents the readiness status of a task's parent
+#[derive(Debug)]
+enum ParentStatus {
+    /// Parent task is complete, includes the parent task for repo preparation
+    Ready(Box<Task>),
+    /// Parent task is still queued or running
+    Waiting,
+    /// Parent task failed
+    Failed(String),
+    /// Parent task was not found in storage
+    NotFound(String),
+}
 
 /// Task scheduler that manages task lifecycle and scheduling decisions
 ///
@@ -65,6 +79,135 @@ impl TaskScheduler {
             submitted_tasks: Arc::new(Mutex::new(HashSet::new())),
             quit_signal,
             quit_when_done,
+        }
+    }
+
+    /// Check if a task's parent is ready (complete or non-existent).
+    ///
+    /// Returns:
+    /// - `None` if the task has no parent
+    /// - `Some(Ready(parent_task))` if parent is complete
+    /// - `Some(Waiting)` if parent is still queued or running
+    /// - `Some(Failed(msg))` if parent failed
+    /// - `Some(NotFound(id))` if parent doesn't exist in storage
+    fn is_parent_ready(task: &Task, all_tasks: &[Task]) -> Option<ParentStatus> {
+        let parent_id = task.parent_id.as_ref()?;
+
+        // Find the parent task
+        let parent_task = all_tasks.iter().find(|t| &t.id == parent_id);
+
+        match parent_task {
+            None => Some(ParentStatus::NotFound(parent_id.clone())),
+            Some(parent) => match parent.status {
+                TaskStatus::Complete => Some(ParentStatus::Ready(Box::new(parent.clone()))),
+                TaskStatus::Failed => Some(ParentStatus::Failed(format!(
+                    "Parent task {} failed",
+                    parent_id
+                ))),
+                TaskStatus::Queued | TaskStatus::Running => Some(ParentStatus::Waiting),
+            },
+        }
+    }
+
+    /// Prepare a child task for scheduling by copying the repository from the parent task.
+    ///
+    /// This updates the task's `copied_repo_path`, `source_commit`, and `source_branch` fields.
+    /// Returns the updated task, or an error if preparation fails.
+    async fn prepare_child_task(&self, task: &Task, parent_task: &Task) -> Result<Task, String> {
+        // Get the parent task's copied repo path
+        let parent_repo_path = parent_task
+            .copied_repo_path
+            .as_ref()
+            .ok_or_else(|| format!("Parent task {} has no copied_repo_path", parent_task.id))?;
+
+        // Get the HEAD commit from the parent's repo
+        let source_commit: String = self
+            .context
+            .git_operations()
+            .get_current_commit(parent_repo_path)
+            .await
+            .map_err(|e| format!("Failed to get parent HEAD commit: {e}"))?;
+
+        // Copy the repository from the parent task's folder
+        let repo_manager = RepoManager::new(&self.context);
+        let (copied_repo_path, _branch_name) = repo_manager
+            .copy_repo(
+                &task.id,
+                parent_repo_path,
+                Some(&source_commit),
+                &task.branch_name,
+            )
+            .await
+            .map_err(|e| format!("Failed to copy repo from parent task: {e}"))?;
+
+        // Create the updated task
+        let mut updated_task = task.clone();
+        updated_task.copied_repo_path = Some(copied_repo_path);
+        updated_task.source_commit = source_commit;
+        // Set source_branch to the parent's branch for git-town integration
+        updated_task.source_branch = Some(parent_task.branch_name.clone());
+
+        Ok(updated_task)
+    }
+
+    /// Mark child tasks as failed when their parent task fails.
+    ///
+    /// This implements cascading failures: when a task fails, all tasks that
+    /// have it as their parent are also marked as failed.
+    async fn fail_child_tasks(
+        &self,
+        failed_task_id: &str,
+        all_tasks: &[Task],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Find all tasks that have the failed task as their parent
+        let child_tasks: Vec<&Task> = all_tasks
+            .iter()
+            .filter(|t| t.parent_id.as_ref() == Some(&failed_task_id.to_string()))
+            .collect();
+
+        let storage = self.storage.lock().await;
+        for task in child_tasks {
+            println!(
+                "Marking task {} as failed due to parent task failure",
+                task.id
+            );
+            storage
+                .update_task_status(
+                    &task.id,
+                    TaskStatus::Failed,
+                    None,
+                    Some(chrono::Utc::now()),
+                    Some(format!("Parent task {} failed", failed_task_id)),
+                )
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    /// Check if a task is ready for scheduling.
+    ///
+    /// A task is ready if:
+    /// - It is in Queued status
+    /// - It is not already submitted
+    /// - It has no parent, OR its parent is complete
+    fn is_task_ready_for_scheduling(
+        task: &Task,
+        all_tasks: &[Task],
+        submitted: &HashSet<String>,
+    ) -> bool {
+        // Must be queued and not already submitted
+        if task.status != TaskStatus::Queued || submitted.contains(&task.id) {
+            return false;
+        }
+
+        // Check parent status
+        match Self::is_parent_ready(task, all_tasks) {
+            None => true,                             // No parent
+            Some(ParentStatus::Ready(_)) => true,     // Parent complete
+            Some(ParentStatus::Waiting) => false,     // Still waiting
+            Some(ParentStatus::Failed(_)) => false,   // Will be failed by cascade
+            Some(ParentStatus::NotFound(_)) => false, // Will be failed by handler
         }
     }
 
@@ -141,8 +284,13 @@ impl TaskScheduler {
 
                             if result.success {
                                 println!("Task completed successfully: {}", result.job_id);
-                            } else if let Some(msg) = result.message {
+                            } else if let Some(msg) = &result.message {
                                 eprintln!("Task failed: {} - {}", result.job_id, msg);
+                                // Handle cascading failures for child tasks
+                                let storage = self.storage.lock().await;
+                                let tasks = storage.list_tasks().await?;
+                                drop(storage);
+                                self.fail_child_tasks(&result.job_id, &tasks).await?;
                             }
                         }
                         Err(e) => {
@@ -179,18 +327,110 @@ impl TaskScheduler {
             if let Some(pool) = &self.worker_pool
                 && pool.available_workers() > 0
             {
-                // Look for a queued task that isn't already submitted
+                // Look for a queued task that isn't already submitted and has a ready parent
                 let storage = self.storage.lock().await;
                 let tasks = storage.list_tasks().await?;
                 drop(storage);
 
-                let submitted = self.submitted_tasks.lock().await;
-                let queued_task = tasks
-                    .into_iter()
-                    .find(|t| t.status == TaskStatus::Queued && !submitted.contains(&t.id));
-                drop(submitted);
+                let submitted = self.submitted_tasks.lock().await.clone();
 
-                if let Some(task) = queued_task {
+                // First, handle tasks with missing or failed parents
+                for task in &tasks {
+                    if task.status != TaskStatus::Queued || submitted.contains(&task.id) {
+                        continue;
+                    }
+
+                    match Self::is_parent_ready(task, &tasks) {
+                        Some(ParentStatus::NotFound(pid)) => {
+                            // Mark task as failed - parent doesn't exist
+                            eprintln!(
+                                "Task {} has missing parent {}, marking as failed",
+                                task.id, pid
+                            );
+                            let storage = self.storage.lock().await;
+                            let _ = storage
+                                .update_task_status(
+                                    &task.id,
+                                    TaskStatus::Failed,
+                                    None,
+                                    Some(chrono::Utc::now()),
+                                    Some(format!("Parent task {} not found", pid)),
+                                )
+                                .await;
+                        }
+                        Some(ParentStatus::Failed(msg)) => {
+                            // Mark task as failed - parent failed (cascade)
+                            eprintln!("Task {} has failed parent, marking as failed", task.id);
+                            let storage = self.storage.lock().await;
+                            let _ = storage
+                                .update_task_status(
+                                    &task.id,
+                                    TaskStatus::Failed,
+                                    None,
+                                    Some(chrono::Utc::now()),
+                                    Some(msg),
+                                )
+                                .await;
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Re-fetch tasks after potential status changes
+                let storage = self.storage.lock().await;
+                let tasks = storage.list_tasks().await?;
+                drop(storage);
+
+                // Find the first task ready for scheduling
+                let queued_task = tasks
+                    .iter()
+                    .find(|t| Self::is_task_ready_for_scheduling(t, &tasks, &submitted))
+                    .cloned();
+
+                if let Some(mut task) = queued_task {
+                    // Check if this is a child task that needs repo preparation
+                    if task.parent_id.is_some() && task.copied_repo_path.is_none() {
+                        // Find the parent task
+                        if let Some(ParentStatus::Ready(parent_task)) =
+                            Self::is_parent_ready(&task, &tasks)
+                        {
+                            println!(
+                                "Preparing child task {} from parent {}",
+                                task.id, parent_task.id
+                            );
+                            match self.prepare_child_task(&task, &parent_task).await {
+                                Ok(prepared_task) => {
+                                    // Update the task in storage with the prepared fields
+                                    let storage = self.storage.lock().await;
+                                    if let Err(e) = storage.update_task(prepared_task.clone()).await
+                                    {
+                                        eprintln!(
+                                            "Failed to update prepared task in storage: {}",
+                                            e
+                                        );
+                                        continue;
+                                    }
+                                    drop(storage);
+                                    task = prepared_task;
+                                }
+                                Err(e) => {
+                                    eprintln!("Failed to prepare child task {}: {}", task.id, e);
+                                    let storage = self.storage.lock().await;
+                                    let _ = storage
+                                        .update_task_status(
+                                            &task.id,
+                                            TaskStatus::Failed,
+                                            None,
+                                            Some(chrono::Utc::now()),
+                                            Some(format!("Failed to prepare repository: {}", e)),
+                                        )
+                                        .await;
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+
                     println!("Scheduling task: {} ({})", task.name, task.id);
 
                     // Update task status to running
@@ -441,8 +681,9 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            data_dir.join(format!("task-copy-{id}")),
+            Some(data_dir.join(format!("task-copy-{id}"))),
             false,
+            None,
         )
     }
 
@@ -692,5 +933,444 @@ mod tests {
         assert_eq!(pool.total_workers(), 3);
         assert_eq!(pool.available_workers(), 3);
         assert_eq!(pool.active_workers(), 0);
+    }
+
+    /// Create a test task with a parent.
+    fn create_child_task(
+        id: &str,
+        repo_path: &std::path::Path,
+        commit_sha: &str,
+        parent_id: &str,
+    ) -> Task {
+        Task::new(
+            id.to_string(),
+            repo_path.to_path_buf(),
+            format!("task-{id}"),
+            "test".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            format!("tsk/test/{id}"),
+            commit_sha.to_string(),
+            None, // source_branch is None for child tasks
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            None, // copied_repo_path is None until parent completes
+            false,
+            Some(parent_id.to_string()),
+        )
+    }
+
+    #[test]
+    fn test_is_parent_ready_no_parent() {
+        // Task with no parent should return None
+        let task = Task::new(
+            "task-1".to_string(),
+            std::path::PathBuf::from("/test"),
+            "test-task".to_string(),
+            "test".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/test/task-1".to_string(),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(std::path::PathBuf::from("/test/copied")),
+            false,
+            None,
+        );
+
+        let all_tasks = vec![task.clone()];
+        let result = TaskScheduler::is_parent_ready(&task, &all_tasks);
+        assert!(result.is_none(), "Task with no parent should return None");
+    }
+
+    #[test]
+    fn test_is_parent_ready_complete() {
+        // Create a completed parent task
+        let mut parent_task = Task::new(
+            "parent-1".to_string(),
+            std::path::PathBuf::from("/test"),
+            "parent-task".to_string(),
+            "test".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/test/parent-1".to_string(),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(std::path::PathBuf::from("/test/copied")),
+            false,
+            None,
+        );
+        parent_task.status = TaskStatus::Complete;
+
+        // Create a child task
+        let child_task = Task::new(
+            "child-1".to_string(),
+            std::path::PathBuf::from("/test"),
+            "child-task".to_string(),
+            "test".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/test/child-1".to_string(),
+            "abc123".to_string(),
+            None,
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            None,
+            false,
+            Some("parent-1".to_string()),
+        );
+
+        let all_tasks = vec![parent_task.clone(), child_task.clone()];
+        let result = TaskScheduler::is_parent_ready(&child_task, &all_tasks);
+
+        match result {
+            Some(ParentStatus::Ready(parent)) => {
+                assert_eq!(parent.id, "parent-1");
+            }
+            _ => panic!("Expected ParentStatus::Ready, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_is_parent_ready_waiting() {
+        // Create a running parent task
+        let mut parent_task = Task::new(
+            "parent-1".to_string(),
+            std::path::PathBuf::from("/test"),
+            "parent-task".to_string(),
+            "test".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/test/parent-1".to_string(),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(std::path::PathBuf::from("/test/copied")),
+            false,
+            None,
+        );
+        parent_task.status = TaskStatus::Running;
+
+        // Create a child task
+        let child_task = Task::new(
+            "child-1".to_string(),
+            std::path::PathBuf::from("/test"),
+            "child-task".to_string(),
+            "test".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/test/child-1".to_string(),
+            "abc123".to_string(),
+            None,
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            None,
+            false,
+            Some("parent-1".to_string()),
+        );
+
+        let all_tasks = vec![parent_task.clone(), child_task.clone()];
+        let result = TaskScheduler::is_parent_ready(&child_task, &all_tasks);
+
+        assert!(
+            matches!(result, Some(ParentStatus::Waiting)),
+            "Expected ParentStatus::Waiting, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_is_parent_ready_failed() {
+        // Create a failed parent task
+        let mut parent_task = Task::new(
+            "parent-1".to_string(),
+            std::path::PathBuf::from("/test"),
+            "parent-task".to_string(),
+            "test".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/test/parent-1".to_string(),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(std::path::PathBuf::from("/test/copied")),
+            false,
+            None,
+        );
+        parent_task.status = TaskStatus::Failed;
+
+        // Create a child task
+        let child_task = Task::new(
+            "child-1".to_string(),
+            std::path::PathBuf::from("/test"),
+            "child-task".to_string(),
+            "test".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/test/child-1".to_string(),
+            "abc123".to_string(),
+            None,
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            None,
+            false,
+            Some("parent-1".to_string()),
+        );
+
+        let all_tasks = vec![parent_task.clone(), child_task.clone()];
+        let result = TaskScheduler::is_parent_ready(&child_task, &all_tasks);
+
+        match result {
+            Some(ParentStatus::Failed(msg)) => {
+                assert!(
+                    msg.contains("parent-1"),
+                    "Error message should mention parent task ID"
+                );
+            }
+            _ => panic!("Expected ParentStatus::Failed, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_is_parent_ready_not_found() {
+        // Create a child task with non-existent parent
+        let child_task = Task::new(
+            "child-1".to_string(),
+            std::path::PathBuf::from("/test"),
+            "child-task".to_string(),
+            "test".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/test/child-1".to_string(),
+            "abc123".to_string(),
+            None,
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            None,
+            false,
+            Some("nonexistent-parent".to_string()),
+        );
+
+        let all_tasks = vec![child_task.clone()];
+        let result = TaskScheduler::is_parent_ready(&child_task, &all_tasks);
+
+        match result {
+            Some(ParentStatus::NotFound(id)) => {
+                assert_eq!(id, "nonexistent-parent");
+            }
+            _ => panic!("Expected ParentStatus::NotFound, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_is_task_ready_for_scheduling_no_parent() {
+        // Task with no parent should be ready
+        let task = Task::new(
+            "task-1".to_string(),
+            std::path::PathBuf::from("/test"),
+            "test-task".to_string(),
+            "test".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/test/task-1".to_string(),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(std::path::PathBuf::from("/test/copied")),
+            false,
+            None,
+        );
+
+        let all_tasks = vec![task.clone()];
+        let submitted = HashSet::new();
+        let result = TaskScheduler::is_task_ready_for_scheduling(&task, &all_tasks, &submitted);
+        assert!(result, "Task with no parent should be ready");
+    }
+
+    #[test]
+    fn test_is_task_ready_for_scheduling_already_submitted() {
+        // Task that's already submitted should not be ready
+        let task = Task::new(
+            "task-1".to_string(),
+            std::path::PathBuf::from("/test"),
+            "test-task".to_string(),
+            "test".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/test/task-1".to_string(),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(std::path::PathBuf::from("/test/copied")),
+            false,
+            None,
+        );
+
+        let all_tasks = vec![task.clone()];
+        let mut submitted = HashSet::new();
+        submitted.insert("task-1".to_string());
+        let result = TaskScheduler::is_task_ready_for_scheduling(&task, &all_tasks, &submitted);
+        assert!(!result, "Already submitted task should not be ready");
+    }
+
+    #[test]
+    fn test_is_task_ready_for_scheduling_parent_waiting() {
+        // Task with running parent should not be ready
+        let mut parent_task = Task::new(
+            "parent-1".to_string(),
+            std::path::PathBuf::from("/test"),
+            "parent-task".to_string(),
+            "test".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/test/parent-1".to_string(),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(std::path::PathBuf::from("/test/copied")),
+            false,
+            None,
+        );
+        parent_task.status = TaskStatus::Running;
+
+        let child_task = Task::new(
+            "child-1".to_string(),
+            std::path::PathBuf::from("/test"),
+            "child-task".to_string(),
+            "test".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/test/child-1".to_string(),
+            "abc123".to_string(),
+            None,
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            None,
+            false,
+            Some("parent-1".to_string()),
+        );
+
+        let all_tasks = vec![parent_task.clone(), child_task.clone()];
+        let submitted = HashSet::new();
+        let result =
+            TaskScheduler::is_task_ready_for_scheduling(&child_task, &all_tasks, &submitted);
+        assert!(!result, "Task with running parent should not be ready");
+    }
+
+    #[test]
+    fn test_is_task_ready_for_scheduling_parent_complete() {
+        // Task with completed parent should be ready
+        let mut parent_task = Task::new(
+            "parent-1".to_string(),
+            std::path::PathBuf::from("/test"),
+            "parent-task".to_string(),
+            "test".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/test/parent-1".to_string(),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(std::path::PathBuf::from("/test/copied")),
+            false,
+            None,
+        );
+        parent_task.status = TaskStatus::Complete;
+
+        let child_task = Task::new(
+            "child-1".to_string(),
+            std::path::PathBuf::from("/test"),
+            "child-task".to_string(),
+            "test".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/test/child-1".to_string(),
+            "abc123".to_string(),
+            None,
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            None,
+            false,
+            Some("parent-1".to_string()),
+        );
+
+        let all_tasks = vec![parent_task.clone(), child_task.clone()];
+        let submitted = HashSet::new();
+        let result =
+            TaskScheduler::is_task_ready_for_scheduling(&child_task, &all_tasks, &submitted);
+        assert!(result, "Task with completed parent should be ready");
+    }
+
+    #[tokio::test]
+    async fn test_fail_child_tasks() {
+        let ctx = AppContext::builder().build();
+        let tsk_env = ctx.tsk_env();
+
+        let (test_repo, commit_sha) = setup_test_repo().unwrap();
+
+        // Create parent and child tasks
+        let parent_task = create_test_task(
+            "parent-1",
+            test_repo.path(),
+            &commit_sha,
+            tsk_env.data_dir(),
+        );
+        let child_task = create_child_task("child-1", test_repo.path(), &commit_sha, "parent-1");
+
+        // Set up storage with both tasks
+        let storage = get_task_storage(tsk_env, ctx.file_system());
+        storage.add_task(parent_task.clone()).await.unwrap();
+        storage.add_task(child_task.clone()).await.unwrap();
+
+        let storage = Arc::new(Mutex::new(storage));
+        let quit_signal = Arc::new(tokio::sync::Notify::new());
+        let scheduler = TaskScheduler::new(Arc::new(ctx), storage.clone(), false, quit_signal);
+
+        // Get all tasks
+        let tasks = storage.lock().await.list_tasks().await.unwrap();
+
+        // Fail child tasks
+        scheduler
+            .fail_child_tasks("parent-1", &tasks)
+            .await
+            .unwrap();
+
+        // Verify child task is marked as failed
+        let storage_guard = storage.lock().await;
+        let child = storage_guard.get_task("child-1").await.unwrap().unwrap();
+        assert_eq!(
+            child.status,
+            TaskStatus::Failed,
+            "Child task should be marked as failed"
+        );
+        assert!(
+            child.error_message.as_ref().unwrap().contains("parent-1"),
+            "Error message should mention parent task"
+        );
     }
 }

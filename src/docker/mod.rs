@@ -86,8 +86,11 @@ impl DockerManager {
 
     /// Build bind volumes for container
     fn build_bind_volumes(&self, task: &crate::task::Task, agent: &dyn Agent) -> Vec<String> {
-        let repo_path_str = task
+        let repo_path = task
             .copied_repo_path
+            .as_ref()
+            .expect("Task must have copied_repo_path set before container execution");
+        let repo_path_str = repo_path
             .to_str()
             .expect("Repository path should be valid UTF-8");
         let mut binds = vec![format!("{repo_path_str}:{CONTAINER_WORKING_DIR}")];
@@ -112,7 +115,7 @@ impl DockerManager {
         }
 
         // Add output directory mount
-        if let Some(task_dir) = task.copied_repo_path.parent() {
+        if let Some(task_dir) = repo_path.parent() {
             let output_dir = task_dir.join("output");
             binds.push(format!("{}:/output", output_dir.to_string_lossy()));
         }
@@ -551,8 +554,9 @@ mod tests {
             source_branch: Some("main".to_string()),
             stack: "default".to_string(),
             project: "default".to_string(),
-            copied_repo_path: repo_path,
+            copied_repo_path: Some(repo_path),
             is_interactive,
+            parent_id: None,
         }
     }
 
@@ -900,7 +904,7 @@ mod tests {
         let absolute_path = temp_dir.path().join("test-repo");
 
         let mut task = create_test_task(false);
-        task.copied_repo_path = absolute_path.clone();
+        task.copied_repo_path = Some(absolute_path.clone());
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
 

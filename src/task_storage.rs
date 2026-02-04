@@ -222,8 +222,9 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            tsk_env.data_dir().to_path_buf(),
+            Some(tsk_env.data_dir().to_path_buf()),
             false,
+            None,
         );
 
         storage.add_task(task.clone()).await.unwrap();
@@ -264,8 +265,9 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            tsk_env.data_dir().to_path_buf(),
+            Some(tsk_env.data_dir().to_path_buf()),
             false,
+            None,
         );
         let mut task2 = Task::new(
             "ijkl9012".to_string(),
@@ -280,8 +282,9 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            tsk_env.data_dir().to_path_buf(),
+            Some(tsk_env.data_dir().to_path_buf()),
             false,
+            None,
         );
         task2.status = TaskStatus::Complete;
         let mut task3 = Task::new(
@@ -297,8 +300,9 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            tsk_env.data_dir().to_path_buf(),
+            Some(tsk_env.data_dir().to_path_buf()),
             false,
+            None,
         );
         task3.status = TaskStatus::Failed;
 

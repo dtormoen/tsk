@@ -57,11 +57,18 @@ pub struct Task {
     pub stack: String,
     /// Project name for Docker image selection (defaults to "default")
     pub project: String,
-    /// Path to the copied repository for this task
-    pub copied_repo_path: PathBuf,
+    /// Path to the copied repository for this task.
+    /// None if the task has a parent and is waiting for it to complete.
+    #[serde(default)]
+    pub copied_repo_path: Option<PathBuf>,
     /// Whether this task should run in interactive mode
     #[serde(default)]
     pub is_interactive: bool,
+    /// Parent task ID that this task is chained to.
+    /// If set, this task will wait for the parent to complete before executing,
+    /// and will use the parent's completed repository as its starting point.
+    #[serde(default)]
+    pub parent_id: Option<String>,
 }
 
 impl Task {
@@ -80,8 +87,9 @@ impl Task {
         stack: String,
         project: String,
         created_at: DateTime<Local>,
-        copied_repo_path: PathBuf,
+        copied_repo_path: Option<PathBuf>,
         is_interactive: bool,
+        parent_id: Option<String>,
     ) -> Self {
         Self {
             id,
@@ -102,6 +110,7 @@ impl Task {
             project,
             copied_repo_path,
             is_interactive,
+            parent_id,
         }
     }
 }
@@ -149,8 +158,9 @@ mod tests {
             "rust".to_string(),
             "test-project".to_string(),
             chrono::Local::now(),
-            PathBuf::from("/test/copied"),
+            Some(PathBuf::from("/test/copied")),
             false,
+            None,
         );
 
         assert_eq!(task.id, "test-id");
@@ -162,6 +172,8 @@ mod tests {
         assert!(task.error_message.is_none());
         assert!(!task.is_interactive);
         assert_eq!(task.source_branch, Some("main".to_string()));
+        assert!(task.parent_id.is_none());
+        assert!(task.copied_repo_path.is_some());
     }
 
     #[test]
@@ -179,10 +191,36 @@ mod tests {
             "rust".to_string(),
             "test-project".to_string(),
             chrono::Local::now(),
-            PathBuf::from("/test/copied"),
+            Some(PathBuf::from("/test/copied")),
             false,
+            None,
         );
 
+        assert!(task.source_branch.is_none());
+    }
+
+    #[test]
+    fn test_task_creation_with_parent() {
+        let task = Task::new(
+            "child-id".to_string(),
+            PathBuf::from("/test"),
+            "child-task".to_string(),
+            "feat".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/feat/child-task/child-id".to_string(),
+            "abc123".to_string(),
+            None, // source_branch is None for child tasks
+            "rust".to_string(),
+            "test-project".to_string(),
+            chrono::Local::now(),
+            None, // copied_repo_path is None until parent completes
+            false,
+            Some("parent-id".to_string()),
+        );
+
+        assert_eq!(task.parent_id, Some("parent-id".to_string()));
+        assert!(task.copied_repo_path.is_none());
         assert!(task.source_branch.is_none());
     }
 }

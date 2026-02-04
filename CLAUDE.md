@@ -38,8 +38,8 @@ TSK implements a command pattern with dependency injection for testability. The 
 *Task Commands (implicit "task" noun):*
 - `run`: Immediately execute single tasks (supports piped input via stdin for descriptions)
 - `shell`: Launch sandbox container with agent for interactive use (supports piped input via stdin for descriptions)
-- `add`: Queue tasks with descriptions and templates (supports piped input via stdin for descriptions)
-- `list`: Display task status and results
+- `add`: Queue tasks with descriptions and templates (supports piped input via stdin for descriptions, supports `--parent <taskid>` for task chaining)
+- `list`: Display task status and results (shows parent task information)
 - `clean`: Delete all completed tasks
 - `delete <task-id>`: Delete a specific task
 - `retry <task-id>`: Retry a previous task
@@ -63,8 +63,15 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Thread-safe with mutex locking for file access
   - Optimized `update_task_status` method for atomic status updates
 - Centralized JSON persistence in XDG data directory (`$XDG_DATA_HOME/tsk/tasks.json`)
-- Task status: Queued → Running → Complete/Failed
+- Task status: Queued → Running → Complete/Failed (Waiting status shown in list for tasks awaiting parent completion)
 - Branch naming: `tsk/{task-type}/{task-name}/{task-id}` (human-readable format with task type, sanitized task name, and 8-character unique identifier)
+- **Task Chaining**: Tasks can specify a parent task via `--parent <taskid>` (short: `-p`)
+  - Child tasks wait until their parent task completes before starting
+  - Repository is copied from the completed parent task's folder (not user's working directory)
+  - Child task's branch starts from parent task's final commit
+  - Git-town parent is set to the parent task's branch (not the original user branch)
+  - Chained tasks (A → B → C) are supported naturally
+  - If parent task fails, all child tasks are marked as Failed (cascading failure)
 
 **Docker Integration** (`src/docker/`)
 - `DockerImageManager`: Centralized Docker image management with intelligent layering
@@ -138,6 +145,9 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Updates terminal title with active/total worker counts by querying the pool
   - Automatic retry for agent warmup failures with 1-hour wait period
   - Tasks that fail during warmup are reset to queued status and retried after wait
+  - Parent-aware scheduling: tasks with incomplete parents are skipped
+  - Prepares child tasks by copying repository from parent task before scheduling
+  - Handles cascading failures when parent tasks fail
 - `WorkerPool`: Generic async job execution pool with semaphore-based concurrency control
   - Tracks active jobs in JoinSet for efficient completion polling
   - Provides `poll_completed()` for retrieving finished job results

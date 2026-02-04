@@ -67,7 +67,7 @@ enum Commands {
         description: Option<String>,
 
         /// Path to prompt file to pass to the agent
-        #[arg(short, long, conflicts_with = "description")]
+        #[arg(long, conflicts_with = "description")]
         prompt: Option<String>,
 
         /// Open the prompt file in $EDITOR after creation
@@ -105,7 +105,7 @@ enum Commands {
         description: Option<String>,
 
         /// Path to prompt file to pass to the agent
-        #[arg(short, long, conflicts_with = "description")]
+        #[arg(long, conflicts_with = "description")]
         prompt: Option<String>,
 
         /// Open the prompt file in $EDITOR after creation
@@ -143,7 +143,7 @@ enum Commands {
         description: Option<String>,
 
         /// Path to prompt file to pass to the agent
-        #[arg(short, long, conflicts_with = "description")]
+        #[arg(long, conflicts_with = "description")]
         prompt: Option<String>,
 
         /// Open the prompt file in $EDITOR after creation
@@ -165,6 +165,10 @@ enum Commands {
         /// Path to the git repository (defaults to current directory)
         #[arg(long)]
         repo: Option<String>,
+
+        /// Parent task ID (task will wait for parent to complete before starting)
+        #[arg(short = 'p', long = "parent")]
+        parent_id: Option<String>,
     },
     /// Start or stop the TSK server daemon that runs queued tasks in containers
     Server(ServerArgs),
@@ -301,6 +305,7 @@ async fn main() {
             stack,
             project,
             repo,
+            parent_id,
         } => Box::new(AddCommand {
             name,
             r#type,
@@ -311,6 +316,7 @@ async fn main() {
             stack,
             project,
             repo,
+            parent_id,
         }),
         Commands::Run {
             name,

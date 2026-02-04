@@ -123,7 +123,8 @@ impl TaskManager {
         // Delete the task directory using the copied_repo_path
         let task = task.unwrap();
         // The task directory is the parent of the copied repo path
-        if let Some(task_dir) = task.copied_repo_path.parent()
+        if let Some(ref copied_repo_path) = task.copied_repo_path
+            && let Some(task_dir) = copied_repo_path.parent()
             && self.file_system.exists(task_dir).await.unwrap_or(false)
         {
             self.file_system
@@ -156,7 +157,8 @@ impl TaskManager {
         // Delete completed tasks directories using copied_repo_path
         for task in &completed_tasks {
             // The task directory is the parent of the copied repo path
-            if let Some(task_dir) = task.copied_repo_path.parent()
+            if let Some(ref copied_repo_path) = task.copied_repo_path
+                && let Some(task_dir) = copied_repo_path.parent()
                 && self.file_system.exists(task_dir).await.unwrap_or(false)
                 && let Err(e) = self.file_system.remove_dir(task_dir).await
             {
@@ -356,8 +358,9 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            queued_dir_path.join("repo"),
+            Some(queued_dir_path.join("repo")),
             false,
+            None,
         );
 
         let mut completed_task = Task::new(
@@ -373,8 +376,9 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            completed_dir_path.join("repo"),
+            Some(completed_dir_path.join("repo")),
             false,
+            None,
         );
         completed_task.status = TaskStatus::Complete;
 
@@ -446,8 +450,9 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            task_dir_path.join("repo"),
+            Some(task_dir_path.join("repo")),
             false,
+            None,
         );
         completed_task.status = TaskStatus::Complete;
 
@@ -601,8 +606,9 @@ mod tests {
             "default".to_string(),
             "default".to_string(),
             chrono::Local::now(),
-            task_dir_path.join("repo"),
+            Some(task_dir_path.join("repo")),
             false,
+            None,
         );
         completed_task.status = TaskStatus::Complete;
 

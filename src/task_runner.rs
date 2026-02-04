@@ -94,7 +94,13 @@ impl TaskRunner {
             .map_err(|e| format!("Agent validation failed: {e}"))?;
 
         // Use the pre-copied repository path
-        let repo_path = &task.copied_repo_path;
+        // Child tasks will have this set by the scheduler before execution
+        let repo_path = task.copied_repo_path.as_ref().ok_or_else(|| {
+            format!(
+                "Task '{}' has no copied repository. This may indicate the task is waiting for its parent to complete.",
+                task.id
+            )
+        })?;
         let branch_name = task.branch_name.clone();
 
         println!("Using repository copy at: {}", repo_path.display());
@@ -105,7 +111,7 @@ impl TaskRunner {
 
         // Create a task-specific image manager with the copied repository as the project root
         // This ensures that project-specific dockerfiles are found in the copied repository
-        let task_image_manager = DockerImageManager::new(&self.ctx, Some(repo_path));
+        let task_image_manager = DockerImageManager::new(&self.ctx, Some(repo_path.as_path()));
 
         // Ensure the Docker image exists - always rebuild to pick up any changes
         let docker_image_tag = task_image_manager
@@ -113,7 +119,7 @@ impl TaskRunner {
                 &task.stack,
                 &task.agent,
                 Some(&task.project),
-                Some(repo_path),
+                Some(repo_path.as_path()),
                 true,
             )
             .await
@@ -261,8 +267,9 @@ mod tests {
             source_branch: Some("main".to_string()),
             stack: "default".to_string(),
             project: "default".to_string(),
-            copied_repo_path: task_copy_dir,
+            copied_repo_path: Some(task_copy_dir),
             is_interactive: false,
+            parent_id: None,
         };
 
         let result = task_runner.execute_task(&task).await;

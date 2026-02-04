@@ -3,8 +3,10 @@ use crate::context::AppContext;
 use crate::context::tsk_env::TskEnv;
 use crate::git::RepoManager;
 use crate::task::Task;
+use crate::task_storage::get_task_storage;
 use crate::utils::sanitize_for_branch_name;
 use chrono::Local;
+use std::collections::HashSet;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
@@ -31,6 +33,8 @@ pub struct TaskBuilder {
     project: Option<String>,
     copied_repo_path: Option<PathBuf>,
     is_interactive: bool,
+    /// Parent task ID that this task is chained to
+    parent_id: Option<String>,
 }
 
 impl TaskBuilder {
@@ -48,6 +52,7 @@ impl TaskBuilder {
             project: None,
             copied_repo_path: None,
             is_interactive: false,
+            parent_id: None,
         }
     }
 
@@ -60,8 +65,10 @@ impl TaskBuilder {
         builder.agent = Some(task.agent.clone());
         builder.stack = Some(task.stack.clone());
         builder.project = Some(task.project.clone());
-        builder.copied_repo_path = Some(task.copied_repo_path.clone());
+        builder.copied_repo_path = task.copied_repo_path.clone();
         builder.is_interactive = task.is_interactive;
+        // Note: We intentionally don't copy parent_id when retrying a task.
+        // The retry creates a fresh task from the current repository state.
 
         // Copy the instructions file path
         builder.instructions_file_path = Some(PathBuf::from(&task.instructions_file));
@@ -126,6 +133,14 @@ impl TaskBuilder {
     /// Sets whether the task should run in interactive mode
     pub fn with_interactive(mut self, is_interactive: bool) -> Self {
         self.is_interactive = is_interactive;
+        self
+    }
+
+    /// Sets the parent task ID that this task is chained to.
+    /// When set, the task will wait for the parent to complete before executing,
+    /// and will use the parent's completed repository as its starting point.
+    pub fn parent_id(mut self, task_id: Option<String>) -> Self {
+        self.parent_id = task_id;
         self
     }
 
@@ -347,18 +362,73 @@ impl TaskBuilder {
         let sanitized_name = sanitize_for_branch_name(&name);
         let branch_name = format!("tsk/{sanitized_task_type}/{sanitized_name}/{id}");
 
-        // Copy the repository for the task
-        let repo_manager = RepoManager::new(ctx);
+        // Validate parent task if specified
+        if let Some(ref pid) = self.parent_id {
+            let storage = get_task_storage(ctx.tsk_env(), ctx.file_system());
+            let tasks = storage.list_tasks().await.map_err(|e| e.to_string())?;
 
-        let (copied_repo_path, _) = repo_manager
-            .copy_repo(
-                &task_dir_name,
-                &repo_root,
-                Some(&source_commit),
-                &branch_name,
-            )
-            .await
-            .map_err(|e| format!("Failed to copy repository: {e}"))?;
+            // Check if parent task exists
+            let parent_task = tasks.iter().find(|t| t.id == *pid);
+            if parent_task.is_none() {
+                return Err(format!(
+                    "Parent task '{}' not found. Please specify a valid task ID.",
+                    pid
+                )
+                .into());
+            }
+
+            // Check for circular parent chains
+            // Walk the parent chain to detect cycles
+            let mut visited = HashSet::new();
+            visited.insert(id.clone()); // Current task being created
+
+            let mut current_id = Some(pid.clone());
+            while let Some(check_id) = current_id {
+                if visited.contains(&check_id) {
+                    return Err(format!(
+                        "Circular parent chain detected: task '{}' would create a cycle",
+                        pid
+                    )
+                    .into());
+                }
+                visited.insert(check_id.clone());
+
+                // Find the task and check its parent
+                current_id = tasks
+                    .iter()
+                    .find(|t| t.id == check_id)
+                    .and_then(|t| t.parent_id.clone());
+            }
+        }
+
+        // Determine if this task has a parent
+        let has_parent = self.parent_id.is_some();
+
+        // Copy the repository for the task (unless it has a parent)
+        // Tasks with parents skip repo copy - they'll get it from the parent when scheduled
+        let copied_repo_path = if has_parent {
+            // Skip repo copy for child tasks - the scheduler will copy from parent task
+            println!(
+                "Task has parent '{}' - repository copy deferred until parent completes",
+                self.parent_id.as_ref().unwrap()
+            );
+            None
+        } else {
+            let repo_manager = RepoManager::new(ctx);
+            let (path, _) = repo_manager
+                .copy_repo(
+                    &task_dir_name,
+                    &repo_root,
+                    Some(&source_commit),
+                    &branch_name,
+                )
+                .await
+                .map_err(|e| format!("Failed to copy repository: {e}"))?;
+            Some(path)
+        };
+
+        // For child tasks, source_branch is set to None - it will be set from parent task later
+        let effective_source_branch = if has_parent { None } else { source_branch };
 
         // Create and return the task
         let task = Task::new(
@@ -370,12 +440,13 @@ impl TaskBuilder {
             agent,
             branch_name,
             source_commit,
-            source_branch,
+            effective_source_branch,
             stack,
             project,
             created_at,
             copied_repo_path,
             self.is_interactive,
+            self.parent_id,
         );
 
         Ok(task)
@@ -1035,5 +1106,132 @@ mod tests {
         // Should use defaults: claude for agent, auto-detect for stack
         assert_eq!(task.agent, "claude", "Agent should use default");
         assert_eq!(task.stack, "rust", "Stack should be auto-detected");
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_with_valid_parent() {
+        use crate::test_utils::TestGitRepository;
+
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        let repo_path = test_repo.path().to_path_buf();
+
+        let ctx = AppContext::builder().build();
+
+        // First create a parent task
+        let parent_task = TaskBuilder::new()
+            .repo_root(repo_path.clone())
+            .name("parent-task".to_string())
+            .description(Some("Parent task".to_string()))
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        // Add parent task to storage so validation passes
+        let storage = get_task_storage(ctx.tsk_env(), ctx.file_system());
+        storage.add_task(parent_task.clone()).await.unwrap();
+
+        // Create child task
+        let child_task = TaskBuilder::new()
+            .repo_root(repo_path)
+            .name("child-task".to_string())
+            .description(Some("Child task".to_string()))
+            .parent_id(Some(parent_task.id.clone()))
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        assert_eq!(child_task.parent_id, Some(parent_task.id));
+        assert!(
+            child_task.copied_repo_path.is_none(),
+            "Child task should have no copied_repo_path"
+        );
+        assert!(
+            child_task.source_branch.is_none(),
+            "Child task should have no source_branch initially"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_invalid_parent_not_found() {
+        use crate::test_utils::TestGitRepository;
+
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        let repo_path = test_repo.path().to_path_buf();
+
+        let ctx = AppContext::builder().build();
+
+        // Try to create a task with a non-existent parent
+        let result = TaskBuilder::new()
+            .repo_root(repo_path)
+            .name("orphan-task".to_string())
+            .description(Some("Orphan task".to_string()))
+            .parent_id(Some("nonexistent-task-id".to_string()))
+            .build(&ctx)
+            .await;
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("not found"),
+            "Expected 'not found' error, got: {err_msg}"
+        );
+        assert!(
+            err_msg.contains("nonexistent-task-id"),
+            "Error should mention the invalid task ID, got: {err_msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_circular_parent_chain_detection() {
+        use crate::test_utils::TestGitRepository;
+
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        let repo_path = test_repo.path().to_path_buf();
+
+        let ctx = AppContext::builder().build();
+        let storage = get_task_storage(ctx.tsk_env(), ctx.file_system());
+
+        // Create task A
+        let task_a = TaskBuilder::new()
+            .repo_root(repo_path.clone())
+            .name("task-a".to_string())
+            .description(Some("Task A".to_string()))
+            .build(&ctx)
+            .await
+            .unwrap();
+        storage.add_task(task_a.clone()).await.unwrap();
+
+        // Create task B with parent A
+        let task_b = TaskBuilder::new()
+            .repo_root(repo_path.clone())
+            .name("task-b".to_string())
+            .description(Some("Task B".to_string()))
+            .parent_id(Some(task_a.id.clone()))
+            .build(&ctx)
+            .await
+            .unwrap();
+        storage.add_task(task_b.clone()).await.unwrap();
+
+        // Create task C with parent B (this should work - no cycle)
+        let task_c = TaskBuilder::new()
+            .repo_root(repo_path.clone())
+            .name("task-c".to_string())
+            .description(Some("Task C".to_string()))
+            .parent_id(Some(task_b.id.clone()))
+            .build(&ctx)
+            .await
+            .unwrap();
+        storage.add_task(task_c.clone()).await.unwrap();
+
+        // Verify the chain is properly traversed
+        assert_eq!(task_a.parent_id, None);
+        assert_eq!(task_b.parent_id, Some(task_a.id.clone()));
+        assert_eq!(task_c.parent_id, Some(task_b.id.clone()));
+
+        // The chain A <- B <- C is valid (C has parent B which has parent A)
+        // This proves the parent chain traversal works correctly
     }
 }

@@ -116,6 +116,7 @@ mod tests {
             stack: None,
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
+            parent_id: None,
         };
 
         // Should fail without piped input
@@ -133,6 +134,7 @@ mod tests {
             stack: None,
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
+            parent_id: None,
         };
 
         let result = cmd_with_desc.execute(&ctx).await;

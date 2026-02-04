@@ -19,6 +19,8 @@ struct TaskRow {
     task_type: String,
     #[tabled(rename = "Status")]
     status: String,
+    #[tabled(rename = "Parent")]
+    parent_id: String,
     #[tabled(rename = "Agent")]
     agent: String,
     #[tabled(rename = "Branch")]
@@ -61,19 +63,31 @@ impl Command for ListCommand {
         } else {
             let rows: Vec<TaskRow> = tasks
                 .iter()
-                .map(|task| TaskRow {
-                    id: task.id.clone(),
-                    name: task.name.clone(),
-                    task_type: task.task_type.clone(),
-                    status: match &task.status {
-                        TaskStatus::Queued => "QUEUED".to_string(),
+                .map(|task| {
+                    // Determine status string - show "WAITING" if queued with incomplete parent
+                    let status = match &task.status {
+                        TaskStatus::Queued => {
+                            if task.parent_id.is_some() && task.copied_repo_path.is_none() {
+                                "WAITING".to_string()
+                            } else {
+                                "QUEUED".to_string()
+                            }
+                        }
                         TaskStatus::Running => "RUNNING".to_string(),
                         TaskStatus::Failed => "FAILED".to_string(),
                         TaskStatus::Complete => "COMPLETE".to_string(),
-                    },
-                    agent: task.agent.clone(),
-                    branch: task.branch_name.clone(),
-                    created: task.created_at.format("%Y-%m-%d %H:%M").to_string(),
+                    };
+
+                    TaskRow {
+                        id: task.id.clone(),
+                        name: task.name.clone(),
+                        task_type: task.task_type.clone(),
+                        status,
+                        parent_id: task.parent_id.clone().unwrap_or_else(|| "-".to_string()),
+                        agent: task.agent.clone(),
+                        branch: task.branch_name.clone(),
+                        created: task.created_at.format("%Y-%m-%d %H:%M").to_string(),
+                    }
                 })
                 .collect();
 
@@ -81,9 +95,20 @@ impl Command for ListCommand {
             println!("{table}");
 
             // Print summary
+            let waiting = tasks
+                .iter()
+                .filter(|t| {
+                    t.status == TaskStatus::Queued
+                        && t.parent_id.is_some()
+                        && t.copied_repo_path.is_none()
+                })
+                .count();
             let queued = tasks
                 .iter()
-                .filter(|t| t.status == TaskStatus::Queued)
+                .filter(|t| {
+                    t.status == TaskStatus::Queued
+                        && (t.parent_id.is_none() || t.copied_repo_path.is_some())
+                })
                 .count();
             let running = tasks
                 .iter()
@@ -99,7 +124,7 @@ impl Command for ListCommand {
                 .count();
 
             println!(
-                "\nSummary: {queued} queued, {running} running, {complete} complete, {failed} failed"
+                "\nSummary: {queued} queued, {waiting} waiting, {running} running, {complete} complete, {failed} failed"
             );
         }
 
