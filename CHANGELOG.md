@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1](https://github.com/dtormoen/tsk/compare/v0.7.0...v0.7.1) - 2026-02-04
+
+### Fixed
+
+- exclude dash from task ID alphabet to prevent CLI flag conflicts
+- prevent warmup from polluting session history and using tools
+- better socat behavior with database connections
+
+### Other
+
+- improve network isolation diagram
+
 ## [0.7.0](https://github.com/dtormoen/tsk/compare/v0.6.5...v0.7.0) - 2026-02-03
 
 This version fixes mutltiple ways agents could bypass the proxy and as a result, could
