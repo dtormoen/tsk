@@ -11,26 +11,19 @@ graph TB
         PKG[Package Registries<br/>pypi.org, crates.io<br/>npmjs.org, etc.]
     end
 
-    subgraph "tsk-external network"
-        PROXY[tsk-proxy<br/>Squid + iptables]
-    end
+    PROXY[tsk-proxy<br/>Squid + iptables + socat]
 
-    subgraph "tsk-agent-abc123 network (internal)"
-        AGENT1[Agent Container<br/>tsk-abc123]
-    end
-
-    subgraph "tsk-agent-def456 network (internal)"
-        AGENT2[Agent Container<br/>tsk-def456]
-    end
+    AGENT1[Agent Container<br/>tsk-abc123]
+    AGENT2[Agent Container<br/>tsk-def456]
 
     subgraph Host
         HOST_SVC[Host Services<br/>PostgreSQL, Redis, etc.]
     end
 
-    AGENT1 -->|HTTP/HTTPS via proxy| PROXY
-    AGENT2 -->|HTTP/HTTPS via proxy| PROXY
-    PROXY -->|Allowed domains only| AI
-    PROXY -->|Allowed domains only| PKG
+    AGENT1 -->|"tsk-agent-abc123 network"| PROXY
+    AGENT2 -->|"tsk-agent-def456 network"| PROXY
+    PROXY -->|"tsk-external network<br/>Allowed domains only"| AI
+    PROXY -->|"tsk-external network<br/>Allowed domains only"| PKG
     PROXY -.->|socat forwarding| HOST_SVC
 
     style PROXY fill:#f96,stroke:#333
@@ -134,6 +127,7 @@ TSK uses Docker internal networks rather than iptables rules in agent containers
 3. **Bypass-resistant**: Even root in the container cannot create a route that doesn't exist
 4. **DNS isolation for free**: No direct resolver access is possible
 5. **Simpler failure mode**: If something goes wrong, agents have no connectivity rather than full connectivity
+6. **Independent of image contents**: Custom project Dockerfiles cannot weaken isolation since it's a property of the network topology, not container configuration
 
 ## Verifying Isolation
 
