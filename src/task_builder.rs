@@ -8,6 +8,15 @@ use chrono::Local;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
+/// Alphabet for generating task IDs. Excludes `-` to prevent IDs from being
+/// mistaken for CLI flags.
+const TASK_ID_ALPHABET: [char; 63] = [
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
+    'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l',
+    'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', '0', '1', '2', '3', '4',
+    '5', '6', '7', '8', '9', '_',
+];
+
 /// Builder for creating tasks with a fluent API
 pub struct TaskBuilder {
     repo_root: Option<PathBuf>,
@@ -240,7 +249,7 @@ impl TaskBuilder {
         // Create task directory in centralized location
         let now = Local::now();
         let created_at = now;
-        let id = nanoid::nanoid!(8);
+        let id = nanoid::nanoid!(8, &TASK_ID_ALPHABET);
         let task_dir_name = id.clone();
         let repo_hash = crate::storage::get_repo_hash(&repo_root);
         let task_dir = ctx.tsk_env().task_dir(&task_dir_name, &repo_hash);
@@ -531,6 +540,13 @@ mod tests {
         assert_eq!(task.task_type, "generic");
         assert!(!task.instructions_file.is_empty());
         assert_eq!(task.id.len(), 8);
+        assert!(
+            task.id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_'),
+            "Task ID should only contain [A-Za-z0-9_], got: {}",
+            task.id
+        );
     }
 
     #[tokio::test]
