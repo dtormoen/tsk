@@ -116,6 +116,23 @@ After you try this command out, try these next steps:
   - Adding `--agent codex,claude` will have `codex` and `claude` do the task in parallel with the same environment and instructions so you can compare agent performance
   - Adding `--agent claude,claude` will have `claude` do the task twice. This can be useful for exploratory changes to get ideas quickly
 
+### Task Chaining
+
+Chain tasks together with `--parent` (`-p`) so a child task starts from where its parent left off:
+
+```bash
+# First task: set up the foundation
+tsk add -t feat -n add-api -d "Add a REST API endpoint for users"
+
+# Check the task list to get the task ID
+tsk list
+
+# Second task: chain it to the first (replace <taskid> with the parent's ID)
+tsk add -t feat -n add-tests -d "Add integration tests for the users API" --parent <taskid>
+```
+
+Child tasks wait for their parent to complete, then start from the parent's final commit. `tsk list` shows these tasks as `WAITING`. If a parent fails, its children are automatically marked as `FAILED`. Chains of any length (A → B → C) are supported.
+
 ### Create a Simple Task Template
 
 Let's create a very basic way to automate working on GitHub issues:
@@ -147,7 +164,7 @@ Now it's easy to solve GitHub issues with a simple task template. Try this with 
 ### Task Commands
 - `tsk run` - Execute a task immediately
 - `tsk shell` - Start a sandbox container with an interactive shell
-- `tsk add` - Queue a task
+- `tsk add` - Queue a task (supports `--parent <taskid>` for task chaining)
 - `tsk list` - View task status and branches
 - `tsk clean` - Clean up completed tasks
 - `tsk delete <task-id>...` - Delete one or more tasks
