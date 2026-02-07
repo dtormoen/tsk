@@ -1,3 +1,4 @@
+use crate::assets::frontmatter::strip_frontmatter;
 use crate::assets::{AssetManager, layered::LayeredAssetManager};
 use crate::context::AppContext;
 use crate::context::tsk_env::TskEnv;
@@ -162,7 +163,9 @@ impl TaskBuilder {
             let asset_manager =
                 LayeredAssetManager::new_with_standard_layers(Some(&repo_root), &ctx.tsk_env());
             match asset_manager.get_template(&task_type) {
-                Ok(template_content) => template_content.contains("{{DESCRIPTION}}"),
+                Ok(template_content) => {
+                    strip_frontmatter(&template_content).contains("{{DESCRIPTION}}")
+                }
                 Err(_) => true, // If we can't read the template, assume it needs description
             }
         } else {
@@ -472,7 +475,9 @@ impl TaskBuilder {
                     &ctx.tsk_env(),
                 );
                 match asset_manager.get_template(task_type) {
-                    Ok(template_content) => template_content.replace("{{DESCRIPTION}}", desc),
+                    Ok(template_content) => {
+                        strip_frontmatter(&template_content).replace("{{DESCRIPTION}}", desc)
+                    }
                     Err(e) => {
                         eprintln!("Warning: Failed to read template: {e}");
                         desc.clone()
@@ -493,15 +498,16 @@ impl TaskBuilder {
                 );
                 match asset_manager.get_template(task_type) {
                     Ok(template_content) => {
+                        let body = strip_frontmatter(&template_content);
                         // If template has description placeholder and we're in edit mode, add TODO
-                        if self.edit && template_content.contains("{{DESCRIPTION}}") {
-                            template_content.replace(
+                        if self.edit && body.contains("{{DESCRIPTION}}") {
+                            body.replace(
                                 "{{DESCRIPTION}}",
                                 "<!-- TODO: Add your task description here -->",
                             )
                         } else {
                             // Use template as-is (for templates without description placeholder)
-                            template_content
+                            body.to_string()
                         }
                     }
                     Err(_) => String::new(),
@@ -649,8 +655,9 @@ mod tests {
         test_repo.init_with_commit().unwrap();
         let current_dir = test_repo.path().to_path_buf();
 
-        // Create template file
-        let template_content = "# Feature Template\n\n{{DESCRIPTION}}";
+        // Create template with frontmatter
+        let template_content =
+            "---\ndescription: A feature template\n---\n# Feature Template\n\n{{DESCRIPTION}}";
         test_repo
             .create_file(".tsk/templates/feat.md", template_content)
             .unwrap();
@@ -669,6 +676,23 @@ mod tests {
         assert_eq!(task.task_type, "feat");
         verify_instructions_content(&ctx, &task, "Feature Template").await;
         verify_instructions_content(&ctx, &task, "My new feature").await;
+
+        // Verify frontmatter is stripped from instructions
+        let instructions_path = ctx
+            .tsk_env()
+            .data_dir()
+            .join("tasks")
+            .join(&task.id)
+            .join(&task.instructions_file);
+        let content = ctx
+            .file_system()
+            .read_file(&instructions_path)
+            .await
+            .unwrap();
+        assert!(
+            !content.contains("description: A feature template"),
+            "Frontmatter should be stripped from instructions"
+        );
     }
 
     #[tokio::test]

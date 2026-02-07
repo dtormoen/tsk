@@ -1,3 +1,7 @@
+---
+description: Implement a new feature or change
+---
+
 # Feature Request
 You need to implement a new feature or change. The description of the feature is:
 

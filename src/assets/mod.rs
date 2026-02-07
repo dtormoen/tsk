@@ -9,6 +9,7 @@ use async_trait::async_trait;
 
 pub mod embedded;
 pub mod filesystem;
+pub(crate) mod frontmatter;
 pub mod layered;
 pub mod utils;
 
@@ -29,4 +30,13 @@ pub trait AssetManager: Send + Sync {
 
     /// List all available dockerfiles
     fn list_dockerfiles(&self) -> Vec<String>;
+
+    /// Get metadata from a template's frontmatter block.
+    fn get_template_metadata(
+        &self,
+        template_type: &str,
+    ) -> Result<frontmatter::TemplateFrontmatter> {
+        let content = self.get_template(template_type)?;
+        Ok(frontmatter::parse_frontmatter(&content))
+    }
 }

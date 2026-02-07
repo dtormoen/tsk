@@ -234,6 +234,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 
 - Tasks create branches with human-readable names: `tsk/{task-type}/{task-name}/{task-id}` (e.g., `tsk/feat/add-user-auth/a1b2c3d4`)
 - Template-based task descriptions encourage structured problem statements.
+- Templates support YAML-style frontmatter (`---` delimited) with a `description` field shown in `tsk template list`. Frontmatter is stripped before template content reaches agents.
 
 ### Docker Infrastructure
 

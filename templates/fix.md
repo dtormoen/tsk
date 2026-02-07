@@ -1,3 +1,7 @@
+---
+description: Fix a bug
+---
+
 # Bug Fix Request
 There is a bug that you need to fix. The following description of the bug was provided:
 

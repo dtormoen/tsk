@@ -1,3 +1,7 @@
+---
+description: Create an implementation plan
+---
+
 # Implementation Plan Request
 Write a detailed document describing how to implement the following changes to the repository:
 

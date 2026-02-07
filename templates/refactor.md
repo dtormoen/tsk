@@ -1,3 +1,7 @@
+---
+description: Refactor existing code
+---
+
 # Refactoring Request
 You need to refactor the code in the following way:
 

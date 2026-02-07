@@ -26,15 +26,20 @@ impl Command for TemplateListCommand {
             return Ok(());
         }
 
-        // Determine source for each template
+        // Determine source and description for each template
         let mut rows = Vec::new();
         for template in &templates {
             let source = determine_template_source(template, project_root.as_deref(), ctx)?;
-            rows.push(vec![template.to_string(), source]);
+            let description = asset_manager
+                .get_template_metadata(template)
+                .ok()
+                .and_then(|meta| meta.description)
+                .unwrap_or_default();
+            rows.push(vec![template.to_string(), source, description]);
         }
 
         println!("Available Templates:");
-        print_columns(&["Name", "Source"], &rows);
+        print_columns(&["Name", "Source", "Description"], &rows);
 
         // Print additional information
         println!("\nTemplate locations (in priority order):");
