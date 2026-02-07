@@ -39,6 +39,7 @@ bytes = "1.11"
 http-body-util = "0.1"
 handlebars = "6.4"
 toml = "0.9"
+rusqlite = { version = "0.35", features = ["bundled"] }
 
 [dev-dependencies]
 assert_cmd = "2.1"
