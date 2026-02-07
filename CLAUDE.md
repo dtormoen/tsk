@@ -66,6 +66,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Task status: Queued → Running → Complete/Failed (Waiting status shown in list for tasks awaiting parent completion)
 - Branch naming: `tsk/{task-type}/{task-name}/{task-id}` (human-readable format with task type, sanitized task name, and 8-character unique identifier)
 - **Task Chaining**: Tasks can specify a parent task via `--parent <taskid>` (short: `-p`)
+  - Database schema supports multiple parents (`parent_ids` stored as JSON array in TEXT column), but CLI currently accepts only one
   - Child tasks wait until their parent task completes before starting
   - Repository is copied from the completed parent task's folder (not user's working directory)
   - Child task's branch starts from parent task's final commit

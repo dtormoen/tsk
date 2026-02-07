@@ -46,7 +46,7 @@ impl Command for ListCommand {
                 .map(|task| {
                     let status = match &task.status {
                         TaskStatus::Queued => {
-                            if task.parent_id.is_some() && task.copied_repo_path.is_none() {
+                            if !task.parent_ids.is_empty() && task.copied_repo_path.is_none() {
                                 "WAITING".to_string()
                             } else {
                                 "QUEUED".to_string()
@@ -75,7 +75,11 @@ impl Command for ListCommand {
                         task.task_type.clone(),
                         status,
                         duration,
-                        task.parent_id.clone().unwrap_or_else(|| "-".to_string()),
+                        if task.parent_ids.is_empty() {
+                            "-".to_string()
+                        } else {
+                            task.parent_ids.join(",")
+                        },
                         task.agent.clone(),
                         task.branch_name.clone(),
                         task.created_at.format("%Y-%m-%d %H:%M").to_string(),
@@ -93,7 +97,7 @@ impl Command for ListCommand {
                 .iter()
                 .filter(|t| {
                     t.status == TaskStatus::Queued
-                        && t.parent_id.is_some()
+                        && !t.parent_ids.is_empty()
                         && t.copied_repo_path.is_none()
                 })
                 .count();
@@ -101,7 +105,7 @@ impl Command for ListCommand {
                 .iter()
                 .filter(|t| {
                     t.status == TaskStatus::Queued
-                        && (t.parent_id.is_none() || t.copied_repo_path.is_some())
+                        && (t.parent_ids.is_empty() || t.copied_repo_path.is_some())
                 })
                 .count();
             let running = tasks
@@ -178,7 +182,7 @@ mod tests {
                 chrono::Local::now(),
                 Some(task_dir_path),
                 false,
-                None,
+                vec![],
             );
             task.status = status;
             if matches!(

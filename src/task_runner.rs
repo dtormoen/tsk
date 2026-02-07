@@ -268,7 +268,7 @@ mod tests {
             project: "default".to_string(),
             copied_repo_path: Some(task_copy_dir),
             is_interactive: false,
-            parent_id: None,
+            parent_ids: vec![],
         };
 
         let result = task_runner.execute_task(&task).await;

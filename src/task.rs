@@ -1,6 +1,32 @@
 use chrono::{DateTime, Local, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::path::PathBuf;
+
+// The JSON format (tasks.json) is frozen and will not change. It only ever supported
+// a single `parent_id: Option<String>`. JSON task files are migrated to SQLite on
+// first run and then renamed to tasks.json.bak, so we only need to read them once.
+// These serde helpers bridge the legacy JSON `parent_id` field to the internal
+// `parent_ids: Vec<String>` representation.
+
+/// Deserializes a legacy `parent_id: Option<String>` into `Vec<String>`.
+fn deserialize_parent_id<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let opt: Option<String> = Option::deserialize(deserializer)?;
+    Ok(opt.into_iter().collect())
+}
+
+/// Serializes `Vec<String>` back as `parent_id: Option<String>` for JSON compatibility.
+fn serialize_parent_id<S>(ids: &[String], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match ids.first() {
+        Some(id) => serializer.serialize_some(id),
+        None => serializer.serialize_none(),
+    }
+}
 
 /// Represents the execution status of a task
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -64,11 +90,16 @@ pub struct Task {
     /// Whether this task should run in interactive mode
     #[serde(default)]
     pub is_interactive: bool,
-    /// Parent task ID that this task is chained to.
-    /// If set, this task will wait for the parent to complete before executing,
+    /// Parent task IDs that this task is chained to.
+    /// If non-empty, this task will wait for the parent to complete before executing,
     /// and will use the parent's completed repository as its starting point.
-    #[serde(default)]
-    pub parent_id: Option<String>,
+    #[serde(
+        default,
+        rename = "parent_id",
+        deserialize_with = "deserialize_parent_id",
+        serialize_with = "serialize_parent_id"
+    )]
+    pub parent_ids: Vec<String>,
 }
 
 impl Task {
@@ -89,7 +120,7 @@ impl Task {
         created_at: DateTime<Local>,
         copied_repo_path: Option<PathBuf>,
         is_interactive: bool,
-        parent_id: Option<String>,
+        parent_ids: Vec<String>,
     ) -> Self {
         Self {
             id,
@@ -110,7 +141,7 @@ impl Task {
             project,
             copied_repo_path,
             is_interactive,
-            parent_id,
+            parent_ids,
         }
     }
 }
@@ -160,7 +191,7 @@ mod tests {
             chrono::Local::now(),
             Some(PathBuf::from("/test/copied")),
             false,
-            None,
+            vec![],
         );
 
         assert_eq!(task.id, "test-id");
@@ -172,7 +203,7 @@ mod tests {
         assert!(task.error_message.is_none());
         assert!(!task.is_interactive);
         assert_eq!(task.source_branch, Some("main".to_string()));
-        assert!(task.parent_id.is_none());
+        assert!(task.parent_ids.is_empty());
         assert!(task.copied_repo_path.is_some());
     }
 
@@ -193,7 +224,7 @@ mod tests {
             chrono::Local::now(),
             Some(PathBuf::from("/test/copied")),
             false,
-            None,
+            vec![],
         );
 
         assert!(task.source_branch.is_none());
@@ -216,11 +247,98 @@ mod tests {
             chrono::Local::now(),
             None, // copied_repo_path is None until parent completes
             false,
-            Some("parent-id".to_string()),
+            vec!["parent-id".to_string()],
         );
 
-        assert_eq!(task.parent_id, Some("parent-id".to_string()));
+        assert_eq!(task.parent_ids, vec!["parent-id"]);
         assert!(task.copied_repo_path.is_none());
         assert!(task.source_branch.is_none());
+    }
+
+    #[test]
+    fn test_deserialize_parent_id_present() {
+        // Simulate a legacy tasks.json entry with "parent_id" field
+        let json = r#"{
+            "id": "test-id",
+            "repo_root": "/test",
+            "name": "test",
+            "task_type": "feat",
+            "instructions_file": "instructions.md",
+            "agent": "claude",
+            "status": "QUEUED",
+            "created_at": "2025-01-01T00:00:00+00:00",
+            "branch_name": "tsk/feat/test/test-id",
+            "source_commit": "abc123",
+            "stack": "rust",
+            "project": "test",
+            "parent_id": "legacy-parent"
+        }"#;
+        let task: Task = serde_json::from_str(json).unwrap();
+        assert_eq!(task.parent_ids, vec!["legacy-parent"]);
+    }
+
+    #[test]
+    fn test_deserialize_parent_id_null() {
+        let json = r#"{
+            "id": "test-id",
+            "repo_root": "/test",
+            "name": "test",
+            "task_type": "feat",
+            "instructions_file": "instructions.md",
+            "agent": "claude",
+            "status": "QUEUED",
+            "created_at": "2025-01-01T00:00:00+00:00",
+            "branch_name": "tsk/feat/test/test-id",
+            "source_commit": "abc123",
+            "stack": "rust",
+            "project": "test",
+            "parent_id": null
+        }"#;
+        let task: Task = serde_json::from_str(json).unwrap();
+        assert!(task.parent_ids.is_empty());
+    }
+
+    #[test]
+    fn test_deserialize_parent_id_missing() {
+        let json = r#"{
+            "id": "test-id",
+            "repo_root": "/test",
+            "name": "test",
+            "task_type": "feat",
+            "instructions_file": "instructions.md",
+            "agent": "claude",
+            "status": "QUEUED",
+            "created_at": "2025-01-01T00:00:00+00:00",
+            "branch_name": "tsk/feat/test/test-id",
+            "source_commit": "abc123",
+            "stack": "rust",
+            "project": "test"
+        }"#;
+        let task: Task = serde_json::from_str(json).unwrap();
+        assert!(task.parent_ids.is_empty());
+    }
+
+    #[test]
+    fn test_json_round_trip_with_parent() {
+        let json = r#"{
+            "id": "test-id",
+            "repo_root": "/test",
+            "name": "test",
+            "task_type": "feat",
+            "instructions_file": "instructions.md",
+            "agent": "claude",
+            "status": "QUEUED",
+            "created_at": "2025-01-01T00:00:00+00:00",
+            "branch_name": "tsk/feat/test/test-id",
+            "source_commit": "abc123",
+            "stack": "rust",
+            "project": "test",
+            "parent_id": "parent-123"
+        }"#;
+        let task: Task = serde_json::from_str(json).unwrap();
+        // Round-trip through JSON
+        let serialized = serde_json::to_string(&task).unwrap();
+        let deserialized: Task = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.parent_ids, vec!["parent-123"]);
     }
 }

@@ -88,7 +88,19 @@ fn row_to_task(row: &rusqlite::Row) -> rusqlite::Result<Task> {
         project: row.get("project")?,
         copied_repo_path: copied_repo_path_str.map(PathBuf::from),
         is_interactive: is_interactive_int != 0,
-        parent_id: row.get("parent_id")?,
+        parent_ids: {
+            let raw: Option<String> = row.get("parent_ids")?;
+            match raw {
+                Some(s) => serde_json::from_str(&s).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        18,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
+                None => vec![],
+            }
+        },
     })
 }
 
@@ -103,7 +115,7 @@ fn insert_task(
         .map(|p| path_to_string(p))
         .transpose()?;
     conn.execute(
-        "INSERT INTO tasks (id, repo_root, name, task_type, instructions_file, agent, status, created_at, started_at, completed_at, branch_name, error_message, source_commit, source_branch, stack, project, copied_repo_path, is_interactive, parent_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+        "INSERT INTO tasks (id, repo_root, name, task_type, instructions_file, agent, status, created_at, started_at, completed_at, branch_name, error_message, source_commit, source_branch, stack, project, copied_repo_path, is_interactive, parent_ids) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
         rusqlite::params![
             task.id,
             repo_root,
@@ -123,7 +135,7 @@ fn insert_task(
             task.project,
             copied_repo_path,
             task.is_interactive as i32,
-            task.parent_id,
+            if task.parent_ids.is_empty() { None::<String> } else { Some(serde_json::to_string(&task.parent_ids).unwrap()) },
         ],
     )?;
     Ok(())
@@ -252,10 +264,9 @@ impl SqliteTaskStorage {
                 project TEXT NOT NULL,
                 copied_repo_path TEXT,
                 is_interactive INTEGER NOT NULL DEFAULT 0,
-                parent_id TEXT
+                parent_ids TEXT
             );
-            CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
-            CREATE INDEX IF NOT EXISTS idx_tasks_parent_id ON tasks(parent_id);",
+            CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);",
         )?;
 
         if let Some(data_dir) = db_path.parent() {
@@ -325,7 +336,7 @@ impl TaskStorage for SqliteTaskStorage {
                 .map(|p| path_to_string(p))
                 .transpose()?;
             let rows_affected = conn.execute(
-                "UPDATE tasks SET repo_root = ?1, name = ?2, task_type = ?3, instructions_file = ?4, agent = ?5, status = ?6, created_at = ?7, started_at = ?8, completed_at = ?9, branch_name = ?10, error_message = ?11, source_commit = ?12, source_branch = ?13, stack = ?14, project = ?15, copied_repo_path = ?16, is_interactive = ?17, parent_id = ?18 WHERE id = ?19",
+                "UPDATE tasks SET repo_root = ?1, name = ?2, task_type = ?3, instructions_file = ?4, agent = ?5, status = ?6, created_at = ?7, started_at = ?8, completed_at = ?9, branch_name = ?10, error_message = ?11, source_commit = ?12, source_branch = ?13, stack = ?14, project = ?15, copied_repo_path = ?16, is_interactive = ?17, parent_ids = ?18 WHERE id = ?19",
                 rusqlite::params![
                     repo_root,
                     task.name,
@@ -344,7 +355,7 @@ impl TaskStorage for SqliteTaskStorage {
                     task.project,
                     copied_repo_path,
                     task.is_interactive as i32,
-                    task.parent_id,
+                    if task.parent_ids.is_empty() { None::<String> } else { Some(serde_json::to_string(&task.parent_ids).unwrap()) },
                     task.id,
                 ],
             )?;

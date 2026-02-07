@@ -99,7 +99,7 @@ mod tests {
                 chrono::Local::now(),
                 Some(task_dir_path),
                 false,
-                None,
+                vec![],
             );
             task.status = TaskStatus::Complete;
             task.started_at = Some(chrono::Utc::now());
@@ -261,7 +261,7 @@ mod tests {
             chrono::Local::now(),
             Some(task_dir_path),
             false,
-            None,
+            vec![],
         );
         let storage = get_task_storage(tsk_env);
         storage.add_task(task).await.unwrap();

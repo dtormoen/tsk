@@ -556,7 +556,7 @@ mod tests {
             project: "default".to_string(),
             copied_repo_path: Some(repo_path),
             is_interactive,
-            parent_id: None,
+            parent_ids: vec![],
         }
     }
 

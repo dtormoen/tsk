@@ -302,7 +302,7 @@ mod tests {
             chrono::Local::now(),
             Some(copied_repo_path),
             false,
-            None,
+            vec![],
         );
         let storage = get_task_storage(tsk_env);
         storage.add_task(task).await.unwrap();
@@ -359,7 +359,7 @@ mod tests {
             chrono::Local::now(),
             Some(queued_dir_path.join("repo")),
             false,
-            None,
+            vec![],
         );
 
         let mut completed_task = Task::new(
@@ -377,7 +377,7 @@ mod tests {
             chrono::Local::now(),
             Some(completed_dir_path.join("repo")),
             false,
-            None,
+            vec![],
         );
         completed_task.status = TaskStatus::Complete;
 
@@ -436,7 +436,7 @@ mod tests {
             chrono::Local::now(),
             Some(task_dir_path.join("repo")),
             false,
-            None,
+            vec![],
         );
         completed_task.status = TaskStatus::Complete;
 
@@ -532,7 +532,7 @@ mod tests {
             chrono::Local::now(),
             Some(task_dir.join("repo")),
             false,
-            None,
+            vec![],
         );
         let storage = get_task_storage(ctx.tsk_env());
         storage.add_task(task).await.unwrap();
@@ -578,7 +578,7 @@ mod tests {
             chrono::Local::now(),
             Some(task_dir_path.join("repo")),
             false,
-            None,
+            vec![],
         );
         completed_task.status = TaskStatus::Complete;
 

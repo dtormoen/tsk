@@ -91,7 +91,7 @@ impl TaskScheduler {
     /// - `Some(Failed(msg))` if parent failed
     /// - `Some(NotFound(id))` if parent doesn't exist in storage
     fn is_parent_ready(task: &Task, all_tasks: &[Task]) -> Option<ParentStatus> {
-        let parent_id = task.parent_id.as_ref()?;
+        let parent_id = task.parent_ids.first()?;
 
         // Find the parent task
         let parent_task = all_tasks.iter().find(|t| &t.id == parent_id);
@@ -162,7 +162,7 @@ impl TaskScheduler {
         // Find all tasks that have the failed task as their parent
         let child_tasks: Vec<&Task> = all_tasks
             .iter()
-            .filter(|t| t.parent_id.as_ref() == Some(&failed_task_id.to_string()))
+            .filter(|t| t.parent_ids.contains(&failed_task_id.to_string()))
             .collect();
 
         let storage = self.storage.lock().await;
@@ -389,7 +389,7 @@ impl TaskScheduler {
 
                 if let Some(mut task) = queued_task {
                     // Check if this is a child task that needs repo preparation
-                    if task.parent_id.is_some() && task.copied_repo_path.is_none() {
+                    if !task.parent_ids.is_empty() && task.copied_repo_path.is_none() {
                         // Find the parent task
                         if let Some(ParentStatus::Ready(parent_task)) =
                             Self::is_parent_ready(&task, &tasks)
@@ -683,7 +683,7 @@ mod tests {
             chrono::Local::now(),
             Some(data_dir.join(format!("task-copy-{id}"))),
             false,
-            None,
+            vec![],
         )
     }
 
@@ -948,7 +948,7 @@ mod tests {
             chrono::Local::now(),
             None, // copied_repo_path is None until parent completes
             false,
-            Some(parent_id.to_string()),
+            vec![parent_id.to_string()],
         )
     }
 
@@ -970,7 +970,7 @@ mod tests {
             chrono::Local::now(),
             Some(std::path::PathBuf::from("/test/copied")),
             false,
-            None,
+            vec![],
         );
 
         let all_tasks = vec![task.clone()];
@@ -996,7 +996,7 @@ mod tests {
             chrono::Local::now(),
             Some(std::path::PathBuf::from("/test/copied")),
             false,
-            None,
+            vec![],
         );
         parent_task.status = TaskStatus::Complete;
 
@@ -1016,7 +1016,7 @@ mod tests {
             chrono::Local::now(),
             None,
             false,
-            Some("parent-1".to_string()),
+            vec!["parent-1".to_string()],
         );
 
         let all_tasks = vec![parent_task.clone(), child_task.clone()];
@@ -1048,7 +1048,7 @@ mod tests {
             chrono::Local::now(),
             Some(std::path::PathBuf::from("/test/copied")),
             false,
-            None,
+            vec![],
         );
         parent_task.status = TaskStatus::Running;
 
@@ -1068,7 +1068,7 @@ mod tests {
             chrono::Local::now(),
             None,
             false,
-            Some("parent-1".to_string()),
+            vec!["parent-1".to_string()],
         );
 
         let all_tasks = vec![parent_task.clone(), child_task.clone()];
@@ -1099,7 +1099,7 @@ mod tests {
             chrono::Local::now(),
             Some(std::path::PathBuf::from("/test/copied")),
             false,
-            None,
+            vec![],
         );
         parent_task.status = TaskStatus::Failed;
 
@@ -1119,7 +1119,7 @@ mod tests {
             chrono::Local::now(),
             None,
             false,
-            Some("parent-1".to_string()),
+            vec!["parent-1".to_string()],
         );
 
         let all_tasks = vec![parent_task.clone(), child_task.clone()];
@@ -1154,7 +1154,7 @@ mod tests {
             chrono::Local::now(),
             None,
             false,
-            Some("nonexistent-parent".to_string()),
+            vec!["nonexistent-parent".to_string()],
         );
 
         let all_tasks = vec![child_task.clone()];
@@ -1186,7 +1186,7 @@ mod tests {
             chrono::Local::now(),
             Some(std::path::PathBuf::from("/test/copied")),
             false,
-            None,
+            vec![],
         );
 
         let all_tasks = vec![task.clone()];
@@ -1213,7 +1213,7 @@ mod tests {
             chrono::Local::now(),
             Some(std::path::PathBuf::from("/test/copied")),
             false,
-            None,
+            vec![],
         );
 
         let all_tasks = vec![task.clone()];
@@ -1241,7 +1241,7 @@ mod tests {
             chrono::Local::now(),
             Some(std::path::PathBuf::from("/test/copied")),
             false,
-            None,
+            vec![],
         );
         parent_task.status = TaskStatus::Running;
 
@@ -1260,7 +1260,7 @@ mod tests {
             chrono::Local::now(),
             None,
             false,
-            Some("parent-1".to_string()),
+            vec!["parent-1".to_string()],
         );
 
         let all_tasks = vec![parent_task.clone(), child_task.clone()];
@@ -1288,7 +1288,7 @@ mod tests {
             chrono::Local::now(),
             Some(std::path::PathBuf::from("/test/copied")),
             false,
-            None,
+            vec![],
         );
         parent_task.status = TaskStatus::Complete;
 
@@ -1307,7 +1307,7 @@ mod tests {
             chrono::Local::now(),
             None,
             false,
-            Some("parent-1".to_string()),
+            vec!["parent-1".to_string()],
         );
 
         let all_tasks = vec![parent_task.clone(), child_task.clone()];

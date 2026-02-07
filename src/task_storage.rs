@@ -61,7 +61,7 @@ mod tests {
             chrono::Local::now(),
             Some(data_dir.to_path_buf()),
             false,
-            None,
+            vec![],
         );
 
         storage.add_task(task.clone()).await.unwrap();
@@ -100,7 +100,7 @@ mod tests {
             chrono::Local::now(),
             Some(data_dir.to_path_buf()),
             false,
-            None,
+            vec![],
         );
         let mut task2 = Task::new(
             "ijkl9012".to_string(),
@@ -117,7 +117,7 @@ mod tests {
             chrono::Local::now(),
             Some(data_dir.to_path_buf()),
             false,
-            None,
+            vec![],
         );
         task2.status = TaskStatus::Complete;
         let mut task3 = Task::new(
@@ -135,7 +135,7 @@ mod tests {
             chrono::Local::now(),
             Some(data_dir.to_path_buf()),
             false,
-            None,
+            vec![],
         );
         task3.status = TaskStatus::Failed;
 
@@ -191,7 +191,7 @@ mod tests {
             created_at,
             Some(PathBuf::from("/copied/repo/path")),
             true,
-            Some("parent5678".to_string()),
+            vec!["parent5678".to_string()],
         );
         task.status = TaskStatus::Complete;
         task.started_at = Some(started_at);
@@ -235,7 +235,7 @@ mod tests {
             Some(PathBuf::from("/copied/repo/path"))
         );
         assert!(retrieved.is_interactive);
-        assert_eq!(retrieved.parent_id, Some("parent5678".to_string()));
+        assert_eq!(retrieved.parent_ids, vec!["parent5678".to_string()]);
     }
 
     #[tokio::test]
@@ -261,7 +261,7 @@ mod tests {
             chrono::Local::now(),
             Some(tsk_env.data_dir().to_path_buf()),
             false,
-            None,
+            vec![],
         );
 
         storage.add_task(task).await.unwrap();
@@ -354,7 +354,7 @@ mod tests {
             chrono::Local::now(),
             Some(data_dir.to_path_buf()),
             false,
-            None,
+            vec![],
         );
         let tasks = vec![task];
         let json = serde_json::to_string_pretty(&tasks).unwrap();
@@ -404,7 +404,7 @@ mod tests {
             chrono::Local::now(),
             Some(data_dir.to_path_buf()),
             false,
-            None,
+            vec![],
         );
         let json = serde_json::to_string_pretty(&vec![task]).unwrap();
         fs::write(&json_path, &json).unwrap();
@@ -452,7 +452,7 @@ mod tests {
             chrono::Local::now(),
             Some(data_dir.to_path_buf()),
             false,
-            None,
+            vec![],
         );
         storage.add_task(existing_task).await.unwrap();
         drop(storage);
@@ -473,7 +473,7 @@ mod tests {
             chrono::Local::now(),
             Some(data_dir.to_path_buf()),
             false,
-            None,
+            vec![],
         );
         let json = serde_json::to_string_pretty(&vec![json_task]).unwrap();
         fs::write(&json_path, &json).unwrap();

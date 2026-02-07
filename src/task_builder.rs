@@ -399,7 +399,7 @@ impl TaskBuilder {
                 current_id = tasks
                     .iter()
                     .find(|t| t.id == check_id)
-                    .and_then(|t| t.parent_id.clone());
+                    .and_then(|t| t.parent_ids.first().cloned());
             }
         }
 
@@ -448,7 +448,7 @@ impl TaskBuilder {
             created_at,
             copied_repo_path,
             self.is_interactive,
-            self.parent_id,
+            self.parent_id.into_iter().collect::<Vec<String>>(),
         );
 
         Ok(task)
@@ -1162,7 +1162,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(child_task.parent_id, Some(parent_task.id));
+        assert_eq!(child_task.parent_ids, vec![parent_task.id]);
         assert!(
             child_task.copied_repo_path.is_none(),
             "Child task should have no copied_repo_path"
@@ -1248,9 +1248,9 @@ mod tests {
         storage.add_task(task_c.clone()).await.unwrap();
 
         // Verify the chain is properly traversed
-        assert_eq!(task_a.parent_id, None);
-        assert_eq!(task_b.parent_id, Some(task_a.id.clone()));
-        assert_eq!(task_c.parent_id, Some(task_b.id.clone()));
+        assert!(task_a.parent_ids.is_empty());
+        assert_eq!(task_b.parent_ids, vec![task_a.id.clone()]);
+        assert_eq!(task_c.parent_ids, vec![task_b.id.clone()]);
 
         // The chain A <- B <- C is valid (C has parent B which has parent A)
         // This proves the parent chain traversal works correctly

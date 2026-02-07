@@ -98,7 +98,7 @@ mod tests {
                 chrono::Local::now(),
                 Some(task_dir_path),
                 false,
-                None,
+                vec![],
             );
             storage
                 .add_task(task)
