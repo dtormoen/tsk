@@ -58,10 +58,10 @@ TSK implements a command pattern with dependency injection for testability. The 
   - This captures all tracked files with current content, staged files, and untracked non-ignored files
   - The `.tsk` directory is copied separately for project-specific configurations
   - This ensures all tasks have a valid repository copy that exactly matches what `git status` shows
-- `TaskStorage` trait abstracts storage with JSON-based implementation
-  - Thread-safe with mutex locking for file access
-  - Optimized `update_task_status` method for atomic status updates
-- Centralized JSON persistence in XDG data directory (`$XDG_DATA_HOME/tsk/tasks.json`)
+- `TaskStorage` trait abstracts storage with `SqliteTaskStorage` implementation (`rusqlite` with bundled SQLite)
+  - WAL mode enabled for concurrent reader/writer support
+  - `tokio::task::spawn_blocking` bridges sync rusqlite into async
+- Centralized SQLite persistence in XDG data directory (`$XDG_DATA_HOME/tsk/tasks.db`)
 - Task status: Queued → Running → Complete/Failed (Waiting status shown in list for tasks awaiting parent completion)
 - Branch naming: `tsk/{task-type}/{task-name}/{task-id}` (human-readable format with task type, sanitized task name, and 8-character unique identifier)
 - **Task Chaining**: Tasks can specify a parent task via `--parent <taskid>` (short: `-p`)

@@ -54,11 +54,9 @@ impl Command for RetryCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::file_system::DefaultFileSystem;
     use crate::task::TaskStatus;
     use crate::task_storage::get_task_storage;
     use crate::test_utils::TestGitRepository;
-    use std::sync::Arc;
 
     async fn setup_test_environment_with_completed_tasks(
         task_ids: Vec<&str>,
@@ -73,8 +71,8 @@ mod tests {
         test_repo.init_with_commit()?;
         let repo_root = test_repo.path().to_path_buf();
 
-        // Create tasks
-        let mut tasks_json = Vec::new();
+        // Add tasks via storage API
+        let storage = get_task_storage(tsk_env.clone());
         for (i, task_id) in task_ids.iter().enumerate() {
             let task_dir_path = tsk_env.task_dir(task_id);
             std::fs::create_dir_all(&task_dir_path)?;
@@ -86,20 +84,31 @@ mod tests {
                 format!("# Task {i}\n\nInstructions for task {i}"),
             )?;
 
-            tasks_json.push(format!(
-                r#"{{"id":"{}","repo_root":"{}","name":"test-task-{}","task_type":"feat","instructions_file":"{}","agent":"claude","timeout":30,"status":"COMPLETE","created_at":"2024-01-01T00:00:00Z","started_at":"2024-01-01T00:30:00Z","completed_at":"2024-01-01T01:00:00Z","branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}"#,
-                task_id,
-                repo_root.to_string_lossy(),
-                i,
-                instructions_path.to_string_lossy(),
-                task_id,
-                task_dir_path.to_string_lossy()
-            ));
+            let mut task = crate::task::Task::new(
+                task_id.to_string(),
+                repo_root.clone(),
+                format!("test-task-{i}"),
+                "feat".to_string(),
+                instructions_path.to_string_lossy().to_string(),
+                "claude".to_string(),
+                format!("tsk/{task_id}"),
+                "abc123".to_string(),
+                Some("main".to_string()),
+                "default".to_string(),
+                "default".to_string(),
+                chrono::Local::now(),
+                Some(task_dir_path),
+                false,
+                None,
+            );
+            task.status = TaskStatus::Complete;
+            task.started_at = Some(chrono::Utc::now());
+            task.completed_at = Some(chrono::Utc::now());
+            storage
+                .add_task(task)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
         }
-
-        // Write tasks.json
-        let tasks_json_content = format!("[{}]", tasks_json.join(","));
-        std::fs::write(tsk_env.tasks_file(), tasks_json_content)?;
 
         Ok((ctx, test_repo))
     }
@@ -120,8 +129,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify new task was created
-        let file_system = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(ctx.tsk_env(), file_system);
+        let storage = get_task_storage(ctx.tsk_env());
         let all_tasks = storage.list_tasks().await.unwrap();
 
         // Should have 2 tasks now (original + retry)
@@ -149,8 +157,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify new tasks were created
-        let file_system = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(ctx.tsk_env(), file_system);
+        let storage = get_task_storage(ctx.tsk_env());
         let all_tasks = storage.list_tasks().await.unwrap();
 
         // Should have 6 tasks now (3 originals + 3 retries)
@@ -191,8 +198,7 @@ mod tests {
         );
 
         // Verify existing tasks were still retried
-        let file_system = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(ctx.tsk_env(), file_system);
+        let storage = get_task_storage(ctx.tsk_env());
         let all_tasks = storage.list_tasks().await.unwrap();
 
         // Should have 4 tasks (2 originals + 2 retries)
@@ -239,14 +245,26 @@ mod tests {
         let task_dir_path = tsk_env.task_dir(task_id);
         std::fs::create_dir_all(&task_dir_path).unwrap();
 
-        let task_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude","timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
-            task_id,
-            repo_root.to_string_lossy(),
-            task_id,
-            task_dir_path.to_string_lossy()
+        // Add queued task via storage API
+        let task = crate::task::Task::new(
+            task_id.to_string(),
+            repo_root,
+            "queued-task".to_string(),
+            "feat".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            format!("tsk/{task_id}"),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(task_dir_path),
+            false,
+            None,
         );
-        std::fs::write(tsk_env.tasks_file(), task_json).unwrap();
+        let storage = get_task_storage(tsk_env);
+        storage.add_task(task).await.unwrap();
 
         let cmd = RetryCommand {
             task_ids: vec![task_id.to_string()],

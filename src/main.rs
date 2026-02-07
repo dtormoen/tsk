@@ -21,7 +21,6 @@ mod task_runner;
 mod task_storage;
 mod utils;
 
-#[cfg(test)]
 mod sqlite_task_storage;
 #[cfg(test)]
 mod test_utils;

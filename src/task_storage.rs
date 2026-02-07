@@ -1,8 +1,11 @@
+#[cfg(test)]
 use crate::context::file_system::FileSystemOperations;
 use crate::context::tsk_env::TskEnv;
 use crate::task::{Task, TaskStatus};
+#[cfg(test)]
 use std::path::PathBuf;
 use std::sync::Arc;
+#[cfg(test)]
 use tokio::sync::Mutex;
 
 // Trait for task storage abstraction
@@ -31,13 +34,15 @@ pub trait TaskStorage: Send + Sync {
     ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>>;
 }
 
-// JSON file-based implementation
+// JSON file-based implementation (retained for testing; production uses SqliteTaskStorage)
+#[cfg(test)]
 pub struct JsonTaskStorage {
     file_path: PathBuf,
     lock: Arc<Mutex<()>>,
     file_system: Arc<dyn FileSystemOperations>,
 }
 
+#[cfg(test)]
 impl JsonTaskStorage {
     pub fn new(tsk_env: Arc<TskEnv>, file_system: Arc<dyn FileSystemOperations>) -> Self {
         let file_path = tsk_env.tasks_file();
@@ -81,6 +86,7 @@ impl JsonTaskStorage {
     }
 }
 
+#[cfg(test)]
 #[async_trait::async_trait]
 impl TaskStorage for JsonTaskStorage {
     async fn add_task(&self, task: Task) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -184,11 +190,10 @@ impl TaskStorage for JsonTaskStorage {
 }
 
 // Factory function for getting task storage
-pub fn get_task_storage(
-    tsk_env: Arc<TskEnv>,
-    file_system: Arc<dyn FileSystemOperations>,
-) -> Box<dyn TaskStorage> {
-    let storage = JsonTaskStorage::new(tsk_env, file_system);
+pub fn get_task_storage(tsk_env: Arc<TskEnv>) -> Box<dyn TaskStorage> {
+    let db_path = tsk_env.tasks_db();
+    let storage = crate::sqlite_task_storage::SqliteTaskStorage::new(db_path)
+        .expect("Failed to initialize SQLite task storage");
     Box::new(storage)
 }
 
@@ -199,6 +204,116 @@ mod tests {
     use crate::context::file_system::DefaultFileSystem;
     use crate::sqlite_task_storage::SqliteTaskStorage;
     use crate::task::Task;
+    use std::path::Path;
+
+    async fn run_storage_crud_tests(storage: &dyn TaskStorage, data_dir: &Path) {
+        let task = Task::new(
+            "abcd1234".to_string(),
+            data_dir.to_path_buf(),
+            "test-task".to_string(),
+            "feature".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/test-task".to_string(),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(data_dir.to_path_buf()),
+            false,
+            None,
+        );
+
+        storage.add_task(task.clone()).await.unwrap();
+
+        let retrieved = storage.get_task(&task.id).await.unwrap();
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().name, "test-task");
+
+        let tasks = storage.list_tasks().await.unwrap();
+        assert_eq!(tasks.len(), 1);
+
+        let mut updated_task = task.clone();
+        updated_task.status = TaskStatus::Running;
+        storage.update_task(updated_task).await.unwrap();
+
+        let retrieved = storage.get_task(&task.id).await.unwrap().unwrap();
+        assert_eq!(retrieved.status, TaskStatus::Running);
+
+        storage.delete_task(&task.id).await.unwrap();
+        let retrieved = storage.get_task(&task.id).await.unwrap();
+        assert!(retrieved.is_none());
+
+        // Test deleting tasks by status
+        let task1 = Task::new(
+            "efgh5678".to_string(),
+            data_dir.to_path_buf(),
+            "task1".to_string(),
+            "feature".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/task1".to_string(),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(data_dir.to_path_buf()),
+            false,
+            None,
+        );
+        let mut task2 = Task::new(
+            "ijkl9012".to_string(),
+            data_dir.to_path_buf(),
+            "task2".to_string(),
+            "bug-fix".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/task2".to_string(),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(data_dir.to_path_buf()),
+            false,
+            None,
+        );
+        task2.status = TaskStatus::Complete;
+        let mut task3 = Task::new(
+            "mnop3456".to_string(),
+            data_dir.to_path_buf(),
+            "task3".to_string(),
+            "refactor".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/task3".to_string(),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(data_dir.to_path_buf()),
+            false,
+            None,
+        );
+        task3.status = TaskStatus::Failed;
+
+        storage.add_task(task1.clone()).await.unwrap();
+        storage.add_task(task2.clone()).await.unwrap();
+        storage.add_task(task3.clone()).await.unwrap();
+
+        let deleted_count = storage
+            .delete_tasks_by_status(vec![TaskStatus::Complete, TaskStatus::Failed])
+            .await
+            .unwrap();
+        assert_eq!(deleted_count, 2);
+
+        let remaining_tasks = storage.list_tasks().await.unwrap();
+        assert_eq!(remaining_tasks.len(), 1);
+        assert_eq!(remaining_tasks[0].status, TaskStatus::Queued);
+    }
 
     #[tokio::test]
     async fn test_json_task_storage() {
@@ -208,120 +323,7 @@ mod tests {
 
         let file_system = Arc::new(DefaultFileSystem);
         let storage = JsonTaskStorage::new(tsk_env.clone(), file_system);
-
-        // Test adding a task
-        let task = Task::new(
-            "abcd1234".to_string(),
-            tsk_env.data_dir().to_path_buf(),
-            "test-task".to_string(),
-            "feature".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/test-task".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(tsk_env.data_dir().to_path_buf()),
-            false,
-            None,
-        );
-
-        storage.add_task(task.clone()).await.unwrap();
-
-        // Test getting a task
-        let retrieved = storage.get_task(&task.id).await.unwrap();
-        assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().name, "test-task");
-
-        // Test listing tasks
-        let tasks = storage.list_tasks().await.unwrap();
-        assert_eq!(tasks.len(), 1);
-
-        // Test updating a task
-        let mut updated_task = task.clone();
-        updated_task.status = TaskStatus::Running;
-        storage.update_task(updated_task).await.unwrap();
-
-        let retrieved = storage.get_task(&task.id).await.unwrap().unwrap();
-        assert_eq!(retrieved.status, TaskStatus::Running);
-
-        // Test deleting a task
-        storage.delete_task(&task.id).await.unwrap();
-        let retrieved = storage.get_task(&task.id).await.unwrap();
-        assert!(retrieved.is_none());
-
-        // Test deleting tasks by status
-        let task1 = Task::new(
-            "efgh5678".to_string(),
-            tsk_env.data_dir().to_path_buf(),
-            "task1".to_string(),
-            "feature".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/task1".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(tsk_env.data_dir().to_path_buf()),
-            false,
-            None,
-        );
-        let mut task2 = Task::new(
-            "ijkl9012".to_string(),
-            tsk_env.data_dir().to_path_buf(),
-            "task2".to_string(),
-            "bug-fix".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/task2".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(tsk_env.data_dir().to_path_buf()),
-            false,
-            None,
-        );
-        task2.status = TaskStatus::Complete;
-        let mut task3 = Task::new(
-            "mnop3456".to_string(),
-            tsk_env.data_dir().to_path_buf(),
-            "task3".to_string(),
-            "refactor".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/task3".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(tsk_env.data_dir().to_path_buf()),
-            false,
-            None,
-        );
-        task3.status = TaskStatus::Failed;
-
-        storage.add_task(task1.clone()).await.unwrap();
-        storage.add_task(task2.clone()).await.unwrap();
-        storage.add_task(task3.clone()).await.unwrap();
-
-        // Delete completed and failed tasks
-        let deleted_count = storage
-            .delete_tasks_by_status(vec![TaskStatus::Complete, TaskStatus::Failed])
-            .await
-            .unwrap();
-        assert_eq!(deleted_count, 2);
-
-        // Verify only queued task remains
-        let remaining_tasks = storage.list_tasks().await.unwrap();
-        assert_eq!(remaining_tasks.len(), 1);
-        assert_eq!(remaining_tasks[0].status, TaskStatus::Queued);
+        run_storage_crud_tests(&storage, tsk_env.data_dir()).await;
     }
 
     #[tokio::test]
@@ -331,120 +333,7 @@ mod tests {
 
         let db_path = tsk_env.data_dir().join("test_tasks.db");
         let storage = SqliteTaskStorage::new(db_path).unwrap();
-
-        // Test adding a task
-        let task = Task::new(
-            "abcd1234".to_string(),
-            tsk_env.data_dir().to_path_buf(),
-            "test-task".to_string(),
-            "feature".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/test-task".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(tsk_env.data_dir().to_path_buf()),
-            false,
-            None,
-        );
-
-        storage.add_task(task.clone()).await.unwrap();
-
-        // Test getting a task
-        let retrieved = storage.get_task(&task.id).await.unwrap();
-        assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().name, "test-task");
-
-        // Test listing tasks
-        let tasks = storage.list_tasks().await.unwrap();
-        assert_eq!(tasks.len(), 1);
-
-        // Test updating a task
-        let mut updated_task = task.clone();
-        updated_task.status = TaskStatus::Running;
-        storage.update_task(updated_task).await.unwrap();
-
-        let retrieved = storage.get_task(&task.id).await.unwrap().unwrap();
-        assert_eq!(retrieved.status, TaskStatus::Running);
-
-        // Test deleting a task
-        storage.delete_task(&task.id).await.unwrap();
-        let retrieved = storage.get_task(&task.id).await.unwrap();
-        assert!(retrieved.is_none());
-
-        // Test deleting tasks by status
-        let task1 = Task::new(
-            "efgh5678".to_string(),
-            tsk_env.data_dir().to_path_buf(),
-            "task1".to_string(),
-            "feature".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/task1".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(tsk_env.data_dir().to_path_buf()),
-            false,
-            None,
-        );
-        let mut task2 = Task::new(
-            "ijkl9012".to_string(),
-            tsk_env.data_dir().to_path_buf(),
-            "task2".to_string(),
-            "bug-fix".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/task2".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(tsk_env.data_dir().to_path_buf()),
-            false,
-            None,
-        );
-        task2.status = TaskStatus::Complete;
-        let mut task3 = Task::new(
-            "mnop3456".to_string(),
-            tsk_env.data_dir().to_path_buf(),
-            "task3".to_string(),
-            "refactor".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/task3".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(tsk_env.data_dir().to_path_buf()),
-            false,
-            None,
-        );
-        task3.status = TaskStatus::Failed;
-
-        storage.add_task(task1.clone()).await.unwrap();
-        storage.add_task(task2.clone()).await.unwrap();
-        storage.add_task(task3.clone()).await.unwrap();
-
-        // Delete completed and failed tasks
-        let deleted_count = storage
-            .delete_tasks_by_status(vec![TaskStatus::Complete, TaskStatus::Failed])
-            .await
-            .unwrap();
-        assert_eq!(deleted_count, 2);
-
-        // Verify only queued task remains
-        let remaining_tasks = storage.list_tasks().await.unwrap();
-        assert_eq!(remaining_tasks.len(), 1);
-        assert_eq!(remaining_tasks[0].status, TaskStatus::Queued);
+        run_storage_crud_tests(&storage, tsk_env.data_dir()).await;
     }
 
     #[tokio::test]

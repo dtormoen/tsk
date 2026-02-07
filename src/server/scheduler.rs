@@ -700,10 +700,7 @@ mod tests {
     #[tokio::test]
     async fn test_scheduler_lifecycle() {
         let ctx = AppContext::builder().build();
-        let storage = Arc::new(Mutex::new(get_task_storage(
-            ctx.tsk_env(),
-            ctx.file_system(),
-        )));
+        let storage = Arc::new(Mutex::new(get_task_storage(ctx.tsk_env())));
 
         let quit_signal = Arc::new(tokio::sync::Notify::new());
         let mut scheduler = TaskScheduler::new(Arc::new(ctx), storage, false, quit_signal);
@@ -737,7 +734,7 @@ mod tests {
         let task2 = create_test_task("task-2", test_repo.path(), &commit_sha, tsk_env.data_dir());
 
         // Set up storage with the first task
-        let storage = get_task_storage(tsk_env, ctx.file_system());
+        let storage = get_task_storage(tsk_env);
         storage.add_task(task1.clone()).await.unwrap();
 
         let storage = Arc::new(Mutex::new(storage));
@@ -795,10 +792,7 @@ mod tests {
         // Test that the scheduler properly handles warmup failure wait periods
         let ctx = Arc::new(AppContext::builder().build());
 
-        let storage = Arc::new(Mutex::new(get_task_storage(
-            ctx.tsk_env(),
-            ctx.file_system(),
-        )));
+        let storage = Arc::new(Mutex::new(get_task_storage(ctx.tsk_env())));
 
         let quit_signal = Arc::new(tokio::sync::Notify::new());
         let scheduler = TaskScheduler::new(ctx, storage, false, quit_signal);
@@ -835,10 +829,7 @@ mod tests {
     async fn test_scheduler_prevents_double_scheduling() {
         // Test that the scheduler doesn't schedule the same task twice
         let ctx = AppContext::builder().build();
-        let storage = Arc::new(Mutex::new(get_task_storage(
-            ctx.tsk_env(),
-            ctx.file_system(),
-        )));
+        let storage = Arc::new(Mutex::new(get_task_storage(ctx.tsk_env())));
         let quit_signal = Arc::new(tokio::sync::Notify::new());
         let scheduler = TaskScheduler::new(Arc::new(ctx), storage, false, quit_signal);
 
@@ -1343,7 +1334,7 @@ mod tests {
         let child_task = create_child_task("child-1", test_repo.path(), &commit_sha, "parent-1");
 
         // Set up storage with both tasks
-        let storage = get_task_storage(tsk_env, ctx.file_system());
+        let storage = get_task_storage(tsk_env);
         storage.add_task(parent_task.clone()).await.unwrap();
         storage.add_task(child_task.clone()).await.unwrap();
 

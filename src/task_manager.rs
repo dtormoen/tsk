@@ -32,7 +32,7 @@ impl TaskManager {
 
         Ok(Self {
             task_runner,
-            task_storage: get_task_storage(ctx.tsk_env(), ctx.file_system()),
+            task_storage: get_task_storage(ctx.tsk_env()),
             file_system: ctx.file_system(),
         })
     }
@@ -286,16 +286,26 @@ mod tests {
         std::fs::create_dir_all(&task_dir_path).unwrap();
         std::fs::write(task_dir_path.join("test.txt"), "test content").unwrap();
 
-        // Create tasks.json with the task
-        let tasks_json_path = tsk_env.tasks_file();
-        let task_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"test-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude","timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
-            task_id,
-            repo_root.to_string_lossy(),
-            task_id,
-            copied_repo_path.to_string_lossy()
+        // Add task via storage API
+        let task = Task::new(
+            task_id.clone(),
+            repo_root,
+            "test-task".to_string(),
+            "feat".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            format!("tsk/{task_id}"),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(copied_repo_path),
+            false,
+            None,
         );
-        std::fs::write(&tasks_json_path, task_json).unwrap();
+        let storage = get_task_storage(tsk_env);
+        storage.add_task(task).await.unwrap();
 
         let task_manager = TaskManager::new(&ctx).unwrap();
 
@@ -334,7 +344,7 @@ mod tests {
                 .await
                 .unwrap();
 
-        let _queued_task = Task::new(
+        let queued_task = Task::new(
             queued_task_id.clone(),
             repo_root.clone(),
             "queued-task".to_string(),
@@ -371,24 +381,10 @@ mod tests {
         );
         completed_task.status = TaskStatus::Complete;
 
-        // Create initial tasks.json with both tasks
-        let tasks_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude","timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}},{{"id":"{}","repo_root":"{}","name":"completed-task","task_type":"fix","instructions_file":"instructions.md","agent":"claude","timeout":30,"status":"COMPLETE","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":"2024-01-01T01:00:00Z","branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
-            queued_task_id,
-            repo_root.to_string_lossy(),
-            queued_task_id,
-            queued_dir_path.join("repo").to_string_lossy(),
-            completed_task_id,
-            repo_root.to_string_lossy(),
-            completed_task_id,
-            completed_dir_path.join("repo").to_string_lossy()
-        );
-
-        let tasks_json_path = config.tasks_file();
-        if let Some(parent) = tasks_json_path.parent() {
-            std::fs::create_dir_all(parent).unwrap();
-        }
-        std::fs::write(&tasks_json_path, tasks_json).unwrap();
+        // Add tasks via storage API
+        let storage = get_task_storage(ctx.tsk_env());
+        storage.add_task(queued_task).await.unwrap();
+        storage.add_task(completed_task).await.unwrap();
 
         // Create TaskManager and clean tasks
         let task_manager = TaskManager::new(&ctx).unwrap();
@@ -451,21 +447,9 @@ mod tests {
             .await
             .unwrap();
 
-        // Create tasks.json with the completed task
-        let tasks_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"original-task","task_type":"generic","instructions_file":"{}","agent":"claude","timeout":45,"status":"COMPLETE","created_at":"2024-01-01T12:00:00Z","started_at":"2024-01-01T12:30:00Z","completed_at":"2024-01-01T13:00:00Z","branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
-            task_id,
-            repo_root.to_string_lossy(),
-            instructions_path.to_string_lossy(),
-            task_id,
-            task_dir_path.join("repo").to_string_lossy()
-        );
-
-        let tasks_json_path = config.tasks_file();
-        if let Some(parent) = tasks_json_path.parent() {
-            std::fs::create_dir_all(parent).unwrap();
-        }
-        std::fs::write(&tasks_json_path, tasks_json).unwrap();
+        // Add task via storage API
+        let storage = get_task_storage(ctx.tsk_env());
+        storage.add_task(completed_task).await.unwrap();
 
         // Create TaskManager and retry the task
         let task_manager = TaskManager::new(&ctx).unwrap();
@@ -504,14 +488,9 @@ mod tests {
     #[tokio::test]
     async fn test_retry_task_not_found() {
         // Set up test environment
-        let (config, _test_repo, ctx) = setup_test_environment().await.unwrap();
+        let (_config, _test_repo, ctx) = setup_test_environment().await.unwrap();
 
-        // Create empty tasks.json
-        let tasks_json_path = config.tasks_file();
-        if let Some(parent) = tasks_json_path.parent() {
-            std::fs::create_dir_all(parent).unwrap();
-        }
-        std::fs::write(&tasks_json_path, "[]").unwrap();
+        // Storage starts empty (SQLite creates the DB on first use)
 
         // Create TaskManager and try to retry a non-existent task
         let task_manager = TaskManager::new(&ctx).unwrap();
@@ -537,20 +516,26 @@ mod tests {
         let task_id = "efgh5678".to_string();
         let task_dir = config.task_dir(&task_id);
 
-        // Create tasks.json with the queued task
-        let tasks_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"queued-task","task_type":"feat","instructions_file":"instructions.md","agent":"claude","timeout":30,"status":"QUEUED","created_at":"2024-01-01T12:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
-            task_id,
-            repo_root.to_string_lossy(),
-            task_id,
-            task_dir.join("repo").to_string_lossy()
+        // Add queued task via storage API
+        let task = Task::new(
+            task_id.clone(),
+            repo_root,
+            "queued-task".to_string(),
+            "feat".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            format!("tsk/{task_id}"),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(task_dir.join("repo")),
+            false,
+            None,
         );
-
-        let tasks_json_path = config.tasks_file();
-        if let Some(parent) = tasks_json_path.parent() {
-            std::fs::create_dir_all(parent).unwrap();
-        }
-        std::fs::write(&tasks_json_path, tasks_json).unwrap();
+        let storage = get_task_storage(ctx.tsk_env());
+        storage.add_task(task).await.unwrap();
 
         // Create TaskManager and try to retry a queued task
         let task_manager = TaskManager::new(&ctx).unwrap();
@@ -597,20 +582,9 @@ mod tests {
         );
         completed_task.status = TaskStatus::Complete;
 
-        // Create tasks.json with the completed task
-        let tasks_json = format!(
-            r#"[{{"id":"{}","repo_root":"{}","name":"test-feature","task_type":"feat","instructions_file":"instructions.md","agent":"claude","timeout":30,"status":"COMPLETE","created_at":"2024-01-15T14:30:00Z","started_at":null,"completed_at":"2024-01-15T15:00:00Z","branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}]"#,
-            task_id,
-            repo_root.to_string_lossy(),
-            task_id,
-            task_dir_path.join("repo").to_string_lossy()
-        );
-
-        let tasks_json_path = config.tasks_file();
-        if let Some(parent) = tasks_json_path.parent() {
-            std::fs::create_dir_all(parent).unwrap();
-        }
-        std::fs::write(&tasks_json_path, tasks_json).unwrap();
+        // Add task via storage API
+        let storage = get_task_storage(ctx.tsk_env());
+        storage.add_task(completed_task).await.unwrap();
 
         // Create TaskManager and clean tasks
         let task_manager = TaskManager::new(&ctx).unwrap();
@@ -635,14 +609,8 @@ mod tests {
     async fn test_with_storage_no_git_repo() {
         // Create AppContext - automatically gets test defaults
         let ctx = AppContext::builder().build();
-        let tsk_env = ctx.tsk_env();
 
-        // Create empty tasks.json
-        let tasks_json_path = tsk_env.tasks_file();
-        if let Some(parent) = tasks_json_path.parent() {
-            std::fs::create_dir_all(parent).unwrap();
-        }
-        std::fs::write(&tasks_json_path, "[]").unwrap();
+        // Storage starts empty (SQLite creates the DB on first use)
 
         // This should succeed even without being in a git repository
         let result = TaskManager::new(&ctx);

@@ -104,6 +104,11 @@ impl TskEnv {
         self.data_dir.join("tasks.json")
     }
 
+    /// Get the path to the tasks.db SQLite database
+    pub fn tasks_db(&self) -> PathBuf {
+        self.data_dir.join("tasks.db")
+    }
+
     /// Get the path to a task's directory
     pub fn task_dir(&self, task_id: &str) -> PathBuf {
         self.data_dir.join("tasks").join(task_id)
@@ -364,6 +369,7 @@ mod tests {
         assert_eq!(env.runtime_dir(), Path::new("/custom/runtime/tsk"));
         assert_eq!(env.config_dir(), Path::new("/custom/config/tsk"));
         assert_eq!(env.tasks_file(), Path::new("/custom/data/tsk/tasks.json"));
+        assert_eq!(env.tasks_db(), Path::new("/custom/data/tsk/tasks.db"));
         assert_eq!(env.socket_path(), Path::new("/custom/runtime/tsk/tsk.sock"));
         assert_eq!(env.pid_file(), Path::new("/custom/runtime/tsk/tsk.pid"));
         // Check that environment fields have defaults

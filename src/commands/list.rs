@@ -22,7 +22,7 @@ impl Command for ListCommand {
                     eprintln!("Falling back to direct file read...");
 
                     // Fall back to direct storage
-                    let storage = get_task_storage(ctx.tsk_env(), ctx.file_system());
+                    let storage = get_task_storage(ctx.tsk_env());
                     storage
                         .list_tasks()
                         .await
@@ -31,7 +31,7 @@ impl Command for ListCommand {
             }
         } else {
             // Server not available, read directly
-            let storage = get_task_storage(ctx.tsk_env(), ctx.file_system());
+            let storage = get_task_storage(ctx.tsk_env());
             storage
                 .list_tasks()
                 .await
@@ -129,13 +129,13 @@ impl Command for ListCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::file_system::DefaultFileSystem;
     use crate::task_storage::get_task_storage;
     use crate::test_utils::TestGitRepository;
-    use std::sync::Arc;
 
     /// Helper to create test environment with tasks
     async fn setup_test_environment_with_tasks(task_count: usize) -> anyhow::Result<AppContext> {
+        use crate::task::Task;
+
         // Create AppContext with test defaults
         let ctx = AppContext::builder().build();
         let tsk_env = ctx.tsk_env();
@@ -146,8 +146,8 @@ mod tests {
         test_repo.init_with_commit()?;
         let repo_root = test_repo.path().to_path_buf();
 
-        // Create sample tasks
-        let mut tasks_json = Vec::new();
+        // Add tasks via storage API
+        let storage = get_task_storage(tsk_env.clone());
         for i in 0..task_count {
             let task_id = format!("task-{}", i + 1);
             let task_dir_path = tsk_env.task_dir(&task_id);
@@ -156,44 +156,45 @@ mod tests {
             let instructions_path = task_dir_path.join("instructions.md");
             std::fs::write(&instructions_path, format!("Task {} instructions", i + 1))?;
 
-            let (status, started_at, completed_at) = match i % 4 {
-                0 => ("QUEUED", "null", "null"),
-                1 => ("RUNNING", r#""2024-01-01T12:00:00Z""#, "null"),
-                2 => (
-                    "COMPLETE",
-                    r#""2024-01-01T12:00:00Z""#,
-                    r#""2024-01-01T12:45:00Z""#,
-                ),
-                _ => (
-                    "FAILED",
-                    r#""2024-01-01T12:00:00Z""#,
-                    r#""2024-01-01T12:02:30Z""#,
-                ),
+            let status = match i % 4 {
+                0 => TaskStatus::Queued,
+                1 => TaskStatus::Running,
+                2 => TaskStatus::Complete,
+                _ => TaskStatus::Failed,
             };
 
-            tasks_json.push(format!(
-                r#"{{"id":"{}","repo_root":"{}","name":"task-{}","task_type":"feat","instructions_file":"{}","agent":"claude","timeout":30,"status":"{}","created_at":"2024-01-01T12:{:02}:00Z","started_at":{},"completed_at":{},"branch_name":"tsk/feat/task-{}/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}"#,
-                task_id,
-                repo_root.to_string_lossy(),
-                i + 1,
-                instructions_path.to_string_lossy(),
-                status,
-                i,
-                started_at,
-                completed_at,
-                i + 1,
-                task_id,
-                task_dir_path.to_string_lossy()
-            ));
+            let mut task = Task::new(
+                task_id.clone(),
+                repo_root.clone(),
+                format!("task-{}", i + 1),
+                "feat".to_string(),
+                instructions_path.to_string_lossy().to_string(),
+                "claude".to_string(),
+                format!("tsk/feat/task-{}/{}", i + 1, task_id),
+                "abc123".to_string(),
+                Some("main".to_string()),
+                "default".to_string(),
+                "default".to_string(),
+                chrono::Local::now(),
+                Some(task_dir_path),
+                false,
+                None,
+            );
+            task.status = status;
+            if matches!(
+                task.status,
+                TaskStatus::Running | TaskStatus::Complete | TaskStatus::Failed
+            ) {
+                task.started_at = Some(chrono::Utc::now());
+            }
+            if matches!(task.status, TaskStatus::Complete | TaskStatus::Failed) {
+                task.completed_at = Some(chrono::Utc::now());
+            }
+            storage
+                .add_task(task)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
         }
-
-        // Write tasks.json
-        let tasks_json_content = format!("[{}]", tasks_json.join(","));
-        let tasks_file_path = tsk_env.tasks_file();
-        if let Some(parent) = tasks_file_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&tasks_file_path, &tasks_json_content)?;
 
         Ok(ctx)
     }
@@ -222,8 +223,7 @@ mod tests {
         let tsk_env = ctx.tsk_env();
 
         // Verify the tasks were created correctly
-        let file_system = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(tsk_env, file_system);
+        let storage = get_task_storage(tsk_env);
         let tasks = storage.list_tasks().await.unwrap();
 
         assert_eq!(tasks.len(), 8);

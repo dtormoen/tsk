@@ -31,7 +31,7 @@ impl TskServer {
     pub fn with_workers(app_context: Arc<AppContext>, workers: u32, quit_when_done: bool) -> Self {
         let tsk_env = app_context.tsk_env();
         let socket_path = tsk_env.socket_path();
-        let storage = get_task_storage(tsk_env.clone(), app_context.file_system());
+        let storage = get_task_storage(tsk_env.clone());
         let storage = Arc::new(Mutex::new(storage));
 
         // Create the quit signal for scheduler-to-server communication
@@ -236,7 +236,7 @@ mod tests {
         // This test verifies that the server gracefully handles connections
         // that don't send any data (like is_server_available checks)
         let app_context = create_test_context();
-        let storage = get_task_storage(app_context.tsk_env(), app_context.file_system());
+        let storage = get_task_storage(app_context.tsk_env());
         let storage = Arc::new(Mutex::new(storage));
         let shutdown_signal = Arc::new(Mutex::new(false));
 
@@ -257,7 +257,7 @@ mod tests {
     async fn test_handle_client_with_valid_request() {
         // This test verifies that valid requests still work correctly
         let app_context = create_test_context();
-        let storage = get_task_storage(app_context.tsk_env(), app_context.file_system());
+        let storage = get_task_storage(app_context.tsk_env());
         let storage = Arc::new(Mutex::new(storage));
         let shutdown_signal = Arc::new(Mutex::new(false));
 

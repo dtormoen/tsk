@@ -53,10 +53,8 @@ impl Command for DeleteCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::file_system::DefaultFileSystem;
     use crate::task_storage::get_task_storage;
     use crate::test_utils::TestGitRepository;
-    use std::sync::Arc;
 
     async fn setup_test_environment_with_tasks(
         task_ids: Vec<&str>,
@@ -71,8 +69,8 @@ mod tests {
         test_repo.init_with_commit()?;
         let repo_root = test_repo.path().to_path_buf();
 
-        // Create tasks
-        let mut tasks_json = Vec::new();
+        // Add tasks via storage API
+        let storage = get_task_storage(tsk_env.clone());
         for (i, task_id) in task_ids.iter().enumerate() {
             let task_dir_path = tsk_env.task_dir(task_id);
             std::fs::create_dir_all(&task_dir_path)?;
@@ -82,25 +80,31 @@ mod tests {
                 format!("Task {i} instructions"),
             )?;
 
-            let instructions_path = task_dir_path.join("instructions.md");
-            tasks_json.push(format!(
-                r#"{{"id":"{}","repo_root":"{}","name":"test-task-{}","task_type":"feat","instructions_file":"{}","agent":"claude","timeout":30,"status":"QUEUED","created_at":"2024-01-01T00:00:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}"#,
-                task_id,
-                repo_root.to_string_lossy(),
-                i,
-                instructions_path.to_string_lossy(),
-                task_id,
-                task_dir_path.to_string_lossy()
-            ));
+            let task = crate::task::Task::new(
+                task_id.to_string(),
+                repo_root.clone(),
+                format!("test-task-{i}"),
+                "feat".to_string(),
+                task_dir_path
+                    .join("instructions.md")
+                    .to_string_lossy()
+                    .to_string(),
+                "claude".to_string(),
+                format!("tsk/{task_id}"),
+                "abc123".to_string(),
+                Some("main".to_string()),
+                "default".to_string(),
+                "default".to_string(),
+                chrono::Local::now(),
+                Some(task_dir_path),
+                false,
+                None,
+            );
+            storage
+                .add_task(task)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
         }
-
-        // Write tasks.json
-        let tasks_json_content = format!("[{}]", tasks_json.join(","));
-        let tasks_file_path = tsk_env.tasks_file();
-        if let Some(parent) = tasks_file_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&tasks_file_path, &tasks_json_content)?;
 
         Ok((ctx, test_repo))
     }
@@ -125,8 +129,7 @@ mod tests {
         assert!(!task_dir.exists());
 
         // Verify task is removed from storage
-        let file_system = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(tsk_env, file_system);
+        let storage = get_task_storage(tsk_env);
         let task = storage.get_task(task_id).await.unwrap();
         assert!(task.is_none());
     }
@@ -153,8 +156,7 @@ mod tests {
         }
 
         // Verify all tasks are removed from storage
-        let file_system = Arc::new(DefaultFileSystem);
-        let storage = get_task_storage(tsk_env, file_system);
+        let storage = get_task_storage(tsk_env);
         for task_id in &task_ids {
             let task = storage.get_task(task_id).await.unwrap();
             assert!(task.is_none());

@@ -145,7 +145,7 @@ impl Command for AddCommand {
                         eprintln!("Falling back to direct file write...");
 
                         // Fall back to direct storage
-                        let storage = get_task_storage(ctx.tsk_env(), ctx.file_system());
+                        let storage = get_task_storage(ctx.tsk_env());
                         storage
                             .add_task(task.clone())
                             .await
@@ -154,7 +154,7 @@ impl Command for AddCommand {
                 }
             } else {
                 // Server not available, write directly
-                let storage = get_task_storage(ctx.tsk_env(), ctx.file_system());
+                let storage = get_task_storage(ctx.tsk_env());
                 storage
                     .add_task(task.clone())
                     .await
@@ -376,7 +376,7 @@ mod tests {
         assert!(result.is_ok(), "Should create tasks for multiple agents");
 
         // Verify tasks were created
-        let storage = crate::task_storage::get_task_storage(ctx.tsk_env(), ctx.file_system());
+        let storage = crate::task_storage::get_task_storage(ctx.tsk_env());
         let tasks = storage.list_tasks().await.unwrap();
         assert_eq!(tasks.len(), 2, "Should create 2 tasks");
 
@@ -446,7 +446,7 @@ mod tests {
         assert!(result.is_ok(), "Should create tasks for duplicate agents");
 
         // Verify tasks were created
-        let storage = crate::task_storage::get_task_storage(ctx.tsk_env(), ctx.file_system());
+        let storage = crate::task_storage::get_task_storage(ctx.tsk_env());
         let tasks = storage.list_tasks().await.unwrap();
         assert_eq!(tasks.len(), 2, "Should create 2 tasks");
 
@@ -489,7 +489,7 @@ mod tests {
         assert!(result.is_ok(), "Command should succeed: {:?}", result.err());
 
         // Verify the created task has name defaulted to type
-        let storage = crate::task_storage::get_task_storage(ctx.tsk_env(), ctx.file_system());
+        let storage = crate::task_storage::get_task_storage(ctx.tsk_env());
         let tasks = storage.list_tasks().await.unwrap();
         assert_eq!(tasks.len(), 1, "Should create 1 task");
         assert_eq!(
@@ -568,7 +568,7 @@ mod tests {
         );
 
         // Verify tasks were created
-        let storage = crate::task_storage::get_task_storage(ctx.tsk_env(), ctx.file_system());
+        let storage = crate::task_storage::get_task_storage(ctx.tsk_env());
         let tasks = storage.list_tasks().await.unwrap();
         assert_eq!(tasks.len(), 2, "Should create 2 tasks");
 
