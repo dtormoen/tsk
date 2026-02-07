@@ -99,7 +99,7 @@ impl TskEnv {
         self.terminal_type.as_deref()
     }
 
-    /// Get the path to the tasks.json file
+    /// Get the legacy tasks.json path (used for migration; production storage is tasks.db)
     pub fn tasks_file(&self) -> PathBuf {
         self.data_dir.join("tasks.json")
     }

@@ -280,7 +280,7 @@ TSK uses Squid as a forward proxy to control network access from task containers
 ## TSK Data Directory
 
 TSK uses the following directories for storing data while running tasks:
-- **~/.local/share/tsk/tasks.json**: The task queue and task definitions
+- **~/.local/share/tsk/tasks.db**: SQLite database for task queue and task definitions
 - **~/.local/share/tsk/tasks/**: Task directories that get mounted into sandboxes when the agent runs. They contain:
   - **<taskid>/repo**: The repo copy that the agent operates on
   - **<taskid>/output**: Directory containing a log file with the agent's actions

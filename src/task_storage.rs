@@ -1,12 +1,6 @@
-#[cfg(test)]
-use crate::context::file_system::FileSystemOperations;
 use crate::context::tsk_env::TskEnv;
 use crate::task::{Task, TaskStatus};
-#[cfg(test)]
-use std::path::PathBuf;
 use std::sync::Arc;
-#[cfg(test)]
-use tokio::sync::Mutex;
 
 // Trait for task storage abstraction
 #[async_trait::async_trait]
@@ -34,161 +28,6 @@ pub trait TaskStorage: Send + Sync {
     ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>>;
 }
 
-// JSON file-based implementation (retained for testing; production uses SqliteTaskStorage)
-#[cfg(test)]
-pub struct JsonTaskStorage {
-    file_path: PathBuf,
-    lock: Arc<Mutex<()>>,
-    file_system: Arc<dyn FileSystemOperations>,
-}
-
-#[cfg(test)]
-impl JsonTaskStorage {
-    pub fn new(tsk_env: Arc<TskEnv>, file_system: Arc<dyn FileSystemOperations>) -> Self {
-        let file_path = tsk_env.tasks_file();
-
-        Self {
-            file_path,
-            lock: Arc::new(Mutex::new(())),
-            file_system,
-        }
-    }
-
-    async fn read_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error + Send + Sync>> {
-        if !self
-            .file_system
-            .exists(&self.file_path)
-            .await
-            .map_err(|e| e.to_string())?
-        {
-            return Ok(Vec::new());
-        }
-
-        let contents = self
-            .file_system
-            .read_file(&self.file_path)
-            .await
-            .map_err(|e| e.to_string())?;
-        let tasks: Vec<Task> = serde_json::from_str(&contents)?;
-        Ok(tasks)
-    }
-
-    async fn write_tasks(
-        &self,
-        tasks: &[Task],
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let contents = serde_json::to_string_pretty(tasks)?;
-        self.file_system
-            .write_file(&self.file_path, &contents)
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-#[async_trait::async_trait]
-impl TaskStorage for JsonTaskStorage {
-    async fn add_task(&self, task: Task) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let _lock = self.lock.lock().await;
-
-        let mut tasks = self.read_tasks().await?;
-        tasks.push(task);
-        self.write_tasks(&tasks).await?;
-
-        Ok(())
-    }
-
-    async fn get_task(
-        &self,
-        id: &str,
-    ) -> Result<Option<Task>, Box<dyn std::error::Error + Send + Sync>> {
-        let _lock = self.lock.lock().await;
-        let tasks = self.read_tasks().await?;
-        drop(_lock); // Release lock after reading
-        Ok(tasks.into_iter().find(|t| t.id == id))
-    }
-
-    async fn list_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error + Send + Sync>> {
-        let _lock = self.lock.lock().await;
-        let tasks = self.read_tasks().await?;
-        drop(_lock); // Release lock after reading
-        Ok(tasks)
-    }
-
-    async fn update_task(
-        &self,
-        task: Task,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let _lock = self.lock.lock().await;
-
-        let mut tasks = self.read_tasks().await?;
-        if let Some(index) = tasks.iter().position(|t| t.id == task.id) {
-            tasks[index] = task;
-            self.write_tasks(&tasks).await?;
-            Ok(())
-        } else {
-            Err("Task not found".into())
-        }
-    }
-
-    async fn update_task_status(
-        &self,
-        id: &str,
-        status: TaskStatus,
-        started_at: Option<chrono::DateTime<chrono::Utc>>,
-        completed_at: Option<chrono::DateTime<chrono::Utc>>,
-        error_message: Option<String>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let _lock = self.lock.lock().await;
-
-        let mut tasks = self.read_tasks().await?;
-        if let Some(task) = tasks.iter_mut().find(|t| t.id == id) {
-            task.status = status;
-            if let Some(started) = started_at {
-                task.started_at = Some(started);
-            }
-            if let Some(completed) = completed_at {
-                task.completed_at = Some(completed);
-            }
-            if let Some(error) = error_message {
-                task.error_message = Some(error);
-            }
-            self.write_tasks(&tasks).await?;
-            Ok(())
-        } else {
-            Err("Task not found".into())
-        }
-    }
-
-    async fn delete_task(&self, id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let _lock = self.lock.lock().await;
-
-        let mut tasks = self.read_tasks().await?;
-        if let Some(index) = tasks.iter().position(|t| t.id == id) {
-            tasks.remove(index);
-            self.write_tasks(&tasks).await?;
-            Ok(())
-        } else {
-            Err("Task not found".into())
-        }
-    }
-
-    async fn delete_tasks_by_status(
-        &self,
-        statuses: Vec<TaskStatus>,
-    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
-        let _lock = self.lock.lock().await;
-
-        let mut tasks = self.read_tasks().await?;
-        let original_count = tasks.len();
-        tasks.retain(|t| !statuses.contains(&t.status));
-        let deleted_count = original_count - tasks.len();
-        self.write_tasks(&tasks).await?;
-        Ok(deleted_count)
-    }
-}
-
 // Factory function for getting task storage
 pub fn get_task_storage(tsk_env: Arc<TskEnv>) -> Box<dyn TaskStorage> {
     let db_path = tsk_env.tasks_db();
@@ -201,11 +40,10 @@ pub fn get_task_storage(tsk_env: Arc<TskEnv>) -> Box<dyn TaskStorage> {
 mod tests {
     use super::*;
     use crate::context::AppContext;
-    use crate::context::file_system::DefaultFileSystem;
     use crate::sqlite_task_storage::SqliteTaskStorage;
     use crate::task::Task;
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     async fn run_storage_crud_tests(storage: &dyn TaskStorage, data_dir: &Path) {
         let task = Task::new(
@@ -314,17 +152,6 @@ mod tests {
         let remaining_tasks = storage.list_tasks().await.unwrap();
         assert_eq!(remaining_tasks.len(), 1);
         assert_eq!(remaining_tasks[0].status, TaskStatus::Queued);
-    }
-
-    #[tokio::test]
-    async fn test_json_task_storage() {
-        let ctx = AppContext::builder().build();
-        let tsk_env = ctx.tsk_env();
-        tsk_env.ensure_directories().unwrap();
-
-        let file_system = Arc::new(DefaultFileSystem);
-        let storage = JsonTaskStorage::new(tsk_env.clone(), file_system);
-        run_storage_crud_tests(&storage, tsk_env.data_dir()).await;
     }
 
     #[tokio::test]
