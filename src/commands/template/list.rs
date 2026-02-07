@@ -1,22 +1,13 @@
 use crate::assets::{AssetManager, layered::LayeredAssetManager};
 use crate::commands::Command;
 use crate::context::AppContext;
+use crate::display::print_columns;
 use crate::repo_utils::find_repository_root;
 use async_trait::async_trait;
 use std::error::Error;
 use std::path::Path;
-use tabled::settings::Style;
-use tabled::{Table, Tabled};
 
 pub struct TemplateListCommand;
-
-#[derive(Tabled)]
-struct TemplateRow {
-    #[tabled(rename = "Name")]
-    name: String,
-    #[tabled(rename = "Source")]
-    source: String,
-}
 
 #[async_trait]
 impl Command for TemplateListCommand {
@@ -39,15 +30,11 @@ impl Command for TemplateListCommand {
         let mut rows = Vec::new();
         for template in &templates {
             let source = determine_template_source(template, project_root.as_deref(), ctx)?;
-            rows.push(TemplateRow {
-                name: template.to_string(),
-                source,
-            });
+            rows.push(vec![template.to_string(), source]);
         }
 
-        let table = Table::new(rows).with(Style::modern()).to_string();
         println!("Available Templates:");
-        println!("{table}");
+        print_columns(&["Name", "Source"], &rows);
 
         // Print additional information
         println!("\nTemplate locations (in priority order):");

@@ -1,33 +1,13 @@
 use super::Command;
 use crate::context::AppContext;
+use crate::display::{format_duration, print_columns};
 use crate::task::TaskStatus;
 use crate::task_storage::get_task_storage;
 use async_trait::async_trait;
+use chrono::Utc;
 use std::error::Error;
-use tabled::settings::Style;
-use tabled::{Table, Tabled};
 
 pub struct ListCommand;
-
-#[derive(Tabled)]
-struct TaskRow {
-    #[tabled(rename = "ID")]
-    id: String,
-    #[tabled(rename = "Name")]
-    name: String,
-    #[tabled(rename = "Type")]
-    task_type: String,
-    #[tabled(rename = "Status")]
-    status: String,
-    #[tabled(rename = "Parent")]
-    parent_id: String,
-    #[tabled(rename = "Agent")]
-    agent: String,
-    #[tabled(rename = "Branch")]
-    branch: String,
-    #[tabled(rename = "Created")]
-    created: String,
-}
 
 #[async_trait]
 impl Command for ListCommand {
@@ -61,10 +41,9 @@ impl Command for ListCommand {
         if tasks.is_empty() {
             println!("No tasks in queue");
         } else {
-            let rows: Vec<TaskRow> = tasks
+            let rows: Vec<Vec<String>> = tasks
                 .iter()
                 .map(|task| {
-                    // Determine status string - show "WAITING" if queued with incomplete parent
                     let status = match &task.status {
                         TaskStatus::Queued => {
                             if task.parent_id.is_some() && task.copied_repo_path.is_none() {
@@ -78,21 +57,36 @@ impl Command for ListCommand {
                         TaskStatus::Complete => "COMPLETE".to_string(),
                     };
 
-                    TaskRow {
-                        id: task.id.clone(),
-                        name: task.name.clone(),
-                        task_type: task.task_type.clone(),
+                    let duration = match (&task.status, &task.started_at, &task.completed_at) {
+                        (TaskStatus::Complete | TaskStatus::Failed, Some(start), Some(end)) => {
+                            let secs = (*end - *start).num_seconds();
+                            format_duration(secs)
+                        }
+                        (TaskStatus::Running, Some(start), _) => {
+                            let secs = (Utc::now() - *start).num_seconds();
+                            format_duration(secs)
+                        }
+                        _ => "-".to_string(),
+                    };
+
+                    vec![
+                        task.id.clone(),
+                        task.name.clone(),
+                        task.task_type.clone(),
                         status,
-                        parent_id: task.parent_id.clone().unwrap_or_else(|| "-".to_string()),
-                        agent: task.agent.clone(),
-                        branch: task.branch_name.clone(),
-                        created: task.created_at.format("%Y-%m-%d %H:%M").to_string(),
-                    }
+                        duration,
+                        task.parent_id.clone().unwrap_or_else(|| "-".to_string()),
+                        task.agent.clone(),
+                        task.branch_name.clone(),
+                        task.created_at.format("%Y-%m-%d %H:%M").to_string(),
+                    ]
                 })
                 .collect();
 
-            let table = Table::new(rows).with(Style::modern()).to_string();
-            println!("{table}");
+            let headers = [
+                "ID", "Name", "Type", "Status", "Duration", "Parent", "Agent", "Branch", "Created",
+            ];
+            print_columns(&headers, &rows);
 
             // Print summary
             let waiting = tasks
@@ -163,21 +157,31 @@ mod tests {
             let instructions_path = task_dir_path.join("instructions.md");
             std::fs::write(&instructions_path, format!("Task {} instructions", i + 1))?;
 
-            let status = match i % 4 {
-                0 => "QUEUED",
-                1 => "RUNNING",
-                2 => "COMPLETE",
-                _ => "FAILED",
+            let (status, started_at, completed_at) = match i % 4 {
+                0 => ("QUEUED", "null", "null"),
+                1 => ("RUNNING", r#""2024-01-01T12:00:00Z""#, "null"),
+                2 => (
+                    "COMPLETE",
+                    r#""2024-01-01T12:00:00Z""#,
+                    r#""2024-01-01T12:45:00Z""#,
+                ),
+                _ => (
+                    "FAILED",
+                    r#""2024-01-01T12:00:00Z""#,
+                    r#""2024-01-01T12:02:30Z""#,
+                ),
             };
 
             tasks_json.push(format!(
-                r#"{{"id":"{}","repo_root":"{}","name":"task-{}","task_type":"feat","instructions_file":"{}","agent":"claude","timeout":30,"status":"{}","created_at":"2024-01-01T12:{:02}:00Z","started_at":null,"completed_at":null,"branch_name":"tsk/feat/task-{}/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}"#,
+                r#"{{"id":"{}","repo_root":"{}","name":"task-{}","task_type":"feat","instructions_file":"{}","agent":"claude","timeout":30,"status":"{}","created_at":"2024-01-01T12:{:02}:00Z","started_at":{},"completed_at":{},"branch_name":"tsk/feat/task-{}/{}","error_message":null,"source_commit":"abc123","stack":"default","project":"default","copied_repo_path":"{}"}}"#,
                 task_id,
                 repo_root.to_string_lossy(),
                 i + 1,
                 instructions_path.to_string_lossy(),
                 status,
                 i,
+                started_at,
+                completed_at,
                 i + 1,
                 task_id,
                 task_dir_path.to_string_lossy()

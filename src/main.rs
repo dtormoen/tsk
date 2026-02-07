@@ -5,6 +5,7 @@ mod agent;
 mod assets;
 mod commands;
 mod context;
+mod display;
 mod docker;
 mod git;
 mod git_sync;
