@@ -176,7 +176,6 @@ Now it's easy to solve GitHub issues with a simple task template. Try this with 
 
 ### Configuration Commands
 - `tsk docker build` - Build required docker images
-- `tsk proxy stop` - Stop the TSK proxy container
 - `tsk template list` - View available task type templates and where they are installed
 
 Run `tsk help` or `tsk help <command>` for detailed options.

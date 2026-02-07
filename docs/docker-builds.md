@@ -292,8 +292,6 @@ docker ps --filter "label=tsk"
 # View proxy logs
 docker logs tsk-proxy
 
-# Stop the proxy if needed
-tsk proxy stop
 ```
 
 ## Common Patterns and Examples

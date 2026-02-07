@@ -7,7 +7,6 @@ pub mod clean;
 pub mod delete;
 pub mod docker;
 pub mod list;
-pub mod proxy;
 pub mod retry;
 pub mod run;
 pub mod server;

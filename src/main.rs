@@ -28,7 +28,6 @@ use commands::{
     AddCommand, CleanCommand, Command, DeleteCommand, ListCommand, RetryCommand, RunCommand,
     ShellCommand,
     docker::DockerBuildCommand,
-    proxy::ProxyStopCommand,
     server::{ServerStartCommand, ServerStopCommand},
     template::TemplateListCommand,
 };
@@ -191,8 +190,6 @@ enum Commands {
     },
     /// Docker operations - build and manage TSK Docker images
     Docker(DockerArgs),
-    /// Proxy operations - manage the TSK proxy container
-    Proxy(ProxyArgs),
     /// Template operations - manage task templates
     Template(TemplateArgs),
 }
@@ -259,19 +256,6 @@ enum DockerCommands {
         #[arg(long, conflicts_with_all = ["stack", "agent", "project", "dry_run"])]
         proxy_only: bool,
     },
-}
-
-#[derive(Args)]
-#[command(about = "Manage the TSK proxy container")]
-struct ProxyArgs {
-    #[command(subcommand)]
-    command: ProxyCommands,
-}
-
-#[derive(Subcommand)]
-enum ProxyCommands {
-    /// Stop the TSK proxy container
-    Stop,
 }
 
 #[derive(Args)]
@@ -392,9 +376,6 @@ async fn main() {
                 dry_run,
                 proxy_only,
             }),
-        },
-        Commands::Proxy(proxy_args) => match proxy_args.command {
-            ProxyCommands::Stop => Box::new(ProxyStopCommand),
         },
         Commands::Template(template_args) => match template_args.command {
             TemplateCommands::List => Box::new(TemplateListCommand),
