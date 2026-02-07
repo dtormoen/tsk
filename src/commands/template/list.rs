@@ -38,7 +38,7 @@ impl Command for TemplateListCommand {
             rows.push(vec![template.to_string(), source, description]);
         }
 
-        println!("Available Templates:");
+        println!("Available Templates:\n");
         print_columns(&["Name", "Source", "Description"], &rows);
 
         // Print additional information
