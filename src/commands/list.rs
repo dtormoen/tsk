@@ -145,13 +145,12 @@ mod tests {
         let test_repo = TestGitRepository::new()?;
         test_repo.init_with_commit()?;
         let repo_root = test_repo.path().to_path_buf();
-        let repo_hash = crate::storage::get_repo_hash(&repo_root);
 
         // Create sample tasks
         let mut tasks_json = Vec::new();
         for i in 0..task_count {
             let task_id = format!("task-{}", i + 1);
-            let task_dir_path = tsk_env.task_dir(&task_id, &repo_hash);
+            let task_dir_path = tsk_env.task_dir(&task_id);
             std::fs::create_dir_all(&task_dir_path)?;
 
             let instructions_path = task_dir_path.join("instructions.md");

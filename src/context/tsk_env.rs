@@ -105,10 +105,8 @@ impl TskEnv {
     }
 
     /// Get the path to a task's directory
-    pub fn task_dir(&self, task_id: &str, repo_hash: &str) -> PathBuf {
-        self.data_dir
-            .join("tasks")
-            .join(format!("{repo_hash}-{task_id}"))
+    pub fn task_dir(&self, task_id: &str) -> PathBuf {
+        self.data_dir.join("tasks").join(task_id)
     }
 
     /// Get the server socket path
@@ -428,9 +426,9 @@ mod tests {
 
         let ctx = AppContext::builder().build();
         let tsk_env = ctx.tsk_env();
-        let task_dir = tsk_env.task_dir("task-123", "repo-abc");
+        let task_dir = tsk_env.task_dir("task-123");
 
-        assert!(task_dir.to_string_lossy().contains("repo-abc-task-123"));
+        assert!(task_dir.ends_with("tasks/task-123"));
     }
 
     #[test]

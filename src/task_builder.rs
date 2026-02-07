@@ -266,8 +266,7 @@ impl TaskBuilder {
         let created_at = now;
         let id = nanoid::nanoid!(8, &TASK_ID_ALPHABET);
         let task_dir_name = id.clone();
-        let repo_hash = crate::storage::get_repo_hash(&repo_root);
-        let task_dir = ctx.tsk_env().task_dir(&task_dir_name, &repo_hash);
+        let task_dir = ctx.tsk_env().task_dir(&task_dir_name);
         ctx.file_system().create_dir(&task_dir).await?;
 
         // Create output directory for capturing agent output
@@ -823,8 +822,7 @@ mod tests {
             .unwrap();
 
         // Verify repository was copied to the correct location
-        let repo_hash = crate::storage::get_repo_hash(test_repo.path());
-        let task_dir = ctx.tsk_env().task_dir(&task.id, &repo_hash);
+        let task_dir = ctx.tsk_env().task_dir(&task.id);
         let copied_repo = task_dir.join("repo");
 
         assert!(copied_repo.exists());
@@ -851,8 +849,7 @@ mod tests {
             .unwrap();
 
         // Verify output directory was created
-        let repo_hash = crate::storage::get_repo_hash(test_repo.path());
-        let task_dir = ctx.tsk_env().task_dir(&task.id, &repo_hash);
+        let task_dir = ctx.tsk_env().task_dir(&task.id);
         let output_dir = task_dir.join("output");
 
         assert!(output_dir.exists());

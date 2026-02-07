@@ -238,8 +238,7 @@ mod tests {
         let task_runner = TaskRunner::new(&ctx);
 
         // Create a task copy directory
-        let repo_hash = crate::storage::get_repo_hash(test_repo.path());
-        let task_copy_dir = tsk_env.task_dir("test-task-123", &repo_hash);
+        let task_copy_dir = tsk_env.task_dir("test-task-123");
 
         // Use the async filesystem operations to copy the repository
         ctx.file_system()

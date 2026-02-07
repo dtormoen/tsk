@@ -72,12 +72,11 @@ mod tests {
         let test_repo = TestGitRepository::new()?;
         test_repo.init_with_commit()?;
         let repo_root = test_repo.path().to_path_buf();
-        let repo_hash = crate::storage::get_repo_hash(&repo_root);
 
         // Create tasks
         let mut tasks_json = Vec::new();
         for (i, task_id) in task_ids.iter().enumerate() {
-            let task_dir_path = tsk_env.task_dir(task_id, &repo_hash);
+            let task_dir_path = tsk_env.task_dir(task_id);
             std::fs::create_dir_all(&task_dir_path)?;
 
             // Create instructions file
@@ -234,11 +233,10 @@ mod tests {
         let test_repo = TestGitRepository::new().unwrap();
         test_repo.init_with_commit().unwrap();
         let repo_root = test_repo.path().to_path_buf();
-        let repo_hash = crate::storage::get_repo_hash(&repo_root);
 
         // Create a queued task (should not be retryable)
         let task_id = "queued-task";
-        let task_dir_path = tsk_env.task_dir(task_id, &repo_hash);
+        let task_dir_path = tsk_env.task_dir(task_id);
         std::fs::create_dir_all(&task_dir_path).unwrap();
 
         let task_json = format!(

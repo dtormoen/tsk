@@ -70,12 +70,11 @@ mod tests {
         let test_repo = TestGitRepository::new()?;
         test_repo.init_with_commit()?;
         let repo_root = test_repo.path().to_path_buf();
-        let repo_hash = crate::storage::get_repo_hash(&repo_root);
 
         // Create tasks
         let mut tasks_json = Vec::new();
         for (i, task_id) in task_ids.iter().enumerate() {
-            let task_dir_path = tsk_env.task_dir(task_id, &repo_hash);
+            let task_dir_path = tsk_env.task_dir(task_id);
             std::fs::create_dir_all(&task_dir_path)?;
             std::fs::write(task_dir_path.join("test.txt"), "test content")?;
             std::fs::write(
@@ -122,8 +121,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify task directory is deleted
-        let repo_hash = crate::storage::get_repo_hash(_test_repo.path());
-        let task_dir = tsk_env.task_dir(task_id, &repo_hash);
+        let task_dir = tsk_env.task_dir(task_id);
         assert!(!task_dir.exists());
 
         // Verify task is removed from storage
@@ -149,9 +147,8 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify all task directories are deleted
-        let repo_hash = crate::storage::get_repo_hash(_test_repo.path());
         for task_id in &task_ids {
-            let task_dir = tsk_env.task_dir(task_id, &repo_hash);
+            let task_dir = tsk_env.task_dir(task_id);
             assert!(!task_dir.exists());
         }
 
@@ -191,9 +188,8 @@ mod tests {
         );
 
         // Verify existing tasks were still deleted
-        let repo_hash = crate::storage::get_repo_hash(_test_repo.path());
         for task_id in &existing_tasks {
-            let task_dir = tsk_env.task_dir(task_id, &repo_hash);
+            let task_dir = tsk_env.task_dir(task_id);
             assert!(!task_dir.exists());
         }
     }

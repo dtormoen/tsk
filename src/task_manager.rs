@@ -253,10 +253,9 @@ mod tests {
     async fn setup_task_directory(
         tsk_env: &TskEnv,
         task_id: &str,
-        repo_hash: &str,
         instructions_content: &str,
     ) -> anyhow::Result<std::path::PathBuf> {
-        let task_dir_path = tsk_env.task_dir(task_id, repo_hash);
+        let task_dir_path = tsk_env.task_dir(task_id);
         std::fs::create_dir_all(&task_dir_path)?;
 
         let instructions_path = task_dir_path.join("instructions.md");
@@ -280,8 +279,7 @@ mod tests {
 
         // Create a task
         let task_id = "test-task-123".to_string();
-        let repo_hash = crate::storage::get_repo_hash(&repo_root);
-        let task_dir_path = tsk_env.task_dir(&task_id, &repo_hash);
+        let task_dir_path = tsk_env.task_dir(&task_id);
         let copied_repo_path = task_dir_path.join("repo");
 
         // Create the task directory and file
@@ -321,29 +319,20 @@ mod tests {
         // Set up test environment
         let (config, test_repo, ctx) = setup_test_environment().await.unwrap();
         let repo_root = test_repo.path().to_path_buf();
-        let repo_hash = crate::storage::get_repo_hash(&repo_root);
 
         // Create tasks with different statuses
         let queued_task_id = "queued-task-123".to_string();
         let completed_task_id = "completed-task-456".to_string();
 
         // Create task directories and files
-        let queued_dir_path = setup_task_directory(
-            &config,
-            &queued_task_id,
-            &repo_hash,
-            "Queued task instructions",
-        )
-        .await
-        .unwrap();
-        let completed_dir_path = setup_task_directory(
-            &config,
-            &completed_task_id,
-            &repo_hash,
-            "Completed task instructions",
-        )
-        .await
-        .unwrap();
+        let queued_dir_path =
+            setup_task_directory(&config, &queued_task_id, "Queued task instructions")
+                .await
+                .unwrap();
+        let completed_dir_path =
+            setup_task_directory(&config, &completed_task_id, "Completed task instructions")
+                .await
+                .unwrap();
 
         let _queued_task = Task::new(
             queued_task_id.clone(),
@@ -430,11 +419,10 @@ mod tests {
         // Set up test environment
         let (config, test_repo, ctx) = setup_test_environment().await.unwrap();
         let repo_root = test_repo.path().to_path_buf();
-        let repo_hash = crate::storage::get_repo_hash(&repo_root);
 
         // Create a completed task to retry
         let task_id = "abcd1234".to_string();
-        let task_dir_path = config.task_dir(&task_id, &repo_hash);
+        let task_dir_path = config.task_dir(&task_id);
         let instructions_path = task_dir_path.join("instructions.md");
 
         let mut completed_task = Task::new(
@@ -459,7 +447,7 @@ mod tests {
         // Set up task directory with instructions
         let instructions_content =
             "# Original Task Instructions\n\nThis is the original task content.";
-        setup_task_directory(&config, &task_id, &repo_hash, instructions_content)
+        setup_task_directory(&config, &task_id, instructions_content)
             .await
             .unwrap();
 
@@ -504,7 +492,7 @@ mod tests {
         assert_eq!(new_task.status, TaskStatus::Queued);
 
         // Verify instructions file was created
-        let new_task_dir = config.task_dir(&new_task_id, &repo_hash);
+        let new_task_dir = config.task_dir(&new_task_id);
         let new_instructions_path = new_task_dir.join("instructions.md");
         assert!(new_instructions_path.exists());
 
@@ -547,8 +535,7 @@ mod tests {
 
         // Create a queued task (should not be retryable)
         let task_id = "efgh5678".to_string();
-        let repo_hash = crate::storage::get_repo_hash(&repo_root);
-        let task_dir = config.task_dir(&task_id, &repo_hash);
+        let task_dir = config.task_dir(&task_id);
 
         // Create tasks.json with the queued task
         let tasks_json = format!(
@@ -582,16 +569,14 @@ mod tests {
         // Set up test environment
         let (config, test_repo, ctx) = setup_test_environment().await.unwrap();
         let repo_root = test_repo.path().to_path_buf();
-        let repo_hash = crate::storage::get_repo_hash(&repo_root);
 
         // Create a task with a specific ID
         let task_id = "ijkl9012".to_string();
 
         // Set up task directory with instructions
-        let task_dir_path =
-            setup_task_directory(&config, &task_id, &repo_hash, "Test instructions")
-                .await
-                .unwrap();
+        let task_dir_path = setup_task_directory(&config, &task_id, "Test instructions")
+            .await
+            .unwrap();
 
         let mut completed_task = Task::new(
             task_id.clone(),
