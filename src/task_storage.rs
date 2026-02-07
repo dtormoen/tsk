@@ -204,6 +204,7 @@ mod tests {
     use crate::context::file_system::DefaultFileSystem;
     use crate::sqlite_task_storage::SqliteTaskStorage;
     use crate::task::Task;
+    use std::fs;
     use std::path::Path;
 
     async fn run_storage_crud_tests(storage: &dyn TaskStorage, data_dir: &Path) {
@@ -497,5 +498,198 @@ mod tests {
         // started_at and completed_at should still be preserved
         assert!(retrieved.started_at.is_some());
         assert!(retrieved.completed_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_migration_from_json() {
+        let ctx = AppContext::builder().build();
+        let tsk_env = ctx.tsk_env();
+        tsk_env.ensure_directories().unwrap();
+
+        let data_dir = tsk_env.data_dir();
+        let json_path = data_dir.join("tasks.json");
+        let bak_path = data_dir.join("tasks.json.bak");
+        let db_path = data_dir.join("migration_test.db");
+
+        // Create a tasks.json with known tasks
+        let task = Task::new(
+            "migrate1234".to_string(),
+            data_dir.to_path_buf(),
+            "migrate-task".to_string(),
+            "feat".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/feat/migrate-task/migrate1234".to_string(),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "rust".to_string(),
+            "test-project".to_string(),
+            chrono::Local::now(),
+            Some(data_dir.to_path_buf()),
+            false,
+            None,
+        );
+        let tasks = vec![task];
+        let json = serde_json::to_string_pretty(&tasks).unwrap();
+        fs::write(&json_path, &json).unwrap();
+
+        // Construct SqliteTaskStorage — migration should run automatically
+        let storage = SqliteTaskStorage::new(db_path).unwrap();
+
+        // Verify tasks are in SQLite
+        let stored_tasks = storage.list_tasks().await.unwrap();
+        assert_eq!(stored_tasks.len(), 1);
+        assert_eq!(stored_tasks[0].id, "migrate1234");
+        assert_eq!(stored_tasks[0].name, "migrate-task");
+
+        // Verify tasks.json was renamed
+        assert!(!json_path.exists());
+        assert!(bak_path.exists());
+
+        // Clean up
+        let _ = fs::remove_file(&bak_path);
+    }
+
+    #[tokio::test]
+    async fn test_migration_skipped_when_bak_exists() {
+        let ctx = AppContext::builder().build();
+        let tsk_env = ctx.tsk_env();
+        tsk_env.ensure_directories().unwrap();
+
+        let data_dir = tsk_env.data_dir();
+        let json_path = data_dir.join("tasks.json");
+        let bak_path = data_dir.join("tasks.json.bak");
+        let db_path = data_dir.join("migration_bak_test.db");
+
+        // Create both tasks.json and tasks.json.bak
+        let task = Task::new(
+            "skip1234".to_string(),
+            data_dir.to_path_buf(),
+            "skip-task".to_string(),
+            "feat".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/feat/skip-task/skip1234".to_string(),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(data_dir.to_path_buf()),
+            false,
+            None,
+        );
+        let json = serde_json::to_string_pretty(&vec![task]).unwrap();
+        fs::write(&json_path, &json).unwrap();
+        fs::write(&bak_path, "old backup").unwrap();
+
+        let storage = SqliteTaskStorage::new(db_path).unwrap();
+
+        // Migration should NOT have run — DB should be empty
+        let stored_tasks = storage.list_tasks().await.unwrap();
+        assert_eq!(stored_tasks.len(), 0);
+
+        // tasks.json should still exist (not renamed)
+        assert!(json_path.exists());
+
+        // Clean up
+        let _ = fs::remove_file(&json_path);
+        let _ = fs::remove_file(&bak_path);
+    }
+
+    #[tokio::test]
+    async fn test_migration_skipped_when_db_has_data() {
+        let ctx = AppContext::builder().build();
+        let tsk_env = ctx.tsk_env();
+        tsk_env.ensure_directories().unwrap();
+
+        let data_dir = tsk_env.data_dir();
+        let json_path = data_dir.join("tasks.json");
+        let bak_path = data_dir.join("tasks.json.bak");
+        let db_path = data_dir.join("migration_existing_test.db");
+
+        // First, create a storage and add a task to it
+        let storage = SqliteTaskStorage::new(db_path.clone()).unwrap();
+        let existing_task = Task::new(
+            "existing1234".to_string(),
+            data_dir.to_path_buf(),
+            "existing-task".to_string(),
+            "feat".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/feat/existing-task/existing1234".to_string(),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(data_dir.to_path_buf()),
+            false,
+            None,
+        );
+        storage.add_task(existing_task).await.unwrap();
+        drop(storage);
+
+        // Now create tasks.json with different tasks
+        let json_task = Task::new(
+            "json5678".to_string(),
+            data_dir.to_path_buf(),
+            "json-task".to_string(),
+            "feat".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            "tsk/feat/json-task/json5678".to_string(),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(data_dir.to_path_buf()),
+            false,
+            None,
+        );
+        let json = serde_json::to_string_pretty(&vec![json_task]).unwrap();
+        fs::write(&json_path, &json).unwrap();
+
+        // Re-open the storage — migration should NOT run since DB has data
+        let storage = SqliteTaskStorage::new(db_path).unwrap();
+        let stored_tasks = storage.list_tasks().await.unwrap();
+        assert_eq!(stored_tasks.len(), 1);
+        assert_eq!(stored_tasks[0].id, "existing1234");
+
+        // tasks.json should still exist (not renamed)
+        assert!(json_path.exists());
+
+        // Clean up
+        let _ = fs::remove_file(&json_path);
+        let _ = fs::remove_file(&bak_path);
+    }
+
+    #[tokio::test]
+    async fn test_migration_handles_invalid_json() {
+        let ctx = AppContext::builder().build();
+        let tsk_env = ctx.tsk_env();
+        tsk_env.ensure_directories().unwrap();
+
+        let data_dir = tsk_env.data_dir();
+        let json_path = data_dir.join("tasks.json");
+        let bak_path = data_dir.join("tasks.json.bak");
+        let db_path = data_dir.join("migration_invalid_test.db");
+
+        // Create tasks.json with invalid content
+        fs::write(&json_path, "not valid json {{{").unwrap();
+
+        let storage = SqliteTaskStorage::new(db_path).unwrap();
+
+        // DB should be empty
+        let stored_tasks = storage.list_tasks().await.unwrap();
+        assert_eq!(stored_tasks.len(), 0);
+
+        // tasks.json should be renamed to .bak even for invalid JSON
+        assert!(!json_path.exists());
+        assert!(bak_path.exists());
+
+        // Clean up
+        let _ = fs::remove_file(&bak_path);
     }
 }

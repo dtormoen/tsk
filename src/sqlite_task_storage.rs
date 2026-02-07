@@ -2,6 +2,7 @@ use crate::task::{Task, TaskStatus};
 use crate::task_storage::TaskStorage;
 use chrono::DateTime;
 use rusqlite::Connection;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -91,6 +92,130 @@ fn row_to_task(row: &rusqlite::Row) -> rusqlite::Result<Task> {
     })
 }
 
+fn insert_task(
+    conn: &Connection,
+    task: &Task,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let repo_root = path_to_string(&task.repo_root)?;
+    let copied_repo_path = task
+        .copied_repo_path
+        .as_ref()
+        .map(|p| path_to_string(p))
+        .transpose()?;
+    conn.execute(
+        "INSERT INTO tasks (id, repo_root, name, task_type, instructions_file, agent, status, created_at, started_at, completed_at, branch_name, error_message, source_commit, source_branch, stack, project, copied_repo_path, is_interactive, parent_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+        rusqlite::params![
+            task.id,
+            repo_root,
+            task.name,
+            task.task_type,
+            task.instructions_file,
+            task.agent,
+            task_status_to_str(&task.status),
+            task.created_at.to_rfc3339(),
+            task.started_at.map(|dt| dt.to_rfc3339()),
+            task.completed_at.map(|dt| dt.to_rfc3339()),
+            task.branch_name,
+            task.error_message,
+            task.source_commit,
+            task.source_branch,
+            task.stack,
+            task.project,
+            copied_repo_path,
+            task.is_interactive as i32,
+            task.parent_id,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Attempts to migrate tasks from a legacy `tasks.json` file into the SQLite database.
+///
+/// Migration runs only when:
+/// - `tasks.json` exists in `data_dir`
+/// - `tasks.json.bak` does NOT exist (prevents re-migration)
+/// - The `tasks` table is empty
+///
+/// After successful migration, `tasks.json` is renamed to `tasks.json.bak`.
+fn migrate_from_json(conn: &Connection, data_dir: &Path) {
+    let json_path = data_dir.join("tasks.json");
+    let bak_path = data_dir.join("tasks.json.bak");
+
+    if !json_path.exists() {
+        return;
+    }
+
+    if bak_path.exists() {
+        return;
+    }
+
+    let count: i64 = match conn.query_row("SELECT COUNT(*) FROM tasks", [], |row| row.get(0)) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Warning: failed to check tasks table during migration: {e}");
+            return;
+        }
+    };
+    if count > 0 {
+        return;
+    }
+
+    let contents = match fs::read_to_string(&json_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Warning: failed to read tasks.json for migration: {e}");
+            return;
+        }
+    };
+
+    let tasks: Vec<Task> = match serde_json::from_str(&contents) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("Warning: tasks.json contains invalid data, skipping migration: {e}");
+            if let Err(rename_err) = fs::rename(&json_path, &bak_path) {
+                eprintln!("Warning: failed to rename tasks.json to tasks.json.bak: {rename_err}");
+            }
+            return;
+        }
+    };
+
+    if tasks.is_empty() {
+        eprintln!("Migrated 0 tasks from tasks.json to tasks.db");
+        if let Err(e) = fs::rename(&json_path, &bak_path) {
+            eprintln!("Warning: failed to rename tasks.json to tasks.json.bak: {e}");
+        }
+        return;
+    }
+
+    // Safe: we have exclusive access during construction and transaction() requires &mut
+    let tx = match conn.unchecked_transaction() {
+        Ok(tx) => tx,
+        Err(e) => {
+            eprintln!("Warning: failed to begin migration transaction: {e}");
+            return;
+        }
+    };
+
+    for task in &tasks {
+        if let Err(e) = insert_task(&tx, task) {
+            eprintln!("Warning: failed to migrate task {}: {e}", task.id);
+            return; // Transaction will be rolled back on drop
+        }
+    }
+
+    if let Err(e) = tx.commit() {
+        eprintln!("Warning: failed to commit migration transaction: {e}");
+        return;
+    }
+
+    if let Err(e) = fs::rename(&json_path, &bak_path) {
+        eprintln!("Warning: failed to rename tasks.json to tasks.json.bak: {e}");
+        return;
+    }
+
+    eprintln!("Migrated {} tasks from tasks.json to tasks.db", tasks.len());
+}
+
 /// SQLite-backed implementation of `TaskStorage`.
 ///
 /// Stores tasks in a SQLite database with WAL mode enabled for concurrent read performance.
@@ -105,7 +230,7 @@ impl SqliteTaskStorage {
     ///
     /// Enables WAL journal mode and creates the `tasks` table and indexes if they don't exist.
     pub fn new(db_path: PathBuf) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let conn = Connection::open(db_path)?;
+        let conn = Connection::open(&db_path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL;")?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS tasks (
@@ -132,6 +257,11 @@ impl SqliteTaskStorage {
             CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
             CREATE INDEX IF NOT EXISTS idx_tasks_parent_id ON tasks(parent_id);",
         )?;
+
+        if let Some(data_dir) = db_path.parent() {
+            migrate_from_json(&conn, data_dir);
+        }
+
         Ok(Self {
             conn: Arc::new(StdMutex::new(conn)),
         })
@@ -144,37 +274,7 @@ impl TaskStorage for SqliteTaskStorage {
         let conn = Arc::clone(&self.conn);
         tokio::task::spawn_blocking(move || {
             let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
-            let repo_root = path_to_string(&task.repo_root)?;
-            let copied_repo_path = task
-                .copied_repo_path
-                .as_ref()
-                .map(|p| path_to_string(p))
-                .transpose()?;
-            conn.execute(
-                "INSERT INTO tasks (id, repo_root, name, task_type, instructions_file, agent, status, created_at, started_at, completed_at, branch_name, error_message, source_commit, source_branch, stack, project, copied_repo_path, is_interactive, parent_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
-                rusqlite::params![
-                    task.id,
-                    repo_root,
-                    task.name,
-                    task.task_type,
-                    task.instructions_file,
-                    task.agent,
-                    task_status_to_str(&task.status),
-                    task.created_at.to_rfc3339(),
-                    task.started_at.map(|dt| dt.to_rfc3339()),
-                    task.completed_at.map(|dt| dt.to_rfc3339()),
-                    task.branch_name,
-                    task.error_message,
-                    task.source_commit,
-                    task.source_branch,
-                    task.stack,
-                    task.project,
-                    copied_repo_path,
-                    task.is_interactive as i32,
-                    task.parent_id,
-                ],
-            )?;
-            Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+            insert_task(&conn, &task)
         })
         .await??;
         Ok(())
