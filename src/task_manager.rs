@@ -1,4 +1,4 @@
-use crate::context::{AppContext, file_system::FileSystemOperations};
+use crate::context::AppContext;
 use crate::task::{Task, TaskBuilder, TaskStatus};
 use crate::task_runner::{TaskExecutionError, TaskExecutionResult, TaskRunner};
 use crate::task_storage::{TaskStorage, get_task_storage};
@@ -14,7 +14,6 @@ use crate::context::tsk_env::TskEnv;
 pub struct TaskManager {
     task_runner: TaskRunner,
     task_storage: Arc<dyn TaskStorage>,
-    file_system: Arc<dyn FileSystemOperations>,
 }
 
 impl TaskManager {
@@ -33,7 +32,6 @@ impl TaskManager {
         Ok(Self {
             task_runner,
             task_storage: get_task_storage(ctx.tsk_env()),
-            file_system: ctx.file_system(),
         })
     }
 
@@ -146,10 +144,9 @@ impl TaskManager {
         // The task directory is the parent of the copied repo path
         if let Some(ref copied_repo_path) = task.copied_repo_path
             && let Some(task_dir) = copied_repo_path.parent()
-            && self.file_system.exists(task_dir).await.unwrap_or(false)
+            && crate::file_system::exists(task_dir).await.unwrap_or(false)
         {
-            self.file_system
-                .remove_dir(task_dir)
+            crate::file_system::remove_dir(task_dir)
                 .await
                 .map_err(|e| format!("Error deleting task directory: {e}"))?;
         }
@@ -180,8 +177,8 @@ impl TaskManager {
             // The task directory is the parent of the copied repo path
             if let Some(ref copied_repo_path) = task.copied_repo_path
                 && let Some(task_dir) = copied_repo_path.parent()
-                && self.file_system.exists(task_dir).await.unwrap_or(false)
-                && let Err(e) = self.file_system.remove_dir(task_dir).await
+                && crate::file_system::exists(task_dir).await.unwrap_or(false)
+                && let Err(e) = crate::file_system::remove_dir(task_dir).await
             {
                 eprintln!(
                     "Warning: Failed to delete task directory {}: {}",

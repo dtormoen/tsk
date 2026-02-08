@@ -270,11 +270,11 @@ impl TaskBuilder {
         let id = nanoid::nanoid!(8, &TASK_ID_ALPHABET);
         let task_dir_name = id.clone();
         let task_dir = ctx.tsk_env().task_dir(&task_dir_name);
-        ctx.file_system().create_dir(&task_dir).await?;
+        crate::file_system::create_dir(&task_dir).await?;
 
         // Create output directory for capturing agent output
         let output_dir = task_dir.join("output");
-        ctx.file_system().create_dir(&output_dir).await?;
+        crate::file_system::create_dir(&output_dir).await?;
 
         // Create instructions file
         let instructions_path = if self.edit {
@@ -289,23 +289,20 @@ impl TaskBuilder {
             self.open_editor(temp_path.to_str().ok_or("Invalid path")?, &tsk_env)?;
 
             // Check if file is empty and ensure cleanup happens even on error
-            let needs_cleanup = self
-                .check_instructions_not_empty(&temp_path, ctx)
-                .await
-                .is_err();
+            let needs_cleanup = self.check_instructions_not_empty(&temp_path).await.is_err();
 
             if needs_cleanup {
                 // Clean up the temporary file and task directory before returning the error
-                let _ = ctx.file_system().remove_file(&temp_path).await;
-                let _ = ctx.file_system().remove_dir(&task_dir).await;
+                let _ = crate::file_system::remove_file(&temp_path).await;
+                let _ = crate::file_system::remove_dir(&task_dir).await;
                 return Err("Instructions file is empty. Task creation cancelled.".into());
             }
 
             // Move the file to the task directory
             let final_path = task_dir.join("instructions.md");
-            let content = ctx.file_system().read_file(&temp_path).await?;
-            ctx.file_system().write_file(&final_path, &content).await?;
-            ctx.file_system().remove_file(&temp_path).await?;
+            let content = crate::file_system::read_file(&temp_path).await?;
+            crate::file_system::write_file(&final_path, &content).await?;
+            crate::file_system::remove_file(&temp_path).await?;
 
             final_path.to_string_lossy().to_string()
         } else {
@@ -460,12 +457,10 @@ impl TaskBuilder {
         task_type: &str,
         ctx: &AppContext,
     ) -> Result<String, Box<dyn Error>> {
-        let fs = ctx.file_system();
-
         if let Some(ref file_path) = self.instructions_file_path {
             // File path provided - read and copy content
-            let content = fs.read_file(file_path).await?;
-            fs.write_file(dest_path, &content).await?;
+            let content = crate::file_system::read_file(file_path).await?;
+            crate::file_system::write_file(dest_path, &content).await?;
         } else if let Some(ref desc) = self.description {
             // Check if a template exists for this task type
             let content = if task_type != "generic" {
@@ -487,7 +482,7 @@ impl TaskBuilder {
                 desc.clone()
             };
 
-            fs.write_file(dest_path, &content).await?;
+            crate::file_system::write_file(dest_path, &content).await?;
         } else {
             // No description provided - use template as-is or create empty file
             let initial_content = if task_type != "generic" {
@@ -516,7 +511,7 @@ impl TaskBuilder {
                 String::new()
             };
 
-            fs.write_file(dest_path, &initial_content).await?;
+            crate::file_system::write_file(dest_path, &initial_content).await?;
         }
 
         println!("Created instructions file: {}", dest_path.display());
@@ -542,10 +537,9 @@ impl TaskBuilder {
     async fn check_instructions_not_empty(
         &self,
         instructions_path: &Path,
-        ctx: &AppContext,
     ) -> Result<(), Box<dyn Error>> {
         // Check if file is empty after editing
-        let content = ctx.file_system().read_file(instructions_path).await?;
+        let content = crate::file_system::read_file(instructions_path).await?;
         if content.trim().is_empty() {
             return Err("Instructions file is empty. Task creation cancelled.".into());
         }
@@ -600,9 +594,7 @@ mod tests {
             .join("tasks")
             .join(&task.id)
             .join(&task.instructions_file);
-        let content = ctx
-            .file_system()
-            .read_file(&instructions_path)
+        let content = crate::file_system::read_file(&instructions_path)
             .await
             .unwrap();
         assert!(content.contains(expected_content));
@@ -684,9 +676,7 @@ mod tests {
             .join("tasks")
             .join(&task.id)
             .join(&task.instructions_file);
-        let content = ctx
-            .file_system()
-            .read_file(&instructions_path)
+        let content = crate::file_system::read_file(&instructions_path)
             .await
             .unwrap();
         assert!(
@@ -739,8 +729,7 @@ mod tests {
         // Create instructions file
         let instructions_content = "# Instructions for task\n\nDetailed steps here.";
         let instructions_path = current_dir.join("task-instructions.md");
-        ctx.file_system()
-            .write_file(&instructions_path, instructions_content)
+        crate::file_system::write_file(&instructions_path, instructions_content)
             .await
             .unwrap();
 

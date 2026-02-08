@@ -1,5 +1,4 @@
 pub mod docker_client;
-pub mod file_system;
 pub mod git_operations;
 pub mod terminal;
 pub mod tsk_config;
@@ -19,7 +18,6 @@ use crate::docker::build_lock_manager::DockerBuildLockManager;
 use crate::git_sync::GitSyncManager;
 use crate::notifications::NotificationClient;
 use docker_client::DockerClient;
-use file_system::FileSystemOperations;
 use git_operations::GitOperations;
 use terminal::TerminalOperations;
 
@@ -38,7 +36,6 @@ pub use terminal::TerminalOperations as TerminalOperationsTrait;
 pub struct AppContext {
     docker_build_lock_manager: Arc<DockerBuildLockManager>,
     docker_client: Arc<dyn DockerClient>,
-    file_system: Arc<dyn FileSystemOperations>,
     git_operations: Arc<dyn GitOperations>,
     git_sync_manager: Arc<GitSyncManager>,
     notification_client: Arc<dyn NotificationClient>,
@@ -60,10 +57,6 @@ impl AppContext {
 
     pub fn docker_client(&self) -> Arc<dyn DockerClient> {
         Arc::clone(&self.docker_client)
-    }
-
-    pub fn file_system(&self) -> Arc<dyn FileSystemOperations> {
-        Arc::clone(&self.file_system)
     }
 
     pub fn git_operations(&self) -> Arc<dyn GitOperations> {
@@ -95,7 +88,6 @@ impl AppContext {
 pub struct AppContextBuilder {
     docker_build_lock_manager: Option<Arc<DockerBuildLockManager>>,
     docker_client: Option<Arc<dyn DockerClient>>,
-    file_system: Option<Arc<dyn FileSystemOperations>>,
     git_operations: Option<Arc<dyn GitOperations>>,
     git_sync_manager: Option<Arc<GitSyncManager>>,
     notification_client: Option<Arc<dyn NotificationClient>>,
@@ -115,7 +107,6 @@ impl AppContextBuilder {
         Self {
             docker_build_lock_manager: None,
             docker_client: None,
-            file_system: None,
             git_operations: None,
             git_sync_manager: None,
             notification_client: None,
@@ -143,15 +134,6 @@ impl AppContextBuilder {
     #[allow(dead_code)] // Used in tests
     pub fn with_docker_client(mut self, docker_client: Arc<dyn DockerClient>) -> Self {
         self.docker_client = Some(docker_client);
-        self
-    }
-
-    /// Configure the file system operations for this context
-    ///
-    /// Used in tests to provide custom file system implementations
-    #[allow(dead_code)]
-    pub fn with_file_system(mut self, file_system: Arc<dyn FileSystemOperations>) -> Self {
-        self.file_system = Some(file_system);
         self
     }
 
@@ -225,16 +207,11 @@ impl AppContextBuilder {
                 Arc::new(NoOpDockerClient)
             });
 
-            let file_system = self
-                .file_system
-                .unwrap_or_else(|| Arc::new(file_system::DefaultFileSystem));
-
             AppContext {
                 docker_build_lock_manager: self
                     .docker_build_lock_manager
                     .unwrap_or_else(|| Arc::new(DockerBuildLockManager::new())),
                 docker_client,
-                file_system,
                 git_operations: self
                     .git_operations
                     .unwrap_or_else(|| Arc::new(git_operations::DefaultGitOperations)),
@@ -272,16 +249,11 @@ impl AppContextBuilder {
                 .docker_client
                 .unwrap_or_else(|| Arc::new(docker_client::DefaultDockerClient::new()));
 
-            let file_system = self
-                .file_system
-                .unwrap_or_else(|| Arc::new(file_system::DefaultFileSystem));
-
             AppContext {
                 docker_build_lock_manager: self
                     .docker_build_lock_manager
                     .unwrap_or_else(|| Arc::new(DockerBuildLockManager::new())),
                 docker_client,
-                file_system,
                 git_operations: self
                     .git_operations
                     .unwrap_or_else(|| Arc::new(git_operations::DefaultGitOperations)),
@@ -353,30 +325,6 @@ mod tests {
         // Verify we can get the docker client back
         let client = app_context.docker_client();
         assert!(client.as_any().is::<FixedResponseDockerClient>());
-    }
-
-    #[tokio::test]
-    async fn test_app_context_with_file_system() {
-        use crate::context::file_system::DefaultFileSystem;
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().unwrap();
-        let docker_client = Arc::new(FixedResponseDockerClient::default());
-        let file_system = Arc::new(DefaultFileSystem);
-
-        let app_context = AppContext::builder()
-            .with_docker_client(docker_client)
-            .with_file_system(file_system.clone())
-            .build();
-
-        // Create a test file
-        let test_file = temp_dir.path().join("file.txt");
-        let fs = app_context.file_system();
-        fs.write_file(&test_file, "test content").await.unwrap();
-
-        // Verify we can use the file system
-        let content = fs.read_file(&test_file).await.unwrap();
-        assert_eq!(content, "test content");
     }
 
     #[test]

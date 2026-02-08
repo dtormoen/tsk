@@ -81,8 +81,7 @@ impl Command for AddCommand {
                 // Capture instructions for reuse if in edit mode
                 if self.edit {
                     first_task_instructions = Some(
-                        ctx.file_system()
-                            .read_file(&PathBuf::from(&task.instructions_file))
+                        crate::file_system::read_file(&PathBuf::from(&task.instructions_file))
                             .await?,
                     );
                 }
@@ -108,8 +107,7 @@ impl Command for AddCommand {
                         .ok_or("Unable to determine data directory")?;
                     let temp_instructions =
                         data_dir.join(format!("temp_instructions_{}.md", nanoid::nanoid!(8)));
-                    ctx.file_system()
-                        .write_file(&temp_instructions, instructions_content)
+                    crate::file_system::write_file(&temp_instructions, instructions_content)
                         .await?;
 
                     let task = builder
@@ -118,7 +116,9 @@ impl Command for AddCommand {
                         .await?;
 
                     // Clean up temporary file after task is created
-                    ctx.file_system().remove_file(&temp_instructions).await.ok();
+                    crate::file_system::remove_file(&temp_instructions)
+                        .await
+                        .ok();
 
                     task
                 } else {
@@ -553,16 +553,14 @@ mod tests {
         assert!(agent_names.contains(&"claude"));
 
         // Verify both tasks have the same instructions content
-        let instructions_1 = ctx
-            .file_system()
-            .read_file(&PathBuf::from(&tasks[0].instructions_file))
-            .await
-            .unwrap();
-        let instructions_2 = ctx
-            .file_system()
-            .read_file(&PathBuf::from(&tasks[1].instructions_file))
-            .await
-            .unwrap();
+        let instructions_1 =
+            crate::file_system::read_file(&PathBuf::from(&tasks[0].instructions_file))
+                .await
+                .unwrap();
+        let instructions_2 =
+            crate::file_system::read_file(&PathBuf::from(&tasks[1].instructions_file))
+                .await
+                .unwrap();
 
         assert_eq!(
             instructions_1, instructions_2,

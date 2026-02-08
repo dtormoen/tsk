@@ -57,9 +57,7 @@ impl RepoManager {
         let repo_path = task_dir.join("repo");
 
         // Create directories if they don't exist
-        self.ctx
-            .file_system()
-            .create_dir(&task_dir)
+        crate::file_system::create_dir(&task_dir)
             .await
             .map_err(|e| format!("Failed to create task directory: {e}"))?;
 
@@ -101,17 +99,10 @@ impl RepoManager {
         let src_modules = current_dir.join(".git/modules");
         let dst_modules = repo_path.join(".git/modules");
 
-        if self
-            .ctx
-            .file_system()
-            .exists(&src_modules)
+        if crate::file_system::exists(&src_modules)
             .await
             .unwrap_or(false)
-            && let Err(e) = self
-                .ctx
-                .file_system()
-                .copy_dir(&src_modules, &dst_modules)
-                .await
+            && let Err(e) = crate::file_system::copy_dir(&src_modules, &dst_modules).await
         {
             eprintln!(
                 "Warning: Failed to copy .git/modules: {e}. Submodules may not work correctly."
@@ -172,9 +163,7 @@ impl RepoManager {
                                 )
                             })?;
                         }
-                        self.ctx
-                            .file_system()
-                            .copy_dir(&src_path, &dst_path)
+                        crate::file_system::copy_dir(&src_path, &dst_path)
                             .await
                             .map_err(|e| {
                                 format!(
@@ -186,9 +175,7 @@ impl RepoManager {
                         // It's a symlink - need special handling
                         // Create parent directory if it doesn't exist
                         if let Some(parent) = dst_path.parent() {
-                            self.ctx
-                                .file_system()
-                                .create_dir(parent)
+                            crate::file_system::create_dir(parent)
                                 .await
                                 .map_err(|e| format!("Failed to create parent directory: {e}"))?;
                         }
@@ -264,9 +251,7 @@ impl RepoManager {
                         // It's a regular file
                         // Create parent directory if it doesn't exist
                         if let Some(parent) = dst_path.parent() {
-                            self.ctx
-                                .file_system()
-                                .create_dir(parent)
+                            crate::file_system::create_dir(parent)
                                 .await
                                 .map_err(|e| format!("Failed to create parent directory: {e}"))?;
                         }
@@ -284,9 +269,7 @@ impl RepoManager {
                         }
 
                         // Copy the file
-                        self.ctx
-                            .file_system()
-                            .copy_file(&src_path, &dst_path)
+                        crate::file_system::copy_file(&src_path, &dst_path)
                             .await
                             .map_err(|e| {
                                 format!("Failed to copy untracked file {}: {e}", src_path.display())
@@ -312,10 +295,7 @@ impl RepoManager {
         // Remove existing .tsk if present (from clone) to ensure overlay
         let tsk_src = current_dir.join(".tsk");
         let tsk_dst = repo_path.join(".tsk");
-        if self
-            .ctx
-            .file_system()
-            .exists(&tsk_src)
+        if crate::file_system::exists(&tsk_src)
             .await
             .map_err(|e| format!("Failed to check if .tsk exists: {e}"))?
         {
@@ -324,9 +304,7 @@ impl RepoManager {
                     .await
                     .map_err(|e| format!("Failed to remove existing .tsk directory: {e}"))?;
             }
-            self.ctx
-                .file_system()
-                .copy_dir(&tsk_src, &tsk_dst)
+            crate::file_system::copy_dir(&tsk_src, &tsk_dst)
                 .await
                 .map_err(|e| format!("Failed to copy .tsk directory: {e}"))?;
         }

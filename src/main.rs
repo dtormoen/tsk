@@ -7,6 +7,7 @@ mod commands;
 mod context;
 mod display;
 mod docker;
+mod file_system;
 mod git;
 mod git_sync;
 mod notifications;

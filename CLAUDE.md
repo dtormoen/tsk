@@ -166,7 +166,6 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `AppContext` provides centralized resource management with builder pattern
 - Traits in the `AppContext` should be accessed via the `AppContext`
 - Factory pattern prevents accidental operations in tests
-- `FileSystemOperations` trait abstracts all file system operations for testability
 - `GitOperations` trait abstracts all git operations for improved testability and separation of concerns
 - `TskEnv` provides XDG-compliant directory paths and runtime environment settings (editor, terminal type)
 - `TskConfig` provides user configuration loaded from tsk.toml

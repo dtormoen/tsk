@@ -241,8 +241,7 @@ mod tests {
         let task_copy_dir = tsk_env.task_dir("test-task-123");
 
         // Use the async filesystem operations to copy the repository
-        ctx.file_system()
-            .copy_dir(test_repo.path(), &task_copy_dir)
+        crate::file_system::copy_dir(test_repo.path(), &task_copy_dir)
             .await
             .unwrap();
 
