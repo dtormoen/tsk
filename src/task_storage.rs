@@ -492,6 +492,51 @@ mod tests {
         let _ = fs::remove_file(&bak_path);
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_writes_no_busy_errors() {
+        let ctx = AppContext::builder().build();
+        let tsk_env = ctx.tsk_env();
+        let data_dir = tsk_env.data_dir().to_path_buf();
+
+        let db_path = tsk_env.data_dir().join("concurrent_test.db");
+        let storage1 = Arc::new(SqliteTaskStorage::new(db_path.clone()).unwrap());
+        let storage2 = Arc::new(SqliteTaskStorage::new(db_path).unwrap());
+
+        const TASKS_PER_WRITER: usize = 50;
+
+        let spawn_writer = |storage: Arc<SqliteTaskStorage>, dir: PathBuf, writer_id: usize| {
+            tokio::spawn(async move {
+                for i in 0..TASKS_PER_WRITER {
+                    let task = Task::new(
+                        format!("w{writer_id}-t{i}"),
+                        dir.clone(),
+                        format!("task-{writer_id}-{i}"),
+                        "feat".to_string(),
+                        "instructions.md".to_string(),
+                        "claude".to_string(),
+                        format!("tsk/feat/task-{writer_id}-{i}/w{writer_id}-t{i}"),
+                        "abc123".to_string(),
+                        Some("main".to_string()),
+                        "default".to_string(),
+                        "default".to_string(),
+                        chrono::Local::now(),
+                        None,
+                        false,
+                        vec![],
+                    );
+                    storage.add_task(task).await.unwrap();
+                }
+            })
+        };
+
+        let h1 = spawn_writer(Arc::clone(&storage1), data_dir.clone(), 0);
+        let h2 = spawn_writer(Arc::clone(&storage2), data_dir, 1);
+        tokio::try_join!(h1, h2).unwrap();
+
+        let tasks = storage1.list_tasks().await.unwrap();
+        assert_eq!(tasks.len(), TASKS_PER_WRITER * 2);
+    }
+
     #[tokio::test]
     async fn test_migration_handles_invalid_json() {
         let ctx = AppContext::builder().build();

@@ -230,7 +230,8 @@ fn migrate_from_json(conn: &Connection, data_dir: &Path) {
 
 /// SQLite-backed implementation of `TaskStorage`.
 ///
-/// Stores tasks in a SQLite database with WAL mode enabled for concurrent read performance.
+/// Stores tasks in a SQLite database with WAL mode and busy_timeout for safe concurrent
+/// multi-process access.
 /// All database operations are executed via `tokio::task::spawn_blocking` to avoid blocking
 /// the async runtime.
 pub struct SqliteTaskStorage {
@@ -240,10 +241,12 @@ pub struct SqliteTaskStorage {
 impl SqliteTaskStorage {
     /// Creates a new `SqliteTaskStorage`, opening or creating the database at `db_path`.
     ///
-    /// Enables WAL journal mode and creates the `tasks` table and indexes if they don't exist.
+    /// Enables WAL journal mode and a 5-second busy timeout, then creates the `tasks` table
+    /// and indexes if they don't exist.
     pub fn new(db_path: PathBuf) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let conn = Connection::open(&db_path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL;")?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,

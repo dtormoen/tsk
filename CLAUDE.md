@@ -42,7 +42,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - The `.tsk` directory is copied separately for project-specific configurations
   - This ensures all tasks have a valid repository copy that exactly matches what `git status` shows
 - `TaskStorage` trait abstracts storage with `SqliteTaskStorage` implementation (`rusqlite` with bundled SQLite)
-  - WAL mode enabled for concurrent reader/writer support
+  - WAL mode and busy_timeout enabled for safe concurrent multi-process access
   - `tokio::task::spawn_blocking` bridges sync rusqlite into async
 - Automatic migration from legacy `tasks.json` to SQLite on first run (renames to `tasks.json.bak`)
 - Centralized SQLite persistence in XDG data directory (`$XDG_DATA_HOME/tsk/tasks.db`)
