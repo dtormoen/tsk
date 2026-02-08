@@ -69,6 +69,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - **Per-container network isolation**: Each agent runs in an isolated internal network that can only communicate with the proxy (see [Network Isolation Guide](docs/network-isolation.md))
 - Proxy-based URL filtering (Squid) for API-only access with domain allowlist
 - Host service access via TCP port forwarding through the proxy container (configured in `[proxy]` section of tsk.toml)
+- **Container environment variables**: All task containers receive `TSK_CONTAINER=1` and `TSK_TASK_ID=<task-id>` for in-container detection
 - Volume mounting for repository copies and agent config
 - Layered image system: base → tech-stack → agent → project
 - Automatic fallback to default project layer when specific layer is missing

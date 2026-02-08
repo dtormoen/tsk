@@ -183,6 +183,10 @@ impl DockerManager {
         let instructions_file_path = PathBuf::from(&task.instructions_file);
         let mut env_vars = self.build_proxy_env_vars();
 
+        // Add TSK environment variables for container detection
+        env_vars.push("TSK_CONTAINER=1".to_string());
+        env_vars.push(format!("TSK_TASK_ID={}", task.id));
+
         // Add agent-specific environment variables
         for (key, value) in agent.environment() {
             env_vars.push(format!("{key}={value}"));
@@ -596,6 +600,10 @@ mod tests {
         let env = task_container_config.env.as_ref().unwrap();
         assert!(env.contains(&"HTTP_PROXY=http://tsk-proxy:3128".to_string()));
         assert!(env.contains(&"HTTPS_PROXY=http://tsk-proxy:3128".to_string()));
+
+        // Check TSK environment variables
+        assert!(env.contains(&"TSK_CONTAINER=1".to_string()));
+        assert!(env.contains(&"TSK_TASK_ID=test-task-id".to_string()));
         drop(create_calls); // Release the lock
 
         let start_calls = mock_client.start_container_calls.lock().unwrap();
@@ -660,6 +668,11 @@ mod tests {
         assert_eq!(config.attach_stderr, Some(true));
         assert_eq!(config.tty, Some(true));
         assert_eq!(config.open_stdin, Some(true));
+
+        // Check TSK environment variables are present in interactive mode too
+        let env = config.env.as_ref().unwrap();
+        assert!(env.contains(&"TSK_CONTAINER=1".to_string()));
+        assert!(env.contains(&"TSK_TASK_ID=test-task-id".to_string()));
 
         // Verify attach_container was called (indirectly through start_container_calls)
         let start_calls = mock_client.start_container_calls.lock().unwrap();
