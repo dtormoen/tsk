@@ -122,7 +122,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 
 **Server Mode** (`src/server/`)
 - `TskServer`: Continuous task execution daemon
-- Signal-based lifecycle: SIGTERM/SIGINT for graceful shutdown via PID file
+- Signal-based lifecycle: SIGTERM/SIGINT for graceful shutdown (kills managed containers, marks tasks as Failed, stops idle proxy, cleans up PID file); second signal forces immediate exit
 - Parallel task execution with configurable workers (default: 1)
 - Quit-when-done mode (`-q/--quit`): Exits automatically when queue is empty
 - Sound notifications (`-s/--sound`): Play sound on task completion (platform-specific)

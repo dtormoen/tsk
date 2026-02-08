@@ -704,6 +704,10 @@ mod tests {
                 Ok(0)
             }
 
+            async fn kill_container(&self, _id: &str) -> Result<(), String> {
+                Ok(())
+            }
+
             async fn logs(
                 &self,
                 _id: &str,
@@ -1089,6 +1093,10 @@ mod tests {
 
             async fn wait_container(&self, _id: &str) -> Result<i64, String> {
                 Ok(0)
+            }
+
+            async fn kill_container(&self, _id: &str) -> Result<(), String> {
+                Ok(())
             }
 
             async fn logs(

@@ -520,6 +520,16 @@ impl TaskScheduler {
     pub async fn stop(&self) {
         *self.running.lock().await = false;
     }
+
+    /// Get a handle to the running flag, allowing external code to stop the scheduler
+    pub fn running_flag(&self) -> Arc<Mutex<bool>> {
+        self.running.clone()
+    }
+
+    /// Get a clone of the submitted task IDs Arc for external use
+    pub fn submitted_task_ids(&self) -> Arc<Mutex<HashSet<String>>> {
+        self.submitted_tasks.clone()
+    }
 }
 
 /// Job implementation for executing tasks

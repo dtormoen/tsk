@@ -25,6 +25,8 @@ pub trait DockerClient: Send + Sync {
 
     async fn wait_container(&self, id: &str) -> Result<i64, String>;
 
+    async fn kill_container(&self, id: &str) -> Result<(), String>;
+
     /// Get container logs as a single string
     ///
     /// Used by test utilities and debugging tools
@@ -266,6 +268,13 @@ impl DockerClient for DefaultDockerClient {
         } else {
             Err("Container wait stream ended unexpectedly".to_string())
         }
+    }
+
+    async fn kill_container(&self, id: &str) -> Result<(), String> {
+        self.docker
+            .kill_container(id, None::<bollard::query_parameters::KillContainerOptions>)
+            .await
+            .map_err(|e| format!("Failed to kill container: {e}"))
     }
 
     async fn logs(&self, id: &str, options: Option<LogsOptions>) -> Result<String, String> {

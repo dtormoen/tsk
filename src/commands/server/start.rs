@@ -30,11 +30,10 @@ impl Command for ServerStartCommand {
                 _ = tokio::signal::ctrl_c() => {},
                 _ = sigterm.recv() => {},
             }
-            println!("\nReceived shutdown signal...");
             shutdown_signal_clone.notify_one();
         });
 
-        // Run server until shutdown
+        // Run server until shutdown signal or natural quit
         tokio::select! {
             result = server.run() => {
                 match result {
@@ -47,7 +46,22 @@ impl Command for ServerStartCommand {
                 }
             }
             _ = shutdown_signal.notified() => {
-                server.shutdown().await;
+                println!("\nReceived shutdown signal, killing running containers...");
+                println!("Press Ctrl-C again to force exit");
+
+                // Install second signal handler for force exit
+                tokio::spawn(async {
+                    let mut sigterm =
+                        signal(SignalKind::terminate()).expect("Failed to listen for SIGTERM");
+                    tokio::select! {
+                        _ = tokio::signal::ctrl_c() => {},
+                        _ = sigterm.recv() => {},
+                    }
+                    std::process::exit(1);
+                });
+
+                // Perform graceful shutdown
+                server.graceful_shutdown().await;
             }
         }
 

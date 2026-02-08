@@ -33,6 +33,10 @@ impl DockerClient for NoOpDockerClient {
         Ok(0)
     }
 
+    async fn kill_container(&self, _id: &str) -> Result<(), String> {
+        Ok(())
+    }
+
     async fn logs(&self, _id: &str, _options: Option<LogsOptions>) -> Result<String, String> {
         Ok("".to_string())
     }
@@ -174,6 +178,10 @@ impl DockerClient for FixedResponseDockerClient {
         Ok(self.exit_code)
     }
 
+    async fn kill_container(&self, _id: &str) -> Result<(), String> {
+        Ok(())
+    }
+
     async fn logs(&self, _id: &str, _options: Option<LogsOptions>) -> Result<String, String> {
         Ok(self.logs_output.clone())
     }
@@ -280,6 +288,7 @@ pub struct TrackedDockerClient {
     pub disconnect_network_calls: Arc<Mutex<Vec<(String, String)>>>,
     pub create_internal_network_calls: Arc<Mutex<Vec<String>>>,
     pub remove_network_calls: Arc<Mutex<Vec<String>>>,
+    pub kill_container_calls: Arc<Mutex<Vec<String>>>,
 
     pub exit_code: i64,
     pub logs_output: String,
@@ -304,6 +313,7 @@ impl Default for TrackedDockerClient {
             disconnect_network_calls: Arc::new(Mutex::new(Vec::new())),
             create_internal_network_calls: Arc::new(Mutex::new(Vec::new())),
             remove_network_calls: Arc::new(Mutex::new(Vec::new())),
+            kill_container_calls: Arc::new(Mutex::new(Vec::new())),
             exit_code: 0,
             logs_output: "Container logs".to_string(),
             network_exists: true,
@@ -376,6 +386,14 @@ impl DockerClient for TrackedDockerClient {
         } else {
             Ok(self.exit_code)
         }
+    }
+
+    async fn kill_container(&self, id: &str) -> Result<(), String> {
+        self.kill_container_calls
+            .lock()
+            .unwrap()
+            .push(id.to_string());
+        Ok(())
     }
 
     async fn logs(&self, id: &str, options: Option<LogsOptions>) -> Result<String, String> {
