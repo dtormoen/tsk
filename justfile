@@ -20,10 +20,17 @@ lint:
     cargo clippy --all-targets -- -D warnings
     cargo clippy -- -D warnings
 
-# Format, lint, test, and verify the binary starts (run before committing)
+# Format, lint, test, verify the binary starts, and run network isolation tests in TSK containers (run before committing)
 precommit: format lint test
     # Check that the command starts
     cargo run -- --help > /dev/null
+    # Run network isolation tests if inside a TSK container
+    if [ "${TSK_CONTAINER:-}" = "1" ]; then \
+        echo "Running network isolation tests..."; \
+        ./scripts/network-isolation-test.sh; \
+    else \
+        echo "Skipping network isolation tests (not in TSK container)"; \
+    fi
 
 # Upgrade all dependencies in cargo.toml
 upgrade-deps:

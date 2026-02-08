@@ -33,6 +33,10 @@ TIMEOUT=5
 # Test result tracking
 declare -a FAILED_TESTS=()
 
+# Temp file for capturing test output
+_TEST_OUTPUT=$(mktemp)
+trap 'rm -f "$_TEST_OUTPUT"' EXIT
+
 # Print functions
 print_header() {
     echo -e "\n${BLUE}═══════════════════════════════════════════════════════════════${NC}"
@@ -59,6 +63,16 @@ print_fail() {
 
 print_info() {
     echo -e "  ${BLUE}[INFO]${NC} $1"
+}
+
+# Run a test, suppressing output if it passes
+# Usage: run_test <test_function> [args...]
+run_test() {
+    local before_failed=$TESTS_FAILED
+    "$@" > "$_TEST_OUTPUT" 2>&1
+    if [ "$TESTS_FAILED" -gt "$before_failed" ]; then
+        cat "$_TEST_OUTPUT"
+    fi
 }
 
 # Test if a command exists
@@ -464,162 +478,162 @@ main() {
     # =========================================================================
     # SECTION 1: HTTP/HTTPS Through Proxy - Allowed Domains
     # =========================================================================
-    print_header "HTTP/HTTPS Through Proxy - Allowed Domains (should succeed)"
+    print_header "HTTP/HTTPS Through Proxy - Allowed Domains (should succeed)" > /dev/null
 
-    test_http_proxy "https://api.anthropic.com" "pass" "Anthropic API"
-    test_http_proxy "https://api.openai.com" "pass" "OpenAI API"
-    test_http_proxy "https://pypi.org" "pass" "PyPI"
-    test_http_proxy "https://index.crates.io" "pass" "crates.io index"
-    test_http_proxy "https://registry.npmjs.org" "pass" "npm registry"
-    test_http_proxy "https://proxy.golang.org" "pass" "Go proxy"
-    test_http_proxy "https://repo.maven.apache.org/maven2/" "pass" "Maven Central"
+    run_test test_http_proxy "https://api.anthropic.com" "pass" "Anthropic API"
+    run_test test_http_proxy "https://api.openai.com" "pass" "OpenAI API"
+    run_test test_http_proxy "https://pypi.org" "pass" "PyPI"
+    run_test test_http_proxy "https://index.crates.io" "pass" "crates.io index"
+    run_test test_http_proxy "https://registry.npmjs.org" "pass" "npm registry"
+    run_test test_http_proxy "https://proxy.golang.org" "pass" "Go proxy"
+    run_test test_http_proxy "https://repo.maven.apache.org/maven2/" "pass" "Maven Central"
 
     # =========================================================================
     # SECTION 2: HTTP/HTTPS Through Proxy - Blocked Domains
     # =========================================================================
-    print_header "HTTP/HTTPS Through Proxy - Blocked Domains (should fail)"
+    print_header "HTTP/HTTPS Through Proxy - Blocked Domains (should fail)" > /dev/null
 
-    test_http_proxy "https://www.google.com" "fail" "Google (blocked)"
-    test_http_proxy "https://github.com" "fail" "GitHub (blocked)"
-    test_http_proxy "https://www.example.com" "fail" "example.com (blocked)"
-    test_http_proxy "https://httpbin.org/get" "fail" "httpbin.org (blocked)"
-    test_http_proxy "https://icanhazip.com" "fail" "icanhazip.com (blocked)"
-    test_http_proxy "https://ifconfig.me" "fail" "ifconfig.me (blocked)"
+    run_test test_http_proxy "https://www.google.com" "fail" "Google (blocked)"
+    run_test test_http_proxy "https://github.com" "fail" "GitHub (blocked)"
+    run_test test_http_proxy "https://www.example.com" "fail" "example.com (blocked)"
+    run_test test_http_proxy "https://httpbin.org/get" "fail" "httpbin.org (blocked)"
+    run_test test_http_proxy "https://icanhazip.com" "fail" "icanhazip.com (blocked)"
+    run_test test_http_proxy "https://ifconfig.me" "fail" "ifconfig.me (blocked)"
 
     # =========================================================================
     # SECTION 3: Direct HTTP/HTTPS (Bypassing Proxy)
     # =========================================================================
-    print_header "Direct HTTP/HTTPS Connections (bypassing proxy - should fail)"
+    print_header "Direct HTTP/HTTPS Connections (bypassing proxy - should fail)" > /dev/null
 
-    test_direct_http "http://www.google.com" "Direct HTTP to Google"
-    test_direct_http "https://www.google.com" "Direct HTTPS to Google"
-    test_direct_http "http://api.anthropic.com" "Direct HTTP to Anthropic"
-    test_direct_http "https://api.anthropic.com" "Direct HTTPS to Anthropic"
+    run_test test_direct_http "http://www.google.com" "Direct HTTP to Google"
+    run_test test_direct_http "https://www.google.com" "Direct HTTPS to Google"
+    run_test test_direct_http "http://api.anthropic.com" "Direct HTTP to Anthropic"
+    run_test test_direct_http "https://api.anthropic.com" "Direct HTTPS to Anthropic"
 
     # =========================================================================
     # SECTION 4: Direct TCP Connections
     # =========================================================================
-    print_header "Direct TCP Connections (should fail)"
+    print_header "Direct TCP Connections (should fail)" > /dev/null
 
-    test_direct_connection "google.com" "80" "Direct TCP to google.com:80"
-    test_direct_connection "google.com" "443" "Direct TCP to google.com:443"
-    test_direct_connection "8.8.8.8" "53" "Direct TCP to Google DNS (8.8.8.8:53)"
+    run_test test_direct_connection "google.com" "80" "Direct TCP to google.com:80"
+    run_test test_direct_connection "google.com" "443" "Direct TCP to google.com:443"
+    run_test test_direct_connection "8.8.8.8" "53" "Direct TCP to Google DNS (8.8.8.8:53)"
 
     # =========================================================================
     # SECTION 5: Direct IP Connections (bypassing DNS)
     # =========================================================================
-    print_header "Direct IP Connections (should fail)"
+    print_header "Direct IP Connections (should fail)" > /dev/null
 
     # Google's IP (one of many)
-    test_direct_ip_connection "142.250.80.46" "80" "Direct to Google IP:80"
-    test_direct_ip_connection "142.250.80.46" "443" "Direct to Google IP:443"
+    run_test test_direct_ip_connection "142.250.80.46" "80" "Direct to Google IP:80"
+    run_test test_direct_ip_connection "142.250.80.46" "443" "Direct to Google IP:443"
 
     # =========================================================================
     # SECTION 6: UDP/DNS Tests
     # =========================================================================
-    print_header "UDP/DNS Tests"
+    print_header "UDP/DNS Tests" > /dev/null
 
     # Test if we can reach external DNS servers (UDP traffic)
-    test_external_dns "8.8.8.8" "External DNS query to Google (8.8.8.8)"
-    test_external_dns "1.1.1.1" "External DNS query to Cloudflare (1.1.1.1)"
+    run_test test_external_dns "8.8.8.8" "External DNS query to Google (8.8.8.8)"
+    run_test test_external_dns "1.1.1.1" "External DNS query to Cloudflare (1.1.1.1)"
 
     # Direct DNS resolution test (should fail - proxy handles DNS for HTTP requests)
-    test_dns_resolution "google.com" "Direct DNS resolution for google.com"
+    run_test test_dns_resolution "google.com" "Direct DNS resolution for google.com"
 
     # =========================================================================
     # SECTION 7: SSH Connections
     # =========================================================================
-    print_header "SSH Connection Tests (should fail)"
+    print_header "SSH Connection Tests (should fail)" > /dev/null
 
-    test_ssh_connection "github.com" "SSH to github.com"
-    test_ssh_connection "gitlab.com" "SSH to gitlab.com"
+    run_test test_ssh_connection "github.com" "SSH to github.com"
+    run_test test_ssh_connection "gitlab.com" "SSH to gitlab.com"
 
     # =========================================================================
     # SECTION 8: ICMP/Ping Tests
     # =========================================================================
-    print_header "ICMP/Ping Tests (should fail - NET_RAW dropped)"
+    print_header "ICMP/Ping Tests (should fail - NET_RAW dropped)" > /dev/null
 
-    test_ping "8.8.8.8" "Ping to 8.8.8.8"
-    test_ping "google.com" "Ping to google.com"
+    run_test test_ping "8.8.8.8" "Ping to 8.8.8.8"
+    run_test test_ping "google.com" "Ping to google.com"
 
     # =========================================================================
     # SECTION 9: Raw Socket Tests
     # =========================================================================
-    print_header "Raw Socket Tests (should fail - NET_RAW dropped)"
+    print_header "Raw Socket Tests (should fail - NET_RAW dropped)" > /dev/null
 
-    test_raw_socket
+    run_test test_raw_socket
 
     # =========================================================================
     # SECTION 10: Non-Standard Port Tests
     # =========================================================================
-    print_header "Non-Standard Port Tests (should fail)"
+    print_header "Non-Standard Port Tests (should fail)" > /dev/null
 
-    test_nonstandard_port "http://portquiz.net:8080" "HTTP on port 8080"
-    test_nonstandard_port "https://example.com:8443" "HTTPS on port 8443"
+    run_test test_nonstandard_port "http://portquiz.net:8080" "HTTP on port 8080"
+    run_test test_nonstandard_port "https://example.com:8443" "HTTPS on port 8443"
 
     # =========================================================================
     # SECTION 11: Localhost/NO_PROXY Tests (informational)
     # =========================================================================
-    print_header "Localhost Tests (informational)"
+    print_header "Localhost Tests (informational)" > /dev/null
 
-    test_localhost_access
+    run_test test_localhost_access
 
     # =========================================================================
     # SECTION 12: IPv6 Tests (should fail)
     # =========================================================================
-    print_header "IPv6 Connectivity Tests (should fail)"
+    print_header "IPv6 Connectivity Tests (should fail)" > /dev/null
 
     # Google's IPv6 address
-    test_ipv6_connection "2607:f8b0:4004:800::200e" "80" "IPv6 to Google"
+    run_test test_ipv6_connection "2607:f8b0:4004:800::200e" "80" "IPv6 to Google"
     # Cloudflare's IPv6
-    test_ipv6_connection "2606:4700:4700::1111" "443" "IPv6 to Cloudflare"
+    run_test test_ipv6_connection "2606:4700:4700::1111" "443" "IPv6 to Cloudflare"
 
     # =========================================================================
     # SECTION 13: Cloud Metadata Tests (should fail - critical)
     # =========================================================================
-    print_header "Cloud Metadata Endpoint Tests (should fail - CRITICAL)"
+    print_header "Cloud Metadata Endpoint Tests (should fail - CRITICAL)" > /dev/null
 
     # AWS metadata endpoint
-    test_cloud_metadata "http://169.254.169.254/latest/meta-data/" "AWS metadata endpoint"
+    run_test test_cloud_metadata "http://169.254.169.254/latest/meta-data/" "AWS metadata endpoint"
     # GCP metadata endpoint
-    test_cloud_metadata "http://metadata.google.internal/computeMetadata/v1/" "GCP metadata endpoint"
+    run_test test_cloud_metadata "http://metadata.google.internal/computeMetadata/v1/" "GCP metadata endpoint"
     # Azure metadata endpoint
-    test_cloud_metadata "http://169.254.169.254/metadata/instance" "Azure metadata endpoint"
+    run_test test_cloud_metadata "http://169.254.169.254/metadata/instance" "Azure metadata endpoint"
     # Link-local range (general)
-    test_direct_ip_connection "169.254.169.254" "80" "Link-local metadata IP"
+    run_test test_direct_ip_connection "169.254.169.254" "80" "Link-local metadata IP"
 
     # =========================================================================
     # SECTION 14: Local Network Tests (should fail)
     # =========================================================================
-    print_header "Local Network Access Tests (should fail)"
+    print_header "Local Network Access Tests (should fail)" > /dev/null
 
     # Common local network ranges - test a sample IP from each
-    test_local_network "192.168.1.1" "80" "Local network 192.168.x.x"
-    test_local_network "10.0.0.1" "80" "Local network 10.x.x.x"
-    test_local_network "172.16.0.1" "80" "Local network 172.16.x.x"
+    run_test test_local_network "192.168.1.1" "80" "Local network 192.168.x.x"
+    run_test test_local_network "10.0.0.1" "80" "Local network 10.x.x.x"
+    run_test test_local_network "172.16.0.1" "80" "Local network 172.16.x.x"
 
     # =========================================================================
     # SECTION 15: Container-to-Container Tests
     # =========================================================================
-    print_header "Container-to-Container Communication Tests"
+    print_header "Container-to-Container Communication Tests" > /dev/null
 
     # Proxy should be reachable on port 3128 (needed for HTTP proxy)
-    test_container_access "tsk-proxy" "3128" "Proxy container on port 3128" "pass"
+    run_test test_container_access "tsk-proxy" "3128" "Proxy container on port 3128" "pass"
     # But other ports on proxy should not be accessible
-    test_container_access "tsk-proxy" "22" "Proxy container on port 22 (SSH)" "fail"
-    test_container_access "tsk-proxy" "80" "Proxy container on port 80 (HTTP)" "fail"
+    run_test test_container_access "tsk-proxy" "22" "Proxy container on port 22 (SSH)" "fail"
+    run_test test_container_access "tsk-proxy" "80" "Proxy container on port 80 (HTTP)" "fail"
 
     # Test unconfigured host service ports (should fail)
     # Port 9999 should not have a socat forwarder unless explicitly configured
-    test_unconfigured_host_port "9999" "Unconfigured host service port 9999"
+    run_test test_unconfigured_host_port "9999" "Unconfigured host service port 9999"
 
     # =========================================================================
     # SECTION 16: WebSocket Tests (should fail on blocked domains)
     # =========================================================================
-    print_header "WebSocket Tests (should fail on blocked domains)"
+    print_header "WebSocket Tests (should fail on blocked domains)" > /dev/null
 
-    test_websocket "https://echo.websocket.org" "WebSocket to echo.websocket.org"
-    test_websocket "https://socketsbay.com/wss/v2/1/demo/" "WebSocket to socketsbay.com"
+    run_test test_websocket "https://echo.websocket.org" "WebSocket to echo.websocket.org"
+    run_test test_websocket "https://socketsbay.com/wss/v2/1/demo/" "WebSocket to socketsbay.com"
 
     # =========================================================================
     # FINAL RESULTS
