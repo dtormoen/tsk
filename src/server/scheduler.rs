@@ -33,7 +33,7 @@ enum ParentStatus {
 /// - Preventing double-scheduling of tasks
 pub struct TaskScheduler {
     context: Arc<AppContext>,
-    storage: Arc<Mutex<Box<dyn TaskStorage>>>,
+    storage: Arc<dyn TaskStorage>,
     running: Arc<Mutex<bool>>,
     warmup_failure_wait_until: Arc<Mutex<Option<Instant>>>,
     worker_pool: Option<Arc<WorkerPool<TaskJob>>>,
@@ -66,7 +66,7 @@ impl TaskScheduler {
     /// Create a new task scheduler
     pub fn new(
         context: Arc<AppContext>,
-        storage: Arc<Mutex<Box<dyn TaskStorage>>>,
+        storage: Arc<dyn TaskStorage>,
         quit_when_done: bool,
         quit_signal: Arc<tokio::sync::Notify>,
     ) -> Self {
@@ -165,13 +165,12 @@ impl TaskScheduler {
             .filter(|t| t.parent_ids.contains(&failed_task_id.to_string()))
             .collect();
 
-        let storage = self.storage.lock().await;
         for task in child_tasks {
             println!(
                 "Marking task {} as failed due to parent task failure",
                 task.id
             );
-            storage
+            self.storage
                 .update_task_status(
                     &task.id,
                     TaskStatus::Failed,
@@ -238,9 +237,7 @@ impl TaskScheduler {
 
         // Check if we should quit immediately due to empty queue
         if self.quit_when_done {
-            let storage = self.storage.lock().await;
-            let tasks = storage.list_tasks().await?;
-            drop(storage);
+            let tasks = self.storage.list_tasks().await?;
 
             let queued_count = tasks
                 .iter()
@@ -287,9 +284,7 @@ impl TaskScheduler {
                             } else if let Some(msg) = &result.message {
                                 eprintln!("Task failed: {} - {}", result.job_id, msg);
                                 // Handle cascading failures for child tasks
-                                let storage = self.storage.lock().await;
-                                let tasks = storage.list_tasks().await?;
-                                drop(storage);
+                                let tasks = self.storage.list_tasks().await?;
                                 self.fail_child_tasks(&result.job_id, &tasks).await?;
                             }
                         }
@@ -328,9 +323,7 @@ impl TaskScheduler {
                 && pool.available_workers() > 0
             {
                 // Look for a queued task that isn't already submitted and has a ready parent
-                let storage = self.storage.lock().await;
-                let tasks = storage.list_tasks().await?;
-                drop(storage);
+                let tasks = self.storage.list_tasks().await?;
 
                 let submitted = self.submitted_tasks.lock().await.clone();
 
@@ -347,8 +340,8 @@ impl TaskScheduler {
                                 "Task {} has missing parent {}, marking as failed",
                                 task.id, pid
                             );
-                            let storage = self.storage.lock().await;
-                            let _ = storage
+                            let _ = self
+                                .storage
                                 .update_task_status(
                                     &task.id,
                                     TaskStatus::Failed,
@@ -361,8 +354,8 @@ impl TaskScheduler {
                         Some(ParentStatus::Failed(msg)) => {
                             // Mark task as failed - parent failed (cascade)
                             eprintln!("Task {} has failed parent, marking as failed", task.id);
-                            let storage = self.storage.lock().await;
-                            let _ = storage
+                            let _ = self
+                                .storage
                                 .update_task_status(
                                     &task.id,
                                     TaskStatus::Failed,
@@ -377,9 +370,7 @@ impl TaskScheduler {
                 }
 
                 // Re-fetch tasks after potential status changes
-                let storage = self.storage.lock().await;
-                let tasks = storage.list_tasks().await?;
-                drop(storage);
+                let tasks = self.storage.list_tasks().await?;
 
                 // Find the first task ready for scheduling
                 let queued_task = tasks
@@ -401,8 +392,8 @@ impl TaskScheduler {
                             match self.prepare_child_task(&task, &parent_task).await {
                                 Ok(prepared_task) => {
                                     // Update the task in storage with the prepared fields
-                                    let storage = self.storage.lock().await;
-                                    if let Err(e) = storage.update_task(prepared_task.clone()).await
+                                    if let Err(e) =
+                                        self.storage.update_task(prepared_task.clone()).await
                                     {
                                         eprintln!(
                                             "Failed to update prepared task in storage: {}",
@@ -410,13 +401,12 @@ impl TaskScheduler {
                                         );
                                         continue;
                                     }
-                                    drop(storage);
                                     task = prepared_task;
                                 }
                                 Err(e) => {
                                     eprintln!("Failed to prepare child task {}: {}", task.id, e);
-                                    let storage = self.storage.lock().await;
-                                    let _ = storage
+                                    let _ = self
+                                        .storage
                                         .update_task_status(
                                             &task.id,
                                             TaskStatus::Failed,
@@ -438,8 +428,7 @@ impl TaskScheduler {
                     running_task.status = TaskStatus::Running;
                     running_task.started_at = Some(chrono::Utc::now());
 
-                    let storage = self.storage.lock().await;
-                    storage
+                    self.storage
                         .update_task_status(
                             &running_task.id,
                             TaskStatus::Running,
@@ -448,7 +437,6 @@ impl TaskScheduler {
                             None,
                         )
                         .await?;
-                    drop(storage);
 
                     // Mark task as submitted
                     self.submitted_tasks
@@ -475,8 +463,8 @@ impl TaskScheduler {
                             self.submitted_tasks.lock().await.remove(&task.id);
 
                             // Revert task status
-                            let storage = self.storage.lock().await;
-                            let _ = storage
+                            let _ = self
+                                .storage
                                 .update_task_status(&task.id, TaskStatus::Queued, None, None, None)
                                 .await;
                         }
@@ -486,8 +474,8 @@ impl TaskScheduler {
                             self.submitted_tasks.lock().await.remove(&task.id);
 
                             // Revert task status
-                            let storage = self.storage.lock().await;
-                            let _ = storage
+                            let _ = self
+                                .storage
                                 .update_task_status(&task.id, TaskStatus::Queued, None, None, None)
                                 .await;
                         }
@@ -498,9 +486,7 @@ impl TaskScheduler {
             // Check if we should quit when done
             if self.quit_when_done {
                 // Get current task list
-                let storage = self.storage.lock().await;
-                let tasks = storage.list_tasks().await?;
-                drop(storage);
+                let tasks = self.storage.list_tasks().await?;
 
                 // Count queued tasks
                 let queued_count = tasks
@@ -542,7 +528,7 @@ impl TaskScheduler {
 pub struct TaskJob {
     task: Task,
     context: Arc<AppContext>,
-    storage: Arc<Mutex<Box<dyn TaskStorage>>>,
+    storage: Arc<dyn TaskStorage>,
     warmup_failure_wait_until: Arc<Mutex<Option<Instant>>>,
 }
 
@@ -573,8 +559,8 @@ impl AsyncJob for TaskJob {
                     *self.warmup_failure_wait_until.lock().await = Some(wait_until);
 
                     // Reset task status to QUEUED so it can be retried
-                    let storage_lock = self.storage.lock().await;
-                    if let Err(e) = storage_lock
+                    if let Err(e) = self
+                        .storage
                         .update_task_status(
                             &self.task.id,
                             TaskStatus::Queued,
@@ -636,7 +622,7 @@ mod tests {
     /// Polls the storage periodically to check if the condition is met.
     /// Returns true if condition met, false if timeout reached.
     async fn wait_for_condition<F>(
-        storage: &Arc<Mutex<Box<dyn TaskStorage>>>,
+        storage: &Arc<dyn TaskStorage>,
         timeout_duration: Duration,
         mut condition: F,
     ) -> bool
@@ -646,9 +632,7 @@ mod tests {
         let deadline = Instant::now() + timeout_duration;
 
         while Instant::now() < deadline {
-            let storage_guard = storage.lock().await;
-            let tasks = storage_guard.list_tasks().await.unwrap();
-            drop(storage_guard);
+            let tasks = storage.list_tasks().await.unwrap();
 
             if condition(&tasks) {
                 return true;
@@ -700,7 +684,7 @@ mod tests {
     #[tokio::test]
     async fn test_scheduler_lifecycle() {
         let ctx = AppContext::builder().build();
-        let storage = Arc::new(Mutex::new(get_task_storage(ctx.tsk_env())));
+        let storage = get_task_storage(ctx.tsk_env());
 
         let quit_signal = Arc::new(tokio::sync::Notify::new());
         let mut scheduler = TaskScheduler::new(Arc::new(ctx), storage, false, quit_signal);
@@ -737,7 +721,6 @@ mod tests {
         let storage = get_task_storage(tsk_env);
         storage.add_task(task1.clone()).await.unwrap();
 
-        let storage = Arc::new(Mutex::new(storage));
         let quit_signal = Arc::new(tokio::sync::Notify::new());
         let mut scheduler = TaskScheduler::new(Arc::new(ctx), storage.clone(), false, quit_signal);
 
@@ -762,10 +745,7 @@ mod tests {
         );
 
         // Add second task to verify scheduler continues processing
-        {
-            let storage_guard = storage.lock().await;
-            storage_guard.add_task(task2.clone()).await.unwrap();
-        }
+        storage.add_task(task2.clone()).await.unwrap();
 
         // Wait for second task to start processing (shows scheduler isn't deadlocked)
         let task2_started = wait_for_condition(&storage, Duration::from_secs(5), |tasks| {
@@ -792,7 +772,7 @@ mod tests {
         // Test that the scheduler properly handles warmup failure wait periods
         let ctx = Arc::new(AppContext::builder().build());
 
-        let storage = Arc::new(Mutex::new(get_task_storage(ctx.tsk_env())));
+        let storage = get_task_storage(ctx.tsk_env());
 
         let quit_signal = Arc::new(tokio::sync::Notify::new());
         let scheduler = TaskScheduler::new(ctx, storage, false, quit_signal);
@@ -829,7 +809,7 @@ mod tests {
     async fn test_scheduler_prevents_double_scheduling() {
         // Test that the scheduler doesn't schedule the same task twice
         let ctx = AppContext::builder().build();
-        let storage = Arc::new(Mutex::new(get_task_storage(ctx.tsk_env())));
+        let storage = get_task_storage(ctx.tsk_env());
         let quit_signal = Arc::new(tokio::sync::Notify::new());
         let scheduler = TaskScheduler::new(Arc::new(ctx), storage, false, quit_signal);
 
@@ -1338,12 +1318,11 @@ mod tests {
         storage.add_task(parent_task.clone()).await.unwrap();
         storage.add_task(child_task.clone()).await.unwrap();
 
-        let storage = Arc::new(Mutex::new(storage));
         let quit_signal = Arc::new(tokio::sync::Notify::new());
         let scheduler = TaskScheduler::new(Arc::new(ctx), storage.clone(), false, quit_signal);
 
         // Get all tasks
-        let tasks = storage.lock().await.list_tasks().await.unwrap();
+        let tasks = storage.list_tasks().await.unwrap();
 
         // Fail child tasks
         scheduler
@@ -1352,8 +1331,7 @@ mod tests {
             .unwrap();
 
         // Verify child task is marked as failed
-        let storage_guard = storage.lock().await;
-        let child = storage_guard.get_task("child-1").await.unwrap().unwrap();
+        let child = storage.get_task("child-1").await.unwrap().unwrap();
         assert_eq!(
             child.status,
             TaskStatus::Failed,

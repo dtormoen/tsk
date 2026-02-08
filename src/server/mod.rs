@@ -17,7 +17,7 @@ use tokio::sync::Mutex;
 /// Main TSK server that handles task management
 pub struct TskServer {
     app_context: Arc<AppContext>,
-    storage: Arc<Mutex<Box<dyn TaskStorage>>>,
+    storage: Arc<dyn TaskStorage>,
     socket_path: PathBuf,
     shutdown_signal: Arc<Mutex<bool>>,
     quit_signal: Arc<tokio::sync::Notify>,
@@ -32,7 +32,6 @@ impl TskServer {
         let tsk_env = app_context.tsk_env();
         let socket_path = tsk_env.socket_path();
         let storage = get_task_storage(tsk_env.clone());
-        let storage = Arc::new(Mutex::new(storage));
 
         // Create the quit signal for scheduler-to-server communication
         let quit_signal = Arc::new(tokio::sync::Notify::new());
@@ -146,7 +145,7 @@ impl TskServer {
 async fn handle_client(
     stream: UnixStream,
     _app_context: Arc<AppContext>,
-    storage: Arc<Mutex<Box<dyn TaskStorage>>>,
+    storage: Arc<dyn TaskStorage>,
     shutdown_signal: Arc<Mutex<bool>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (reader, mut writer) = stream.into_split();
@@ -166,40 +165,31 @@ async fn handle_client(
 
     // Process request
     let response = match request {
-        Request::AddTask { repo_path: _, task } => {
-            let storage = storage.lock().await;
-            match storage.add_task(*task).await {
-                Ok(_) => Response::Success {
-                    message: "Task added successfully".to_string(),
-                },
-                Err(e) => Response::Error {
-                    message: e.to_string(),
-                },
-            }
-        }
-        Request::ListTasks => {
-            let storage = storage.lock().await;
-            match storage.list_tasks().await {
-                Ok(tasks) => Response::TaskList { tasks },
-                Err(e) => Response::Error {
-                    message: e.to_string(),
-                },
-            }
-        }
-        Request::GetStatus { task_id } => {
-            let storage = storage.lock().await;
-            match storage.get_task(&task_id).await {
-                Ok(Some(task)) => Response::TaskStatus {
-                    status: task.status,
-                },
-                Ok(None) => Response::Error {
-                    message: "Task not found".to_string(),
-                },
-                Err(e) => Response::Error {
-                    message: e.to_string(),
-                },
-            }
-        }
+        Request::AddTask { repo_path: _, task } => match storage.add_task(*task).await {
+            Ok(_) => Response::Success {
+                message: "Task added successfully".to_string(),
+            },
+            Err(e) => Response::Error {
+                message: e.to_string(),
+            },
+        },
+        Request::ListTasks => match storage.list_tasks().await {
+            Ok(tasks) => Response::TaskList { tasks },
+            Err(e) => Response::Error {
+                message: e.to_string(),
+            },
+        },
+        Request::GetStatus { task_id } => match storage.get_task(&task_id).await {
+            Ok(Some(task)) => Response::TaskStatus {
+                status: task.status,
+            },
+            Ok(None) => Response::Error {
+                message: "Task not found".to_string(),
+            },
+            Err(e) => Response::Error {
+                message: e.to_string(),
+            },
+        },
         Request::Shutdown => {
             *shutdown_signal.lock().await = true;
             Response::Success {
@@ -237,7 +227,6 @@ mod tests {
         // that don't send any data (like is_server_available checks)
         let app_context = create_test_context();
         let storage = get_task_storage(app_context.tsk_env());
-        let storage = Arc::new(Mutex::new(storage));
         let shutdown_signal = Arc::new(Mutex::new(false));
 
         // Create a pair of connected Unix sockets
@@ -258,7 +247,6 @@ mod tests {
         // This test verifies that valid requests still work correctly
         let app_context = create_test_context();
         let storage = get_task_storage(app_context.tsk_env());
-        let storage = Arc::new(Mutex::new(storage));
         let shutdown_signal = Arc::new(Mutex::new(false));
 
         // Create a pair of connected Unix sockets

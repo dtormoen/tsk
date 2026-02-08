@@ -29,11 +29,11 @@ pub trait TaskStorage: Send + Sync {
 }
 
 // Factory function for getting task storage
-pub fn get_task_storage(tsk_env: Arc<TskEnv>) -> Box<dyn TaskStorage> {
+pub fn get_task_storage(tsk_env: Arc<TskEnv>) -> Arc<dyn TaskStorage> {
     let db_path = tsk_env.tasks_db();
     let storage = crate::sqlite_task_storage::SqliteTaskStorage::new(db_path)
         .expect("Failed to initialize SQLite task storage");
-    Box::new(storage)
+    Arc::new(storage)
 }
 
 #[cfg(test)]

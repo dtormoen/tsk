@@ -13,7 +13,7 @@ use crate::context::tsk_env::TskEnv;
 /// It handles task persistence through TaskStorage and delegates execution to TaskRunner.
 pub struct TaskManager {
     task_runner: TaskRunner,
-    task_storage: Box<dyn TaskStorage>,
+    task_storage: Arc<dyn TaskStorage>,
     file_system: Arc<dyn FileSystemOperations>,
 }
 
