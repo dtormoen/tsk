@@ -131,35 +131,11 @@ impl Command for AddCommand {
                 }
             };
 
-            // Store the task (via server or direct storage)
-            let client = ctx.tsk_client();
-
-            if client.is_server_available().await {
-                // Server is available, use it
-                match client.add_task(repo_root.clone(), task.clone()).await {
-                    Ok(_) => {
-                        // Task added successfully
-                    }
-                    Err(_) => {
-                        eprintln!("Failed to add task via server");
-                        eprintln!("Falling back to direct file write...");
-
-                        // Fall back to direct storage
-                        let storage = get_task_storage(ctx.tsk_env());
-                        storage
-                            .add_task(task.clone())
-                            .await
-                            .map_err(|e| e as Box<dyn Error>)?;
-                    }
-                }
-            } else {
-                // Server not available, write directly
-                let storage = get_task_storage(ctx.tsk_env());
-                storage
-                    .add_task(task.clone())
-                    .await
-                    .map_err(|e| e as Box<dyn Error>)?;
-            }
+            let storage = get_task_storage(ctx.tsk_env());
+            storage
+                .add_task(task.clone())
+                .await
+                .map_err(|e| e as Box<dyn Error>)?;
 
             created_tasks.push(task);
         }
@@ -206,7 +182,6 @@ mod tests {
     use super::*;
 
     fn create_test_context() -> AppContext {
-        // Automatically gets test defaults: NoOpDockerClient, NoOpTskClient, etc.
         AppContext::builder().build()
     }
 

@@ -1,17 +1,9 @@
-use crate::task::{Task, TaskStatus};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 /// Request messages that can be sent to the TSK server
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Request {
-    /// Add a new task to the queue
-    AddTask { repo_path: PathBuf, task: Box<Task> },
-    /// List all tasks
-    ListTasks,
-    /// Get the status of a specific task
-    GetStatus { task_id: String },
     /// Shutdown the server
     Shutdown,
 }
@@ -24,10 +16,6 @@ pub enum Response {
     Success { message: String },
     /// Error occurred
     Error { message: String },
-    /// List of tasks
-    TaskList { tasks: Vec<Task> },
-    /// Status of a specific task
-    TaskStatus { status: TaskStatus },
 }
 
 impl Request {
@@ -76,13 +64,12 @@ mod tests {
 
     #[test]
     fn test_request_serialization() {
-        let request = Request::ListTasks;
+        let request = Request::Shutdown;
         let json = request.to_json().unwrap();
         let parsed: Request = Request::from_json(&json).unwrap();
 
         match parsed {
-            Request::ListTasks => (),
-            _ => panic!("Unexpected request type"),
+            Request::Shutdown => (),
         }
     }
 

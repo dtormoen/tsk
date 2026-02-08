@@ -369,7 +369,6 @@ mod tests {
         // Verify we can use the TSK client
         let client = app_context.tsk_client();
         assert!(!client.is_server_available().await);
-        assert!(client.list_tasks().await.unwrap().is_empty());
     }
 
     #[tokio::test]

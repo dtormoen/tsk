@@ -1,6 +1,5 @@
 use crate::context::tsk_env::TskEnv;
 use crate::server::protocol::{Request, Response};
-use crate::task::{Task, TaskStatus};
 use async_trait::async_trait;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -14,25 +13,6 @@ use tokio::time::timeout;
 pub trait TskClient: Send + Sync {
     /// Check if the server is available
     async fn is_server_available(&self) -> bool;
-
-    /// Add a task to the server
-    async fn add_task(
-        &self,
-        repo_path: PathBuf,
-        task: Task,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
-
-    /// List all tasks from the server
-    async fn list_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error + Send + Sync>>;
-
-    /// Get the status of a specific task
-    ///
-    /// Used by test utilities and debugging tools
-    #[allow(dead_code)] // Used by test implementations
-    async fn get_task_status(
-        &self,
-        task_id: String,
-    ) -> Result<TaskStatus, Box<dyn std::error::Error + Send + Sync>>;
 
     /// Shutdown the server
     async fn shutdown_server(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
@@ -109,52 +89,6 @@ impl TskClient for DefaultTskClient {
         )
     }
 
-    async fn add_task(
-        &self,
-        repo_path: PathBuf,
-        task: Task,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let request = Request::AddTask {
-            repo_path,
-            task: Box::new(task),
-        };
-        let response = self.send_request(request).await?;
-
-        match response {
-            Response::Success { message } => {
-                println!("{message}");
-                Ok(())
-            }
-            Response::Error { message } => Err(message.into()),
-            _ => Err("Unexpected response from server".into()),
-        }
-    }
-
-    async fn list_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error + Send + Sync>> {
-        let request = Request::ListTasks;
-        let response = self.send_request(request).await?;
-
-        match response {
-            Response::TaskList { tasks } => Ok(tasks),
-            Response::Error { message } => Err(message.into()),
-            _ => Err("Unexpected response from server".into()),
-        }
-    }
-
-    async fn get_task_status(
-        &self,
-        task_id: String,
-    ) -> Result<TaskStatus, Box<dyn std::error::Error + Send + Sync>> {
-        let request = Request::GetStatus { task_id };
-        let response = self.send_request(request).await?;
-
-        match response {
-            Response::TaskStatus { status } => Ok(status),
-            Response::Error { message } => Err(message.into()),
-            _ => Err("Unexpected response from server".into()),
-        }
-    }
-
     async fn shutdown_server(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let request = Request::Shutdown;
         let response = self.send_request(request).await?;
@@ -165,7 +99,6 @@ impl TskClient for DefaultTskClient {
                 Ok(())
             }
             Response::Error { message } => Err(message.into()),
-            _ => Err("Unexpected response from server".into()),
         }
     }
 }
@@ -188,19 +121,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_response_parsing_validates_empty_responses() {
-        // This test documents that the send_request method now properly handles
-        // empty responses by returning an error instead of causing a JSON parse error.
-        // The actual EOF scenario is tested implicitly when the server closes
-        // connections without sending data, which was the original bug.
+    async fn test_shutdown_when_server_not_running() {
         let ctx = AppContext::builder().build();
         let tsk_env = ctx.tsk_env();
         tsk_env.ensure_directories().unwrap();
 
         let client = DefaultTskClient::new(tsk_env);
 
-        // Attempting to list tasks when server is not running should fail gracefully
-        let result = client.list_tasks().await;
+        // Attempting to shutdown when server is not running should fail gracefully
+        let result = client.shutdown_server().await;
         assert!(result.is_err());
 
         // The error should be about connection, not JSON parsing

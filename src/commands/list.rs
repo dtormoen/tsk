@@ -13,31 +13,11 @@ pub struct ListCommand;
 #[async_trait]
 impl Command for ListCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
-        // Try to get tasks from server first
-        let client = ctx.tsk_client();
-        let tasks = if client.is_server_available().await {
-            match client.list_tasks().await {
-                Ok(tasks) => tasks,
-                Err(_) => {
-                    eprintln!("Failed to list tasks via server");
-                    eprintln!("Falling back to direct file read...");
-
-                    // Fall back to direct storage
-                    let storage = get_task_storage(ctx.tsk_env());
-                    storage
-                        .list_tasks()
-                        .await
-                        .map_err(|e| e as Box<dyn Error>)?
-                }
-            }
-        } else {
-            // Server not available, read directly
-            let storage = get_task_storage(ctx.tsk_env());
-            storage
-                .list_tasks()
-                .await
-                .map_err(|e| e as Box<dyn Error>)?
-        };
+        let storage = get_task_storage(ctx.tsk_env());
+        let tasks = storage
+            .list_tasks()
+            .await
+            .map_err(|e| e as Box<dyn Error>)?;
 
         if tasks.is_empty() {
             println!("No tasks in queue");
