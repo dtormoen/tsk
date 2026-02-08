@@ -1,23 +1,17 @@
 pub mod lifecycle;
-pub mod protocol;
 pub mod scheduler;
 pub mod worker_pool;
 
 use crate::context::AppContext;
 use crate::task_storage::get_task_storage;
 use lifecycle::ServerLifecycle;
-use protocol::{Request, Response};
 use scheduler::TaskScheduler;
-use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Mutex;
 
 /// Main TSK server that handles task management
 pub struct TskServer {
     app_context: Arc<AppContext>,
-    socket_path: PathBuf,
     shutdown_signal: Arc<Mutex<bool>>,
     quit_signal: Arc<tokio::sync::Notify>,
     scheduler: Arc<Mutex<TaskScheduler>>,
@@ -29,7 +23,6 @@ impl TskServer {
     /// Create a new TSK server instance with specified number of workers
     pub fn with_workers(app_context: Arc<AppContext>, workers: u32, quit_when_done: bool) -> Self {
         let tsk_env = app_context.tsk_env();
-        let socket_path = tsk_env.socket_path();
         let storage = get_task_storage(tsk_env.clone());
 
         // Create the quit signal for scheduler-to-server communication
@@ -45,7 +38,6 @@ impl TskServer {
 
         Self {
             app_context,
-            socket_path,
             shutdown_signal: Arc::new(Mutex::new(false)),
             quit_signal,
             scheduler,
@@ -54,7 +46,7 @@ impl TskServer {
         }
     }
 
-    /// Start the server and listen for connections
+    /// Start the server and process tasks
     pub async fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Check if server is already running
         if self.lifecycle.is_server_running() {
@@ -64,14 +56,7 @@ impl TskServer {
         // Write PID file
         self.lifecycle.write_pid()?;
 
-        // Ensure socket doesn't already exist
-        if self.socket_path.exists() {
-            std::fs::remove_file(&self.socket_path)?;
-        }
-
-        // Create and bind to socket
-        let listener = UnixListener::bind(&self.socket_path)?;
-        println!("TSK Server listening on: {:?}", self.socket_path);
+        println!("TSK Server started (PID {})", std::process::id());
 
         // Start the task scheduler in the background
         let scheduler = self.scheduler.clone();
@@ -82,7 +67,6 @@ impl TskServer {
             }
         });
 
-        // Accept connections in a loop
         loop {
             tokio::select! {
                 _ = self.quit_signal.notified() => {
@@ -90,29 +74,9 @@ impl TskServer {
                     break;
                 }
                 _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
-                    // Periodically check shutdown signal
                     if *self.shutdown_signal.lock().await {
                         println!("Server shutting down...");
                         break;
-                    }
-                }
-                result = listener.accept() => {
-                    match result {
-                        Ok((stream, _)) => {
-                            let shutdown_signal = self.shutdown_signal.clone();
-
-                            // Handle each client in a separate task
-                            tokio::spawn(async move {
-                                if let Err(e) =
-                                    handle_client(stream, shutdown_signal).await
-                                {
-                                    eprintln!("Error handling client: {e}");
-                                }
-                            });
-                        }
-                        Err(e) => {
-                            eprintln!("Error accepting connection: {e}");
-                        }
                     }
                 }
             }
@@ -134,113 +98,5 @@ impl TskServer {
     /// Signal the server to shut down
     pub async fn shutdown(&self) {
         *self.shutdown_signal.lock().await = true;
-    }
-}
-
-/// Handle a single client connection
-async fn handle_client(
-    stream: UnixStream,
-    shutdown_signal: Arc<Mutex<bool>>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let (reader, mut writer) = stream.into_split();
-    let mut reader = BufReader::new(reader);
-    let mut line = String::new();
-
-    // Read request
-    let bytes_read = reader.read_line(&mut line).await?;
-
-    // Handle empty connections (e.g., from is_server_available checks)
-    if bytes_read == 0 || line.trim().is_empty() {
-        // Client connected but didn't send data - this is normal for availability checks
-        return Ok(());
-    }
-
-    let request: Request = serde_json::from_str(&line)?;
-
-    // Process request
-    let response = match request {
-        Request::Shutdown => {
-            *shutdown_signal.lock().await = true;
-            Response::Success {
-                message: "Server shutting down".to_string(),
-            }
-        }
-    };
-
-    // Send response
-    let response_json = serde_json::to_string(&response)?;
-    writer.write_all(response_json.as_bytes()).await?;
-    writer.write_all(b"\n").await?;
-    writer.flush().await?;
-
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Arc;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::UnixStream;
-
-    #[tokio::test]
-    async fn test_handle_client_with_empty_connection() {
-        // This test verifies that the server gracefully handles connections
-        // that don't send any data (like is_server_available checks)
-        let shutdown_signal = Arc::new(Mutex::new(false));
-
-        // Create a pair of connected Unix sockets
-        let (client, server) = UnixStream::pair().unwrap();
-
-        // Close the client side immediately (simulating is_server_available)
-        drop(client);
-
-        // Handle the server side - this should not error with EOF
-        let result = handle_client(server, shutdown_signal).await;
-
-        // The function should return Ok(()) without panicking or erroring
-        assert!(result.is_ok(), "Expected Ok(()), got {result:?}");
-    }
-
-    #[tokio::test]
-    async fn test_handle_client_with_valid_request() {
-        // This test verifies that Shutdown requests work correctly
-        let shutdown_signal = Arc::new(Mutex::new(false));
-
-        // Create a pair of connected Unix sockets
-        let (mut client, server) = UnixStream::pair().unwrap();
-
-        // Send a Shutdown request from the client side
-        let request = Request::Shutdown;
-        let request_json = serde_json::to_string(&request).unwrap();
-        client.write_all(request_json.as_bytes()).await.unwrap();
-        client.write_all(b"\n").await.unwrap();
-        client.flush().await.unwrap();
-
-        // Handle the request on the server side
-        let shutdown_clone = shutdown_signal.clone();
-        let server_handle =
-            tokio::spawn(async move { handle_client(server, shutdown_clone).await });
-
-        // Read the response
-        let mut buf = vec![0; 1024];
-        let n = client.read(&mut buf).await.unwrap();
-        let response_str = String::from_utf8_lossy(&buf[..n]);
-
-        // Verify we got a Success response
-        assert!(
-            response_str.contains("Success"),
-            "Expected Success response, got: {response_str}"
-        );
-
-        // Ensure the server handler completes successfully
-        let result = server_handle.await.unwrap();
-        assert!(result.is_ok());
-
-        // Verify shutdown signal was set
-        assert!(
-            *shutdown_signal.lock().await,
-            "Shutdown signal should be set to true"
-        );
     }
 }

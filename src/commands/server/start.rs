@@ -4,6 +4,7 @@ use crate::server::TskServer;
 use async_trait::async_trait;
 use std::error::Error;
 use std::sync::Arc;
+use tokio::signal::unix::{SignalKind, signal};
 
 pub struct ServerStartCommand {
     pub workers: u32,
@@ -18,14 +19,17 @@ impl Command for ServerStartCommand {
         ctx.notification_client().set_sound_enabled(self.sound);
         let server = TskServer::with_workers(Arc::new(ctx.clone()), self.workers, self.quit);
 
-        // Setup signal handlers for graceful shutdown
+        // Setup signal handlers for graceful shutdown (SIGINT and SIGTERM)
         let shutdown_signal = Arc::new(tokio::sync::Notify::new());
         let shutdown_signal_clone = shutdown_signal.clone();
 
         tokio::spawn(async move {
-            tokio::signal::ctrl_c()
-                .await
-                .expect("Failed to listen for Ctrl+C");
+            let mut sigterm =
+                signal(SignalKind::terminate()).expect("Failed to listen for SIGTERM");
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {},
+                _ = sigterm.recv() => {},
+            }
             println!("\nReceived shutdown signal...");
             shutdown_signal_clone.notify_one();
         });

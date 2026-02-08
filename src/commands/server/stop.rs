@@ -1,5 +1,6 @@
 use crate::commands::Command;
 use crate::context::AppContext;
+use crate::server::lifecycle::ServerLifecycle;
 use async_trait::async_trait;
 use std::error::Error;
 
@@ -10,32 +11,36 @@ impl Command for ServerStopCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         println!("Stopping TSK server...");
 
-        let client = ctx.tsk_client();
+        let lifecycle = ServerLifecycle::new(ctx.tsk_env());
 
-        if !client.is_server_available().await {
-            println!("Server is not running");
-            return Ok(());
+        let pid = match lifecycle.read_pid() {
+            Some(pid) if lifecycle.is_server_running() => pid,
+            _ => {
+                println!("Server is not running");
+                return Ok(());
+            }
+        };
+
+        if !lifecycle.send_sigterm(pid) {
+            eprintln!("Failed to send SIGTERM to server process (PID {pid})");
+            return Err(Box::new(std::io::Error::other(format!(
+                "Failed to send SIGTERM to process {pid}"
+            ))));
         }
 
-        match client.shutdown_server().await {
-            Ok(_) => {
-                println!("Server shutdown command sent successfully");
+        let poll_interval = tokio::time::Duration::from_millis(200);
+        let timeout = tokio::time::Duration::from_secs(10);
+        let start = tokio::time::Instant::now();
 
-                // Wait a bit for the server to shut down
-                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-
-                if client.is_server_available().await {
-                    eprintln!("Warning: Server may still be running");
-                } else {
-                    println!("Server stopped successfully");
-                }
-            }
-            Err(e) => {
-                eprintln!("Failed to stop server: {e}");
-                return Err(Box::new(std::io::Error::other(e.to_string())));
+        while start.elapsed() < timeout {
+            tokio::time::sleep(poll_interval).await;
+            if !lifecycle.is_server_running() {
+                println!("Server stopped successfully");
+                return Ok(());
             }
         }
 
+        eprintln!("Warning: Server may still be running after timeout");
         Ok(())
     }
 }

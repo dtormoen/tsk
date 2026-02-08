@@ -1,11 +1,10 @@
 use crate::context::tsk_env::TskEnv;
 use std::fs;
 use std::io::{Read, Write};
-use std::path::PathBuf;
 use std::process;
 use std::sync::Arc;
 
-/// Manages server lifecycle (PID files, etc.)
+/// Manages server lifecycle (PID files, signals, etc.)
 pub struct ServerLifecycle {
     tsk_env: Arc<TskEnv>,
 }
@@ -24,12 +23,8 @@ impl ServerLifecycle {
             return false;
         }
 
-        // Read PID from file
         match self.read_pid() {
-            Some(pid) => {
-                // Check if process is still alive
-                self.is_process_alive(pid)
-            }
+            Some(pid) => self.is_process_alive(pid),
             None => false,
         }
     }
@@ -71,38 +66,25 @@ impl ServerLifecycle {
         Ok(())
     }
 
-    /// Check if a process with given PID is alive
+    /// Send SIGTERM to the server process
+    #[cfg(unix)]
+    pub fn send_sigterm(&self, pid: u32) -> bool {
+        unsafe { libc::kill(pid as i32, libc::SIGTERM) == 0 }
+    }
+
     #[cfg(unix)]
     fn is_process_alive(&self, pid: u32) -> bool {
-        unsafe {
-            // Send signal 0 to check if process exists
-            libc::kill(pid as i32, 0) == 0
-        }
+        unsafe { libc::kill(pid as i32, 0) == 0 }
     }
 
     #[cfg(not(unix))]
     fn is_process_alive(&self, _pid: u32) -> bool {
-        // On non-Unix systems, assume the process is alive if PID file exists
         true
     }
 
-    /// Get the server socket path
-    pub fn socket_path(&self) -> PathBuf {
-        self.tsk_env.socket_path()
-    }
-
-    /// Clean up server resources
+    /// Clean up server resources (PID file)
     pub fn cleanup(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Remove PID file
-        self.remove_pid()?;
-
-        // Remove socket file
-        let socket_path = self.socket_path();
-        if socket_path.exists() {
-            fs::remove_file(&socket_path)?;
-        }
-
-        Ok(())
+        self.remove_pid()
     }
 }
 
@@ -118,20 +100,14 @@ mod tests {
 
         let lifecycle = ServerLifecycle::new(tsk_env);
 
-        // Initially no server should be running
         assert!(!lifecycle.is_server_running());
 
-        // Write PID
         lifecycle.write_pid().unwrap();
-
-        // Now server should be detected as running
         assert!(lifecycle.is_server_running());
 
-        // Read PID should return current process ID
         let pid = lifecycle.read_pid().unwrap();
         assert_eq!(pid, process::id());
 
-        // Cleanup should remove PID file
         lifecycle.cleanup().unwrap();
         assert!(!lifecycle.is_server_running());
     }

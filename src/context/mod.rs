@@ -2,7 +2,6 @@ pub mod docker_client;
 pub mod file_system;
 pub mod git_operations;
 pub mod terminal;
-pub mod tsk_client;
 pub mod tsk_config;
 pub mod tsk_env;
 
@@ -25,10 +24,9 @@ use git_operations::GitOperations;
 use terminal::TerminalOperations;
 
 use std::sync::Arc;
-use tsk_client::TskClient;
 
 #[cfg(test)]
-use crate::test_utils::{NoOpDockerClient, NoOpTskClient};
+use crate::test_utils::NoOpDockerClient;
 #[cfg(test)]
 use tempfile::TempDir;
 
@@ -45,7 +43,6 @@ pub struct AppContext {
     git_sync_manager: Arc<GitSyncManager>,
     notification_client: Arc<dyn NotificationClient>,
     terminal_operations: Arc<dyn TerminalOperations>,
-    tsk_client: Arc<dyn TskClient>,
     tsk_config: Arc<TskConfig>,
     tsk_env: Arc<TskEnv>,
     #[cfg(test)]
@@ -85,10 +82,6 @@ impl AppContext {
         Arc::clone(&self.terminal_operations)
     }
 
-    pub fn tsk_client(&self) -> Arc<dyn TskClient> {
-        Arc::clone(&self.tsk_client)
-    }
-
     /// Returns the user configuration loaded from tsk.toml
     pub fn tsk_config(&self) -> Arc<TskConfig> {
         Arc::clone(&self.tsk_config)
@@ -107,7 +100,6 @@ pub struct AppContextBuilder {
     git_sync_manager: Option<Arc<GitSyncManager>>,
     notification_client: Option<Arc<dyn NotificationClient>>,
     terminal_operations: Option<Arc<dyn TerminalOperations>>,
-    tsk_client: Option<Arc<dyn TskClient>>,
     tsk_config: Option<Arc<TskConfig>>,
     tsk_env: Option<Arc<TskEnv>>,
 }
@@ -128,7 +120,6 @@ impl AppContextBuilder {
             git_sync_manager: None,
             notification_client: None,
             terminal_operations: None,
-            tsk_client: None,
             tsk_config: None,
             tsk_env: None,
         }
@@ -185,15 +176,6 @@ impl AppContextBuilder {
         self
     }
 
-    /// Configure the TSK client for this context
-    ///
-    /// Used in tests to provide custom TSK client implementations
-    #[allow(dead_code)]
-    pub fn with_tsk_client(mut self, tsk_client: Arc<dyn TskClient>) -> Self {
-        self.tsk_client = Some(tsk_client);
-        self
-    }
-
     /// Configure the TSK environment for this context
     ///
     /// Used in tests to provide custom TSK environment
@@ -238,11 +220,6 @@ impl AppContextBuilder {
                 .tsk_config
                 .unwrap_or_else(|| Arc::new(TskConfig::default()));
 
-            let tsk_client = self.tsk_client.unwrap_or_else(|| {
-                // Use NoOpTskClient by default in tests
-                Arc::new(NoOpTskClient)
-            });
-
             let docker_client = self.docker_client.unwrap_or_else(|| {
                 // Use NoOpDockerClient by default in tests
                 Arc::new(NoOpDockerClient)
@@ -270,7 +247,6 @@ impl AppContextBuilder {
                 terminal_operations: self
                     .terminal_operations
                     .unwrap_or_else(|| Arc::new(terminal::DefaultTerminalOperations::new())),
-                tsk_client,
                 tsk_config,
                 tsk_env,
                 _temp_dir: Some(temp_dir),
@@ -291,10 +267,6 @@ impl AppContextBuilder {
             let tsk_config = self
                 .tsk_config
                 .unwrap_or_else(|| Arc::new(tsk_config::load_config(tsk_env.config_dir())));
-
-            let tsk_client = self
-                .tsk_client
-                .unwrap_or_else(|| Arc::new(tsk_client::DefaultTskClient::new(tsk_env.clone())));
 
             let docker_client = self
                 .docker_client
@@ -322,7 +294,6 @@ impl AppContextBuilder {
                 terminal_operations: self
                     .terminal_operations
                     .unwrap_or_else(|| Arc::new(terminal::DefaultTerminalOperations::new())),
-                tsk_client,
                 tsk_config,
                 tsk_env,
             }
@@ -355,20 +326,6 @@ mod tests {
         // Verify we can get the docker client back
         let client = app_context.docker_client();
         assert!(client.as_any().is::<FixedResponseDockerClient>());
-    }
-
-    #[tokio::test]
-    async fn test_app_context_with_tsk_client() {
-        use crate::test_utils::NoOpTskClient;
-
-        let tsk_client = Arc::new(NoOpTskClient);
-        let app_context = AppContext::builder()
-            .with_tsk_client(tsk_client.clone())
-            .build();
-
-        // Verify we can use the TSK client
-        let client = app_context.tsk_client();
-        assert!(!client.is_server_available().await);
     }
 
     #[tokio::test]

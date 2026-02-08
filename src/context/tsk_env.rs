@@ -114,11 +114,6 @@ impl TskEnv {
         self.data_dir.join("tasks").join(task_id)
     }
 
-    /// Get the server socket path
-    pub fn socket_path(&self) -> PathBuf {
-        self.runtime_dir.join("tsk.sock")
-    }
-
     /// Get the server PID file path
     pub fn pid_file(&self) -> PathBuf {
         self.runtime_dir.join("tsk.pid")
@@ -370,7 +365,6 @@ mod tests {
         assert_eq!(env.config_dir(), Path::new("/custom/config/tsk"));
         assert_eq!(env.tasks_file(), Path::new("/custom/data/tsk/tasks.json"));
         assert_eq!(env.tasks_db(), Path::new("/custom/data/tsk/tasks.db"));
-        assert_eq!(env.socket_path(), Path::new("/custom/runtime/tsk/tsk.sock"));
         assert_eq!(env.pid_file(), Path::new("/custom/runtime/tsk/tsk.pid"));
         // Check that environment fields have defaults
         assert!(!env.editor().is_empty());

@@ -78,7 +78,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `TskEnv`: Manages XDG-compliant directory paths (data_dir, runtime_dir, config_dir) and runtime environment settings (editor, terminal type)
 - `TskConfig`: User configuration loaded from tsk.toml (docker limits, project-specific settings)
 - Centralized task storage across all repositories
-- Runtime directory for server socket and PID file
+- Runtime directory for PID file
 
 **Configuration File** (`$XDG_CONFIG_HOME/tsk/tsk.toml`)
 - Optional TOML configuration file for user-configurable options
@@ -117,10 +117,9 @@ TSK implements a command pattern with dependency injection for testability. The 
   ```
 - **Priority order**: CLI flags > project config > auto-detection > defaults
 
-**Server Mode** (`src/server/`, `src/client/`)
+**Server Mode** (`src/server/`)
 - `TskServer`: Continuous task execution daemon
-- `TskClient`: Client for communicating with server
-- Unix socket-based IPC protocol
+- Signal-based lifecycle: SIGTERM/SIGINT for graceful shutdown via PID file
 - Parallel task execution with configurable workers (default: 1)
 - Quit-when-done mode (`-q/--quit`): Exits automatically when queue is empty
 - Sound notifications (`-s/--sound`): Play sound on task completion (platform-specific)

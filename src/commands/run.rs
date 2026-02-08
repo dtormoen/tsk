@@ -106,7 +106,7 @@ mod tests {
     use super::*;
 
     fn create_test_context() -> AppContext {
-        // Automatically gets test defaults: NoOpDockerClient, NoOpTskClient, etc.
+        // Automatically gets test defaults: NoOpDockerClient, etc.
         AppContext::builder().build()
     }
 
