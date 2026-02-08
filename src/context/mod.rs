@@ -16,7 +16,6 @@ pub use tsk_env::TskEnv;
 use crate::git_sync::GitSyncManager;
 use crate::notifications::NotificationClient;
 use docker_client::DockerClient;
-use terminal::TerminalOperations;
 
 use std::sync::Arc;
 
@@ -25,16 +24,12 @@ use crate::test_utils::NoOpDockerClient;
 #[cfg(test)]
 use tempfile::TempDir;
 
-// Re-export terminal trait for tests
-#[cfg(test)]
-pub use terminal::TerminalOperations as TerminalOperationsTrait;
-
 #[derive(Clone)]
 pub struct AppContext {
     docker_client: Arc<dyn DockerClient>,
     git_sync_manager: Arc<GitSyncManager>,
     notification_client: Arc<dyn NotificationClient>,
-    terminal_operations: Arc<dyn TerminalOperations>,
+    terminal_operations: Arc<terminal::TerminalOperations>,
     tsk_config: Arc<TskConfig>,
     tsk_env: Arc<TskEnv>,
     #[cfg(test)]
@@ -58,7 +53,7 @@ impl AppContext {
         Arc::clone(&self.notification_client)
     }
 
-    pub fn terminal_operations(&self) -> Arc<dyn TerminalOperations> {
+    pub fn terminal_operations(&self) -> Arc<terminal::TerminalOperations> {
         Arc::clone(&self.terminal_operations)
     }
 
@@ -76,7 +71,6 @@ pub struct AppContextBuilder {
     docker_client: Option<Arc<dyn DockerClient>>,
     git_sync_manager: Option<Arc<GitSyncManager>>,
     notification_client: Option<Arc<dyn NotificationClient>>,
-    terminal_operations: Option<Arc<dyn TerminalOperations>>,
     tsk_config: Option<Arc<TskConfig>>,
     tsk_env: Option<Arc<TskEnv>>,
 }
@@ -93,7 +87,6 @@ impl AppContextBuilder {
             docker_client: None,
             git_sync_manager: None,
             notification_client: None,
-            terminal_operations: None,
             tsk_config: None,
             tsk_env: None,
         }
@@ -105,18 +98,6 @@ impl AppContextBuilder {
     #[allow(dead_code)] // Used in tests
     pub fn with_docker_client(mut self, docker_client: Arc<dyn DockerClient>) -> Self {
         self.docker_client = Some(docker_client);
-        self
-    }
-
-    /// Configure the terminal operations for this context
-    ///
-    /// Used in tests to provide custom terminal operations
-    #[allow(dead_code)]
-    pub fn with_terminal_operations(
-        mut self,
-        terminal_operations: Arc<dyn TerminalOperations>,
-    ) -> Self {
-        self.terminal_operations = Some(terminal_operations);
         self
     }
 
@@ -177,9 +158,7 @@ impl AppContextBuilder {
                 notification_client: self
                     .notification_client
                     .unwrap_or_else(crate::notifications::create_notification_client),
-                terminal_operations: self
-                    .terminal_operations
-                    .unwrap_or_else(|| Arc::new(terminal::DefaultTerminalOperations::new())),
+                terminal_operations: Arc::new(terminal::TerminalOperations::new()),
                 tsk_config,
                 tsk_env,
                 _temp_dir: Some(temp_dir),
@@ -213,9 +192,7 @@ impl AppContextBuilder {
                 notification_client: self
                     .notification_client
                     .unwrap_or_else(crate::notifications::create_notification_client),
-                terminal_operations: self
-                    .terminal_operations
-                    .unwrap_or_else(|| Arc::new(terminal::DefaultTerminalOperations::new())),
+                terminal_operations: Arc::new(terminal::TerminalOperations::new()),
                 tsk_config,
                 tsk_env,
             }
@@ -275,45 +252,5 @@ mod tests {
         // Verify we can get the docker client back
         let client = app_context.docker_client();
         assert!(client.as_any().is::<FixedResponseDockerClient>());
-    }
-
-    #[test]
-    fn test_app_context_with_terminal_operations() {
-        use std::sync::Mutex;
-
-        // Create a mock terminal operations implementation
-        #[derive(Default)]
-        struct MockTerminalOperations {
-            titles: Mutex<Vec<String>>,
-            restore_called: Mutex<bool>,
-        }
-
-        impl TerminalOperations for MockTerminalOperations {
-            fn set_title(&self, title: &str) {
-                self.titles.lock().unwrap().push(title.to_string());
-            }
-
-            fn restore_title(&self) {
-                *self.restore_called.lock().unwrap() = true;
-            }
-        }
-
-        let mock_terminal = Arc::new(MockTerminalOperations::default());
-        let app_context = AppContext::builder()
-            .with_terminal_operations(mock_terminal.clone())
-            .build();
-
-        // Use terminal operations through context
-        let terminal = app_context.terminal_operations();
-        terminal.set_title("Test Title 1");
-        terminal.set_title("Test Title 2");
-        terminal.restore_title();
-
-        // Verify the mock recorded the calls
-        assert_eq!(
-            *mock_terminal.titles.lock().unwrap(),
-            vec!["Test Title 1", "Test Title 2"]
-        );
-        assert!(*mock_terminal.restore_called.lock().unwrap());
     }
 }
