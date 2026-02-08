@@ -1,10 +1,11 @@
 use super::Command;
 use crate::context::AppContext;
-use crate::display::{format_duration, print_columns};
+use crate::display::{colorize_status, format_duration, print_columns, status_color};
 use crate::task::TaskStatus;
 use crate::task_storage::get_task_storage;
 use async_trait::async_trait;
 use chrono::Utc;
+use is_terminal::IsTerminal;
 use std::error::Error;
 
 pub struct ListCommand;
@@ -41,6 +42,8 @@ impl Command for ListCommand {
         if tasks.is_empty() {
             println!("No tasks in queue");
         } else {
+            let styled = std::io::stdout().is_terminal();
+
             let rows: Vec<Vec<String>> = tasks
                 .iter()
                 .map(|task| {
@@ -73,7 +76,7 @@ impl Command for ListCommand {
                         task.id.clone(),
                         task.name.clone(),
                         task.task_type.clone(),
-                        status,
+                        colorize_status(&status, styled),
                         duration,
                         if task.parent_ids.is_empty() {
                             "-".to_string()
@@ -121,8 +124,22 @@ impl Command for ListCommand {
                 .filter(|t| t.status == TaskStatus::Failed)
                 .count();
 
+            let cs = |count: usize, label: &str| -> String {
+                if styled
+                    && count > 0
+                    && let Some(code) = status_color(label)
+                {
+                    return format!("{code}{count} {label}\x1b[0m");
+                }
+                format!("{count} {label}")
+            };
             println!(
-                "\nSummary: {queued} queued, {waiting} waiting, {running} running, {complete} complete, {failed} failed"
+                "\nSummary: {}, {}, {}, {}, {}",
+                cs(queued, "queued"),
+                cs(waiting, "waiting"),
+                cs(running, "running"),
+                cs(complete, "complete"),
+                cs(failed, "failed"),
             );
         }
 
