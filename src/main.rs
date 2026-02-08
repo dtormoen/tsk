@@ -11,7 +11,6 @@ mod file_system;
 mod git;
 mod git_operations;
 mod git_sync;
-mod notifications;
 mod repo_utils;
 mod repository;
 mod server;

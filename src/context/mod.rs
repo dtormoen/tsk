@@ -1,4 +1,5 @@
 pub mod docker_client;
+pub mod notifications;
 pub mod terminal;
 pub mod tsk_config;
 pub mod tsk_env;
@@ -14,8 +15,8 @@ pub use tsk_config::{BindMount, DockerOptions, EnvVar, NamedVolume, ProjectConfi
 pub use tsk_env::TskEnv;
 
 use crate::git_sync::GitSyncManager;
-use crate::notifications::NotificationClient;
 use docker_client::DockerClient;
+use notifications::NotificationClient;
 
 use std::sync::Arc;
 
@@ -28,7 +29,7 @@ use tempfile::TempDir;
 pub struct AppContext {
     docker_client: Arc<dyn DockerClient>,
     git_sync_manager: Arc<GitSyncManager>,
-    notification_client: Arc<dyn NotificationClient>,
+    notification_client: Arc<NotificationClient>,
     terminal_operations: Arc<terminal::TerminalOperations>,
     tsk_config: Arc<TskConfig>,
     tsk_env: Arc<TskEnv>,
@@ -49,7 +50,7 @@ impl AppContext {
         Arc::clone(&self.git_sync_manager)
     }
 
-    pub fn notification_client(&self) -> Arc<dyn NotificationClient> {
+    pub fn notification_client(&self) -> Arc<NotificationClient> {
         Arc::clone(&self.notification_client)
     }
 
@@ -70,7 +71,7 @@ impl AppContext {
 pub struct AppContextBuilder {
     docker_client: Option<Arc<dyn DockerClient>>,
     git_sync_manager: Option<Arc<GitSyncManager>>,
-    notification_client: Option<Arc<dyn NotificationClient>>,
+    notification_client: Option<Arc<NotificationClient>>,
     tsk_config: Option<Arc<TskConfig>>,
     tsk_env: Option<Arc<TskEnv>>,
 }
@@ -157,7 +158,7 @@ impl AppContextBuilder {
                     .unwrap_or_else(|| Arc::new(GitSyncManager::new())),
                 notification_client: self
                     .notification_client
-                    .unwrap_or_else(crate::notifications::create_notification_client),
+                    .unwrap_or_else(notifications::create_notification_client),
                 terminal_operations: Arc::new(terminal::TerminalOperations::new()),
                 tsk_config,
                 tsk_env,
@@ -191,7 +192,7 @@ impl AppContextBuilder {
                     .unwrap_or_else(|| Arc::new(GitSyncManager::new())),
                 notification_client: self
                     .notification_client
-                    .unwrap_or_else(crate::notifications::create_notification_client),
+                    .unwrap_or_else(notifications::create_notification_client),
                 terminal_operations: Arc::new(terminal::TerminalOperations::new()),
                 tsk_config,
                 tsk_env,
