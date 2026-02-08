@@ -37,6 +37,26 @@ impl TaskManager {
         })
     }
 
+    /// Stores and executes a task inline, for use by `run` and `shell` commands.
+    ///
+    /// Unlike server-scheduled tasks (which are added to the queue as `Queued` and later picked
+    /// up by the scheduler), `run` and `shell` execute tasks directly. This method persists the
+    /// task as `Running` before execution so it appears in `tsk list` and can be used as a
+    /// parent for task chaining. The `Running` status prevents the server scheduler from
+    /// picking it up.
+    pub async fn store_and_execute_task(
+        &self,
+        task: &Task,
+    ) -> Result<TaskExecutionResult, TaskExecutionError> {
+        let mut stored_task = task.clone();
+        stored_task.status = TaskStatus::Running;
+        stored_task.started_at = Some(chrono::Utc::now());
+        if let Err(e) = self.task_storage.add_task(stored_task).await {
+            eprintln!("Error storing task: {e}");
+        }
+        self.execute_queued_task(task).await
+    }
+
     /// Execute a task from the queue with status updates.
     ///
     /// Updates task status in storage throughout the execution lifecycle:
@@ -62,7 +82,8 @@ impl TaskManager {
         match execution_result {
             Ok(result) => {
                 // Update task status based on the task result
-                let mut updated_task = task.clone();
+                // Use running_task to preserve started_at timestamp
+                let mut updated_task = running_task;
                 updated_task.completed_at = Some(chrono::Utc::now());
                 updated_task.branch_name = result.branch_name.clone();
 
@@ -86,12 +107,12 @@ impl TaskManager {
             }
             Err(e) => {
                 // Update task status to failed
-                let mut failed_task = task.clone();
-                failed_task.status = TaskStatus::Failed;
-                failed_task.error_message = Some(e.message.clone());
-                failed_task.completed_at = Some(chrono::Utc::now());
+                // Use running_task to preserve started_at timestamp
+                running_task.status = TaskStatus::Failed;
+                running_task.error_message = Some(e.message.clone());
+                running_task.completed_at = Some(chrono::Utc::now());
 
-                if let Err(storage_err) = self.task_storage.update_task(failed_task).await {
+                if let Err(storage_err) = self.task_storage.update_task(running_task).await {
                     eprintln!("Error updating task status: {storage_err}");
                 }
                 Err(e)
@@ -617,6 +638,60 @@ mod tests {
         assert!(
             result.is_ok(),
             "TaskManager::new should work without a git repository"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_store_and_execute_task() {
+        let (tsk_env, test_repo, ctx) = setup_test_environment().await.unwrap();
+        let repo_root = test_repo.path().to_path_buf();
+
+        let task_id = "store-exec-1".to_string();
+        let task_dir_path = setup_task_directory(&tsk_env, &task_id, "Test instructions")
+            .await
+            .unwrap();
+
+        let task = Task::new(
+            task_id.clone(),
+            repo_root,
+            "store-exec-task".to_string(),
+            "feat".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            format!("tsk/{task_id}"),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(task_dir_path.join("repo")),
+            false,
+            vec![],
+        );
+
+        let task_manager = TaskManager::new(&ctx).unwrap();
+        let _result = task_manager.store_and_execute_task(&task).await;
+
+        // Verify the task exists in storage after execution
+        let stored = task_manager.task_storage.get_task(&task_id).await.unwrap();
+        assert!(stored.is_some(), "Task should exist in storage");
+
+        let stored_task = stored.unwrap();
+        assert_ne!(
+            stored_task.status,
+            TaskStatus::Queued,
+            "Task should not be Queued after store_and_execute_task"
+        );
+        assert!(
+            stored_task.started_at.is_some(),
+            "Task should have started_at set"
+        );
+
+        // Verify the task appears in list_tasks
+        let all_tasks = task_manager.task_storage.list_tasks().await.unwrap();
+        assert!(
+            all_tasks.iter().any(|t| t.id == task_id),
+            "Task should appear in the list of all tasks"
         );
     }
 }

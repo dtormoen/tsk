@@ -80,6 +80,7 @@ impl Command for RunCommand {
             .await?;
 
         println!("Agent: {}", agents[0]);
+        println!("Task ID: {}", task.id);
 
         // Update terminal title for the task
         ctx.terminal_operations()
@@ -88,7 +89,7 @@ impl Command for RunCommand {
         // Execute the task
         let task_manager = TaskManager::new(ctx)?;
         let result = task_manager
-            .execute_queued_task(&task)
+            .store_and_execute_task(&task)
             .await
             .map_err(|e| e.message);
 

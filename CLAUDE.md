@@ -19,8 +19,8 @@ TSK implements a command pattern with dependency injection for testability. The 
 **CLI Commands** (`src/commands/`)
 
 *Task Commands (implicit "task" noun):*
-- `run`: Immediately execute single tasks (supports piped input via stdin for descriptions)
-- `shell`: Launch sandbox container with agent for interactive use (supports piped input via stdin for descriptions)
+- `run`: Immediately execute single tasks (tracked in DB, supports piped input via stdin for descriptions)
+- `shell`: Launch sandbox container with agent for interactive use (tracked in DB, supports piped input via stdin for descriptions)
 - `add`: Queue tasks with descriptions and templates (supports piped input via stdin for descriptions, supports `--parent <taskid>` for task chaining)
 - `list`: Display task status and results (shows parent task information)
 - `clean`: Delete all completed tasks
@@ -47,6 +47,9 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Automatic migration from legacy `tasks.json` to SQLite on first run (renames to `tasks.json.bak`)
 - Centralized SQLite persistence in XDG data directory (`$XDG_DATA_HOME/tsk/tasks.db`)
 - Task status: Queued → Running → Complete/Failed (Waiting status shown in list for tasks awaiting parent completion)
+- Two execution paths:
+  - **Server-scheduled**: `add` stores tasks as `Queued`, server scheduler picks them up and transitions to `Running`
+  - **Inline**: `run`/`shell` store tasks as `Running` (via `TaskManager::store_and_execute_task`) and execute immediately; the `Running` status prevents the scheduler from picking them up
 - Branch naming: `tsk/{task-type}/{task-name}/{task-id}` (human-readable format with task type, sanitized task name, and 8-character unique identifier)
 - **Task Chaining**: Tasks can specify a parent task via `--parent <taskid>` (short: `-p`)
   - Database schema supports multiple parents (`parent_ids` stored as JSON array in TEXT column), but CLI currently accepts only one

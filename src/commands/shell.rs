@@ -60,6 +60,8 @@ impl Command for ShellCommand {
             println!("Agent: {agent}");
         }
 
+        println!("Task ID: {}", task.id);
+
         // Update terminal title for the shell session
         ctx.terminal_operations()
             .set_title(&format!("TSK Shell: {}", self.name));
@@ -67,7 +69,7 @@ impl Command for ShellCommand {
         // Execute the task using TaskManager
         let task_manager = TaskManager::new(ctx)?;
         let result = task_manager
-            .execute_queued_task(&task)
+            .store_and_execute_task(&task)
             .await
             .map_err(|e| e.message);
 
