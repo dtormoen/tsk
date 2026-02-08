@@ -6,7 +6,6 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 /// State of a Docker build lock
@@ -15,17 +14,9 @@ pub enum BuildLockState {
     /// No build is currently in progress
     Idle,
     /// A build is currently in progress
-    Building {
-        /// When the build started
-        #[allow(dead_code)]
-        started_at: Instant,
-    },
+    Building,
     /// Build completed (kept for a short time for caching)
-    Completed {
-        /// When the build finished
-        #[allow(dead_code)]
-        finished_at: Instant,
-    },
+    Completed,
 }
 
 /// Lock information for a specific image
@@ -61,9 +52,7 @@ impl Drop for BuildLockGuard {
         // Mark the build as completed
         let mut locks = self.manager.locks.lock().unwrap();
         if let Some(lock) = locks.get_mut(&self.image_tag) {
-            lock.state = BuildLockState::Completed {
-                finished_at: Instant::now(),
-            };
+            lock.state = BuildLockState::Completed;
         }
     }
 }
@@ -103,7 +92,7 @@ impl DockerBuildLockManager {
                 .or_insert_with(ImageLock::new);
 
             // Increment waiting count if build is in progress
-            if matches!(lock.state, BuildLockState::Building { .. }) {
+            if matches!(lock.state, BuildLockState::Building) {
                 lock.waiting_count += 1;
 
                 // Log that we're waiting
@@ -127,9 +116,7 @@ impl DockerBuildLockManager {
                 if lock.waiting_count > 0 {
                     lock.waiting_count -= 1;
                 }
-                lock.state = BuildLockState::Building {
-                    started_at: Instant::now(),
-                };
+                lock.state = BuildLockState::Building;
 
                 // Log that we acquired the lock
                 if lock.waiting_count > 0 {
@@ -215,7 +202,7 @@ mod tests {
         {
             let locks = manager.locks.lock().unwrap();
             if let Some(lock) = locks.get("test-image") {
-                assert!(matches!(lock.state, BuildLockState::Building { .. }));
+                assert!(matches!(lock.state, BuildLockState::Building));
             }
         }
 
@@ -226,7 +213,7 @@ mod tests {
         {
             let locks = manager.locks.lock().unwrap();
             if let Some(lock) = locks.get("test-image") {
-                assert!(matches!(lock.state, BuildLockState::Completed { .. }));
+                assert!(matches!(lock.state, BuildLockState::Completed));
             }
         }
     }

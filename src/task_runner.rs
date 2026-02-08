@@ -111,7 +111,8 @@ impl TaskRunner {
 
         // Create a task-specific image manager with the copied repository as the project root
         // This ensures that project-specific dockerfiles are found in the copied repository
-        let task_image_manager = DockerImageManager::new(&self.ctx, Some(repo_path.as_path()));
+        let task_image_manager =
+            DockerImageManager::new(&self.ctx, Some(repo_path.as_path()), None);
 
         // Ensure the Docker image exists - always rebuild to pick up any changes
         let docker_image_tag = task_image_manager

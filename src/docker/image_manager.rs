@@ -88,7 +88,12 @@ impl DockerImageManager {
     /// # Arguments
     /// * `ctx` - Application context with all dependencies
     /// * `project_root` - Optional project root for layered assets
-    pub fn new(ctx: &AppContext, project_root: Option<&std::path::Path>) -> Self {
+    /// * `docker_build_lock_manager` - Optional shared lock manager; creates a new one if `None`
+    pub fn new(
+        ctx: &AppContext,
+        project_root: Option<&std::path::Path>,
+        docker_build_lock_manager: Option<Arc<DockerBuildLockManager>>,
+    ) -> Self {
         let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
             project_root,
             &ctx.tsk_env(),
@@ -98,7 +103,8 @@ impl DockerImageManager {
 
         Self {
             ctx: ctx.clone(),
-            docker_build_lock_manager: ctx.docker_build_lock_manager(),
+            docker_build_lock_manager: docker_build_lock_manager
+                .unwrap_or_else(|| Arc::new(DockerBuildLockManager::new())),
             template_manager,
             composer,
         }
@@ -457,7 +463,7 @@ mod tests {
 
     fn create_test_manager() -> DockerImageManager {
         let ctx = AppContext::builder().build();
-        DockerImageManager::new(&ctx, None)
+        DockerImageManager::new(&ctx, None, None)
     }
 
     #[test]
@@ -738,6 +744,7 @@ mod tests {
             "Tasks should execute serially due to lock"
         );
     }
+
     #[tokio::test]
     async fn test_parallel_ensure_image_different_images() {
         use crate::docker::build_lock_manager::DockerBuildLockManager;
@@ -745,16 +752,12 @@ mod tests {
         // Create a shared lock manager
         let lock_manager = Arc::new(DockerBuildLockManager::new());
 
-        // Create managers with the same lock manager
-        let ctx1 = AppContext::builder()
-            .with_docker_build_lock_manager(lock_manager.clone())
-            .build();
-        let manager1 = DockerImageManager::new(&ctx1, None);
+        // Create managers with the same lock manager passed directly
+        let ctx1 = AppContext::builder().build();
+        let manager1 = DockerImageManager::new(&ctx1, None, Some(lock_manager.clone()));
 
-        let ctx2 = AppContext::builder()
-            .with_docker_build_lock_manager(lock_manager.clone())
-            .build();
-        let manager2 = DockerImageManager::new(&ctx2, None);
+        let ctx2 = AppContext::builder().build();
+        let manager2 = DockerImageManager::new(&ctx2, None, Some(lock_manager.clone()));
 
         // Launch two concurrent ensure_image tasks for different images
         let task1 = tokio::spawn(async move {

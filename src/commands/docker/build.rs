@@ -88,7 +88,7 @@ impl Command for DockerBuildCommand {
         let project_root = find_repository_root(std::path::Path::new(".")).ok();
 
         // Create image manager with AppContext
-        let image_manager = DockerImageManager::new(ctx, project_root.as_deref());
+        let image_manager = DockerImageManager::new(ctx, project_root.as_deref(), None);
 
         // Build the main image (with dry_run flag)
         let image_tag = image_manager
