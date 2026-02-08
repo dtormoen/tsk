@@ -8,24 +8,7 @@ TSK is a Rust-based CLI tool for delegating development tasks to AI agents runni
 
 ## Development Commands
 
-```bash
-# Build and development
-cargo build
-cargo test
-RUST_LOG=debug cargo run
-
-# Code quality
-cargo fmt -- --check
-cargo clippy -- -D warnings
-
-# Justfile commands (recommended)
-just build                         # Build project
-just install                       # Install TSK binary to system
-just test                          # Run tests with proper threading
-just format                        # Format and lint code
-just precommit                     # Full CI checks (fmt, clippy, test, help)
-just docker-build                  # Build Docker images using embedded assets (wraps 'tsk docker build')
-```
+See @justfile.
 
 ## Architecture Overview
 
