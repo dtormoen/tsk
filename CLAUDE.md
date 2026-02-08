@@ -140,7 +140,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Provides `poll_completed()` for retrieving finished job results
   - Provides `total_workers()`, `active_workers()`, and `available_workers()` for monitoring
 
-**Git Operations** (`src/git.rs`, `src/git_sync.rs`, `src/context/git_operations.rs`)
+**Git Operations** (`src/git.rs`, `src/git_sync.rs`, `src/git_operations.rs`)
 - Repository cloning to centralized task directories using `CloneLocal::NoLinks` for optimized pack files
 - Working directory overlay preserves uncommitted/unstaged changes from source
 - Isolated branch creation and result integration
@@ -164,9 +164,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 
 **Dependency Injection** (`src/context/`)
 - `AppContext` provides centralized resource management with builder pattern
-- Traits in the `AppContext` should be accessed via the `AppContext`
 - Factory pattern prevents accidental operations in tests
-- `GitOperations` trait abstracts all git operations for improved testability and separation of concerns
 - `TskEnv` provides XDG-compliant directory paths and runtime environment settings (editor, terminal type)
 - `TskConfig` provides user configuration loaded from tsk.toml
 

@@ -3,6 +3,7 @@ use crate::assets::{AssetManager, layered::LayeredAssetManager};
 use crate::context::AppContext;
 use crate::context::tsk_env::TskEnv;
 use crate::git::RepoManager;
+use crate::git_operations;
 use crate::task::Task;
 use crate::task_storage::get_task_storage;
 use crate::utils::sanitize_for_branch_name;
@@ -238,7 +239,7 @@ impl TaskBuilder {
 
         // Check if repository has any commits
         // This must happen before we try to capture source_commit
-        let has_commits = match ctx.git_operations().get_current_commit(&repo_root).await {
+        let has_commits = match git_operations::get_current_commit(&repo_root).await {
             Ok(_) => true,
             Err(e) => {
                 // Check if this is an empty repository error
@@ -313,7 +314,7 @@ impl TaskBuilder {
         };
 
         // Capture the current commit SHA
-        let source_commit = match ctx.git_operations().get_current_commit(&repo_root).await {
+        let source_commit = match git_operations::get_current_commit(&repo_root).await {
             Ok(commit) => commit,
             Err(e) => {
                 return Err(format!("Failed to get current commit for task '{name}': {e}").into());
@@ -322,9 +323,7 @@ impl TaskBuilder {
 
         // Capture the current branch for git-town parent tracking
         // Returns None if in detached HEAD state
-        let source_branch = ctx
-            .git_operations()
-            .get_current_branch(&repo_root)
+        let source_branch = git_operations::get_current_branch(&repo_root)
             .await
             .ok()
             .flatten();

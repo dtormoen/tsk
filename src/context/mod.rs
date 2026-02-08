@@ -1,5 +1,4 @@
 pub mod docker_client;
-pub mod git_operations;
 pub mod terminal;
 pub mod tsk_config;
 pub mod tsk_env;
@@ -18,7 +17,6 @@ use crate::docker::build_lock_manager::DockerBuildLockManager;
 use crate::git_sync::GitSyncManager;
 use crate::notifications::NotificationClient;
 use docker_client::DockerClient;
-use git_operations::GitOperations;
 use terminal::TerminalOperations;
 
 use std::sync::Arc;
@@ -36,7 +34,6 @@ pub use terminal::TerminalOperations as TerminalOperationsTrait;
 pub struct AppContext {
     docker_build_lock_manager: Arc<DockerBuildLockManager>,
     docker_client: Arc<dyn DockerClient>,
-    git_operations: Arc<dyn GitOperations>,
     git_sync_manager: Arc<GitSyncManager>,
     notification_client: Arc<dyn NotificationClient>,
     terminal_operations: Arc<dyn TerminalOperations>,
@@ -57,10 +54,6 @@ impl AppContext {
 
     pub fn docker_client(&self) -> Arc<dyn DockerClient> {
         Arc::clone(&self.docker_client)
-    }
-
-    pub fn git_operations(&self) -> Arc<dyn GitOperations> {
-        Arc::clone(&self.git_operations)
     }
 
     pub fn git_sync_manager(&self) -> Arc<GitSyncManager> {
@@ -88,7 +81,6 @@ impl AppContext {
 pub struct AppContextBuilder {
     docker_build_lock_manager: Option<Arc<DockerBuildLockManager>>,
     docker_client: Option<Arc<dyn DockerClient>>,
-    git_operations: Option<Arc<dyn GitOperations>>,
     git_sync_manager: Option<Arc<GitSyncManager>>,
     notification_client: Option<Arc<dyn NotificationClient>>,
     terminal_operations: Option<Arc<dyn TerminalOperations>>,
@@ -107,7 +99,6 @@ impl AppContextBuilder {
         Self {
             docker_build_lock_manager: None,
             docker_client: None,
-            git_operations: None,
             git_sync_manager: None,
             notification_client: None,
             terminal_operations: None,
@@ -134,15 +125,6 @@ impl AppContextBuilder {
     #[allow(dead_code)] // Used in tests
     pub fn with_docker_client(mut self, docker_client: Arc<dyn DockerClient>) -> Self {
         self.docker_client = Some(docker_client);
-        self
-    }
-
-    /// Configure the git operations for this context
-    ///
-    /// Used in tests to provide custom git operations implementations
-    #[allow(dead_code)]
-    pub fn with_git_operations(mut self, git_operations: Arc<dyn GitOperations>) -> Self {
-        self.git_operations = Some(git_operations);
         self
     }
 
@@ -212,9 +194,6 @@ impl AppContextBuilder {
                     .docker_build_lock_manager
                     .unwrap_or_else(|| Arc::new(DockerBuildLockManager::new())),
                 docker_client,
-                git_operations: self
-                    .git_operations
-                    .unwrap_or_else(|| Arc::new(git_operations::DefaultGitOperations)),
                 git_sync_manager: self
                     .git_sync_manager
                     .unwrap_or_else(|| Arc::new(GitSyncManager::new())),
@@ -254,9 +233,6 @@ impl AppContextBuilder {
                     .docker_build_lock_manager
                     .unwrap_or_else(|| Arc::new(DockerBuildLockManager::new())),
                 docker_client,
-                git_operations: self
-                    .git_operations
-                    .unwrap_or_else(|| Arc::new(git_operations::DefaultGitOperations)),
                 git_sync_manager: self
                     .git_sync_manager
                     .unwrap_or_else(|| Arc::new(GitSyncManager::new())),

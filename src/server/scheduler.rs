@@ -1,5 +1,6 @@
 use crate::context::AppContext;
 use crate::git::RepoManager;
+use crate::git_operations;
 use crate::server::worker_pool::{AsyncJob, JobError, JobResult, WorkerPool};
 use crate::task::{Task, TaskStatus};
 use crate::task_manager::TaskManager;
@@ -121,10 +122,7 @@ impl TaskScheduler {
             .ok_or_else(|| format!("Parent task {} has no copied_repo_path", parent_task.id))?;
 
         // Get the HEAD commit from the parent's repo
-        let source_commit: String = self
-            .context
-            .git_operations()
-            .get_current_commit(parent_repo_path)
+        let source_commit: String = git_operations::get_current_commit(parent_repo_path)
             .await
             .map_err(|e| format!("Failed to get parent HEAD commit: {e}"))?;
 

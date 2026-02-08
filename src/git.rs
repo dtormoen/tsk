@@ -1,4 +1,5 @@
 use crate::context::AppContext;
+use crate::git_operations;
 use chrono::{DateTime, Local};
 use std::path::{Path, PathBuf};
 
@@ -62,12 +63,7 @@ impl RepoManager {
             .map_err(|e| format!("Failed to create task directory: {e}"))?;
 
         // Check if the provided path is in a git repository
-        if !self
-            .ctx
-            .git_operations()
-            .is_git_repository(repo_root)
-            .await?
-        {
+        if !git_operations::is_git_repository(repo_root).await? {
             return Err("Not in a git repository".to_string());
         }
 
@@ -78,18 +74,12 @@ impl RepoManager {
         // 1. All tracked files (from working directory, including unstaged changes)
         // 2. All staged files (including newly added files in the index)
         // 3. All untracked files (not ignored)
-        let all_files_to_copy = self
-            .ctx
-            .git_operations()
-            .get_all_non_ignored_files(&current_dir)
-            .await?;
+        let all_files_to_copy = git_operations::get_all_non_ignored_files(&current_dir).await?;
 
         // Clone repository with optimized pack files (no hardlinks)
         // This creates an efficient repository copy with 1-2 pack files instead of
         // preserving fragmented pack structure from the source repository
-        self.ctx
-            .git_operations()
-            .clone_local(&current_dir, &repo_path)
+        git_operations::clone_local(&current_dir, &repo_path)
             .await
             .map_err(|e| format!("Failed to clone repository: {e}"))?;
 
@@ -115,18 +105,13 @@ impl RepoManager {
         match source_commit {
             Some(commit_sha) => {
                 // Create branch from specific commit
-                self.ctx
-                    .git_operations()
-                    .create_branch_from_commit(&repo_path, &branch_name, commit_sha)
+                git_operations::create_branch_from_commit(&repo_path, &branch_name, commit_sha)
                     .await?;
                 println!("Created branch from commit: {commit_sha}");
             }
             None => {
                 // Create branch from HEAD (existing behavior)
-                self.ctx
-                    .git_operations()
-                    .create_branch(&repo_path, &branch_name)
-                    .await?;
+                git_operations::create_branch(&repo_path, &branch_name).await?;
             }
         }
 
@@ -334,10 +319,7 @@ impl RepoManager {
             let submodule_path = repo_path.join(&submodule.path);
 
             // Check if the submodule is a valid git repository
-            if !self
-                .ctx
-                .git_operations()
-                .is_git_repository(&submodule_path)
+            if !git_operations::is_git_repository(&submodule_path)
                 .await
                 .unwrap_or(false)
             {
@@ -345,7 +327,7 @@ impl RepoManager {
             }
 
             // Check if submodule has uncommitted changes
-            let status_output = match self.ctx.git_operations().get_status(&submodule_path).await {
+            let status_output = match git_operations::get_status(&submodule_path).await {
                 Ok(output) => output,
                 Err(e) => {
                     eprintln!(
@@ -361,7 +343,7 @@ impl RepoManager {
             }
 
             // Add and commit changes in the submodule
-            if let Err(e) = self.ctx.git_operations().add_all(&submodule_path).await {
+            if let Err(e) = git_operations::add_all(&submodule_path).await {
                 eprintln!(
                     "Warning: Failed to stage changes in submodule '{}': {}",
                     submodule.path, e
@@ -369,12 +351,7 @@ impl RepoManager {
                 continue;
             }
 
-            if let Err(e) = self
-                .ctx
-                .git_operations()
-                .commit(&submodule_path, message)
-                .await
-            {
+            if let Err(e) = git_operations::commit(&submodule_path, message).await {
                 eprintln!(
                     "Warning: Failed to commit changes in submodule '{}': {}",
                     submodule.path, e
@@ -403,7 +380,7 @@ impl RepoManager {
         }
 
         // Check if there are any changes to commit
-        let status_output = self.ctx.git_operations().get_status(repo_path).await?;
+        let status_output = git_operations::get_status(repo_path).await?;
 
         if status_output.trim().is_empty() {
             println!("No changes to commit");
@@ -411,10 +388,10 @@ impl RepoManager {
         }
 
         // Add all changes
-        self.ctx.git_operations().add_all(repo_path).await?;
+        git_operations::add_all(repo_path).await?;
 
         // Commit changes
-        self.ctx.git_operations().commit(repo_path, message).await?;
+        git_operations::commit(repo_path, message).await?;
 
         println!("Committed changes: {message}");
         Ok(())
@@ -472,11 +449,7 @@ impl RepoManager {
         git_town_enabled: bool,
     ) -> Result<bool, String> {
         // Check if there are any changes by comparing HEAD with source commit
-        let current_head = self
-            .ctx
-            .git_operations()
-            .get_current_commit(repo_path)
-            .await?;
+        let current_head = git_operations::get_current_commit(repo_path).await?;
         if current_head == source_commit {
             println!("No changes detected - skipping branch creation");
             return Ok(false);
@@ -497,24 +470,14 @@ impl RepoManager {
         self.ctx
             .git_sync_manager()
             .with_repo_lock(&main_repo, || async {
-                self.ctx
-                    .git_operations()
-                    .add_remote(&main_repo, &remote_name, repo_path_str)
-                    .await?;
+                git_operations::add_remote(&main_repo, &remote_name, repo_path_str).await?;
 
                 // Validate that the branch is accessible before attempting fetch
-                if let Err(e) = self
-                    .ctx
-                    .git_operations()
-                    .validate_branch_accessible(repo_path, branch_name)
-                    .await
+                if let Err(e) =
+                    git_operations::validate_branch_accessible(repo_path, branch_name).await
                 {
                     // Clean up remote before returning error
-                    let _ = self
-                        .ctx
-                        .git_operations()
-                        .remove_remote(&main_repo, &remote_name)
-                        .await;
+                    let _ = git_operations::remove_remote(&main_repo, &remote_name).await;
                     return Err(format!(
                         "Cannot fetch branch '{}': {}\n\
                          The branch was created but points to an inaccessible commit.\n\
@@ -524,18 +487,10 @@ impl RepoManager {
                 }
 
                 // Fetch the specific branch from the remote
-                match self
-                    .ctx
-                    .git_operations()
-                    .fetch_branch(&main_repo, &remote_name, branch_name)
-                    .await
-                {
+                match git_operations::fetch_branch(&main_repo, &remote_name, branch_name).await {
                     Ok(_) => {
                         // Remove the temporary remote
-                        self.ctx
-                            .git_operations()
-                            .remove_remote(&main_repo, &remote_name)
-                            .await?;
+                        git_operations::remove_remote(&main_repo, &remote_name).await?;
 
                         // Set git-town parent if enabled and source branch is known
                         if git_town_enabled
@@ -549,11 +504,7 @@ impl RepoManager {
                     }
                     Err(e) => {
                         // Remove the temporary remote before returning error
-                        let _ = self
-                            .ctx
-                            .git_operations()
-                            .remove_remote(&main_repo, &remote_name)
-                            .await;
+                        let _ = git_operations::remove_remote(&main_repo, &remote_name).await;
                         return Err(e);
                     }
                 }
@@ -572,21 +523,13 @@ impl RepoManager {
         }
 
         // Now check if the fetched branch has any commits not in main
-        let has_commits = self
-            .ctx
-            .git_operations()
-            .has_commits_not_in_base(&main_repo, branch_name, "main")
-            .await?;
+        let has_commits =
+            git_operations::has_commits_not_in_base(&main_repo, branch_name, "main").await?;
 
         if !has_commits {
             println!("No new commits in branch {branch_name} - deleting branch");
             // Delete the branch from the main repository since it has no new commits
-            if let Err(e) = self
-                .ctx
-                .git_operations()
-                .delete_branch(&main_repo, branch_name)
-                .await
-            {
+            if let Err(e) = git_operations::delete_branch(&main_repo, branch_name).await {
                 eprintln!("Warning: Failed to delete branch {branch_name}: {e}");
             }
             return Ok(false);
@@ -904,10 +847,7 @@ impl RepoManager {
             return Ok(());
         }
 
-        let is_git_repo = self
-            .ctx
-            .git_operations()
-            .is_git_repository(&original_submodule)
+        let is_git_repo = git_operations::is_git_repository(&original_submodule)
             .await
             .unwrap_or(false);
 
@@ -923,11 +863,9 @@ impl RepoManager {
             .ok_or("Invalid module git path")?;
 
         // Add remote
-        if let Err(e) = self
-            .ctx
-            .git_operations()
-            .add_remote(&original_submodule, remote_name, copied_module_git_str)
-            .await
+        if let Err(e) =
+            git_operations::add_remote(&original_submodule, remote_name, copied_module_git_str)
+                .await
         {
             return Err(format!("Failed to add remote: {}", e));
         }
@@ -946,11 +884,7 @@ impl RepoManager {
             }
             _ => {
                 // Clean up remote and return error
-                let _ = self
-                    .ctx
-                    .git_operations()
-                    .remove_remote(&original_submodule, remote_name)
-                    .await;
+                let _ = git_operations::remove_remote(&original_submodule, remote_name).await;
                 return Err("Failed to get HEAD of copied submodule".to_string());
             }
         };
@@ -968,11 +902,7 @@ impl RepoManager {
             }
             _ => {
                 // Clean up remote and return error
-                let _ = self
-                    .ctx
-                    .git_operations()
-                    .remove_remote(&original_submodule, remote_name)
-                    .await;
+                let _ = git_operations::remove_remote(&original_submodule, remote_name).await;
                 return Err("Failed to get HEAD of original submodule".to_string());
             }
         };
@@ -980,11 +910,7 @@ impl RepoManager {
         // If the HEADs are the same, there are no new commits in this submodule - skip branch creation
         if copied_head_sha == original_head_sha {
             // Clean up remote and return - no branch needed for unchanged submodule
-            let _ = self
-                .ctx
-                .git_operations()
-                .remove_remote(&original_submodule, remote_name)
-                .await;
+            let _ = git_operations::remove_remote(&original_submodule, remote_name).await;
             return Ok(());
         }
 
@@ -999,11 +925,7 @@ impl RepoManager {
             .await;
 
         // Always clean up the remote, regardless of fetch result
-        let _ = self
-            .ctx
-            .git_operations()
-            .remove_remote(&original_submodule, remote_name)
-            .await;
+        let _ = git_operations::remove_remote(&original_submodule, remote_name).await;
 
         // Check fetch result
         match fetch_result {
@@ -2096,11 +2018,10 @@ mod tests {
         println!("SUBMODULE TEST: submodule .git state = {submodule_git_state}");
 
         // 5. Check if the submodule is recognized as a valid git repo
-        let submodule_is_git_repo = ctx
-            .git_operations()
-            .is_git_repository(&copied_path.join("libs/mylib"))
-            .await
-            .unwrap_or(false);
+        let submodule_is_git_repo =
+            git_operations::is_git_repository(&copied_path.join("libs/mylib"))
+                .await
+                .unwrap_or(false);
         println!("SUBMODULE TEST: submodule is valid git repo = {submodule_is_git_repo}");
 
         // 6. Check .git/modules in copied repo (where git stores actual submodule data)
@@ -2259,14 +2180,10 @@ mod tests {
         println!("  middle/inner/.git exists = {inner_git_exists}");
 
         // Check if they're valid git repos
-        let middle_is_repo = ctx
-            .git_operations()
-            .is_git_repository(&copied_path.join("middle"))
+        let middle_is_repo = git_operations::is_git_repository(&copied_path.join("middle"))
             .await
             .unwrap_or(false);
-        let inner_is_repo = ctx
-            .git_operations()
-            .is_git_repository(&copied_path.join("middle/inner"))
+        let inner_is_repo = git_operations::is_git_repository(&copied_path.join("middle/inner"))
             .await
             .unwrap_or(false);
 
@@ -2350,9 +2267,7 @@ mod tests {
         let (copied_path, _) = result.unwrap();
 
         // Verify the submodule is a valid git repository in the copied repo
-        let copied_submodule_is_repo = ctx
-            .git_operations()
-            .is_git_repository(&copied_path.join("lib"))
+        let copied_submodule_is_repo = git_operations::is_git_repository(&copied_path.join("lib"))
             .await
             .unwrap_or(false);
         assert!(
