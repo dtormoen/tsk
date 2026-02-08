@@ -11,8 +11,17 @@ impl Command for CleanCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         println!("Cleaning completed tasks...");
         let task_manager = TaskManager::new(ctx)?;
-        let completed_count = task_manager.clean_tasks().await?;
-        println!("Cleanup complete: {completed_count} completed task(s) deleted");
+        let result = task_manager.clean_tasks().await?;
+        println!(
+            "Cleanup complete: {} completed task(s) deleted",
+            result.deleted
+        );
+        if result.skipped > 0 {
+            println!(
+                "Skipped {} task(s) with pending child tasks",
+                result.skipped
+            );
+        }
         Ok(())
     }
 }

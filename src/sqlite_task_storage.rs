@@ -414,30 +414,4 @@ impl TaskStorage for SqliteTaskStorage {
         })
         .await?
     }
-
-    async fn delete_tasks_by_status(
-        &self,
-        statuses: Vec<TaskStatus>,
-    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
-        let conn = Arc::clone(&self.conn);
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
-            let placeholders: Vec<String> = (1..=statuses.len()).map(|i| format!("?{i}")).collect();
-            let sql = format!(
-                "DELETE FROM tasks WHERE status IN ({})",
-                placeholders.join(", ")
-            );
-            let params: Vec<String> = statuses
-                .iter()
-                .map(|s| task_status_to_str(s).to_string())
-                .collect();
-            let param_refs: Vec<&dyn rusqlite::types::ToSql> = params
-                .iter()
-                .map(|s| s as &dyn rusqlite::types::ToSql)
-                .collect();
-            let rows_affected = conn.execute(&sql, param_refs.as_slice())?;
-            Ok(rows_affected)
-        })
-        .await?
-    }
 }

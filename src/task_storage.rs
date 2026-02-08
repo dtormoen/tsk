@@ -22,10 +22,6 @@ pub trait TaskStorage: Send + Sync {
         error_message: Option<String>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
     async fn delete_task(&self, id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
-    async fn delete_tasks_by_status(
-        &self,
-        statuses: Vec<TaskStatus>,
-    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 // Factory function for getting task storage
@@ -84,7 +80,7 @@ mod tests {
         let retrieved = storage.get_task(&task.id).await.unwrap();
         assert!(retrieved.is_none());
 
-        // Test deleting tasks by status
+        // Test deleting specific tasks
         let task1 = Task::new(
             "efgh5678".to_string(),
             data_dir.to_path_buf(),
@@ -143,11 +139,8 @@ mod tests {
         storage.add_task(task2.clone()).await.unwrap();
         storage.add_task(task3.clone()).await.unwrap();
 
-        let deleted_count = storage
-            .delete_tasks_by_status(vec![TaskStatus::Complete, TaskStatus::Failed])
-            .await
-            .unwrap();
-        assert_eq!(deleted_count, 2);
+        storage.delete_task(&task2.id).await.unwrap();
+        storage.delete_task(&task3.id).await.unwrap();
 
         let remaining_tasks = storage.list_tasks().await.unwrap();
         assert_eq!(remaining_tasks.len(), 1);

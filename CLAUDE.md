@@ -23,7 +23,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `shell`: Launch sandbox container with agent for interactive use (tracked in DB, supports piped input via stdin for descriptions)
 - `add`: Queue tasks with descriptions and templates (supports piped input via stdin for descriptions, supports `--parent <taskid>` for task chaining)
 - `list`: Display task status and results (shows parent task information)
-- `clean`: Delete all completed tasks
+- `clean`: Delete completed tasks (skips parents with queued/running children)
 - `delete <task-id>`: Delete a specific task
 - `retry <task-id>`: Retry a previous task
 

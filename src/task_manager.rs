@@ -2,7 +2,15 @@ use crate::context::AppContext;
 use crate::task::{Task, TaskBuilder, TaskStatus};
 use crate::task_runner::{TaskExecutionError, TaskExecutionResult, TaskRunner};
 use crate::task_storage::{TaskStorage, get_task_storage};
+use std::collections::HashSet;
 use std::sync::Arc;
+
+/// Result of cleaning completed tasks.
+#[derive(Debug)]
+pub struct CleanResult {
+    pub deleted: usize,
+    pub skipped: usize,
+}
 
 #[cfg(test)]
 use crate::context::tsk_env::TskEnv;
@@ -154,11 +162,12 @@ impl TaskManager {
         Ok(())
     }
 
-    /// Delete all completed tasks.
+    /// Delete all completed tasks that are not parents of active children.
     ///
     /// Removes completed tasks from storage and deletes their working directories.
-    /// Returns the number of tasks deleted.
-    pub async fn clean_tasks(&self) -> Result<usize, String> {
+    /// Skips completed tasks that are referenced as parents by Queued or Running tasks
+    /// to avoid orphaning child tasks that depend on them.
+    pub async fn clean_tasks(&self) -> Result<CleanResult, String> {
         // Get all tasks to find directories to delete
         let all_tasks = self
             .task_storage
@@ -166,14 +175,25 @@ impl TaskManager {
             .await
             .map_err(|e| format!("Error listing tasks: {e}"))?;
 
-        // Filter completed tasks
+        // Build set of task IDs that are parents of active (Queued/Running) children
+        let active_parent_ids: HashSet<String> = all_tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Queued || t.status == TaskStatus::Running)
+            .flat_map(|t| t.parent_ids.iter().cloned())
+            .collect();
+
+        // Split completed tasks into deletable and skipped
         let completed_tasks: Vec<&Task> = all_tasks
             .iter()
             .filter(|t| t.status == TaskStatus::Complete)
             .collect();
 
-        // Delete completed tasks directories using copied_repo_path
-        for task in &completed_tasks {
+        let (deletable, skipped): (Vec<&Task>, Vec<&Task>) = completed_tasks
+            .into_iter()
+            .partition(|t| !active_parent_ids.contains(&t.id));
+
+        // Delete directories for deletable tasks
+        for task in &deletable {
             // The task directory is the parent of the copied repo path
             if let Some(ref copied_repo_path) = task.copied_repo_path
                 && let Some(task_dir) = copied_repo_path.parent()
@@ -187,14 +207,20 @@ impl TaskManager {
             }
         }
 
-        // Delete completed tasks from storage
-        let deleted_count = self
-            .task_storage
-            .delete_tasks_by_status(vec![TaskStatus::Complete])
-            .await
-            .map_err(|e| format!("Error deleting completed tasks: {e}"))?;
+        // Delete each deletable task individually from storage
+        let mut deleted = 0;
+        for task in &deletable {
+            if let Err(e) = self.task_storage.delete_task(&task.id).await {
+                eprintln!("Warning: Failed to delete task {}: {}", task.id, e);
+            } else {
+                deleted += 1;
+            }
+        }
 
-        Ok(deleted_count)
+        Ok(CleanResult {
+            deleted,
+            skipped: skipped.len(),
+        })
     }
 
     /// Retry a task by creating a new task with the same instructions.
@@ -409,8 +435,9 @@ mod tests {
 
         let result = task_manager.clean_tasks().await;
         assert!(result.is_ok(), "Failed to clean tasks: {result:?}");
-        let completed_count = result.unwrap();
-        assert_eq!(completed_count, 1);
+        let result = result.unwrap();
+        assert_eq!(result.deleted, 1);
+        assert_eq!(result.skipped, 0);
 
         // Verify directories are cleaned up
         assert!(
@@ -609,8 +636,9 @@ mod tests {
 
         let result = task_manager.clean_tasks().await;
         assert!(result.is_ok(), "Failed to clean tasks: {result:?}");
-        let completed_count = result.unwrap();
-        assert_eq!(completed_count, 1);
+        let result = result.unwrap();
+        assert_eq!(result.deleted, 1);
+        assert_eq!(result.skipped, 0);
 
         // Verify directory was deleted
         assert!(
@@ -621,6 +649,139 @@ mod tests {
         // Verify storage was updated
         let remaining_tasks = task_manager.task_storage.list_tasks().await.unwrap();
         assert_eq!(remaining_tasks.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_clean_skips_parents_with_active_children() {
+        // Set up test environment
+        let (config, test_repo, ctx) = setup_test_environment().await.unwrap();
+        let repo_root = test_repo.path().to_path_buf();
+
+        // Create a completed parent task
+        let parent_task_id = "parent-task-001".to_string();
+        let parent_dir_path =
+            setup_task_directory(&config, &parent_task_id, "Parent task instructions")
+                .await
+                .unwrap();
+
+        let mut parent_task = Task::new(
+            parent_task_id.clone(),
+            repo_root.clone(),
+            "parent-task".to_string(),
+            "feat".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            format!("tsk/{parent_task_id}"),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(parent_dir_path.join("repo")),
+            false,
+            vec![],
+        );
+        parent_task.status = TaskStatus::Complete;
+
+        // Create a queued child task referencing the parent
+        let child_task_id = "child-task-001".to_string();
+        let child_dir_path =
+            setup_task_directory(&config, &child_task_id, "Child task instructions")
+                .await
+                .unwrap();
+
+        let child_task = Task::new(
+            child_task_id.clone(),
+            repo_root.clone(),
+            "child-task".to_string(),
+            "feat".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            format!("tsk/{child_task_id}"),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(child_dir_path.join("repo")),
+            false,
+            vec![parent_task_id.clone()],
+        );
+
+        // Create another completed task with no children
+        let childless_task_id = "childless-task-001".to_string();
+        let childless_dir_path =
+            setup_task_directory(&config, &childless_task_id, "Childless task instructions")
+                .await
+                .unwrap();
+
+        let mut childless_task = Task::new(
+            childless_task_id.clone(),
+            repo_root.clone(),
+            "childless-task".to_string(),
+            "fix".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            format!("tsk/{childless_task_id}"),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(childless_dir_path.join("repo")),
+            false,
+            vec![],
+        );
+        childless_task.status = TaskStatus::Complete;
+
+        // Add all tasks via storage API
+        let storage = get_task_storage(ctx.tsk_env());
+        storage.add_task(parent_task).await.unwrap();
+        storage.add_task(child_task).await.unwrap();
+        storage.add_task(childless_task).await.unwrap();
+
+        // Create TaskManager and clean tasks
+        let task_manager = TaskManager::new(&ctx).unwrap();
+
+        let result = task_manager.clean_tasks().await;
+        assert!(result.is_ok(), "Failed to clean tasks: {result:?}");
+        let result = result.unwrap();
+        assert_eq!(result.deleted, 1);
+        assert_eq!(result.skipped, 1);
+
+        // Verify parent task still exists in storage (skipped)
+        let parent = task_manager
+            .task_storage
+            .get_task(&parent_task_id)
+            .await
+            .unwrap();
+        assert!(
+            parent.is_some(),
+            "Parent task should still exist in storage"
+        );
+
+        // Verify childless task was deleted from storage
+        let childless = task_manager
+            .task_storage
+            .get_task(&childless_task_id)
+            .await
+            .unwrap();
+        assert!(
+            childless.is_none(),
+            "Childless task should have been deleted from storage"
+        );
+
+        // Verify parent directory still exists
+        assert!(
+            parent_dir_path.exists(),
+            "Parent task directory should still exist"
+        );
+
+        // Verify childless task directory was deleted
+        assert!(
+            !childless_dir_path.exists(),
+            "Childless task directory should have been deleted"
+        );
     }
 
     #[tokio::test]
