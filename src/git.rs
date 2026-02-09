@@ -467,7 +467,8 @@ impl RepoManager {
         let remote_name = format!("tsk-temp-{}", now.format("%Y-%m-%d-%H%M%S"));
 
         // Synchronize git operations on the main repository
-        self.ctx
+        let has_commits = self
+            .ctx
             .git_sync_manager()
             .with_repo_lock(&main_repo, || async {
                 git_operations::add_remote(&main_repo, &remote_name, repo_path_str).await?;
@@ -508,35 +509,37 @@ impl RepoManager {
                         return Err(e);
                     }
                 }
-                Ok::<(), String>(())
+
+                // Fetch submodule changes back to original submodules
+                // This ensures commits made by agents in submodules are available in the original repo
+                if let Err(e) = self
+                    .fetch_submodule_changes(repo_path, repo_root, branch_name)
+                    .await
+                {
+                    eprintln!("Warning: Failed to fetch submodule changes: {e}");
+                    // Don't fail - superproject changes are still valid
+                }
+
+                // Check if the fetched branch has any commits not in main
+                let has_commits =
+                    git_operations::has_commits_not_in_base(&main_repo, branch_name, "main")
+                        .await?;
+
+                if !has_commits {
+                    println!("No new commits in branch {branch_name} - deleting branch");
+                    if let Err(e) = git_operations::delete_branch(&main_repo, branch_name).await {
+                        eprintln!("Warning: Failed to delete branch {branch_name}: {e}");
+                    }
+                }
+
+                Ok::<bool, String>(has_commits)
             })
             .await?;
 
-        // Fetch submodule changes back to original submodules
-        // This ensures commits made by agents in submodules are available in the original repo
-        if let Err(e) = self
-            .fetch_submodule_changes(repo_path, repo_root, branch_name)
-            .await
-        {
-            eprintln!("Warning: Failed to fetch submodule changes: {e}");
-            // Don't fail - superproject changes are still valid
+        if has_commits {
+            println!("Fetched changes from copied repository");
         }
-
-        // Now check if the fetched branch has any commits not in main
-        let has_commits =
-            git_operations::has_commits_not_in_base(&main_repo, branch_name, "main").await?;
-
-        if !has_commits {
-            println!("No new commits in branch {branch_name} - deleting branch");
-            // Delete the branch from the main repository since it has no new commits
-            if let Err(e) = git_operations::delete_branch(&main_repo, branch_name).await {
-                eprintln!("Warning: Failed to delete branch {branch_name}: {e}");
-            }
-            return Ok(false);
-        }
-
-        println!("Fetched changes from copied repository");
-        Ok(true)
+        Ok(has_commits)
     }
 
     /// Fix submodule paths after copying .git/modules to the destination.
@@ -857,14 +860,15 @@ impl RepoManager {
         }
 
         // Add the copied module as a remote and fetch all refs
-        let remote_name = "tsk-submodule-temp";
+        let now: DateTime<Local> = Local::now();
+        let remote_name = format!("tsk-sub-temp-{}", now.format("%Y%m%d-%H%M%S-%3f"));
         let copied_module_git_str = copied_module_git
             .to_str()
             .ok_or("Invalid module git path")?;
 
         // Add remote
         if let Err(e) =
-            git_operations::add_remote(&original_submodule, remote_name, copied_module_git_str)
+            git_operations::add_remote(&original_submodule, &remote_name, copied_module_git_str)
                 .await
         {
             return Err(format!("Failed to add remote: {}", e));
@@ -884,7 +888,7 @@ impl RepoManager {
             }
             _ => {
                 // Clean up remote and return error
-                let _ = git_operations::remove_remote(&original_submodule, remote_name).await;
+                let _ = git_operations::remove_remote(&original_submodule, &remote_name).await;
                 return Err("Failed to get HEAD of copied submodule".to_string());
             }
         };
@@ -902,7 +906,7 @@ impl RepoManager {
             }
             _ => {
                 // Clean up remote and return error
-                let _ = git_operations::remove_remote(&original_submodule, remote_name).await;
+                let _ = git_operations::remove_remote(&original_submodule, &remote_name).await;
                 return Err("Failed to get HEAD of original submodule".to_string());
             }
         };
@@ -910,7 +914,7 @@ impl RepoManager {
         // If the HEADs are the same, there are no new commits in this submodule - skip branch creation
         if copied_head_sha == original_head_sha {
             // Clean up remote and return - no branch needed for unchanged submodule
-            let _ = git_operations::remove_remote(&original_submodule, remote_name).await;
+            let _ = git_operations::remove_remote(&original_submodule, &remote_name).await;
             return Ok(());
         }
 
@@ -920,12 +924,12 @@ impl RepoManager {
         let refspec = format!("+{}:refs/heads/{}", copied_head_sha, branch_name);
         let fetch_result = tokio::process::Command::new("git")
             .current_dir(&original_submodule)
-            .args(["fetch", remote_name, &refspec])
+            .args(["fetch", &remote_name, &refspec])
             .output()
             .await;
 
         // Always clean up the remote, regardless of fetch result
-        let _ = git_operations::remove_remote(&original_submodule, remote_name).await;
+        let _ = git_operations::remove_remote(&original_submodule, &remote_name).await;
 
         // Check fetch result
         match fetch_result {
