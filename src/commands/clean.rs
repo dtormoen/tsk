@@ -11,7 +11,7 @@ impl Command for CleanCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         println!("Cleaning completed tasks...");
         let task_manager = TaskManager::new(ctx)?;
-        let result = task_manager.clean_tasks().await?;
+        let result = task_manager.clean_tasks(false, None).await?;
         println!(
             "Cleanup complete: {} completed task(s) deleted",
             result.deleted

@@ -5,7 +5,7 @@ use crate::task_storage::{TaskStorage, get_task_storage};
 use std::collections::HashSet;
 use std::sync::Arc;
 
-/// Result of cleaning completed tasks.
+/// Result of cleaning terminal-state tasks.
 #[derive(Debug)]
 pub struct CleanResult {
     pub deleted: usize,
@@ -162,12 +162,22 @@ impl TaskManager {
         Ok(())
     }
 
-    /// Delete all completed tasks that are not parents of active children.
+    /// Delete completed (and optionally failed) tasks that are not parents of active children.
     ///
-    /// Removes completed tasks from storage and deletes their working directories.
-    /// Skips completed tasks that are referenced as parents by Queued or Running tasks
+    /// Removes terminal-state tasks from storage and deletes their working directories.
+    /// Skips tasks that are referenced as parents by Queued or Running tasks
     /// to avoid orphaning child tasks that depend on them.
-    pub async fn clean_tasks(&self) -> Result<CleanResult, String> {
+    ///
+    /// # Arguments
+    ///
+    /// * `include_failed` - When true, also clean Failed tasks (not just Complete)
+    /// * `min_age` - When Some, only clean tasks whose `completed_at` is older than this duration.
+    ///   Tasks without a `completed_at` timestamp are never cleaned when an age filter is set.
+    pub async fn clean_tasks(
+        &self,
+        include_failed: bool,
+        min_age: Option<chrono::Duration>,
+    ) -> Result<CleanResult, String> {
         // Get all tasks to find directories to delete
         let all_tasks = self
             .task_storage
@@ -182,13 +192,29 @@ impl TaskManager {
             .flat_map(|t| t.parent_ids.iter().cloned())
             .collect();
 
-        // Split completed tasks into deletable and skipped
-        let completed_tasks: Vec<&Task> = all_tasks
+        let now = chrono::Utc::now();
+
+        // Filter for cleanable tasks based on status and age
+        let cleanable_tasks: Vec<&Task> = all_tasks
             .iter()
-            .filter(|t| t.status == TaskStatus::Complete)
+            .filter(|t| {
+                let status_match = t.status == TaskStatus::Complete
+                    || (include_failed && t.status == TaskStatus::Failed);
+                if !status_match {
+                    return false;
+                }
+                if let Some(min_age) = min_age {
+                    match t.completed_at {
+                        Some(completed_at) => now - completed_at >= min_age,
+                        None => false,
+                    }
+                } else {
+                    true
+                }
+            })
             .collect();
 
-        let (deletable, skipped): (Vec<&Task>, Vec<&Task>) = completed_tasks
+        let (deletable, skipped): (Vec<&Task>, Vec<&Task>) = cleanable_tasks
             .into_iter()
             .partition(|t| !active_parent_ids.contains(&t.id));
 
@@ -433,7 +459,7 @@ mod tests {
         // Create TaskManager and clean tasks
         let task_manager = TaskManager::new(&ctx).unwrap();
 
-        let result = task_manager.clean_tasks().await;
+        let result = task_manager.clean_tasks(false, None).await;
         assert!(result.is_ok(), "Failed to clean tasks: {result:?}");
         let result = result.unwrap();
         assert_eq!(result.deleted, 1);
@@ -634,7 +660,7 @@ mod tests {
         // Create TaskManager and clean tasks
         let task_manager = TaskManager::new(&ctx).unwrap();
 
-        let result = task_manager.clean_tasks().await;
+        let result = task_manager.clean_tasks(false, None).await;
         assert!(result.is_ok(), "Failed to clean tasks: {result:?}");
         let result = result.unwrap();
         assert_eq!(result.deleted, 1);
@@ -743,7 +769,7 @@ mod tests {
         // Create TaskManager and clean tasks
         let task_manager = TaskManager::new(&ctx).unwrap();
 
-        let result = task_manager.clean_tasks().await;
+        let result = task_manager.clean_tasks(false, None).await;
         assert!(result.is_ok(), "Failed to clean tasks: {result:?}");
         let result = result.unwrap();
         assert_eq!(result.deleted, 1);
@@ -851,5 +877,183 @@ mod tests {
             all_tasks.iter().any(|t| t.id == task_id),
             "Task should appear in the list of all tasks"
         );
+    }
+
+    #[tokio::test]
+    async fn test_clean_tasks_with_age_filter() {
+        let (config, test_repo, ctx) = setup_test_environment().await.unwrap();
+        let repo_root = test_repo.path().to_path_buf();
+
+        // Create tasks with different statuses and ages
+        let old_complete_id = "old-complete-001".to_string();
+        let old_failed_id = "old-failed-002".to_string();
+        let young_complete_id = "young-complete-003".to_string();
+        let queued_id = "queued-004".to_string();
+        let old_parent_id = "old-parent-005".to_string();
+
+        let old_complete_dir = setup_task_directory(&config, &old_complete_id, "Old complete task")
+            .await
+            .unwrap();
+        let old_failed_dir = setup_task_directory(&config, &old_failed_id, "Old failed task")
+            .await
+            .unwrap();
+        let young_complete_dir =
+            setup_task_directory(&config, &young_complete_id, "Young complete task")
+                .await
+                .unwrap();
+        let queued_dir = setup_task_directory(&config, &queued_id, "Queued task")
+            .await
+            .unwrap();
+        let old_parent_dir = setup_task_directory(&config, &old_parent_id, "Old parent task")
+            .await
+            .unwrap();
+
+        let ten_days_ago = chrono::Utc::now() - chrono::Duration::days(10);
+        let two_days_ago = chrono::Utc::now() - chrono::Duration::days(2);
+
+        // Old Complete task (should be deleted)
+        let mut old_complete = Task::new(
+            old_complete_id.clone(),
+            repo_root.clone(),
+            "old-complete".to_string(),
+            "feat".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            format!("tsk/{old_complete_id}"),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(old_complete_dir.join("repo")),
+            false,
+            vec![],
+        );
+        old_complete.status = TaskStatus::Complete;
+        old_complete.completed_at = Some(ten_days_ago);
+
+        // Old Failed task (should be deleted when include_failed=true)
+        let mut old_failed = Task::new(
+            old_failed_id.clone(),
+            repo_root.clone(),
+            "old-failed".to_string(),
+            "fix".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            format!("tsk/{old_failed_id}"),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(old_failed_dir.join("repo")),
+            false,
+            vec![],
+        );
+        old_failed.status = TaskStatus::Failed;
+        old_failed.completed_at = Some(ten_days_ago);
+
+        // Young Complete task (should be preserved - too young)
+        let mut young_complete = Task::new(
+            young_complete_id.clone(),
+            repo_root.clone(),
+            "young-complete".to_string(),
+            "feat".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            format!("tsk/{young_complete_id}"),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(young_complete_dir.join("repo")),
+            false,
+            vec![],
+        );
+        young_complete.status = TaskStatus::Complete;
+        young_complete.completed_at = Some(two_days_ago);
+
+        // Queued task (should always be preserved), child of old_parent
+        let queued = Task::new(
+            queued_id.clone(),
+            repo_root.clone(),
+            "queued-task".to_string(),
+            "feat".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            format!("tsk/{queued_id}"),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(queued_dir.join("repo")),
+            false,
+            vec![old_parent_id.clone()],
+        );
+
+        // Old parent task with active child (should be skipped due to parent protection)
+        let mut old_parent = Task::new(
+            old_parent_id.clone(),
+            repo_root.clone(),
+            "old-parent".to_string(),
+            "feat".to_string(),
+            "instructions.md".to_string(),
+            "claude".to_string(),
+            format!("tsk/{old_parent_id}"),
+            "abc123".to_string(),
+            Some("main".to_string()),
+            "default".to_string(),
+            "default".to_string(),
+            chrono::Local::now(),
+            Some(old_parent_dir.join("repo")),
+            false,
+            vec![],
+        );
+        old_parent.status = TaskStatus::Complete;
+        old_parent.completed_at = Some(ten_days_ago);
+
+        let storage = get_task_storage(ctx.tsk_env());
+        storage.add_task(old_complete).await.unwrap();
+        storage.add_task(old_failed).await.unwrap();
+        storage.add_task(young_complete).await.unwrap();
+        storage.add_task(queued).await.unwrap();
+        storage.add_task(old_parent).await.unwrap();
+
+        let task_manager = TaskManager::new(&ctx).unwrap();
+
+        let result = task_manager
+            .clean_tasks(true, Some(chrono::Duration::days(7)))
+            .await;
+        assert!(result.is_ok(), "Failed to clean tasks: {result:?}");
+        let result = result.unwrap();
+        assert_eq!(result.deleted, 2, "Should delete old complete + old failed");
+        assert_eq!(
+            result.skipped, 1,
+            "Should skip old parent with active child"
+        );
+
+        // Verify old tasks are deleted
+        assert!(
+            !old_complete_dir.exists(),
+            "Old complete dir should be deleted"
+        );
+        assert!(!old_failed_dir.exists(), "Old failed dir should be deleted");
+
+        // Verify preserved tasks still exist
+        assert!(
+            young_complete_dir.exists(),
+            "Young complete dir should exist"
+        );
+        assert!(queued_dir.exists(), "Queued dir should exist");
+        assert!(old_parent_dir.exists(), "Old parent dir should exist");
+
+        let remaining = task_manager.task_storage.list_tasks().await.unwrap();
+        assert_eq!(remaining.len(), 3);
+        let remaining_ids: HashSet<String> = remaining.iter().map(|t| t.id.clone()).collect();
+        assert!(remaining_ids.contains(&young_complete_id));
+        assert!(remaining_ids.contains(&queued_id));
+        assert!(remaining_ids.contains(&old_parent_id));
     }
 }

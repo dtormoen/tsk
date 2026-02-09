@@ -135,6 +135,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Parent-aware scheduling: tasks with incomplete parents are skipped
   - Prepares child tasks by copying repository from parent task before scheduling
   - Handles cascading failures when parent tasks fail
+  - Auto-cleans completed/failed tasks older than 7 days (hourly check, runs on startup)
 - `WorkerPool`: Generic async job execution pool with semaphore-based concurrency control
   - Tracks active jobs in JoinSet for efficient completion polling
   - Provides `poll_completed()` for retrieving finished job results

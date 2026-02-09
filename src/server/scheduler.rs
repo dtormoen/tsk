@@ -42,6 +42,7 @@ pub struct TaskScheduler {
     submitted_tasks: Arc<Mutex<HashSet<String>>>,
     quit_signal: Arc<tokio::sync::Notify>,
     quit_when_done: bool,
+    last_auto_clean: Instant,
 }
 
 impl TaskScheduler {
@@ -80,6 +81,7 @@ impl TaskScheduler {
             submitted_tasks: Arc::new(Mutex::new(HashSet::new())),
             quit_signal,
             quit_when_done,
+            last_auto_clean: Instant::now() - Duration::from_secs(3600),
         }
     }
 
@@ -263,6 +265,31 @@ impl TaskScheduler {
 
                 self.context.terminal_operations().restore_title();
                 break;
+            }
+
+            // Auto-clean old completed/failed tasks every hour
+            const AUTO_CLEAN_INTERVAL: Duration = Duration::from_secs(3600);
+            const AUTO_CLEAN_MIN_AGE: chrono::Duration = chrono::Duration::days(7);
+            if self.last_auto_clean.elapsed() >= AUTO_CLEAN_INTERVAL {
+                self.last_auto_clean = Instant::now();
+                let task_manager = TaskManager::new(&self.context);
+                match task_manager {
+                    Ok(tm) => match tm.clean_tasks(true, Some(AUTO_CLEAN_MIN_AGE)).await {
+                        Ok(result) if result.deleted > 0 => {
+                            println!(
+                                "Auto-clean: removed {} old task(s) ({} skipped)",
+                                result.deleted, result.skipped
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("Auto-clean failed: {}", e);
+                        }
+                        _ => {}
+                    },
+                    Err(e) => {
+                        eprintln!("Auto-clean: failed to create task manager: {}", e);
+                    }
+                }
             }
 
             // Update terminal title to reflect current worker state
