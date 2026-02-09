@@ -148,7 +148,8 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Automatic commit and fetch operations
 - `GitSyncManager`: Repository-level synchronization for concurrent git operations
   - Prevents concurrent fetch operations to the same repository
-  - Uses repository path-based locking mechanism
+  - Uses dual-lock architecture: in-process `tokio::Mutex` + cross-process `flock(2)` file locks
+  - Lock file at `<repo>/.git/tsk.lock` provides cross-process safety (multiple `tsk` processes on same repo)
 - **Submodule Support**: Full support for repositories with git submodules
   - Copies `.git/modules/` directory to preserve submodule git data without network access
   - Fixes gitdir paths in submodule `.git` files to point to correct locations
