@@ -9,8 +9,6 @@ mod agent {
     #[async_trait]
     pub trait LogProcessor: Send + Sync {
         fn process_line(&mut self, line: &str) -> Option<String>;
-        #[allow(dead_code)]
-        fn get_full_log(&self) -> String;
         fn get_final_result(&self) -> Option<&TaskResult>;
     }
 

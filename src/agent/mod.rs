@@ -136,10 +136,6 @@ mod tests {
                     Some("test".to_string())
                 }
 
-                fn get_full_log(&self) -> String {
-                    "test log".to_string()
-                }
-
                 fn get_final_result(&self) -> Option<&TaskResult> {
                     None
                 }
@@ -218,13 +214,6 @@ mod tests {
         let result = processor.process_line(line);
         assert_eq!(result, Some(line.to_string()));
 
-        // Test get_full_log
-        processor.process_line("line 1");
-        processor.process_line("line 2");
-        let full_log = processor.get_full_log();
-        assert!(full_log.contains("line 1"));
-        assert!(full_log.contains("line 2"));
-
         // Test get_final_result returns None
         assert!(processor.get_final_result().is_none());
     }
@@ -244,11 +233,6 @@ mod tests {
         let output = processor.process_line(cmd_started);
         assert!(output.is_some());
         assert!(output.unwrap().contains("Running: ls"));
-
-        // Test get_full_log stores lines
-        let full_log = processor.get_full_log();
-        assert!(full_log.contains("thread.started"));
-        assert!(full_log.contains("command_execution"));
 
         // Test get_final_result returns None before turn.completed
         assert!(processor.get_final_result().is_none());

@@ -79,7 +79,6 @@ struct TaskInvocation {
 /// - Initially prints non-JSON lines as-is (for misconfiguration messages)
 /// - Switches to JSON-only mode after the first valid JSON line
 pub struct ClaudeLogProcessor {
-    full_log: Vec<String>,
     final_result: Option<TaskResult>,
     json_mode_active: bool,
     /// Track whether the previous line was a parsing error to avoid duplicate error messages
@@ -94,7 +93,6 @@ impl ClaudeLogProcessor {
     /// Creates a new ClaudeLogProcessor
     pub fn new(task_name: Option<String>) -> Self {
         Self {
-            full_log: Vec::new(),
             final_result: None,
             json_mode_active: false,
             last_line_was_parse_error: false,
@@ -934,9 +932,6 @@ impl ClaudeLogProcessor {
 #[async_trait]
 impl LogProcessor for ClaudeLogProcessor {
     fn process_line(&mut self, line: &str) -> Option<String> {
-        // Store the raw line for the full log
-        self.full_log.push(line.to_string());
-
         // Skip empty lines - don't reset error tracking
         if line.trim().is_empty() {
             return None;
@@ -974,10 +969,6 @@ impl LogProcessor for ClaudeLogProcessor {
                 }
             }
         }
-    }
-
-    fn get_full_log(&self) -> String {
-        self.full_log.join("\n")
     }
 
     fn get_final_result(&self) -> Option<&TaskResult> {

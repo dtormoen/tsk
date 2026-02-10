@@ -370,11 +370,9 @@ mod tests {
         let tsk_env = app_context.tsk_env();
         let agent = ClaudeAgent::with_tsk_env(tsk_env);
 
-        let log_processor = agent.create_log_processor(None);
-
         // Just verify we can create a log processor
         // The actual log processor functionality is tested elsewhere
-        let _ = log_processor.get_full_log();
+        let _log_processor = agent.create_log_processor(None);
 
         // Also test with custom config using AppContext
         use crate::context::AppContext;
