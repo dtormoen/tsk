@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/dtormoen/tsk/compare/v0.7.1...v0.8.0) - 2026-02-09
+
+There are a lot of under the hood improvements, but the headlines here are:
+- Added a `--parent` flag for tasks which allows task chaining. Very powerful
+  when combined with a Claude Code skill that teaches Claude how to use TSK.
+- Added automatic tsk-proxy container management so it'll shut down when not in use.
+- `tsk server start` will now kill running containers when you use ctrl-c to exit.
+- Migrated json task storage to sql and renamed task directories to be just their task ID.
+- Added the ability to add a description to your task templates via yaml frontmatter.
+  Run `tsk template list` to see task descriptions.
+- Improved TUI output tables in `tsk list` and `tsk template list` commands.
+
+Task chaining allows you to specify parent child relationships between tasks. TSK will
+wait to schedule a child task until the parent completes and the child will start from
+the branch that the parent created.
+
+There are two breaking changes:
+- The `tsk proxy` commands are removed in favor of automatic proxy container management.
+- Migrating to SQL storage and simplifying task directory paths. These changes did not
+  cause issues in my testing, however, this is a large change and there may be cases
+  that are broken with tasks created before the migration.
+
+### Added
+
+- implement graceful server shutdown with container cleanup
+- skip cleaning parent tasks with active children
+- track shell and run tasks in the database
+- replace IPC-based server stop with SIGTERM via PID file
+- remove IPC from add and list commands in favor of direct SQLite access
+- simplify storage wrapper from Arc<Mutex<Box<dyn TaskStorage>>> to Arc<dyn TaskStorage>
+- add busy_timeout PRAGMA to SQLite storage for safe concurrent access
+- run network isolation tests conditionally in precommit
+- add TSK_CONTAINER and TSK_TASK_ID env vars to task containers
+- add color coding to status column in tsk list
+- support multiple parent IDs in database schema
+- remove JsonTaskStorage and clean up legacy JSON references
+- add automatic migration from tasks.json to SQLite
+- wire SqliteTaskStorage as default storage backend
+- add rusqlite dependency and implement SqliteTaskStorage
+- add bold+underline styling to table headers
+- add frontmatter support to task templates
+- add duration column to list and replace table borders with aligned columns
+- add task dependency chaining with --parent flag
+
+### Other
+
+- remove NotificationClient trait, use concrete type in AppContext
+- remove TerminalOperations trait, use concrete type in AppContext
+- move DockerBuildLockManager out of AppContext into DockerImageManager
+- remove GitOperations trait, extract to free functions
+- remove FileSystemOperations trait, extract to free functions
+- add comments to justfile recipes and simplify CLAUDE.md dev commands
+- [**breaking**] remove `tsk proxy` command
+- [**breaking**] remove repo hash prefix from task directory paths
+- add task chaining with --parent to README
+
 ## [0.7.1](https://github.com/dtormoen/tsk/compare/v0.7.0...v0.7.1) - 2026-02-04
 
 ### Fixed
