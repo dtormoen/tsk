@@ -12,6 +12,16 @@ pub struct CleanResult {
     pub skipped: usize,
 }
 
+/// Optional overrides applied when retrying a task.
+#[derive(Debug, Default)]
+pub struct RetryOverrides {
+    pub name: Option<String>,
+    pub agent: Option<String>,
+    pub stack: Option<String>,
+    pub project: Option<String>,
+    pub parent_id: Option<String>,
+}
+
 #[cfg(test)]
 use crate::context::tsk_env::TskEnv;
 
@@ -257,6 +267,7 @@ impl TaskManager {
         &self,
         task_id: &str,
         edit_instructions: bool,
+        overrides: RetryOverrides,
         ctx: &AppContext,
     ) -> Result<String, String> {
         // Retrieve the original task
@@ -279,8 +290,24 @@ impl TaskManager {
         // Use TaskBuilder to create the new task, leveraging from_existing
         let mut builder = TaskBuilder::from_existing(&original_task);
 
-        // Keep the same name - the new nanoid will ensure uniqueness
         builder = builder.edit(edit_instructions);
+
+        // Apply optional overrides
+        if let Some(name) = overrides.name {
+            builder = builder.name(name);
+        }
+        if let Some(agent) = overrides.agent {
+            builder = builder.agent(Some(agent));
+        }
+        if let Some(stack) = overrides.stack {
+            builder = builder.stack(Some(stack));
+        }
+        if let Some(project) = overrides.project {
+            builder = builder.project(Some(project));
+        }
+        if let Some(parent_id) = overrides.parent_id {
+            builder = builder.parent_id(Some(parent_id));
+        }
 
         let new_task = builder
             .build(ctx)
@@ -525,7 +552,9 @@ mod tests {
         // Create TaskManager and retry the task
         let task_manager = TaskManager::new(&ctx).unwrap();
 
-        let result = task_manager.retry_task(&task_id, false, &ctx).await;
+        let result = task_manager
+            .retry_task(&task_id, false, RetryOverrides::default(), &ctx)
+            .await;
         assert!(result.is_ok(), "Failed to retry task: {result:?}");
         let new_task_id = result.unwrap();
 
@@ -567,7 +596,7 @@ mod tests {
         let task_manager = TaskManager::new(&ctx).unwrap();
 
         let result = task_manager
-            .retry_task("non-existent-task", false, &ctx)
+            .retry_task("non-existent-task", false, RetryOverrides::default(), &ctx)
             .await;
         assert!(result.is_err());
         assert!(
@@ -611,7 +640,9 @@ mod tests {
         // Create TaskManager and try to retry a queued task
         let task_manager = TaskManager::new(&ctx).unwrap();
 
-        let result = task_manager.retry_task(&task_id, false, &ctx).await;
+        let result = task_manager
+            .retry_task(&task_id, false, RetryOverrides::default(), &ctx)
+            .await;
         assert!(result.is_err());
         assert!(
             result

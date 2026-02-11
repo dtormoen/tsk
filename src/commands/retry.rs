@@ -1,12 +1,17 @@
 use super::Command;
 use crate::context::AppContext;
-use crate::task_manager::TaskManager;
+use crate::task_manager::{RetryOverrides, TaskManager};
 use async_trait::async_trait;
 use std::error::Error;
 
 pub struct RetryCommand {
     pub task_ids: Vec<String>,
     pub edit: bool,
+    pub name: Option<String>,
+    pub agent: Option<String>,
+    pub stack: Option<String>,
+    pub project: Option<String>,
+    pub parent_id: Option<String>,
 }
 
 #[async_trait]
@@ -22,7 +27,17 @@ impl Command for RetryCommand {
 
         for task_id in &self.task_ids {
             println!("Retrying task: {task_id}");
-            match task_manager.retry_task(task_id, self.edit, ctx).await {
+            let overrides = RetryOverrides {
+                name: self.name.clone(),
+                agent: self.agent.clone(),
+                stack: self.stack.clone(),
+                project: self.project.clone(),
+                parent_id: self.parent_id.clone(),
+            };
+            match task_manager
+                .retry_task(task_id, self.edit, overrides, ctx)
+                .await
+            {
                 Ok(new_task_id) => {
                     println!("Task '{task_id}' retried successfully. New task ID: {new_task_id}");
                     successful_retries += 1;
@@ -123,6 +138,11 @@ mod tests {
         let cmd = RetryCommand {
             task_ids: vec![task_id.to_string()],
             edit: false,
+            name: None,
+            agent: None,
+            stack: None,
+            project: None,
+            parent_id: None,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -142,6 +162,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_retry_with_overrides() {
+        let task_id = "test-task-1";
+        let (ctx, _test_repo) = setup_test_environment_with_completed_tasks(vec![task_id])
+            .await
+            .unwrap();
+
+        let cmd = RetryCommand {
+            task_ids: vec![task_id.to_string()],
+            edit: false,
+            name: Some("new-name".to_string()),
+            agent: Some("codex".to_string()),
+            stack: None,
+            project: None,
+            parent_id: None,
+        };
+
+        let result = cmd.execute(&ctx).await;
+        assert!(result.is_ok());
+
+        // Verify new task was created with overridden values
+        let storage = get_task_storage(ctx.tsk_env());
+        let all_tasks = storage.list_tasks().await.unwrap();
+
+        assert_eq!(all_tasks.len(), 2);
+
+        let new_task = all_tasks.iter().find(|t| t.id != task_id).unwrap();
+        assert_eq!(new_task.name, "new-name");
+        assert_eq!(new_task.agent, "codex");
+        assert_eq!(new_task.status, TaskStatus::Queued);
+    }
+
+    #[tokio::test]
     async fn test_retry_multiple_tasks() {
         let task_ids = vec!["task-1", "task-2", "task-3"];
         let (ctx, _test_repo) = setup_test_environment_with_completed_tasks(task_ids.clone())
@@ -151,6 +203,11 @@ mod tests {
         let cmd = RetryCommand {
             task_ids: task_ids.iter().map(|s| s.to_string()).collect(),
             edit: false,
+            name: None,
+            agent: None,
+            stack: None,
+            project: None,
+            parent_id: None,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -186,6 +243,11 @@ mod tests {
                 "task-3".to_string(),
             ],
             edit: false,
+            name: None,
+            agent: None,
+            stack: None,
+            project: None,
+            parent_id: None,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -221,6 +283,11 @@ mod tests {
         let cmd = RetryCommand {
             task_ids: vec![],
             edit: false,
+            name: None,
+            agent: None,
+            stack: None,
+            project: None,
+            parent_id: None,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -269,6 +336,11 @@ mod tests {
         let cmd = RetryCommand {
             task_ids: vec![task_id.to_string()],
             edit: false,
+            name: None,
+            agent: None,
+            stack: None,
+            project: None,
+            parent_id: None,
         };
 
         let result = cmd.execute(&ctx).await;

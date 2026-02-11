@@ -186,9 +186,24 @@ enum Commands {
     Retry {
         /// Task IDs to retry
         task_ids: Vec<String>,
+        /// Unique identifier for the task (defaults to task type if not specified)
+        #[arg(short, long)]
+        name: Option<String>,
         /// Open the prompt file in $EDITOR after creation
         #[arg(short, long)]
         edit: bool,
+        /// Specific agent to use (claude, codex)
+        #[arg(short, long)]
+        agent: Option<String>,
+        /// Stack for Docker image (e.g., rust, python, node)
+        #[arg(long)]
+        stack: Option<String>,
+        /// Project name for Docker image
+        #[arg(long)]
+        project: Option<String>,
+        /// Parent task ID (task will wait for parent to complete before starting)
+        #[arg(short = 'p', long = "parent")]
+        parent_id: Option<String>,
     },
     /// Docker operations - build and manage TSK Docker images
     Docker(DockerArgs),
@@ -349,7 +364,23 @@ async fn main() {
         Commands::List => Box::new(ListCommand),
         Commands::Clean => Box::new(CleanCommand),
         Commands::Delete { task_ids } => Box::new(DeleteCommand { task_ids }),
-        Commands::Retry { task_ids, edit } => Box::new(RetryCommand { task_ids, edit }),
+        Commands::Retry {
+            task_ids,
+            name,
+            edit,
+            agent,
+            stack,
+            project,
+            parent_id,
+        } => Box::new(RetryCommand {
+            task_ids,
+            edit,
+            name,
+            agent,
+            stack,
+            project,
+            parent_id,
+        }),
         Commands::Server(server_args) => match server_args.command {
             ServerCommands::Start {
                 workers,
