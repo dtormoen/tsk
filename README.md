@@ -162,6 +162,9 @@ Now it's easy to solve GitHub issues with a simple task template. Try this with 
 ## Commands
 
 ### Task Commands
+
+Create, manage, and monitor tasks assigned to AI agents.
+
 - `tsk run` - Execute a task immediately
 - `tsk shell` - Start a sandbox container with an interactive shell
 - `tsk add` - Queue a task (supports `--parent <taskid>` for task chaining)
@@ -171,10 +174,16 @@ Now it's easy to solve GitHub issues with a simple task template. Try this with 
 - `tsk retry <task-id>...` - Retry one or more tasks
 
 ### Server Commands
+
+Manage the TSK server daemon for parallel task execution. The server automatically cleans up completed and failed tasks older than 7 days.
+
 - `tsk server start` - Start the TSK server daemon
 - `tsk server stop` - Stop the running TSK server
 
 ### Configuration Commands
+
+Build Docker images and manage task templates.
+
 - `tsk docker build` - Build required docker images
 - `tsk template list` - View available task type templates and where they are installed
 
