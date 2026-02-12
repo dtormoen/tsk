@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1](https://github.com/dtormoen/tsk/compare/v0.8.0...v0.8.1) - 2026-02-12
+
+### Added
+
+- add configurable auto-cleanup settings to [server] config section
+- add override options to retry command (--name, --agent, --stack, --project, --parent)
+- expand repo lock scope to cover submodule fetches and post-fetch operations
+- replace in-process mutex with cross-process flock(2) file locking in GitSyncManager
+- auto-clean old tasks in server mode
+
+### Other
+
+- add section descriptions to README command groups
+- remove unused get_full_log from LogProcessor trait
+
 ## [0.8.0](https://github.com/dtormoen/tsk/compare/v0.7.1...v0.8.0) - 2026-02-09
 
 There are a lot of under the hood improvements, but the headlines here are:
