@@ -96,6 +96,10 @@ TSK implements a command pattern with dependency injection for testability. The 
   [git_town]
   enabled = true  # Enable git-town parent branch tracking (default: false)
 
+  [server]
+  auto_clean_enabled = true   # Enable automatic cleanup of old tasks (default: true)
+  auto_clean_age_days = 7.0   # Minimum age in days before cleanup (default: 7.0)
+
   [proxy]
   # Ports forwarded from proxy to host.docker.internal (agents connect to tsk-proxy:<port>)
   host_services = [5432, 6379, 3000]  # PostgreSQL, Redis, dev server
@@ -135,7 +139,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Parent-aware scheduling: tasks with incomplete parents are skipped
   - Prepares child tasks by copying repository from parent task before scheduling
   - Handles cascading failures when parent tasks fail
-  - Auto-cleans completed/failed tasks older than 7 days (hourly check, runs on startup)
+  - Auto-cleans completed/failed tasks based on `[server]` config (default: enabled, 7 days, hourly check, runs on startup)
 - `WorkerPool`: Generic async job execution pool with semaphore-based concurrency control
   - Tracks active jobs in JoinSet for efficient completion polling
   - Provides `poll_completed()` for retrieving finished job results

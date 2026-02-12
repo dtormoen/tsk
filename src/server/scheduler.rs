@@ -269,12 +269,15 @@ impl TaskScheduler {
 
             // Auto-clean old completed/failed tasks every hour
             const AUTO_CLEAN_INTERVAL: Duration = Duration::from_secs(3600);
-            const AUTO_CLEAN_MIN_AGE: chrono::Duration = chrono::Duration::days(7);
-            if self.last_auto_clean.elapsed() >= AUTO_CLEAN_INTERVAL {
+            let server_config = &self.context.tsk_config().server;
+            if server_config.auto_clean_enabled
+                && self.last_auto_clean.elapsed() >= AUTO_CLEAN_INTERVAL
+            {
                 self.last_auto_clean = Instant::now();
+                let min_age = server_config.auto_clean_min_age();
                 let task_manager = TaskManager::new(&self.context);
                 match task_manager {
-                    Ok(tm) => match tm.clean_tasks(true, Some(AUTO_CLEAN_MIN_AGE)).await {
+                    Ok(tm) => match tm.clean_tasks(true, Some(min_age)).await {
                         Ok(result) if result.deleted > 0 => {
                             println!(
                                 "Auto-clean: removed {} old task(s) ({} skipped)",

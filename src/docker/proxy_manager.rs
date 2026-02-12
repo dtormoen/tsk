@@ -622,6 +622,7 @@ mod tests {
             proxy: ProxyConfig {
                 host_services: vec![5432, 6379],
             },
+            server: Default::default(),
             project: Default::default(),
         };
 

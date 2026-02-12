@@ -221,6 +221,11 @@ host_services = [5432, 6379]  # e.g., PostgreSQL, Redis
 [git_town]
 enabled = true  # default: false
 
+# Server daemon configuration
+[server]
+auto_clean_enabled = true   # Automatically clean old tasks (default: true)
+auto_clean_age_days = 7.0   # Minimum age in days before cleanup (default: 7.0)
+
 # Project-specific configuration (matches directory name)
 [project.my-project]
 agent = "claude"        # Default agent (claude or codex)

@@ -27,6 +27,9 @@ pub struct TskConfig {
     /// Proxy configuration for host service access
     #[serde(default)]
     pub proxy: ProxyConfig,
+    /// Server daemon configuration
+    #[serde(default)]
+    pub server: ServerConfig,
     /// Project-specific configurations keyed by project name
     #[serde(default)]
     pub project: HashMap<String, ProjectConfig>,
@@ -116,6 +119,39 @@ impl ProxyConfig {
                 .collect::<Vec<_>>()
                 .join(",")
         }
+    }
+}
+
+/// Server daemon configuration
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ServerConfig {
+    /// Enable automatic cleanup of old completed/failed tasks (default: true)
+    pub auto_clean_enabled: bool,
+    /// Minimum age in days before a task is eligible for auto-cleanup (default: 7.0)
+    ///
+    /// Supports fractional days (e.g., 0.5 for 12 hours). Negative values are
+    /// clamped to 0.
+    pub auto_clean_age_days: f64,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            auto_clean_enabled: true,
+            auto_clean_age_days: 7.0,
+        }
+    }
+}
+
+impl ServerConfig {
+    /// Convert `auto_clean_age_days` to a `chrono::Duration`.
+    ///
+    /// Negative values are clamped to zero (clean immediately on next cycle).
+    pub fn auto_clean_min_age(&self) -> chrono::Duration {
+        let days = f64::max(0.0, self.auto_clean_age_days);
+        let seconds = (days * 86_400.0) as i64;
+        chrono::Duration::seconds(seconds)
     }
 }
 
@@ -657,5 +693,78 @@ memory_limit_gb = 8.0
     fn test_tsk_config_default_has_empty_proxy() {
         let config = TskConfig::default();
         assert!(config.proxy.host_services.is_empty());
+    }
+
+    #[test]
+    fn test_server_config_default() {
+        let config = ServerConfig::default();
+        assert!(config.auto_clean_enabled);
+        assert_eq!(config.auto_clean_age_days, 7.0);
+    }
+
+    #[test]
+    fn test_server_config_auto_clean_min_age() {
+        let config = ServerConfig::default();
+        assert_eq!(config.auto_clean_min_age(), chrono::Duration::days(7));
+
+        let custom = ServerConfig {
+            auto_clean_enabled: true,
+            auto_clean_age_days: 0.5,
+        };
+        assert_eq!(
+            custom.auto_clean_min_age(),
+            chrono::Duration::seconds(43200)
+        );
+    }
+
+    #[test]
+    fn test_server_config_negative_days_clamped() {
+        let config = ServerConfig {
+            auto_clean_enabled: true,
+            auto_clean_age_days: -5.0,
+        };
+        assert_eq!(config.auto_clean_min_age(), chrono::Duration::zero());
+    }
+
+    #[test]
+    fn test_server_config_from_toml() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_dir = temp_dir.path();
+
+        let toml_content = r#"
+[server]
+auto_clean_enabled = false
+auto_clean_age_days = 14.0
+"#;
+        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+
+        let config = load_config(config_dir);
+        assert!(!config.server.auto_clean_enabled);
+        assert_eq!(config.server.auto_clean_age_days, 14.0);
+    }
+
+    #[test]
+    fn test_server_config_missing_uses_default() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_dir = temp_dir.path();
+
+        let toml_content = r#"
+[docker]
+memory_limit_gb = 8.0
+"#;
+        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+
+        let config = load_config(config_dir);
+        assert!(config.server.auto_clean_enabled);
+        assert_eq!(config.server.auto_clean_age_days, 7.0);
+    }
+
+    #[test]
+    fn test_tsk_config_default_has_server_defaults() {
+        let config = TskConfig::default();
+        assert!(config.server.auto_clean_enabled);
+        assert_eq!(config.server.auto_clean_age_days, 7.0);
     }
 }

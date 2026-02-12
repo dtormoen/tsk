@@ -953,6 +953,7 @@ mod tests {
             docker: Default::default(),
             git_town: Default::default(),
             proxy: Default::default(),
+            server: Default::default(),
             project: project_configs,
         };
 
@@ -1013,6 +1014,7 @@ mod tests {
             docker: Default::default(),
             git_town: Default::default(),
             proxy: Default::default(),
+            server: Default::default(),
             project: project_configs,
         };
 
@@ -1067,6 +1069,7 @@ mod tests {
             docker: Default::default(),
             git_town: Default::default(),
             proxy: Default::default(),
+            server: Default::default(),
             project: project_configs,
         };
 
