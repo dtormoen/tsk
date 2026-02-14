@@ -8,6 +8,8 @@ use std::sync::{Arc, OnceLock};
 pub mod claude_log_processor;
 pub use claude_log_processor::ClaudeLogProcessor;
 
+const NOT_LOGGED_IN_ERROR: &str = "Claude CLI is not logged in. Please run 'claude login' first.";
+
 /// Claude AI agent implementation
 pub struct ClaudeAgent {
     tsk_env: Option<Arc<TskEnv>>,
@@ -32,6 +34,25 @@ impl ClaudeAgent {
             .expect("TskEnv should always be present")
             .claude_config_dir()
             .to_path_buf()
+    }
+
+    /// Checks login status via `claude auth status --json`.
+    /// Returns `Some(true)` if logged in, `Some(false)` if not logged in,
+    /// or `None` if the command is unavailable (older CLI versions).
+    fn check_auth_status() -> Option<bool> {
+        let output = Command::new("claude")
+            .args(["auth", "status", "--json"])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+
+        if !output.status.success() {
+            return None;
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let status: serde_json::Value = serde_json::from_str(stdout.trim()).ok()?;
+        Some(status.get("loggedIn") == Some(&serde_json::Value::Bool(true)))
     }
 }
 
@@ -144,9 +165,17 @@ impl Agent for ClaudeAgent {
             return Ok(());
         }
 
-        // Check if ~/.claude directory exists
-        let claude_config_dir = self.get_claude_config_dir();
+        // Try `claude auth status` first (available in newer CLI versions)
+        if let Some(logged_in) = Self::check_auth_status() {
+            return if logged_in {
+                Ok(())
+            } else {
+                Err(NOT_LOGGED_IN_ERROR.to_string())
+            };
+        }
 
+        // Fall back to directory check for older CLI versions
+        let claude_config_dir = self.get_claude_config_dir();
         if !claude_config_dir.exists() {
             return Err(format!(
                 "Claude configuration directory not found at {}. Please run 'claude login' first.",
@@ -163,27 +192,35 @@ impl Agent for ClaudeAgent {
             return Ok(());
         }
 
-        println!("Running Claude Code warmup steps...");
+        // Step 1: Check auth status (prefer `auth status`, fall back to prompt)
+        match Self::check_auth_status() {
+            Some(true) => {}
+            Some(false) => {
+                return Err(NOT_LOGGED_IN_ERROR.to_string());
+            }
+            None => {
+                // Fall back to prompting Claude for older CLI versions
+                println!("Falling back to Claude Code warmup...");
+                let output = Command::new("claude")
+                    .args([
+                        "-p",
+                        "--no-session-persistence",
+                        "--tools",
+                        "",
+                        "--model",
+                        "sonnet",
+                        "say hi and nothing else",
+                    ])
+                    .output()
+                    .map_err(|e| format!("Failed to run Claude CLI: {e}"))?;
 
-        // Step 1: Force Claude CLI to refresh token
-        let output = Command::new("claude")
-            .args([
-                "-p",
-                "--no-session-persistence",
-                "--tools",
-                "",
-                "--model",
-                "sonnet",
-                "say hi and nothing else",
-            ])
-            .output()
-            .map_err(|e| format!("Failed to run Claude CLI: {e}"))?;
-
-        if !output.status.success() {
-            return Err(format!(
-                "Claude CLI failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
+                if !output.status.success() {
+                    return Err(format!(
+                        "Claude CLI failed: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    ));
+                }
+            }
         }
 
         // Step 2: Export OAuth token on macOS only
@@ -203,8 +240,6 @@ impl Agent for ClaudeAgent {
                 eprintln!("Warning: Could not export OAuth token from keychain");
             }
         }
-
-        println!("Claude Code warmup completed successfully");
         Ok(())
     }
 
