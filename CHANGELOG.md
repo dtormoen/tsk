@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2](https://github.com/dtormoen/tsk/compare/v0.8.1...v0.8.2) - 2026-02-14
+
+### Other
+
+- use struct update syntax for TskConfig construction in tests
+
 ## [0.8.1](https://github.com/dtormoen/tsk/compare/v0.8.0...v0.8.1) - 2026-02-12
 
 ### Added
