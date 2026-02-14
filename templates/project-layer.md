@@ -14,7 +14,7 @@ TSK uses a layered Docker image system where each task runs in a container built
 3. **Project layer**: Project-specific dependencies and optimizations (what you're creating)
 4. **Agent layer**: AI agent setup (added last)
 
-The repository will be mounted at `/workspace` in the container, and the working directory will be set to `/workspace`. The container runs as the `agent` user (not root).
+The repository will be mounted at `/workspace/{project_name}` in the container, and the working directory will be set to `/workspace/{project_name}`. The container runs as the `agent` user (not root).
 
 ## Requirements for the Project Layer
 
@@ -45,7 +45,7 @@ Your Dockerfile should:
    ```
 
 4. Important notes:
-   - The working directory is already set to `/workspace`
+   - The build-time working directory is `/workspace` (at runtime it becomes `/workspace/{project_name}`)
    - The user is already set to `agent` (not root)
    - Language toolchains are already installed
    - Network access goes through a proxy (already configured)

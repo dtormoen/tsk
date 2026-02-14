@@ -280,12 +280,13 @@ impl CodexLogProcessor {
                 }
                 "file_change" => {
                     if let Some(changes) = &item.changes {
-                        // Extract filenames from paths (remove /workspace prefix if present)
+                        // Extract filenames from paths (remove /workspace/{project}/ prefix if present)
                         let filenames: Vec<String> = changes
                             .iter()
                             .map(|c| {
                                 c.path
                                     .strip_prefix("/workspace/")
+                                    .and_then(|rest| rest.split_once('/').map(|(_, after)| after))
                                     .unwrap_or(&c.path)
                                     .to_string()
                             })
@@ -525,7 +526,7 @@ mod tests {
         assert!(output.contains("🧠 [test-task][codex]: I need to analyze"));
 
         // File change with path
-        let file_completed = r#"{"type":"item.completed","item":{"id":"item_2","type":"file_change","changes":[{"path":"/workspace/src/main.rs","kind":"update"}]}}"#;
+        let file_completed = r#"{"type":"item.completed","item":{"id":"item_2","type":"file_change","changes":[{"path":"/workspace/test-project/src/main.rs","kind":"update"}]}}"#;
         let output = processor.process_line(file_completed).unwrap();
         assert!(output.contains("✅ [test-task][codex]: Modified: src/main.rs"));
 
@@ -541,7 +542,7 @@ mod tests {
         let mut processor = CodexLogProcessor::new(Some("test-task".to_string()));
 
         // Multiple file changes
-        let file_completed = r#"{"type":"item.completed","item":{"id":"item_1","type":"file_change","changes":[{"path":"/workspace/src/main.rs","kind":"update"},{"path":"/workspace/src/lib.rs","kind":"update"},{"path":"/workspace/Cargo.toml","kind":"update"}]}}"#;
+        let file_completed = r#"{"type":"item.completed","item":{"id":"item_1","type":"file_change","changes":[{"path":"/workspace/test-project/src/main.rs","kind":"update"},{"path":"/workspace/test-project/src/lib.rs","kind":"update"},{"path":"/workspace/test-project/Cargo.toml","kind":"update"}]}}"#;
         let output = processor.process_line(file_completed).unwrap();
         assert!(output.contains("✅ [test-task][codex]: Modified 3 files: src/main.rs, ..."));
     }

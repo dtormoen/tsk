@@ -35,5 +35,4 @@ RUN uv pip install \
 RUN uv pip install poetry
 
 # Set Python environment variables
-ENV PYTHONPATH="/workspace:${PYTHONPATH}"
 ENV PYTHONUNBUFFERED=1

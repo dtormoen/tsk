@@ -33,7 +33,7 @@ The foundation of all TSK containers (`base/default.dockerfile`):
 - Essential development tools (git, curl, build-essential, ripgrep, etc.)
 - Non-root `agent` user (created by renaming the default `ubuntu` user) for security
 - Git configuration inherited from host user via build arguments
-- Working directory set to `/workspace`
+- Build-time working directory set to `/workspace` (at runtime, `/workspace/{project_name}`)
 - Contains placeholders (`{{{STACK}}}`, `{{{PROJECT}}}`, `{{{AGENT}}}`) for layer composition
 
 ### 2. Stack Layer
@@ -214,7 +214,7 @@ TSK implements multiple security layers:
 
 ### Volume Mounts
 Each container has the following volumes mounted:
-- Repository copy: `{repo_path}:/workspace` (read-write)
+- Repository copy: `{repo_path}:/workspace/{project_name}` (read-write)
 - Agent configuration: Agent-specific (e.g., `~/.claude:/home/agent/.claude` for Claude)
 - Instructions: `{instructions_dir}:/instructions:ro` (read-only)
 - Output: `{task_dir}/output:/output` (read-write)

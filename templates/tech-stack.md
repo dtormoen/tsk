@@ -56,7 +56,7 @@ Your Dockerfile should:
    ENV PATH="/home/agent/.local/bin:${PATH}"
    ```
 
-   Note: Don't change WORKDIR - the base layer already sets it to `/workspace` and maintains it throughout.
+   Note: Don't change WORKDIR - the base layer already sets it to `/workspace` and maintains it throughout. At runtime, the actual working directory will be `/workspace/{project_name}`.
 
 4. Important notes:
    - The stack layer runs as the `agent` user (not root)
@@ -65,7 +65,7 @@ Your Dockerfile should:
    - Consider using version managers (rustup, nvm, pyenv) when appropriate
    - Install tools to the user's home directory (`/home/agent/`) when possible
    - Keep the layer focused on language toolchain, not project dependencies
-   - The working directory remains `/workspace` throughout - don't change it
+   - The build-time working directory remains `/workspace` throughout - don't change it (at runtime, it becomes `/workspace/{project_name}`)
 
 5. Example patterns for reference:
 

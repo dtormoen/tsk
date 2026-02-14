@@ -15,8 +15,12 @@ use bollard::query_parameters::{LogsOptions, RemoveContainerOptions};
 use futures_util::stream::StreamExt;
 use std::path::PathBuf;
 
-const CONTAINER_WORKING_DIR: &str = "/workspace";
+const CONTAINER_WORKSPACE_BASE: &str = "/workspace";
 const CONTAINER_USER: &str = "agent";
+
+fn container_working_dir(project: &str) -> String {
+    format!("{CONTAINER_WORKSPACE_BASE}/{project}")
+}
 
 /// Manages Docker container execution for TSK tasks.
 ///
@@ -93,7 +97,8 @@ impl DockerManager {
         let repo_path_str = repo_path
             .to_str()
             .expect("Repository path should be valid UTF-8");
-        let mut binds = vec![format!("{repo_path_str}:{CONTAINER_WORKING_DIR}")];
+        let working_dir = container_working_dir(&task.project);
+        let mut binds = vec![format!("{repo_path_str}:{working_dir}")];
 
         // Add agent-specific volumes
         for (host_path, container_path, options) in agent.volumes() {
@@ -181,6 +186,7 @@ impl DockerManager {
     ) -> ContainerCreateBody {
         let binds = self.build_bind_volumes(task, agent);
         let instructions_file_path = PathBuf::from(&task.instructions_file);
+        let working_dir = container_working_dir(&task.project);
         let mut env_vars = self.build_proxy_env_vars();
 
         // Add TSK environment variables for container detection
@@ -197,6 +203,11 @@ impl DockerManager {
             for env_var in &project_config.env {
                 env_vars.push(format!("{}={}", env_var.name, env_var.value));
             }
+        }
+
+        // Set PYTHONPATH for Python stacks so imports work from the project directory
+        if task.stack == "python" {
+            env_vars.push(format!("PYTHONPATH={working_dir}"));
         }
 
         let agent_command = agent.build_command(
@@ -237,7 +248,7 @@ impl DockerManager {
                 ]),
                 ..Default::default()
             }),
-            working_dir: Some(CONTAINER_WORKING_DIR.to_string()),
+            working_dir: Some(working_dir),
             env: Some(env_vars),
             attach_stdin: Some(task.is_interactive),
             attach_stdout: Some(task.is_interactive),
@@ -794,7 +805,7 @@ mod tests {
             Some("tsk-test-task-id".to_string())
         );
         assert_eq!(config.image, Some("tsk/base".to_string()));
-        assert_eq!(config.working_dir, Some(CONTAINER_WORKING_DIR.to_string()));
+        assert_eq!(config.working_dir, Some("/workspace/default".to_string()));
         // User is now set directly
         assert_eq!(config.user, Some(CONTAINER_USER.to_string()));
 
@@ -828,7 +839,7 @@ mod tests {
 
         let binds = host_config.binds.as_ref().unwrap();
         assert_eq!(binds.len(), 4); // workspace, claude dir, instructions, and output
-        assert!(binds[0].contains(&format!("/tmp/test-repo:{CONTAINER_WORKING_DIR}")));
+        assert!(binds[0].contains("/tmp/test-repo:/workspace/default"));
         // In test mode, .claude directory is in temp directory
         assert!(binds[1].contains(":/home/agent/.claude"));
         assert!(binds[2].contains(":/instructions:ro"));
@@ -934,7 +945,7 @@ mod tests {
         // Should contain an absolute path (starts with /)
         assert!(repo_bind.starts_with('/'));
         assert!(repo_bind.contains("test-repo"));
-        assert!(repo_bind.ends_with(&format!(":{CONTAINER_WORKING_DIR}")));
+        assert!(repo_bind.ends_with(":/workspace/default"));
 
         // Should also have the claude directory, instructions, and output mounts
         assert_eq!(binds.len(), 4); // workspace, claude dir, instructions, and output
@@ -1182,6 +1193,50 @@ mod tests {
                 .any(|e| e == "DATABASE_URL=postgres://tsk-proxy:5432/mydb")
         );
         assert!(env.iter().any(|e| e == "DEBUG=true"));
+    }
+
+    #[tokio::test]
+    async fn test_python_stack_sets_pythonpath() {
+        let mock_client = Arc::new(TrackedDockerClient::default());
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .build();
+        let manager = DockerManager::new(&ctx);
+
+        let mut task = create_test_task(false);
+        task.stack = "python".to_string();
+        task.project = "my-python-app".to_string();
+        let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
+        let _ = manager.run_task_container("tsk/base", &task, &agent).await;
+
+        let create_calls = mock_client.create_container_calls.lock().unwrap();
+        let task_container_config = &create_calls[1].1;
+        let env = task_container_config.env.as_ref().unwrap();
+        assert!(env.contains(&"PYTHONPATH=/workspace/my-python-app".to_string()));
+
+        // Also verify working_dir uses the project name
+        assert_eq!(
+            task_container_config.working_dir,
+            Some("/workspace/my-python-app".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_non_python_stack_no_pythonpath() {
+        let mock_client = Arc::new(TrackedDockerClient::default());
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .build();
+        let manager = DockerManager::new(&ctx);
+
+        let task = create_test_task(false); // stack is "default"
+        let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
+        let _ = manager.run_task_container("tsk/base", &task, &agent).await;
+
+        let create_calls = mock_client.create_container_calls.lock().unwrap();
+        let task_container_config = &create_calls[1].1;
+        let env = task_container_config.env.as_ref().unwrap();
+        assert!(!env.iter().any(|e| e.starts_with("PYTHONPATH=")));
     }
 
     #[tokio::test]
