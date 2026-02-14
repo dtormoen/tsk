@@ -950,11 +950,8 @@ mod tests {
             },
         );
         let tsk_config = TskConfig {
-            docker: Default::default(),
-            git_town: Default::default(),
-            proxy: Default::default(),
-            server: Default::default(),
             project: project_configs,
+            ..Default::default()
         };
 
         let ctx = AppContext::builder().with_tsk_config(tsk_config).build();
@@ -1011,11 +1008,8 @@ mod tests {
             },
         );
         let tsk_config = TskConfig {
-            docker: Default::default(),
-            git_town: Default::default(),
-            proxy: Default::default(),
-            server: Default::default(),
             project: project_configs,
+            ..Default::default()
         };
 
         let ctx = AppContext::builder().with_tsk_config(tsk_config).build();
@@ -1066,11 +1060,8 @@ mod tests {
             },
         );
         let tsk_config = TskConfig {
-            docker: Default::default(),
-            git_town: Default::default(),
-            proxy: Default::default(),
-            server: Default::default(),
             project: project_configs,
+            ..Default::default()
         };
 
         let ctx = AppContext::builder().with_tsk_config(tsk_config).build();

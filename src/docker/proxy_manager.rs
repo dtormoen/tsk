@@ -617,13 +617,10 @@ mod tests {
 
         let mock_client = Arc::new(TrackedDockerClient::default());
         let tsk_config = TskConfig {
-            docker: Default::default(),
-            git_town: Default::default(),
             proxy: ProxyConfig {
                 host_services: vec![5432, 6379],
             },
-            server: Default::default(),
-            project: Default::default(),
+            ..Default::default()
         };
 
         let ctx = AppContext::builder()
