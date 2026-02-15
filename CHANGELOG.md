@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2](https://github.com/dtormoen/tsk/compare/v0.8.1...v0.8.2) - 2026-02-15
+
+### Added
+
+- add Podman as alternative container engine for host-machine use
+- mount repos at /workspace/{project_name} for project-scoped agent memories
+- use `claude auth status` for login validation and warmup
+
+### Other
+
+- remove CLAUDE.md content redundant with README
+- document Podman support in README
+- add Task::test_default() and migrate test construction to struct update syntax
+- use struct update syntax for TskConfig construction in tests
+
 ## [0.8.1](https://github.com/dtormoen/tsk/compare/v0.8.0...v0.8.1) - 2026-02-12
 
 ### Added
