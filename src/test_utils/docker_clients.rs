@@ -296,6 +296,8 @@ pub struct TrackedDockerClient {
     pub create_network_error: Option<String>,
     pub create_internal_network_error: Option<String>,
     pub remove_network_error: Option<String>,
+    pub create_container_error: Option<String>,
+    pub start_container_error: Option<String>,
     pub image_exists_returns: bool,
     pub inspect_container_response: String,
 }
@@ -320,6 +322,8 @@ impl Default for TrackedDockerClient {
             create_network_error: None,
             create_internal_network_error: None,
             remove_network_error: None,
+            create_container_error: None,
+            start_container_error: None,
             image_exists_returns: true,
             inspect_container_response: r#"{"State": {"Health": {"Status": "healthy"}}}"#
                 .to_string(),
@@ -340,20 +344,21 @@ impl DockerClient for TrackedDockerClient {
         config: ContainerCreateBody,
     ) -> Result<String, String> {
         let call_count = self.create_container_calls.lock().unwrap().len();
+        let is_proxy = options
+            .as_ref()
+            .is_some_and(|opt| opt.name == Some("tsk-proxy".to_string()));
 
         // Determine the result before moving config
-        let result = if let Some(opt) = &options {
-            if opt.name == Some("tsk-proxy".to_string()) {
-                Ok("test-proxy-container-id".to_string())
-            } else if let Some(cmd) = &config.cmd {
-                if cmd.contains(&"false".to_string()) {
-                    Ok("test-container-id-fail".to_string())
-                } else {
-                    Ok(format!("test-container-id-{call_count}"))
-                }
-            } else {
-                Ok(format!("test-container-id-{call_count}"))
-            }
+        let result = if is_proxy {
+            Ok("test-proxy-container-id".to_string())
+        } else if let Some(ref error) = self.create_container_error {
+            Err(error.clone())
+        } else if config
+            .cmd
+            .as_ref()
+            .is_some_and(|cmd| cmd.contains(&"false".to_string()))
+        {
+            Ok("test-container-id-fail".to_string())
         } else {
             Ok(format!("test-container-id-{call_count}"))
         };
@@ -372,6 +377,12 @@ impl DockerClient for TrackedDockerClient {
             .lock()
             .unwrap()
             .push(id.to_string());
+        // Only fail for non-proxy containers (proxy uses the name "tsk-proxy")
+        if id != "tsk-proxy"
+            && let Some(ref error) = self.start_container_error
+        {
+            return Err(error.clone());
+        }
         Ok(())
     }
 

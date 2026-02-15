@@ -269,6 +269,12 @@ impl DockerManager {
 
     /// Run a task container with unified support for both interactive and non-interactive modes.
     ///
+    /// Follows a setup → execute → cleanup structure:
+    /// 1. **Setup**: Conditionally create an isolated network and connect the proxy
+    /// 2. **Execute**: Create, configure, and run the container via [`run_container_inner`]
+    /// 3. **Cleanup**: Always remove the container, tear down the network, and stop
+    ///    the proxy if idle — regardless of whether execution succeeded or failed
+    ///
     /// # Arguments
     /// * `docker_image_tag` - Docker image tag to use
     /// * `task` - The task to execute
@@ -283,10 +289,8 @@ impl DockerManager {
         task: &crate::task::Task,
         agent: &dyn Agent,
     ) -> Result<(String, Option<crate::agent::TaskResult>), String> {
+        // --- Setup: conditionally create network and connect proxy ---
         let network_name = if task.network_isolation {
-            // Try to ensure proxy is running and healthy
-            // If proxy fails to start or become healthy, return an error
-            // This will cause the task to fail and can be retried later
             if let Err(e) = self.proxy_manager.ensure_proxy().await {
                 return Err(format!(
                     "Failed to ensure proxy is running and healthy: {e}. \
@@ -295,16 +299,13 @@ impl DockerManager {
                 ));
             }
 
-            // Create isolated network for this agent
             let name = self
                 .proxy_manager
                 .create_agent_network(&task.id)
                 .await
                 .map_err(|e| format!("Failed to create agent network: {e}"))?;
 
-            // Connect proxy to the agent's network before starting container
             if let Err(e) = self.proxy_manager.connect_proxy_to_network(&name).await {
-                // Clean up network on failure
                 self.proxy_manager.cleanup_agent_network(&name).await;
                 return Err(format!("Failed to connect proxy to agent network: {e}"));
             }
@@ -313,8 +314,42 @@ impl DockerManager {
             None
         };
 
-        let config =
-            self.create_container_config(docker_image_tag, task, agent, network_name.as_deref());
+        // --- Execute: run the container, capturing its ID for cleanup ---
+        let (container_id, result) = self
+            .run_container_inner(docker_image_tag, task, agent, network_name.as_deref())
+            .await;
+
+        // --- Cleanup: always runs regardless of success/failure ---
+        if let Some(ref id) = container_id {
+            let _ = self.remove_container(id).await;
+        }
+        if let Some(ref name) = network_name {
+            self.proxy_manager.cleanup_agent_network(name).await;
+        }
+        if network_name.is_some()
+            && let Err(e) = self.proxy_manager.maybe_stop_proxy().await
+        {
+            eprintln!("Warning: Failed to check/stop idle proxy: {e}");
+        }
+
+        result
+    }
+
+    /// Execute the container lifecycle without performing resource cleanup.
+    ///
+    /// Returns the container ID (if one was created) alongside the execution result,
+    /// so the caller can clean up the container, network, and proxy in one place.
+    async fn run_container_inner(
+        &self,
+        docker_image_tag: &str,
+        task: &crate::task::Task,
+        agent: &dyn Agent,
+        network_name: Option<&str>,
+    ) -> (
+        Option<String>,
+        Result<(String, Option<crate::agent::TaskResult>), String>,
+    ) {
+        let config = self.create_container_config(docker_image_tag, task, agent, network_name);
         let container_name = self.build_container_name(task);
         let options = bollard::query_parameters::CreateContainerOptionsBuilder::default()
             .name(&container_name)
@@ -327,84 +362,56 @@ impl DockerManager {
             .await
         {
             Ok(id) => id,
-            Err(e) => {
-                // Clean up network on failure
-                if let Some(ref name) = network_name {
-                    self.proxy_manager.cleanup_agent_network(name).await;
-                }
-                return Err(e);
-            }
+            Err(e) => return (None, Err(e)),
         };
 
         // Copy agent files into container before starting
         for (tar_data, dest_path) in agent.files_to_copy() {
-            self.ctx
+            if let Err(e) = self
+                .ctx
                 .docker_client()
                 .upload_to_container(&container_id, &dest_path, tar_data)
-                .await?;
+                .await
+            {
+                return (Some(container_id), Err(e));
+            }
+        }
+
+        if let Err(e) = self
+            .ctx
+            .docker_client()
+            .start_container(&container_id)
+            .await
+        {
+            return (Some(container_id), Err(e));
         }
 
         let result = if task.is_interactive {
             println!("\nStarting interactive session...");
-            if let Err(e) = self
-                .ctx
-                .docker_client()
-                .start_container(&container_id)
-                .await
-            {
-                let _ = self.remove_container(&container_id).await;
-                if let Some(ref name) = network_name {
-                    self.proxy_manager.cleanup_agent_network(name).await;
-                }
-                return Err(e);
-            }
 
-            let attach_result = self
+            match self
                 .ctx
                 .docker_client()
                 .attach_container(&container_id)
-                .await;
-
-            let _ = self.remove_container(&container_id).await;
-            if let Some(ref name) = network_name {
-                self.proxy_manager.cleanup_agent_network(name).await;
-            }
-
-            if let Err(e) = attach_result {
-                eprintln!("Interactive session ended with error: {e}");
-                return Err(e);
-            }
-
-            println!("\nInteractive session ended");
-            Ok((String::new(), None))
-        } else {
-            // Non-interactive mode: start, stream logs, process results
-            println!("Starting agent sand box container: {container_id}");
-            if let Err(e) = self
-                .ctx
-                .docker_client()
-                .start_container(&container_id)
                 .await
             {
-                let _ = self.remove_container(&container_id).await;
-                if let Some(ref name) = network_name {
-                    self.proxy_manager.cleanup_agent_network(name).await;
+                Ok(()) => {
+                    println!("\nInteractive session ended");
+                    Ok((String::new(), None))
                 }
-                return Err(e);
+                Err(e) => {
+                    eprintln!("Interactive session ended with error: {e}");
+                    Err(e)
+                }
             }
+        } else {
+            println!("Starting agent sand box container: {container_id}");
 
-            // Stream logs and process them
             let mut log_processor = agent.create_log_processor(Some(task));
             let output = self
                 .stream_container_logs(&container_id, &mut *log_processor)
                 .await;
-
             let task_result = log_processor.get_final_result().cloned();
-
-            let _ = self.remove_container(&container_id).await;
-            if let Some(ref name) = network_name {
-                self.proxy_manager.cleanup_agent_network(name).await;
-            }
 
             match output {
                 Ok(output) => Ok((output, task_result)),
@@ -412,16 +419,7 @@ impl DockerManager {
             }
         };
 
-        // After task completion (success or failure), try to stop proxy if idle
-        // This handles single-run mode (tsk run, tsk shell)
-        // Errors during proxy cleanup are logged but don't affect the task result
-        if network_name.is_some()
-            && let Err(e) = self.proxy_manager.maybe_stop_proxy().await
-        {
-            eprintln!("Warning: Failed to check/stop idle proxy: {e}");
-        }
-
-        result
+        (Some(container_id), result)
     }
 
     /// Stream container logs and process them through the log processor
@@ -737,7 +735,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_run_task_container_create_fails() {
+    async fn test_run_task_container_network_setup_fails() {
         let mock_client = TrackedDockerClient {
             network_exists: false,
             create_network_error: Some("Docker daemon not running".to_string()),
@@ -1334,5 +1332,70 @@ mod tests {
 
         let remove_network_calls = mock_client.remove_network_calls.lock().unwrap();
         assert_eq!(remove_network_calls.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_on_container_create_failure() {
+        let mock_client = Arc::new(TrackedDockerClient {
+            create_container_error: Some("out of disk space".to_string()),
+            ..Default::default()
+        });
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .build();
+        let manager = DockerManager::new(&ctx);
+
+        let task = create_test_task(false);
+        let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("out of disk space"));
+
+        // No container was created, so no remove_container call
+        let remove_calls = mock_client.remove_container_calls.lock().unwrap();
+        assert_eq!(remove_calls.len(), 0);
+        drop(remove_calls);
+
+        // Network cleanup should still happen (setup succeeded before container create failed)
+        let disconnect_calls = mock_client.disconnect_network_calls.lock().unwrap();
+        assert_eq!(disconnect_calls.len(), 1);
+        drop(disconnect_calls);
+
+        let remove_network_calls = mock_client.remove_network_calls.lock().unwrap();
+        assert_eq!(remove_network_calls.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_on_start_container_failure() {
+        let mock_client = Arc::new(TrackedDockerClient {
+            start_container_error: Some("container runtime error".to_string()),
+            ..Default::default()
+        });
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .build();
+        let manager = DockerManager::new(&ctx);
+
+        let task = create_test_task(false);
+        let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("container runtime error"));
+
+        // Container was created, so cleanup should remove it
+        let remove_calls = mock_client.remove_container_calls.lock().unwrap();
+        assert_eq!(remove_calls.len(), 1);
+        assert_eq!(remove_calls[0].0, "test-container-id-1");
+        drop(remove_calls);
+
+        // Network cleanup should happen
+        let disconnect_calls = mock_client.disconnect_network_calls.lock().unwrap();
+        assert_eq!(disconnect_calls.len(), 1);
+        drop(disconnect_calls);
+
+        let remove_network_calls = mock_client.remove_network_calls.lock().unwrap();
+        assert_eq!(remove_network_calls.len(), 1);
     }
 }
