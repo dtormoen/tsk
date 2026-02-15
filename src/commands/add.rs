@@ -19,6 +19,7 @@ pub struct AddCommand {
     pub project: Option<String>,
     pub repo: Option<String>,
     pub parent_id: Option<String>,
+    pub no_network_isolation: bool,
 }
 
 #[async_trait]
@@ -75,6 +76,7 @@ impl Command for AddCommand {
                     .stack(self.stack.clone())
                     .project(self.project.clone())
                     .parent_id(self.parent_id.clone())
+                    .network_isolation(!self.no_network_isolation)
                     .build(ctx)
                     .await?;
 
@@ -96,7 +98,8 @@ impl Command for AddCommand {
                     .agent(Some(agent.clone()))
                     .stack(self.stack.clone())
                     .project(self.project.clone())
-                    .parent_id(self.parent_id.clone());
+                    .parent_id(self.parent_id.clone())
+                    .network_isolation(!self.no_network_isolation);
 
                 if let Some(ref instructions_content) = first_task_instructions {
                     // Write instructions to temporary file for this task
@@ -198,6 +201,7 @@ mod tests {
             project: None,
             repo: Some(".".to_string()),
             parent_id: None,
+            no_network_isolation: false,
         };
 
         let ctx = create_test_context();
@@ -224,6 +228,7 @@ mod tests {
             project: None,
             repo: Some(".".to_string()),
             parent_id: None,
+            no_network_isolation: false,
         };
 
         let ctx = create_test_context();
@@ -265,6 +270,7 @@ mod tests {
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             parent_id: None,
+            no_network_isolation: false,
         };
 
         // Execute should succeed
@@ -304,6 +310,7 @@ mod tests {
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             parent_id: None,
+            no_network_isolation: false,
         };
 
         // Execute should succeed without changing directories
@@ -345,6 +352,7 @@ mod tests {
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             parent_id: None,
+            no_network_isolation: false,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -385,6 +393,7 @@ mod tests {
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             parent_id: None,
+            no_network_isolation: false,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -415,6 +424,7 @@ mod tests {
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             parent_id: None,
+            no_network_isolation: false,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -458,6 +468,7 @@ mod tests {
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             parent_id: None,
+            no_network_isolation: false,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -532,6 +543,7 @@ mod tests {
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             parent_id: None,
+            no_network_isolation: false,
         };
 
         let result = cmd.execute(&ctx).await;

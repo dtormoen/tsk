@@ -15,9 +15,9 @@ TSK implements a command pattern with dependency injection for testability. The 
 **CLI Commands** (`src/commands/`)
 
 *Task Commands (implicit "task" noun):*
-- `run`: Immediately execute single tasks (tracked in DB, supports piped input via stdin for descriptions)
-- `shell`: Launch sandbox container with agent for interactive use (tracked in DB, supports piped input via stdin for descriptions)
-- `add`: Queue tasks with descriptions and templates (supports piped input via stdin for descriptions, supports `--parent <taskid>` for task chaining)
+- `run`: Immediately execute single tasks (tracked in DB, supports piped input via stdin for descriptions, supports `--no-network-isolation`)
+- `shell`: Launch sandbox container with agent for interactive use (tracked in DB, supports piped input via stdin for descriptions, supports `--no-network-isolation`)
+- `add`: Queue tasks with descriptions and templates (supports piped input via stdin for descriptions, supports `--parent <taskid>` for task chaining, supports `--no-network-isolation`)
 - `list`: Display task status and results (shows parent task information)
 - `clean`: Delete completed tasks (skips parents with queued/running children)
 - `delete <task-id>`: Delete a specific task
@@ -66,7 +66,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Uses Docker network inspection to count connected agent containers
 - `DockerManager`: Container execution with unified support for interactive and non-interactive modes
 - Security-first containers with dropped capabilities
-- **Per-container network isolation**: Each agent runs in an isolated internal network that can only communicate with the proxy (see [Network Isolation Guide](docs/network-isolation.md))
+- **Per-container network isolation**: Each agent runs in an isolated internal network that can only communicate with the proxy (see [Network Isolation Guide](docs/network-isolation.md)). Can be disabled per-task with `--no-network-isolation`
 - Proxy-based URL filtering (Squid) for API-only access with domain allowlist
 - Host service access via TCP port forwarding through the proxy container (configured in `[proxy]` section of tsk.toml)
 - **Container environment variables**: All task containers receive `TSK_CONTAINER=1` and `TSK_TASK_ID=<task-id>` for in-container detection

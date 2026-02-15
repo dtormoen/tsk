@@ -40,6 +40,7 @@ fn row_to_task(row: &rusqlite::Row) -> rusqlite::Result<Task> {
     let repo_root_str: String = row.get("repo_root")?;
     let copied_repo_path_str: Option<String> = row.get("copied_repo_path")?;
     let is_interactive_int: i32 = row.get("is_interactive")?;
+    let network_isolation_int: i32 = row.get("network_isolation")?;
 
     Ok(Task {
         id: row.get("id")?,
@@ -101,6 +102,7 @@ fn row_to_task(row: &rusqlite::Row) -> rusqlite::Result<Task> {
                 None => vec![],
             }
         },
+        network_isolation: network_isolation_int != 0,
     })
 }
 
@@ -115,7 +117,7 @@ fn insert_task(
         .map(|p| path_to_string(p))
         .transpose()?;
     conn.execute(
-        "INSERT INTO tasks (id, repo_root, name, task_type, instructions_file, agent, status, created_at, started_at, completed_at, branch_name, error_message, source_commit, source_branch, stack, project, copied_repo_path, is_interactive, parent_ids) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+        "INSERT INTO tasks (id, repo_root, name, task_type, instructions_file, agent, status, created_at, started_at, completed_at, branch_name, error_message, source_commit, source_branch, stack, project, copied_repo_path, is_interactive, parent_ids, network_isolation) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
         rusqlite::params![
             task.id,
             repo_root,
@@ -136,6 +138,7 @@ fn insert_task(
             copied_repo_path,
             task.is_interactive as i32,
             if task.parent_ids.is_empty() { None::<String> } else { Some(serde_json::to_string(&task.parent_ids).unwrap()) },
+            task.network_isolation as i32,
         ],
     )?;
     Ok(())
@@ -272,6 +275,11 @@ impl SqliteTaskStorage {
             CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);",
         )?;
 
+        // Migration: add network_isolation column for existing databases
+        let _ = conn.execute_batch(
+            "ALTER TABLE tasks ADD COLUMN network_isolation INTEGER NOT NULL DEFAULT 1;",
+        );
+
         if let Some(data_dir) = db_path.parent() {
             migrate_from_json(&conn, data_dir);
         }
@@ -339,7 +347,7 @@ impl TaskStorage for SqliteTaskStorage {
                 .map(|p| path_to_string(p))
                 .transpose()?;
             let rows_affected = conn.execute(
-                "UPDATE tasks SET repo_root = ?1, name = ?2, task_type = ?3, instructions_file = ?4, agent = ?5, status = ?6, created_at = ?7, started_at = ?8, completed_at = ?9, branch_name = ?10, error_message = ?11, source_commit = ?12, source_branch = ?13, stack = ?14, project = ?15, copied_repo_path = ?16, is_interactive = ?17, parent_ids = ?18 WHERE id = ?19",
+                "UPDATE tasks SET repo_root = ?1, name = ?2, task_type = ?3, instructions_file = ?4, agent = ?5, status = ?6, created_at = ?7, started_at = ?8, completed_at = ?9, branch_name = ?10, error_message = ?11, source_commit = ?12, source_branch = ?13, stack = ?14, project = ?15, copied_repo_path = ?16, is_interactive = ?17, parent_ids = ?18, network_isolation = ?19 WHERE id = ?20",
                 rusqlite::params![
                     repo_root,
                     task.name,
@@ -359,6 +367,7 @@ impl TaskStorage for SqliteTaskStorage {
                     copied_repo_path,
                     task.is_interactive as i32,
                     if task.parent_ids.is_empty() { None::<String> } else { Some(serde_json::to_string(&task.parent_ids).unwrap()) },
+                    task.network_isolation as i32,
                     task.id,
                 ],
             )?;

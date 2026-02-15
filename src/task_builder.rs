@@ -37,6 +37,7 @@ pub struct TaskBuilder {
     is_interactive: bool,
     /// Parent task ID that this task is chained to
     parent_id: Option<String>,
+    network_isolation: bool,
 }
 
 impl TaskBuilder {
@@ -55,6 +56,7 @@ impl TaskBuilder {
             copied_repo_path: None,
             is_interactive: false,
             parent_id: None,
+            network_isolation: true,
         }
     }
 
@@ -69,6 +71,7 @@ impl TaskBuilder {
         builder.project = Some(task.project.clone());
         builder.copied_repo_path = task.copied_repo_path.clone();
         builder.is_interactive = task.is_interactive;
+        builder.network_isolation = task.network_isolation;
         // Note: We intentionally don't copy parent_id when retrying a task.
         // The retry creates a fresh task from the current repository state.
 
@@ -143,6 +146,13 @@ impl TaskBuilder {
     /// and will use the parent's completed repository as its starting point.
     pub fn parent_id(mut self, task_id: Option<String>) -> Self {
         self.parent_id = task_id;
+        self
+    }
+
+    /// Sets whether per-container network isolation is enabled.
+    /// When disabled, the container runs on the default Docker network with direct internet access.
+    pub fn network_isolation(mut self, enabled: bool) -> Self {
+        self.network_isolation = enabled;
         self
     }
 
@@ -445,6 +455,7 @@ impl TaskBuilder {
             copied_repo_path,
             self.is_interactive,
             self.parent_id.into_iter().collect::<Vec<String>>(),
+            self.network_isolation,
         );
 
         Ok(task)

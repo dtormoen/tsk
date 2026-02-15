@@ -182,12 +182,17 @@ impl DockerManager {
         image: &str,
         task: &crate::task::Task,
         agent: &dyn Agent,
-        network_name: &str,
+        network_name: Option<&str>,
     ) -> ContainerCreateBody {
         let binds = self.build_bind_volumes(task, agent);
         let instructions_file_path = PathBuf::from(&task.instructions_file);
         let working_dir = container_working_dir(&task.project);
-        let mut env_vars = self.build_proxy_env_vars();
+
+        let mut env_vars = if network_name.is_some() {
+            self.build_proxy_env_vars()
+        } else {
+            Vec::new()
+        };
 
         // Add TSK environment variables for container detection
         env_vars.push("TSK_CONTAINER=1".to_string());
@@ -224,6 +229,20 @@ impl DockerManager {
         // Load Docker resource limits from user configuration
         let docker_config = &self.ctx.tsk_config().docker;
 
+        let mut cap_drop = vec![
+            "NET_ADMIN".to_string(),
+            "SETPCAP".to_string(),
+            "SYS_ADMIN".to_string(),
+            "SYS_PTRACE".to_string(),
+            "DAC_OVERRIDE".to_string(),
+            "AUDIT_WRITE".to_string(),
+            "SETUID".to_string(),
+            "SETGID".to_string(),
+        ];
+        if network_name.is_some() {
+            cap_drop.push("NET_RAW".to_string());
+        }
+
         ContainerCreateBody {
             image: Some(image.to_string()),
             // No entrypoint needed anymore - just run as agent user directly
@@ -231,21 +250,10 @@ impl DockerManager {
             cmd: command,
             host_config: Some(HostConfig {
                 binds: Some(binds),
-                network_mode: Some(network_name.to_string()),
+                network_mode: network_name.map(|n| n.to_string()),
                 memory: Some(docker_config.memory_limit_bytes()),
                 cpu_quota: Some(docker_config.cpu_quota_microseconds()),
-                // No capabilities needed since we're not running iptables
-                cap_drop: Some(vec![
-                    "NET_ADMIN".to_string(),
-                    "NET_RAW".to_string(),
-                    "SETPCAP".to_string(),
-                    "SYS_ADMIN".to_string(),
-                    "SYS_PTRACE".to_string(),
-                    "DAC_OVERRIDE".to_string(),
-                    "AUDIT_WRITE".to_string(),
-                    "SETUID".to_string(),
-                    "SETGID".to_string(),
-                ]),
+                cap_drop: Some(cap_drop),
                 ..Default::default()
             }),
             working_dir: Some(working_dir),
@@ -275,38 +283,38 @@ impl DockerManager {
         task: &crate::task::Task,
         agent: &dyn Agent,
     ) -> Result<(String, Option<crate::agent::TaskResult>), String> {
-        // Try to ensure proxy is running and healthy
-        // If proxy fails to start or become healthy, return an error
-        // This will cause the task to fail and can be retried later
-        if let Err(e) = self.proxy_manager.ensure_proxy().await {
-            return Err(format!(
-                "Failed to ensure proxy is running and healthy: {e}. \
-                The task should be retried later when the proxy is available. \
-                Check the status in Docker."
-            ));
-        }
+        let network_name = if task.network_isolation {
+            // Try to ensure proxy is running and healthy
+            // If proxy fails to start or become healthy, return an error
+            // This will cause the task to fail and can be retried later
+            if let Err(e) = self.proxy_manager.ensure_proxy().await {
+                return Err(format!(
+                    "Failed to ensure proxy is running and healthy: {e}. \
+                    The task should be retried later when the proxy is available. \
+                    Check the status in Docker."
+                ));
+            }
 
-        // Create isolated network for this agent
-        let network_name = self
-            .proxy_manager
-            .create_agent_network(&task.id)
-            .await
-            .map_err(|e| format!("Failed to create agent network: {e}"))?;
+            // Create isolated network for this agent
+            let name = self
+                .proxy_manager
+                .create_agent_network(&task.id)
+                .await
+                .map_err(|e| format!("Failed to create agent network: {e}"))?;
 
-        // Connect proxy to the agent's network before starting container
-        if let Err(e) = self
-            .proxy_manager
-            .connect_proxy_to_network(&network_name)
-            .await
-        {
-            // Clean up network on failure
-            self.proxy_manager
-                .cleanup_agent_network(&network_name)
-                .await;
-            return Err(format!("Failed to connect proxy to agent network: {e}"));
-        }
+            // Connect proxy to the agent's network before starting container
+            if let Err(e) = self.proxy_manager.connect_proxy_to_network(&name).await {
+                // Clean up network on failure
+                self.proxy_manager.cleanup_agent_network(&name).await;
+                return Err(format!("Failed to connect proxy to agent network: {e}"));
+            }
+            Some(name)
+        } else {
+            None
+        };
 
-        let config = self.create_container_config(docker_image_tag, task, agent, &network_name);
+        let config =
+            self.create_container_config(docker_image_tag, task, agent, network_name.as_deref());
         let container_name = self.build_container_name(task);
         let options = bollard::query_parameters::CreateContainerOptionsBuilder::default()
             .name(&container_name)
@@ -321,9 +329,9 @@ impl DockerManager {
             Ok(id) => id,
             Err(e) => {
                 // Clean up network on failure
-                self.proxy_manager
-                    .cleanup_agent_network(&network_name)
-                    .await;
+                if let Some(ref name) = network_name {
+                    self.proxy_manager.cleanup_agent_network(name).await;
+                }
                 return Err(e);
             }
         };
@@ -345,9 +353,9 @@ impl DockerManager {
                 .await
             {
                 let _ = self.remove_container(&container_id).await;
-                self.proxy_manager
-                    .cleanup_agent_network(&network_name)
-                    .await;
+                if let Some(ref name) = network_name {
+                    self.proxy_manager.cleanup_agent_network(name).await;
+                }
                 return Err(e);
             }
 
@@ -358,9 +366,9 @@ impl DockerManager {
                 .await;
 
             let _ = self.remove_container(&container_id).await;
-            self.proxy_manager
-                .cleanup_agent_network(&network_name)
-                .await;
+            if let Some(ref name) = network_name {
+                self.proxy_manager.cleanup_agent_network(name).await;
+            }
 
             if let Err(e) = attach_result {
                 eprintln!("Interactive session ended with error: {e}");
@@ -379,9 +387,9 @@ impl DockerManager {
                 .await
             {
                 let _ = self.remove_container(&container_id).await;
-                self.proxy_manager
-                    .cleanup_agent_network(&network_name)
-                    .await;
+                if let Some(ref name) = network_name {
+                    self.proxy_manager.cleanup_agent_network(name).await;
+                }
                 return Err(e);
             }
 
@@ -394,9 +402,9 @@ impl DockerManager {
             let task_result = log_processor.get_final_result().cloned();
 
             let _ = self.remove_container(&container_id).await;
-            self.proxy_manager
-                .cleanup_agent_network(&network_name)
-                .await;
+            if let Some(ref name) = network_name {
+                self.proxy_manager.cleanup_agent_network(name).await;
+            }
 
             match output {
                 Ok(output) => Ok((output, task_result)),
@@ -407,7 +415,9 @@ impl DockerManager {
         // After task completion (success or failure), try to stop proxy if idle
         // This handles single-run mode (tsk run, tsk shell)
         // Errors during proxy cleanup are logged but don't affect the task result
-        if let Err(e) = self.proxy_manager.maybe_stop_proxy().await {
+        if network_name.is_some()
+            && let Err(e) = self.proxy_manager.maybe_stop_proxy().await
+        {
             eprintln!("Warning: Failed to check/stop idle proxy: {e}");
         }
 
@@ -1255,5 +1265,74 @@ mod tests {
             !env.iter()
                 .any(|e| e.starts_with("DATABASE_URL=") || e.starts_with("DEBUG="))
         );
+    }
+
+    #[tokio::test]
+    async fn test_run_task_container_no_network_isolation() {
+        let mock_client = Arc::new(TrackedDockerClient::default());
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .build();
+        let manager = DockerManager::new(&ctx);
+
+        let mut task = create_test_task(false);
+        task.network_isolation = false;
+        let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
+
+        assert!(result.is_ok());
+
+        // Verify NO proxy or network operations occurred
+        let create_calls = mock_client.create_container_calls.lock().unwrap();
+        assert_eq!(create_calls.len(), 1); // Only task container, no proxy
+
+        let task_config = &create_calls[0].1;
+
+        // No proxy env vars
+        let env = task_config.env.as_ref().unwrap();
+        assert!(!env.iter().any(|e| e.starts_with("HTTP_PROXY=")));
+        assert!(!env.iter().any(|e| e.starts_with("HTTPS_PROXY=")));
+        assert!(!env.iter().any(|e| e.starts_with("NO_PROXY=")));
+        assert!(!env.iter().any(|e| e.starts_with("no_proxy=")));
+
+        // TSK env vars should still be present
+        assert!(env.contains(&"TSK_CONTAINER=1".to_string()));
+        assert!(env.contains(&"TSK_TASK_ID=test-task-id".to_string()));
+
+        // network_mode should be None
+        let host_config = task_config.host_config.as_ref().unwrap();
+        assert!(
+            host_config.network_mode.is_none(),
+            "network_mode should be None when isolation is disabled"
+        );
+
+        // NET_RAW should NOT be in cap_drop
+        let cap_drop = host_config.cap_drop.as_ref().unwrap();
+        assert!(
+            !cap_drop.contains(&"NET_RAW".to_string()),
+            "NET_RAW should not be dropped"
+        );
+        // But NET_ADMIN should still be dropped
+        assert!(
+            cap_drop.contains(&"NET_ADMIN".to_string()),
+            "NET_ADMIN should still be dropped"
+        );
+        drop(create_calls);
+
+        // No network operations
+        let create_network_calls = mock_client.create_internal_network_calls.lock().unwrap();
+        assert_eq!(create_network_calls.len(), 0);
+        drop(create_network_calls);
+
+        let connect_calls = mock_client.connect_network_calls.lock().unwrap();
+        assert_eq!(connect_calls.len(), 0);
+        drop(connect_calls);
+
+        let disconnect_calls = mock_client.disconnect_network_calls.lock().unwrap();
+        assert_eq!(disconnect_calls.len(), 0);
+        drop(disconnect_calls);
+
+        let remove_network_calls = mock_client.remove_network_calls.lock().unwrap();
+        assert_eq!(remove_network_calls.len(), 0);
     }
 }

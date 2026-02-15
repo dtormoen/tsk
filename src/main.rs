@@ -100,6 +100,10 @@ enum Commands {
         /// Path to the git repository (defaults to current directory)
         #[arg(long)]
         repo: Option<String>,
+
+        /// Disable per-container network isolation (allows direct internet access)
+        #[arg(long)]
+        no_network_isolation: bool,
     },
     /// Launch a sandbox container with an agent for interactive use
     Shell {
@@ -141,6 +145,10 @@ enum Commands {
         /// Path to the git repository (defaults to current directory)
         #[arg(long)]
         repo: Option<String>,
+
+        /// Disable per-container network isolation (allows direct internet access)
+        #[arg(long)]
+        no_network_isolation: bool,
     },
     /// Queue a task for later execution by the TSK server
     Add {
@@ -183,6 +191,10 @@ enum Commands {
         /// Parent task ID (task will wait for parent to complete before starting)
         #[arg(short = 'p', long = "parent")]
         parent_id: Option<String>,
+
+        /// Disable per-container network isolation (allows direct internet access)
+        #[arg(long)]
+        no_network_isolation: bool,
     },
     /// Start or stop the TSK server daemon that runs queued tasks in containers
     Server(ServerArgs),
@@ -352,6 +364,7 @@ async fn main() {
             project,
             repo,
             parent_id,
+            no_network_isolation,
         } => Box::new(AddCommand {
             name,
             r#type,
@@ -363,6 +376,7 @@ async fn main() {
             project,
             repo,
             parent_id,
+            no_network_isolation,
         }),
         Commands::Run {
             engine: _,
@@ -375,6 +389,7 @@ async fn main() {
             stack,
             project,
             repo,
+            no_network_isolation,
         } => Box::new(RunCommand {
             name,
             r#type,
@@ -385,6 +400,7 @@ async fn main() {
             stack,
             project,
             repo,
+            no_network_isolation,
         }),
         Commands::Shell {
             engine: _,
@@ -397,6 +413,7 @@ async fn main() {
             stack,
             project,
             repo,
+            no_network_isolation,
         } => Box::new(ShellCommand {
             name,
             r#type,
@@ -407,6 +424,7 @@ async fn main() {
             stack,
             project,
             repo,
+            no_network_isolation,
         }),
         Commands::List => Box::new(ListCommand),
         Commands::Clean => Box::new(CleanCommand),

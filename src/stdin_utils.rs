@@ -117,6 +117,7 @@ mod tests {
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             parent_id: None,
+            no_network_isolation: false,
         };
 
         // Should fail without piped input
@@ -135,6 +136,7 @@ mod tests {
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             parent_id: None,
+            no_network_isolation: false,
         };
 
         let result = cmd_with_desc.execute(&ctx).await;
@@ -173,6 +175,7 @@ mod tests {
             stack: None,
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
+            no_network_isolation: false,
         };
 
         // Should succeed for templates without {{DESCRIPTION}} placeholder
@@ -197,6 +200,7 @@ mod tests {
             stack: None,
             project: None,
             repo: None,
+            no_network_isolation: false,
         };
 
         // Verify the command has the expected fields

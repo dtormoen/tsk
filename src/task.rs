@@ -2,6 +2,10 @@ use chrono::{DateTime, Local, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::path::PathBuf;
 
+fn default_true() -> bool {
+    true
+}
+
 // The JSON format (tasks.json) is frozen and will not change. It only ever supported
 // a single `parent_id: Option<String>`. JSON task files are migrated to SQLite on
 // first run and then renamed to tasks.json.bak, so we only need to read them once.
@@ -100,6 +104,9 @@ pub struct Task {
         serialize_with = "serialize_parent_id"
     )]
     pub parent_ids: Vec<String>,
+    /// Whether per-container network isolation is enabled for this task
+    #[serde(default = "default_true")]
+    pub network_isolation: bool,
 }
 
 impl Task {
@@ -121,6 +128,7 @@ impl Task {
         copied_repo_path: Option<PathBuf>,
         is_interactive: bool,
         parent_ids: Vec<String>,
+        network_isolation: bool,
     ) -> Self {
         Self {
             id,
@@ -142,6 +150,7 @@ impl Task {
             copied_repo_path,
             is_interactive,
             parent_ids,
+            network_isolation,
         }
     }
 }
@@ -177,6 +186,7 @@ impl Task {
             copied_repo_path: Some(PathBuf::from("/test/copied")),
             is_interactive: false,
             parent_ids: vec![],
+            network_isolation: true,
         }
     }
 }

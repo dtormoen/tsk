@@ -129,6 +129,31 @@ TSK uses Docker internal networks rather than iptables rules in agent containers
 5. **Simpler failure mode**: If something goes wrong, agents have no connectivity rather than full connectivity
 6. **Independent of image contents**: Custom project Dockerfiles cannot weaken isolation since it's a property of the network topology, not container configuration
 
+## Disabling Network Isolation
+
+Network isolation can be disabled on a per-task basis using the `--no-network-isolation` flag. When disabled, the container runs on the default Docker network with direct internet access, bypassing the proxy and isolated network setup entirely.
+
+```bash
+# Run a task without network isolation
+tsk run --no-network-isolation -d "Install dependencies requiring custom registry"
+
+# Add a queued task without network isolation
+tsk add --no-network-isolation -d "Task needing unrestricted network access"
+
+# Launch an interactive shell without network isolation
+tsk shell --no-network-isolation
+```
+
+When network isolation is disabled:
+- No proxy container is started or used
+- No isolated Docker network is created
+- The container has direct internet access (default Docker networking)
+- `HTTP_PROXY` / `HTTPS_PROXY` environment variables are not set
+- The `NET_RAW` capability is not dropped (tools like `ping` will work)
+- All other security hardening (dropped capabilities like `NET_ADMIN`, `SYS_ADMIN`, etc.) remains in effect
+
+Use this flag when tasks require network access patterns that are incompatible with the proxy-based filtering, such as custom package registries, proprietary APIs not on the allowlist, or debugging network connectivity issues.
+
 ## Verifying Isolation
 
 Run the network isolation test script:

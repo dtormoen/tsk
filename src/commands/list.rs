@@ -52,9 +52,15 @@ impl Command for ListCommand {
                         _ => "-".to_string(),
                     };
 
+                    let name_display = if task.network_isolation {
+                        task.name.clone()
+                    } else {
+                        format!("{} [no-net-iso]", task.name)
+                    };
+
                     vec![
                         task.id.clone(),
-                        task.name.clone(),
+                        name_display,
                         task.task_type.clone(),
                         colorize_status(&status, styled),
                         duration,
