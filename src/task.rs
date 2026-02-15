@@ -151,6 +151,37 @@ impl Task {
 pub use crate::task_builder::TaskBuilder;
 
 #[cfg(test)]
+impl Task {
+    /// Creates a Task with sensible defaults for testing.
+    ///
+    /// Tests should override only the fields relevant to their scenario
+    /// using struct update syntax: `Task { field: val, ..Task::test_default() }`.
+    pub fn test_default() -> Self {
+        Self {
+            id: "test-id".to_string(),
+            repo_root: PathBuf::from("/test"),
+            name: "test-task".to_string(),
+            task_type: "feat".to_string(),
+            instructions_file: "instructions.md".to_string(),
+            agent: "claude".to_string(),
+            status: TaskStatus::Queued,
+            created_at: chrono::Local::now(),
+            started_at: None,
+            completed_at: None,
+            branch_name: "tsk/feat/test-task/test-id".to_string(),
+            error_message: None,
+            source_commit: "abc123".to_string(),
+            source_branch: Some("main".to_string()),
+            stack: "default".to_string(),
+            project: "default".to_string(),
+            copied_repo_path: Some(PathBuf::from("/test/copied")),
+            is_interactive: false,
+            parent_ids: vec![],
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -176,23 +207,7 @@ mod tests {
 
     #[test]
     fn test_task_creation() {
-        let task = Task::new(
-            "test-id".to_string(),
-            PathBuf::from("/test"),
-            "test-task".to_string(),
-            "feat".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/feat/test-task/test-id".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "rust".to_string(),
-            "test-project".to_string(),
-            chrono::Local::now(),
-            Some(PathBuf::from("/test/copied")),
-            false,
-            vec![],
-        );
+        let task = Task::test_default();
 
         assert_eq!(task.id, "test-id");
         assert_eq!(task.name, "test-task");
@@ -209,46 +224,25 @@ mod tests {
 
     #[test]
     fn test_task_creation_detached_head() {
-        let task = Task::new(
-            "test-id".to_string(),
-            PathBuf::from("/test"),
-            "test-task".to_string(),
-            "feat".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/feat/test-task/test-id".to_string(),
-            "abc123".to_string(),
-            None,
-            "rust".to_string(),
-            "test-project".to_string(),
-            chrono::Local::now(),
-            Some(PathBuf::from("/test/copied")),
-            false,
-            vec![],
-        );
+        let task = Task {
+            source_branch: None,
+            ..Task::test_default()
+        };
 
         assert!(task.source_branch.is_none());
     }
 
     #[test]
     fn test_task_creation_with_parent() {
-        let task = Task::new(
-            "child-id".to_string(),
-            PathBuf::from("/test"),
-            "child-task".to_string(),
-            "feat".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/feat/child-task/child-id".to_string(),
-            "abc123".to_string(),
-            None, // source_branch is None for child tasks
-            "rust".to_string(),
-            "test-project".to_string(),
-            chrono::Local::now(),
-            None, // copied_repo_path is None until parent completes
-            false,
-            vec!["parent-id".to_string()],
-        );
+        let task = Task {
+            id: "child-id".to_string(),
+            name: "child-task".to_string(),
+            branch_name: "tsk/feat/child-task/child-id".to_string(),
+            source_branch: None,
+            copied_repo_path: None,
+            parent_ids: vec!["parent-id".to_string()],
+            ..Task::test_default()
+        };
 
         assert_eq!(task.parent_ids, vec!["parent-id"]);
         assert!(task.copied_repo_path.is_none());

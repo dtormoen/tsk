@@ -690,23 +690,16 @@ mod tests {
         commit_sha: &str,
         data_dir: &std::path::Path,
     ) -> Task {
-        Task::new(
-            id.to_string(),
-            repo_path.to_path_buf(),
-            format!("task-{id}"),
-            "test".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            format!("tsk/test/{id}"),
-            commit_sha.to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(data_dir.join(format!("task-copy-{id}"))),
-            false,
-            vec![],
-        )
+        Task {
+            id: id.to_string(),
+            repo_root: repo_path.to_path_buf(),
+            name: format!("task-{id}"),
+            task_type: "test".to_string(),
+            branch_name: format!("tsk/test/{id}"),
+            source_commit: commit_sha.to_string(),
+            copied_repo_path: Some(data_dir.join(format!("task-copy-{id}"))),
+            ..Task::test_default()
+        }
     }
 
     /// Setup test repository with instructions file.
@@ -951,45 +944,30 @@ mod tests {
         commit_sha: &str,
         parent_id: &str,
     ) -> Task {
-        Task::new(
-            id.to_string(),
-            repo_path.to_path_buf(),
-            format!("task-{id}"),
-            "test".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            format!("tsk/test/{id}"),
-            commit_sha.to_string(),
-            None, // source_branch is None for child tasks
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            None, // copied_repo_path is None until parent completes
-            false,
-            vec![parent_id.to_string()],
-        )
+        Task {
+            id: id.to_string(),
+            repo_root: repo_path.to_path_buf(),
+            name: format!("task-{id}"),
+            task_type: "test".to_string(),
+            branch_name: format!("tsk/test/{id}"),
+            source_commit: commit_sha.to_string(),
+            source_branch: None,
+            stack: "default".to_string(),
+            project: "default".to_string(),
+            copied_repo_path: None,
+            parent_ids: vec![parent_id.to_string()],
+            ..Task::test_default()
+        }
     }
 
     #[test]
     fn test_is_parent_ready_no_parent() {
         // Task with no parent should return None
-        let task = Task::new(
-            "task-1".to_string(),
-            std::path::PathBuf::from("/test"),
-            "test-task".to_string(),
-            "test".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/test/task-1".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(std::path::PathBuf::from("/test/copied")),
-            false,
-            vec![],
-        );
+        let task = Task {
+            id: "task-1".to_string(),
+            branch_name: "tsk/test/task-1".to_string(),
+            ..Task::test_default()
+        };
 
         let all_tasks = vec![task.clone()];
         let result = TaskScheduler::is_parent_ready(&task, &all_tasks);
@@ -999,43 +977,24 @@ mod tests {
     #[test]
     fn test_is_parent_ready_complete() {
         // Create a completed parent task
-        let mut parent_task = Task::new(
-            "parent-1".to_string(),
-            std::path::PathBuf::from("/test"),
-            "parent-task".to_string(),
-            "test".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/test/parent-1".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(std::path::PathBuf::from("/test/copied")),
-            false,
-            vec![],
-        );
-        parent_task.status = TaskStatus::Complete;
+        let parent_task = Task {
+            id: "parent-1".to_string(),
+            name: "parent-task".to_string(),
+            branch_name: "tsk/test/parent-1".to_string(),
+            status: TaskStatus::Complete,
+            ..Task::test_default()
+        };
 
         // Create a child task
-        let child_task = Task::new(
-            "child-1".to_string(),
-            std::path::PathBuf::from("/test"),
-            "child-task".to_string(),
-            "test".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/test/child-1".to_string(),
-            "abc123".to_string(),
-            None,
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            None,
-            false,
-            vec!["parent-1".to_string()],
-        );
+        let child_task = Task {
+            id: "child-1".to_string(),
+            name: "child-task".to_string(),
+            branch_name: "tsk/test/child-1".to_string(),
+            source_branch: None,
+            copied_repo_path: None,
+            parent_ids: vec!["parent-1".to_string()],
+            ..Task::test_default()
+        };
 
         let all_tasks = vec![parent_task.clone(), child_task.clone()];
         let result = TaskScheduler::is_parent_ready(&child_task, &all_tasks);
@@ -1051,43 +1010,24 @@ mod tests {
     #[test]
     fn test_is_parent_ready_waiting() {
         // Create a running parent task
-        let mut parent_task = Task::new(
-            "parent-1".to_string(),
-            std::path::PathBuf::from("/test"),
-            "parent-task".to_string(),
-            "test".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/test/parent-1".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(std::path::PathBuf::from("/test/copied")),
-            false,
-            vec![],
-        );
-        parent_task.status = TaskStatus::Running;
+        let parent_task = Task {
+            id: "parent-1".to_string(),
+            name: "parent-task".to_string(),
+            branch_name: "tsk/test/parent-1".to_string(),
+            status: TaskStatus::Running,
+            ..Task::test_default()
+        };
 
         // Create a child task
-        let child_task = Task::new(
-            "child-1".to_string(),
-            std::path::PathBuf::from("/test"),
-            "child-task".to_string(),
-            "test".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/test/child-1".to_string(),
-            "abc123".to_string(),
-            None,
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            None,
-            false,
-            vec!["parent-1".to_string()],
-        );
+        let child_task = Task {
+            id: "child-1".to_string(),
+            name: "child-task".to_string(),
+            branch_name: "tsk/test/child-1".to_string(),
+            source_branch: None,
+            copied_repo_path: None,
+            parent_ids: vec!["parent-1".to_string()],
+            ..Task::test_default()
+        };
 
         let all_tasks = vec![parent_task.clone(), child_task.clone()];
         let result = TaskScheduler::is_parent_ready(&child_task, &all_tasks);
@@ -1102,43 +1042,24 @@ mod tests {
     #[test]
     fn test_is_parent_ready_failed() {
         // Create a failed parent task
-        let mut parent_task = Task::new(
-            "parent-1".to_string(),
-            std::path::PathBuf::from("/test"),
-            "parent-task".to_string(),
-            "test".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/test/parent-1".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(std::path::PathBuf::from("/test/copied")),
-            false,
-            vec![],
-        );
-        parent_task.status = TaskStatus::Failed;
+        let parent_task = Task {
+            id: "parent-1".to_string(),
+            name: "parent-task".to_string(),
+            branch_name: "tsk/test/parent-1".to_string(),
+            status: TaskStatus::Failed,
+            ..Task::test_default()
+        };
 
         // Create a child task
-        let child_task = Task::new(
-            "child-1".to_string(),
-            std::path::PathBuf::from("/test"),
-            "child-task".to_string(),
-            "test".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/test/child-1".to_string(),
-            "abc123".to_string(),
-            None,
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            None,
-            false,
-            vec!["parent-1".to_string()],
-        );
+        let child_task = Task {
+            id: "child-1".to_string(),
+            name: "child-task".to_string(),
+            branch_name: "tsk/test/child-1".to_string(),
+            source_branch: None,
+            copied_repo_path: None,
+            parent_ids: vec!["parent-1".to_string()],
+            ..Task::test_default()
+        };
 
         let all_tasks = vec![parent_task.clone(), child_task.clone()];
         let result = TaskScheduler::is_parent_ready(&child_task, &all_tasks);
@@ -1157,23 +1078,15 @@ mod tests {
     #[test]
     fn test_is_parent_ready_not_found() {
         // Create a child task with non-existent parent
-        let child_task = Task::new(
-            "child-1".to_string(),
-            std::path::PathBuf::from("/test"),
-            "child-task".to_string(),
-            "test".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/test/child-1".to_string(),
-            "abc123".to_string(),
-            None,
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            None,
-            false,
-            vec!["nonexistent-parent".to_string()],
-        );
+        let child_task = Task {
+            id: "child-1".to_string(),
+            name: "child-task".to_string(),
+            branch_name: "tsk/test/child-1".to_string(),
+            source_branch: None,
+            copied_repo_path: None,
+            parent_ids: vec!["nonexistent-parent".to_string()],
+            ..Task::test_default()
+        };
 
         let all_tasks = vec![child_task.clone()];
         let result = TaskScheduler::is_parent_ready(&child_task, &all_tasks);
@@ -1189,23 +1102,11 @@ mod tests {
     #[test]
     fn test_is_task_ready_for_scheduling_no_parent() {
         // Task with no parent should be ready
-        let task = Task::new(
-            "task-1".to_string(),
-            std::path::PathBuf::from("/test"),
-            "test-task".to_string(),
-            "test".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/test/task-1".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(std::path::PathBuf::from("/test/copied")),
-            false,
-            vec![],
-        );
+        let task = Task {
+            id: "task-1".to_string(),
+            branch_name: "tsk/test/task-1".to_string(),
+            ..Task::test_default()
+        };
 
         let all_tasks = vec![task.clone()];
         let submitted = HashSet::new();
@@ -1216,23 +1117,11 @@ mod tests {
     #[test]
     fn test_is_task_ready_for_scheduling_already_submitted() {
         // Task that's already submitted should not be ready
-        let task = Task::new(
-            "task-1".to_string(),
-            std::path::PathBuf::from("/test"),
-            "test-task".to_string(),
-            "test".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/test/task-1".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(std::path::PathBuf::from("/test/copied")),
-            false,
-            vec![],
-        );
+        let task = Task {
+            id: "task-1".to_string(),
+            branch_name: "tsk/test/task-1".to_string(),
+            ..Task::test_default()
+        };
 
         let all_tasks = vec![task.clone()];
         let mut submitted = HashSet::new();
@@ -1244,42 +1133,23 @@ mod tests {
     #[test]
     fn test_is_task_ready_for_scheduling_parent_waiting() {
         // Task with running parent should not be ready
-        let mut parent_task = Task::new(
-            "parent-1".to_string(),
-            std::path::PathBuf::from("/test"),
-            "parent-task".to_string(),
-            "test".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/test/parent-1".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(std::path::PathBuf::from("/test/copied")),
-            false,
-            vec![],
-        );
-        parent_task.status = TaskStatus::Running;
+        let parent_task = Task {
+            id: "parent-1".to_string(),
+            name: "parent-task".to_string(),
+            branch_name: "tsk/test/parent-1".to_string(),
+            status: TaskStatus::Running,
+            ..Task::test_default()
+        };
 
-        let child_task = Task::new(
-            "child-1".to_string(),
-            std::path::PathBuf::from("/test"),
-            "child-task".to_string(),
-            "test".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/test/child-1".to_string(),
-            "abc123".to_string(),
-            None,
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            None,
-            false,
-            vec!["parent-1".to_string()],
-        );
+        let child_task = Task {
+            id: "child-1".to_string(),
+            name: "child-task".to_string(),
+            branch_name: "tsk/test/child-1".to_string(),
+            source_branch: None,
+            copied_repo_path: None,
+            parent_ids: vec!["parent-1".to_string()],
+            ..Task::test_default()
+        };
 
         let all_tasks = vec![parent_task.clone(), child_task.clone()];
         let submitted = HashSet::new();
@@ -1291,42 +1161,23 @@ mod tests {
     #[test]
     fn test_is_task_ready_for_scheduling_parent_complete() {
         // Task with completed parent should be ready
-        let mut parent_task = Task::new(
-            "parent-1".to_string(),
-            std::path::PathBuf::from("/test"),
-            "parent-task".to_string(),
-            "test".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/test/parent-1".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(std::path::PathBuf::from("/test/copied")),
-            false,
-            vec![],
-        );
-        parent_task.status = TaskStatus::Complete;
+        let parent_task = Task {
+            id: "parent-1".to_string(),
+            name: "parent-task".to_string(),
+            branch_name: "tsk/test/parent-1".to_string(),
+            status: TaskStatus::Complete,
+            ..Task::test_default()
+        };
 
-        let child_task = Task::new(
-            "child-1".to_string(),
-            std::path::PathBuf::from("/test"),
-            "child-task".to_string(),
-            "test".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/test/child-1".to_string(),
-            "abc123".to_string(),
-            None,
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            None,
-            false,
-            vec!["parent-1".to_string()],
-        );
+        let child_task = Task {
+            id: "child-1".to_string(),
+            name: "child-task".to_string(),
+            branch_name: "tsk/test/child-1".to_string(),
+            source_branch: None,
+            copied_repo_path: None,
+            parent_ids: vec!["parent-1".to_string()],
+            ..Task::test_default()
+        };
 
         let all_tasks = vec![parent_task.clone(), child_task.clone()];
         let submitted = HashSet::new();

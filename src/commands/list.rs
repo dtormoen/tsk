@@ -164,33 +164,31 @@ mod tests {
                 _ => TaskStatus::Failed,
             };
 
-            let mut task = Task::new(
-                task_id.clone(),
-                repo_root.clone(),
-                format!("task-{}", i + 1),
-                "feat".to_string(),
-                instructions_path.to_string_lossy().to_string(),
-                "claude".to_string(),
-                format!("tsk/feat/task-{}/{}", i + 1, task_id),
-                "abc123".to_string(),
-                Some("main".to_string()),
-                "default".to_string(),
-                "default".to_string(),
-                chrono::Local::now(),
-                Some(task_dir_path),
-                false,
-                vec![],
-            );
-            task.status = status;
-            if matches!(
-                task.status,
+            let started_at = if matches!(
+                status,
                 TaskStatus::Running | TaskStatus::Complete | TaskStatus::Failed
             ) {
-                task.started_at = Some(chrono::Utc::now());
-            }
-            if matches!(task.status, TaskStatus::Complete | TaskStatus::Failed) {
-                task.completed_at = Some(chrono::Utc::now());
-            }
+                Some(chrono::Utc::now())
+            } else {
+                None
+            };
+            let completed_at = if matches!(status, TaskStatus::Complete | TaskStatus::Failed) {
+                Some(chrono::Utc::now())
+            } else {
+                None
+            };
+            let task = Task {
+                id: task_id.clone(),
+                repo_root: repo_root.clone(),
+                name: format!("task-{}", i + 1),
+                instructions_file: instructions_path.to_string_lossy().to_string(),
+                branch_name: format!("tsk/feat/task-{}/{}", i + 1, task_id),
+                copied_repo_path: Some(task_dir_path),
+                status,
+                started_at,
+                completed_at,
+                ..Task::test_default()
+            };
             storage
                 .add_task(task)
                 .await

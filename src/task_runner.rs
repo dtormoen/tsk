@@ -195,7 +195,7 @@ impl TaskRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::{Task, TaskStatus};
+    use crate::task::Task;
     use crate::test_utils::git_test_utils::TestGitRepository;
     use std::sync::Arc;
 
@@ -249,26 +249,15 @@ mod tests {
         let task = Task {
             id: "test-task-123".to_string(),
             repo_root: test_repo.path().to_path_buf(),
-            name: "test-task".to_string(),
             task_type: "feature".to_string(),
             instructions_file: task_copy_dir
                 .join(".tsk/tasks/instructions.md")
                 .to_string_lossy()
                 .to_string(),
-            agent: "claude".to_string(),
-            status: TaskStatus::Queued,
-            created_at: chrono::Local::now(),
-            started_at: None,
-            completed_at: None,
             branch_name: "tsk/feature/test-task/test-task-123".to_string(),
-            error_message: None,
             source_commit: test_repo.get_current_commit().unwrap(),
-            source_branch: Some("main".to_string()),
-            stack: "default".to_string(),
-            project: "default".to_string(),
             copied_repo_path: Some(task_copy_dir),
-            is_interactive: false,
-            parent_ids: vec![],
+            ..Task::test_default()
         };
 
         let result = task_runner.execute_task(&task).await;

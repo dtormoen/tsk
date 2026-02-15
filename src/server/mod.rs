@@ -185,40 +185,18 @@ mod tests {
 
         // Add tasks to storage as Running
         let storage = get_task_storage(ctx.tsk_env());
-        let task1 = Task::new(
-            "task-1".to_string(),
-            std::path::PathBuf::from("/test"),
-            "test-task-1".to_string(),
-            "test".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/test/task-1".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(std::path::PathBuf::from("/test/copied")),
-            false,
-            vec![],
-        );
-        let task2 = Task::new(
-            "task-2".to_string(),
-            std::path::PathBuf::from("/test"),
-            "test-task-2".to_string(),
-            "test".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/test/task-2".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(std::path::PathBuf::from("/test/copied")),
-            false,
-            vec![],
-        );
+        let task1 = Task {
+            id: "task-1".to_string(),
+            name: "test-task-1".to_string(),
+            branch_name: "tsk/test/task-1".to_string(),
+            ..Task::test_default()
+        };
+        let task2 = Task {
+            id: "task-2".to_string(),
+            name: "test-task-2".to_string(),
+            branch_name: "tsk/test/task-2".to_string(),
+            ..Task::test_default()
+        };
 
         storage.add_task(task1).await.unwrap();
         storage.add_task(task2).await.unwrap();
@@ -297,23 +275,12 @@ mod tests {
 
         // Add a task that's already completed
         let storage = get_task_storage(ctx.tsk_env());
-        let task = Task::new(
-            "task-done".to_string(),
-            std::path::PathBuf::from("/test"),
-            "done-task".to_string(),
-            "test".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/test/task-done".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(std::path::PathBuf::from("/test/copied")),
-            false,
-            vec![],
-        );
+        let task = Task {
+            id: "task-done".to_string(),
+            name: "done-task".to_string(),
+            branch_name: "tsk/test/task-done".to_string(),
+            ..Task::test_default()
+        };
         storage.add_task(task).await.unwrap();
         storage
             .update_task_status(

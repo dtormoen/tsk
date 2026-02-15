@@ -99,26 +99,18 @@ mod tests {
                 format!("# Task {i}\n\nInstructions for task {i}"),
             )?;
 
-            let mut task = crate::task::Task::new(
-                task_id.to_string(),
-                repo_root.clone(),
-                format!("test-task-{i}"),
-                "feat".to_string(),
-                instructions_path.to_string_lossy().to_string(),
-                "claude".to_string(),
-                format!("tsk/{task_id}"),
-                "abc123".to_string(),
-                Some("main".to_string()),
-                "default".to_string(),
-                "default".to_string(),
-                chrono::Local::now(),
-                Some(task_dir_path),
-                false,
-                vec![],
-            );
-            task.status = TaskStatus::Complete;
-            task.started_at = Some(chrono::Utc::now());
-            task.completed_at = Some(chrono::Utc::now());
+            let task = crate::task::Task {
+                id: task_id.to_string(),
+                repo_root: repo_root.clone(),
+                name: format!("test-task-{i}"),
+                instructions_file: instructions_path.to_string_lossy().to_string(),
+                branch_name: format!("tsk/{task_id}"),
+                copied_repo_path: Some(task_dir_path),
+                status: TaskStatus::Complete,
+                started_at: Some(chrono::Utc::now()),
+                completed_at: Some(chrono::Utc::now()),
+                ..crate::task::Task::test_default()
+            };
             storage
                 .add_task(task)
                 .await
@@ -313,23 +305,14 @@ mod tests {
         std::fs::create_dir_all(&task_dir_path).unwrap();
 
         // Add queued task via storage API
-        let task = crate::task::Task::new(
-            task_id.to_string(),
+        let task = crate::task::Task {
+            id: task_id.to_string(),
             repo_root,
-            "queued-task".to_string(),
-            "feat".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            format!("tsk/{task_id}"),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(task_dir_path),
-            false,
-            vec![],
-        );
+            name: "queued-task".to_string(),
+            branch_name: format!("tsk/{task_id}"),
+            copied_repo_path: Some(task_dir_path),
+            ..crate::task::Task::test_default()
+        };
         let storage = get_task_storage(tsk_env);
         storage.add_task(task).await.unwrap();
 

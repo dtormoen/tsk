@@ -555,23 +555,14 @@ mod tests {
         Task {
             id: "test-task-id".to_string(),
             repo_root: repo_path.clone(),
-            name: "test-task".to_string(),
             task_type: "feature".to_string(),
             instructions_file: "/tmp/test-repo/.tsk/tasks/instructions.md".to_string(),
-            agent: "claude".to_string(),
             status: TaskStatus::Running,
-            created_at: chrono::Local::now(),
             started_at: Some(chrono::Utc::now()),
-            completed_at: None,
             branch_name: "tsk/feature/test-task/test-task-id".to_string(),
-            error_message: None,
-            source_commit: "abc123".to_string(),
-            source_branch: Some("main".to_string()),
-            stack: "default".to_string(),
-            project: "default".to_string(),
             copied_repo_path: Some(repo_path),
             is_interactive,
-            parent_ids: vec![],
+            ..Task::test_default()
         }
     }
 

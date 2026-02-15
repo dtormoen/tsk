@@ -80,26 +80,18 @@ mod tests {
                 format!("Task {i} instructions"),
             )?;
 
-            let task = crate::task::Task::new(
-                task_id.to_string(),
-                repo_root.clone(),
-                format!("test-task-{i}"),
-                "feat".to_string(),
-                task_dir_path
+            let task = crate::task::Task {
+                id: task_id.to_string(),
+                repo_root: repo_root.clone(),
+                name: format!("test-task-{i}"),
+                instructions_file: task_dir_path
                     .join("instructions.md")
                     .to_string_lossy()
                     .to_string(),
-                "claude".to_string(),
-                format!("tsk/{task_id}"),
-                "abc123".to_string(),
-                Some("main".to_string()),
-                "default".to_string(),
-                "default".to_string(),
-                chrono::Local::now(),
-                Some(task_dir_path),
-                false,
-                vec![],
-            );
+                branch_name: format!("tsk/{task_id}"),
+                copied_repo_path: Some(task_dir_path),
+                ..crate::task::Task::test_default()
+            };
             storage
                 .add_task(task)
                 .await

@@ -384,23 +384,13 @@ mod tests {
         std::fs::write(task_dir_path.join("test.txt"), "test content").unwrap();
 
         // Add task via storage API
-        let task = Task::new(
-            task_id.clone(),
+        let task = Task {
+            id: task_id.clone(),
             repo_root,
-            "test-task".to_string(),
-            "feat".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            format!("tsk/{task_id}"),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(copied_repo_path),
-            false,
-            vec![],
-        );
+            branch_name: format!("tsk/{task_id}"),
+            copied_repo_path: Some(copied_repo_path),
+            ..Task::test_default()
+        };
         let storage = get_task_storage(tsk_env);
         storage.add_task(task).await.unwrap();
 
@@ -441,42 +431,25 @@ mod tests {
                 .await
                 .unwrap();
 
-        let queued_task = Task::new(
-            queued_task_id.clone(),
-            repo_root.clone(),
-            "queued-task".to_string(),
-            "feat".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            format!("tsk/{queued_task_id}"),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(queued_dir_path.join("repo")),
-            false,
-            vec![],
-        );
+        let queued_task = Task {
+            id: queued_task_id.clone(),
+            repo_root: repo_root.clone(),
+            name: "queued-task".to_string(),
+            branch_name: format!("tsk/{queued_task_id}"),
+            copied_repo_path: Some(queued_dir_path.join("repo")),
+            ..Task::test_default()
+        };
 
-        let mut completed_task = Task::new(
-            completed_task_id.clone(),
-            repo_root.clone(),
-            "completed-task".to_string(),
-            "fix".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            format!("tsk/{completed_task_id}"),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(completed_dir_path.join("repo")),
-            false,
-            vec![],
-        );
-        completed_task.status = TaskStatus::Complete;
+        let completed_task = Task {
+            id: completed_task_id.clone(),
+            repo_root: repo_root.clone(),
+            name: "completed-task".to_string(),
+            task_type: "fix".to_string(),
+            branch_name: format!("tsk/{completed_task_id}"),
+            status: TaskStatus::Complete,
+            copied_repo_path: Some(completed_dir_path.join("repo")),
+            ..Task::test_default()
+        };
 
         // Add tasks via storage API
         let storage = get_task_storage(ctx.tsk_env());
@@ -519,24 +492,17 @@ mod tests {
         let task_dir_path = config.task_dir(&task_id);
         let instructions_path = task_dir_path.join("instructions.md");
 
-        let mut completed_task = Task::new(
-            task_id.clone(),
-            repo_root.clone(),
-            "original-task".to_string(),
-            "generic".to_string(),
-            instructions_path.to_string_lossy().to_string(),
-            "claude".to_string(),
-            format!("tsk/{task_id}"),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(task_dir_path.join("repo")),
-            false,
-            vec![],
-        );
-        completed_task.status = TaskStatus::Complete;
+        let completed_task = Task {
+            id: task_id.clone(),
+            repo_root: repo_root.clone(),
+            name: "original-task".to_string(),
+            task_type: "generic".to_string(),
+            instructions_file: instructions_path.to_string_lossy().to_string(),
+            branch_name: format!("tsk/{task_id}"),
+            status: TaskStatus::Complete,
+            copied_repo_path: Some(task_dir_path.join("repo")),
+            ..Task::test_default()
+        };
 
         // Set up task directory with instructions
         let instructions_content =
@@ -617,23 +583,14 @@ mod tests {
         let task_dir = config.task_dir(&task_id);
 
         // Add queued task via storage API
-        let task = Task::new(
-            task_id.clone(),
+        let task = Task {
+            id: task_id.clone(),
             repo_root,
-            "queued-task".to_string(),
-            "feat".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            format!("tsk/{task_id}"),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(task_dir.join("repo")),
-            false,
-            vec![],
-        );
+            name: "queued-task".to_string(),
+            branch_name: format!("tsk/{task_id}"),
+            copied_repo_path: Some(task_dir.join("repo")),
+            ..Task::test_default()
+        };
         let storage = get_task_storage(ctx.tsk_env());
         storage.add_task(task).await.unwrap();
 
@@ -665,24 +622,15 @@ mod tests {
             .await
             .unwrap();
 
-        let mut completed_task = Task::new(
-            task_id.clone(),
-            repo_root.clone(),
-            "test-feature".to_string(),
-            "feat".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            format!("tsk/{task_id}"),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(task_dir_path.join("repo")),
-            false,
-            vec![],
-        );
-        completed_task.status = TaskStatus::Complete;
+        let completed_task = Task {
+            id: task_id.clone(),
+            repo_root: repo_root.clone(),
+            name: "test-feature".to_string(),
+            branch_name: format!("tsk/{task_id}"),
+            status: TaskStatus::Complete,
+            copied_repo_path: Some(task_dir_path.join("repo")),
+            ..Task::test_default()
+        };
 
         // Add task via storage API
         let storage = get_task_storage(ctx.tsk_env());
@@ -721,24 +669,15 @@ mod tests {
                 .await
                 .unwrap();
 
-        let mut parent_task = Task::new(
-            parent_task_id.clone(),
-            repo_root.clone(),
-            "parent-task".to_string(),
-            "feat".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            format!("tsk/{parent_task_id}"),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(parent_dir_path.join("repo")),
-            false,
-            vec![],
-        );
-        parent_task.status = TaskStatus::Complete;
+        let parent_task = Task {
+            id: parent_task_id.clone(),
+            repo_root: repo_root.clone(),
+            name: "parent-task".to_string(),
+            branch_name: format!("tsk/{parent_task_id}"),
+            status: TaskStatus::Complete,
+            copied_repo_path: Some(parent_dir_path.join("repo")),
+            ..Task::test_default()
+        };
 
         // Create a queued child task referencing the parent
         let child_task_id = "child-task-001".to_string();
@@ -747,23 +686,15 @@ mod tests {
                 .await
                 .unwrap();
 
-        let child_task = Task::new(
-            child_task_id.clone(),
-            repo_root.clone(),
-            "child-task".to_string(),
-            "feat".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            format!("tsk/{child_task_id}"),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(child_dir_path.join("repo")),
-            false,
-            vec![parent_task_id.clone()],
-        );
+        let child_task = Task {
+            id: child_task_id.clone(),
+            repo_root: repo_root.clone(),
+            name: "child-task".to_string(),
+            branch_name: format!("tsk/{child_task_id}"),
+            copied_repo_path: Some(child_dir_path.join("repo")),
+            parent_ids: vec![parent_task_id.clone()],
+            ..Task::test_default()
+        };
 
         // Create another completed task with no children
         let childless_task_id = "childless-task-001".to_string();
@@ -772,24 +703,16 @@ mod tests {
                 .await
                 .unwrap();
 
-        let mut childless_task = Task::new(
-            childless_task_id.clone(),
-            repo_root.clone(),
-            "childless-task".to_string(),
-            "fix".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            format!("tsk/{childless_task_id}"),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(childless_dir_path.join("repo")),
-            false,
-            vec![],
-        );
-        childless_task.status = TaskStatus::Complete;
+        let childless_task = Task {
+            id: childless_task_id.clone(),
+            repo_root: repo_root.clone(),
+            name: "childless-task".to_string(),
+            task_type: "fix".to_string(),
+            branch_name: format!("tsk/{childless_task_id}"),
+            status: TaskStatus::Complete,
+            copied_repo_path: Some(childless_dir_path.join("repo")),
+            ..Task::test_default()
+        };
 
         // Add all tasks via storage API
         let storage = get_task_storage(ctx.tsk_env());
@@ -866,23 +789,14 @@ mod tests {
             .await
             .unwrap();
 
-        let task = Task::new(
-            task_id.clone(),
+        let task = Task {
+            id: task_id.clone(),
             repo_root,
-            "store-exec-task".to_string(),
-            "feat".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            format!("tsk/{task_id}"),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(task_dir_path.join("repo")),
-            false,
-            vec![],
-        );
+            name: "store-exec-task".to_string(),
+            branch_name: format!("tsk/{task_id}"),
+            copied_repo_path: Some(task_dir_path.join("repo")),
+            ..Task::test_default()
+        };
 
         let task_manager = TaskManager::new(&ctx).unwrap();
         let _result = task_manager.store_and_execute_task(&task).await;
@@ -943,107 +857,64 @@ mod tests {
         let two_days_ago = chrono::Utc::now() - chrono::Duration::days(2);
 
         // Old Complete task (should be deleted)
-        let mut old_complete = Task::new(
-            old_complete_id.clone(),
-            repo_root.clone(),
-            "old-complete".to_string(),
-            "feat".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            format!("tsk/{old_complete_id}"),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(old_complete_dir.join("repo")),
-            false,
-            vec![],
-        );
-        old_complete.status = TaskStatus::Complete;
-        old_complete.completed_at = Some(ten_days_ago);
+        let old_complete = Task {
+            id: old_complete_id.clone(),
+            repo_root: repo_root.clone(),
+            name: "old-complete".to_string(),
+            branch_name: format!("tsk/{old_complete_id}"),
+            status: TaskStatus::Complete,
+            completed_at: Some(ten_days_ago),
+            copied_repo_path: Some(old_complete_dir.join("repo")),
+            ..Task::test_default()
+        };
 
         // Old Failed task (should be deleted when include_failed=true)
-        let mut old_failed = Task::new(
-            old_failed_id.clone(),
-            repo_root.clone(),
-            "old-failed".to_string(),
-            "fix".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            format!("tsk/{old_failed_id}"),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(old_failed_dir.join("repo")),
-            false,
-            vec![],
-        );
-        old_failed.status = TaskStatus::Failed;
-        old_failed.completed_at = Some(ten_days_ago);
+        let old_failed = Task {
+            id: old_failed_id.clone(),
+            repo_root: repo_root.clone(),
+            name: "old-failed".to_string(),
+            task_type: "fix".to_string(),
+            branch_name: format!("tsk/{old_failed_id}"),
+            status: TaskStatus::Failed,
+            completed_at: Some(ten_days_ago),
+            copied_repo_path: Some(old_failed_dir.join("repo")),
+            ..Task::test_default()
+        };
 
         // Young Complete task (should be preserved - too young)
-        let mut young_complete = Task::new(
-            young_complete_id.clone(),
-            repo_root.clone(),
-            "young-complete".to_string(),
-            "feat".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            format!("tsk/{young_complete_id}"),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(young_complete_dir.join("repo")),
-            false,
-            vec![],
-        );
-        young_complete.status = TaskStatus::Complete;
-        young_complete.completed_at = Some(two_days_ago);
+        let young_complete = Task {
+            id: young_complete_id.clone(),
+            repo_root: repo_root.clone(),
+            name: "young-complete".to_string(),
+            branch_name: format!("tsk/{young_complete_id}"),
+            status: TaskStatus::Complete,
+            completed_at: Some(two_days_ago),
+            copied_repo_path: Some(young_complete_dir.join("repo")),
+            ..Task::test_default()
+        };
 
         // Queued task (should always be preserved), child of old_parent
-        let queued = Task::new(
-            queued_id.clone(),
-            repo_root.clone(),
-            "queued-task".to_string(),
-            "feat".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            format!("tsk/{queued_id}"),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(queued_dir.join("repo")),
-            false,
-            vec![old_parent_id.clone()],
-        );
+        let queued = Task {
+            id: queued_id.clone(),
+            repo_root: repo_root.clone(),
+            name: "queued-task".to_string(),
+            branch_name: format!("tsk/{queued_id}"),
+            copied_repo_path: Some(queued_dir.join("repo")),
+            parent_ids: vec![old_parent_id.clone()],
+            ..Task::test_default()
+        };
 
         // Old parent task with active child (should be skipped due to parent protection)
-        let mut old_parent = Task::new(
-            old_parent_id.clone(),
-            repo_root.clone(),
-            "old-parent".to_string(),
-            "feat".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            format!("tsk/{old_parent_id}"),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(old_parent_dir.join("repo")),
-            false,
-            vec![],
-        );
-        old_parent.status = TaskStatus::Complete;
-        old_parent.completed_at = Some(ten_days_ago);
+        let old_parent = Task {
+            id: old_parent_id.clone(),
+            repo_root: repo_root.clone(),
+            name: "old-parent".to_string(),
+            branch_name: format!("tsk/{old_parent_id}"),
+            status: TaskStatus::Complete,
+            completed_at: Some(ten_days_ago),
+            copied_repo_path: Some(old_parent_dir.join("repo")),
+            ..Task::test_default()
+        };
 
         let storage = get_task_storage(ctx.tsk_env());
         storage.add_task(old_complete).await.unwrap();

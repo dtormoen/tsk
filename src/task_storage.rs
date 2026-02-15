@@ -42,23 +42,14 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     async fn run_storage_crud_tests(storage: &dyn TaskStorage, data_dir: &Path) {
-        let task = Task::new(
-            "abcd1234".to_string(),
-            data_dir.to_path_buf(),
-            "test-task".to_string(),
-            "feature".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/test-task".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(data_dir.to_path_buf()),
-            false,
-            vec![],
-        );
+        let task = Task {
+            id: "abcd1234".to_string(),
+            repo_root: data_dir.to_path_buf(),
+            task_type: "feature".to_string(),
+            branch_name: "tsk/test-task".to_string(),
+            copied_repo_path: Some(data_dir.to_path_buf()),
+            ..Task::test_default()
+        };
 
         storage.add_task(task.clone()).await.unwrap();
 
@@ -81,59 +72,35 @@ mod tests {
         assert!(retrieved.is_none());
 
         // Test deleting specific tasks
-        let task1 = Task::new(
-            "efgh5678".to_string(),
-            data_dir.to_path_buf(),
-            "task1".to_string(),
-            "feature".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/task1".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(data_dir.to_path_buf()),
-            false,
-            vec![],
-        );
-        let mut task2 = Task::new(
-            "ijkl9012".to_string(),
-            data_dir.to_path_buf(),
-            "task2".to_string(),
-            "bug-fix".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/task2".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(data_dir.to_path_buf()),
-            false,
-            vec![],
-        );
-        task2.status = TaskStatus::Complete;
-        let mut task3 = Task::new(
-            "mnop3456".to_string(),
-            data_dir.to_path_buf(),
-            "task3".to_string(),
-            "refactor".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/task3".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(data_dir.to_path_buf()),
-            false,
-            vec![],
-        );
-        task3.status = TaskStatus::Failed;
+        let task1 = Task {
+            id: "efgh5678".to_string(),
+            repo_root: data_dir.to_path_buf(),
+            name: "task1".to_string(),
+            task_type: "feature".to_string(),
+            branch_name: "tsk/task1".to_string(),
+            copied_repo_path: Some(data_dir.to_path_buf()),
+            ..Task::test_default()
+        };
+        let task2 = Task {
+            id: "ijkl9012".to_string(),
+            repo_root: data_dir.to_path_buf(),
+            name: "task2".to_string(),
+            task_type: "bug-fix".to_string(),
+            status: TaskStatus::Complete,
+            branch_name: "tsk/task2".to_string(),
+            copied_repo_path: Some(data_dir.to_path_buf()),
+            ..Task::test_default()
+        };
+        let task3 = Task {
+            id: "mnop3456".to_string(),
+            repo_root: data_dir.to_path_buf(),
+            name: "task3".to_string(),
+            task_type: "refactor".to_string(),
+            status: TaskStatus::Failed,
+            branch_name: "tsk/task3".to_string(),
+            copied_repo_path: Some(data_dir.to_path_buf()),
+            ..Task::test_default()
+        };
 
         storage.add_task(task1.clone()).await.unwrap();
         storage.add_task(task2.clone()).await.unwrap();
@@ -169,27 +136,27 @@ mod tests {
         let started_at = chrono::Utc::now();
         let completed_at = chrono::Utc::now();
 
-        let mut task = Task::new(
-            "round1234".to_string(),
-            PathBuf::from("/some/repo/root"),
-            "full-task".to_string(),
-            "feat".to_string(),
-            "/tmp/instructions.md".to_string(),
-            "codex".to_string(),
-            "tsk/feat/full-task/round1234".to_string(),
-            "deadbeef".to_string(),
-            Some("develop".to_string()),
-            "rust".to_string(),
-            "my-project".to_string(),
+        let task = Task {
+            id: "round1234".to_string(),
+            repo_root: PathBuf::from("/some/repo/root"),
+            name: "full-task".to_string(),
+            instructions_file: "/tmp/instructions.md".to_string(),
+            agent: "codex".to_string(),
+            status: TaskStatus::Complete,
             created_at,
-            Some(PathBuf::from("/copied/repo/path")),
-            true,
-            vec!["parent5678".to_string()],
-        );
-        task.status = TaskStatus::Complete;
-        task.started_at = Some(started_at);
-        task.completed_at = Some(completed_at);
-        task.error_message = Some("something went wrong".to_string());
+            started_at: Some(started_at),
+            completed_at: Some(completed_at),
+            branch_name: "tsk/feat/full-task/round1234".to_string(),
+            error_message: Some("something went wrong".to_string()),
+            source_commit: "deadbeef".to_string(),
+            source_branch: Some("develop".to_string()),
+            stack: "rust".to_string(),
+            project: "my-project".to_string(),
+            copied_repo_path: Some(PathBuf::from("/copied/repo/path")),
+            is_interactive: true,
+            parent_ids: vec!["parent5678".to_string()],
+            ..Task::test_default()
+        };
 
         storage.add_task(task.clone()).await.unwrap();
 
@@ -239,23 +206,15 @@ mod tests {
         let db_path = tsk_env.data_dir().join("test_status_update.db");
         let storage = SqliteTaskStorage::new(db_path).unwrap();
 
-        let task = Task::new(
-            "status1234".to_string(),
-            tsk_env.data_dir().to_path_buf(),
-            "status-task".to_string(),
-            "fix".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/fix/status-task/status1234".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(tsk_env.data_dir().to_path_buf()),
-            false,
-            vec![],
-        );
+        let task = Task {
+            id: "status1234".to_string(),
+            repo_root: tsk_env.data_dir().to_path_buf(),
+            name: "status-task".to_string(),
+            task_type: "fix".to_string(),
+            branch_name: "tsk/fix/status-task/status1234".to_string(),
+            copied_repo_path: Some(tsk_env.data_dir().to_path_buf()),
+            ..Task::test_default()
+        };
 
         storage.add_task(task).await.unwrap();
 
@@ -332,23 +291,14 @@ mod tests {
         let db_path = data_dir.join("migration_test.db");
 
         // Create a tasks.json with known tasks
-        let task = Task::new(
-            "migrate1234".to_string(),
-            data_dir.to_path_buf(),
-            "migrate-task".to_string(),
-            "feat".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/feat/migrate-task/migrate1234".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "rust".to_string(),
-            "test-project".to_string(),
-            chrono::Local::now(),
-            Some(data_dir.to_path_buf()),
-            false,
-            vec![],
-        );
+        let task = Task {
+            id: "migrate1234".to_string(),
+            repo_root: data_dir.to_path_buf(),
+            name: "migrate-task".to_string(),
+            branch_name: "tsk/feat/migrate-task/migrate1234".to_string(),
+            copied_repo_path: Some(data_dir.to_path_buf()),
+            ..Task::test_default()
+        };
         let tasks = vec![task];
         let json = serde_json::to_string_pretty(&tasks).unwrap();
         fs::write(&json_path, &json).unwrap();
@@ -382,23 +332,14 @@ mod tests {
         let db_path = data_dir.join("migration_bak_test.db");
 
         // Create both tasks.json and tasks.json.bak
-        let task = Task::new(
-            "skip1234".to_string(),
-            data_dir.to_path_buf(),
-            "skip-task".to_string(),
-            "feat".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/feat/skip-task/skip1234".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(data_dir.to_path_buf()),
-            false,
-            vec![],
-        );
+        let task = Task {
+            id: "skip1234".to_string(),
+            repo_root: data_dir.to_path_buf(),
+            name: "skip-task".to_string(),
+            branch_name: "tsk/feat/skip-task/skip1234".to_string(),
+            copied_repo_path: Some(data_dir.to_path_buf()),
+            ..Task::test_default()
+        };
         let json = serde_json::to_string_pretty(&vec![task]).unwrap();
         fs::write(&json_path, &json).unwrap();
         fs::write(&bak_path, "old backup").unwrap();
@@ -430,44 +371,26 @@ mod tests {
 
         // First, create a storage and add a task to it
         let storage = SqliteTaskStorage::new(db_path.clone()).unwrap();
-        let existing_task = Task::new(
-            "existing1234".to_string(),
-            data_dir.to_path_buf(),
-            "existing-task".to_string(),
-            "feat".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/feat/existing-task/existing1234".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(data_dir.to_path_buf()),
-            false,
-            vec![],
-        );
+        let existing_task = Task {
+            id: "existing1234".to_string(),
+            repo_root: data_dir.to_path_buf(),
+            name: "existing-task".to_string(),
+            branch_name: "tsk/feat/existing-task/existing1234".to_string(),
+            copied_repo_path: Some(data_dir.to_path_buf()),
+            ..Task::test_default()
+        };
         storage.add_task(existing_task).await.unwrap();
         drop(storage);
 
         // Now create tasks.json with different tasks
-        let json_task = Task::new(
-            "json5678".to_string(),
-            data_dir.to_path_buf(),
-            "json-task".to_string(),
-            "feat".to_string(),
-            "instructions.md".to_string(),
-            "claude".to_string(),
-            "tsk/feat/json-task/json5678".to_string(),
-            "abc123".to_string(),
-            Some("main".to_string()),
-            "default".to_string(),
-            "default".to_string(),
-            chrono::Local::now(),
-            Some(data_dir.to_path_buf()),
-            false,
-            vec![],
-        );
+        let json_task = Task {
+            id: "json5678".to_string(),
+            repo_root: data_dir.to_path_buf(),
+            name: "json-task".to_string(),
+            branch_name: "tsk/feat/json-task/json5678".to_string(),
+            copied_repo_path: Some(data_dir.to_path_buf()),
+            ..Task::test_default()
+        };
         let json = serde_json::to_string_pretty(&vec![json_task]).unwrap();
         fs::write(&json_path, &json).unwrap();
 
@@ -500,23 +423,14 @@ mod tests {
         let spawn_writer = |storage: Arc<SqliteTaskStorage>, dir: PathBuf, writer_id: usize| {
             tokio::spawn(async move {
                 for i in 0..TASKS_PER_WRITER {
-                    let task = Task::new(
-                        format!("w{writer_id}-t{i}"),
-                        dir.clone(),
-                        format!("task-{writer_id}-{i}"),
-                        "feat".to_string(),
-                        "instructions.md".to_string(),
-                        "claude".to_string(),
-                        format!("tsk/feat/task-{writer_id}-{i}/w{writer_id}-t{i}"),
-                        "abc123".to_string(),
-                        Some("main".to_string()),
-                        "default".to_string(),
-                        "default".to_string(),
-                        chrono::Local::now(),
-                        None,
-                        false,
-                        vec![],
-                    );
+                    let task = Task {
+                        id: format!("w{writer_id}-t{i}"),
+                        repo_root: dir.clone(),
+                        name: format!("task-{writer_id}-{i}"),
+                        branch_name: format!("tsk/feat/task-{writer_id}-{i}/w{writer_id}-t{i}"),
+                        copied_repo_path: None,
+                        ..Task::test_default()
+                    };
                     storage.add_task(task).await.unwrap();
                 }
             })
