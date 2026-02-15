@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-TSK is a Rust-based CLI tool for delegating development tasks to AI agents running in sandboxed Docker environments. The project enables a "lead engineer + AI team" workflow where tasks are executed autonomously in isolated containers and produce reviewable git branches. TSK supports parallel task execution with configurable worker counts for improved throughput.
+TSK is a Rust-based CLI tool for delegating development tasks to AI agents running in sandboxed container environments (Docker or Podman). The project enables a "lead engineer + AI team" workflow where tasks are executed autonomously in isolated containers and produce reviewable git branches. TSK supports parallel task execution with configurable worker counts for improved throughput.
 
 ## Development Commands
 
@@ -12,7 +12,7 @@ See @justfile.
 
 ## Architecture Overview
 
-TSK implements a command pattern with dependency injection for testability. The core workflow: queue tasks → execute in Docker → create git branches for review. TSK can run in server mode for continuous task processing across multiple repositories.
+TSK implements a command pattern with dependency injection for testability. The core workflow: queue tasks → execute in containers (Docker or Podman) → create git branches for review. TSK can run in server mode for continuous task processing across multiple repositories.
 
 ### Key Components
 
@@ -61,6 +61,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - If parent task fails, all child tasks are marked as Failed (cascading failure)
 
 **Docker Integration** (`src/docker/`)
+- **Container engine**: Supports Docker (default) and Podman via `--container-engine` flag on container-related subcommands (`run`, `shell`, `add`, `retry`, `server start`, `docker build`) or `container_engine` in `[docker]` config. Podman uses host network mode for builds and case-insensitive error matching.
 - `DockerImageManager`: Centralized Docker image management with intelligent layering
 - `ProxyManager`: Dedicated proxy lifecycle management with automatic cleanup and network isolation
   - Skips proxy build if proxy is already running (faster startup)
@@ -90,8 +91,9 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Supports Docker container resource limits and project-specific settings:
   ```toml
   [docker]
-  memory_limit_gb = 12.0  # gigabytes (default: 12.0)
-  cpu_limit = 8           # number of CPUs (default: 8)
+  container_engine = "docker"  # "docker" (default) or "podman"
+  memory_limit_gb = 12.0       # gigabytes (default: 12.0)
+  cpu_limit = 8                # number of CPUs (default: 8)
 
   [git_town]
   enabled = true  # Enable git-town parent branch tracking (default: false)

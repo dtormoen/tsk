@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use crate::assets::layered::LayeredAssetManager;
 use crate::context::AppContext;
+use crate::context::ContainerEngine;
 use crate::docker::build_lock_manager::DockerBuildLockManager;
 use crate::docker::composer::{ComposedDockerfile, DockerComposer};
 use crate::docker::layers::{DockerImageConfig, DockerLayerType};
@@ -392,6 +393,9 @@ impl DockerImageManager {
         options_builder = options_builder.t(&composed.image_tag);
         options_builder = options_builder.nocache(no_cache);
         options_builder = options_builder.buildargs(&build_args);
+        if self.ctx.tsk_config().docker.container_engine == ContainerEngine::Podman {
+            options_builder = options_builder.networkmode("host");
+        }
         let options = options_builder.build();
 
         // Build the image using the DockerClient with streaming output

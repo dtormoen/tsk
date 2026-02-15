@@ -4,6 +4,7 @@
 //! handling proxy container lifecycle, health checks, and network configuration.
 
 use crate::context::AppContext;
+use crate::context::ContainerEngine;
 use crate::context::TskConfig;
 use crate::context::docker_client::DockerClient;
 use crate::context::tsk_env::TskEnv;
@@ -143,6 +144,9 @@ impl ProxyManager {
         options_builder = options_builder.dockerfile("Dockerfile");
         options_builder = options_builder.t(PROXY_IMAGE);
         options_builder = options_builder.nocache(no_cache);
+        if self.tsk_config.docker.container_engine == ContainerEngine::Podman {
+            options_builder = options_builder.networkmode("host");
+        }
         let options = options_builder.build();
 
         // Build the image using the DockerClient with streaming output
@@ -194,7 +198,7 @@ impl ProxyManager {
                 println!("Proxy container stopped successfully");
                 Ok(())
             }
-            Err(e) if e.contains("No such container") => {
+            Err(e) if e.to_lowercase().contains("no such container") => {
                 println!("Proxy container was not running");
                 Ok(())
             }
@@ -223,7 +227,7 @@ impl ProxyManager {
                     .and_then(|r| r.as_bool())
                     .unwrap_or(false))
             }
-            Err(e) if e.contains("No such container") => Ok(false),
+            Err(e) if e.to_lowercase().contains("no such container") => Ok(false),
             Err(e) => Err(anyhow::anyhow!(e)),
         }
     }
@@ -267,7 +271,7 @@ impl ProxyManager {
 
                 Ok(count)
             }
-            Err(e) if e.contains("No such container") => Ok(0),
+            Err(e) if e.to_lowercase().contains("no such container") => Ok(0),
             Err(e) => Err(anyhow::anyhow!(e)),
         }
     }
@@ -371,7 +375,7 @@ impl ProxyManager {
             }
             Err(e) => {
                 // Container might already exist, try to start it
-                if e.contains("already in use") {
+                if e.to_lowercase().contains("already in use") {
                     // Try to start existing container
                     match self
                         .docker_client
@@ -379,7 +383,7 @@ impl ProxyManager {
                         .await
                     {
                         Ok(_) => (),
-                        Err(e) if e.contains("already started") => (),
+                        Err(e) if e.to_lowercase().contains("already started") => (),
                         Err(e) => {
                             return Err(anyhow::anyhow!("Failed to start proxy container: {e}"));
                         }
@@ -452,7 +456,7 @@ impl ProxyManager {
                         }
                     }
                 }
-                Err(e) if e.contains("No such container") => {
+                Err(e) if e.to_lowercase().contains("no such container") => {
                     return Err(anyhow::anyhow!("Proxy container not found"));
                 }
                 Err(_) => {

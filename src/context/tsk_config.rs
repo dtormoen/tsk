@@ -49,10 +49,22 @@ impl TskConfig {
     }
 }
 
+/// Container engine to use for running containers
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum ContainerEngine {
+    #[default]
+    Docker,
+    Podman,
+}
+
 /// Docker container resource configuration
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct DockerOptions {
+    /// Container engine to use (default: docker)
+    #[serde(default)]
+    pub container_engine: ContainerEngine,
     /// Container memory limit in gigabytes (default: 12.0)
     pub memory_limit_gb: f64,
     /// Number of CPUs available to container (default: 8)
@@ -62,6 +74,7 @@ pub struct DockerOptions {
 impl Default for DockerOptions {
     fn default() -> Self {
         Self {
+            container_engine: ContainerEngine::Docker,
             memory_limit_gb: 12.0, // 12GB
             cpu_limit: 8,          // 8 CPUs
         }
@@ -283,6 +296,7 @@ mod tests {
         let custom_options = DockerOptions {
             memory_limit_gb: 5.5,
             cpu_limit: 4,
+            ..Default::default()
         };
         // 5.5 GB in bytes
         assert_eq!(
@@ -766,5 +780,24 @@ memory_limit_gb = 8.0
         let config = TskConfig::default();
         assert!(config.server.auto_clean_enabled);
         assert_eq!(config.server.auto_clean_age_days, 7.0);
+    }
+
+    #[test]
+    fn test_container_engine_podman_from_toml() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_dir = temp_dir.path();
+
+        let toml_content = r#"
+[docker]
+container_engine = "podman"
+memory_limit_gb = 8.0
+"#;
+        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+
+        let config = load_config(config_dir);
+
+        assert_eq!(config.docker.container_engine, ContainerEngine::Podman);
+        assert_eq!(config.docker.memory_limit_gb, 8.0);
     }
 }

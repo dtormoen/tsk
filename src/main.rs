@@ -33,7 +33,7 @@ use commands::{
     server::{ServerStartCommand, ServerStopCommand},
     template::TemplateListCommand,
 };
-use context::AppContext;
+use context::{AppContext, ContainerEngine};
 
 #[derive(Parser)]
 #[command(name = "tsk")]
@@ -50,11 +50,21 @@ struct Cli {
     command: Commands,
 }
 
+#[derive(Args, Clone)]
+struct ContainerEngineArgs {
+    /// Container engine to use (docker or podman)
+    #[arg(long)]
+    container_engine: Option<ContainerEngine>,
+}
+
 #[derive(Subcommand)]
 #[command(about = "Task operations and configuration management", long_about = None)]
 enum Commands {
     /// Immediately run a task in a sandbox container synchronously
     Run {
+        #[command(flatten)]
+        engine: ContainerEngineArgs,
+
         /// Unique identifier for the task (defaults to task type if not specified)
         #[arg(short, long)]
         name: Option<String>,
@@ -93,6 +103,9 @@ enum Commands {
     },
     /// Launch a sandbox container with an agent for interactive use
     Shell {
+        #[command(flatten)]
+        engine: ContainerEngineArgs,
+
         /// Unique identifier for the shell session
         #[arg(short, long, default_value = "shell")]
         name: String,
@@ -131,6 +144,9 @@ enum Commands {
     },
     /// Queue a task for later execution by the TSK server
     Add {
+        #[command(flatten)]
+        engine: ContainerEngineArgs,
+
         /// Unique identifier for the task (defaults to task type if not specified)
         #[arg(short, long)]
         name: Option<String>,
@@ -184,6 +200,9 @@ enum Commands {
     },
     /// Retry one or more tasks by creating new tasks with the same instructions
     Retry {
+        #[command(flatten)]
+        engine: ContainerEngineArgs,
+
         /// Task IDs to retry
         task_ids: Vec<String>,
         /// Unique identifier for the task (defaults to task type if not specified)
@@ -211,6 +230,27 @@ enum Commands {
     Template(TemplateArgs),
 }
 
+impl Commands {
+    fn container_engine(&self) -> Option<ContainerEngine> {
+        match self {
+            Commands::Run { engine, .. } => engine.container_engine.clone(),
+            Commands::Shell { engine, .. } => engine.container_engine.clone(),
+            Commands::Add { engine, .. } => engine.container_engine.clone(),
+            Commands::Retry { engine, .. } => engine.container_engine.clone(),
+            Commands::Server(args) => match &args.command {
+                ServerCommands::Start { engine, .. } => engine.container_engine.clone(),
+                ServerCommands::Stop => None,
+            },
+            Commands::Docker(args) => match &args.command {
+                DockerCommands::Build { engine, .. } => engine.container_engine.clone(),
+            },
+            Commands::List | Commands::Clean | Commands::Delete { .. } | Commands::Template(_) => {
+                None
+            }
+        }
+    }
+}
+
 #[derive(Args)]
 #[command(about = "Manage the TSK server daemon")]
 struct ServerArgs {
@@ -222,6 +262,9 @@ struct ServerArgs {
 enum ServerCommands {
     /// Start the TSK server daemon
     Start {
+        #[command(flatten)]
+        engine: ContainerEngineArgs,
+
         /// Number of parallel workers for task execution
         #[arg(short, long, default_value = "1", value_parser = clap::value_parser!(u32).range(1..=32))]
         workers: u32,
@@ -249,6 +292,9 @@ struct DockerArgs {
 enum DockerCommands {
     /// Build TSK Docker images
     Build {
+        #[command(flatten)]
+        engine: ContainerEngineArgs,
+
         /// Build without using Docker's cache
         #[arg(long)]
         no_cache: bool,
@@ -293,10 +339,13 @@ async fn main() {
     let cli = Cli::parse();
 
     // Create the AppContext using the builder pattern
-    let app_context = AppContext::builder().build();
+    let app_context = AppContext::builder()
+        .with_container_engine(cli.command.container_engine())
+        .build();
 
     let command: Box<dyn Command> = match cli.command {
         Commands::Add {
+            engine: _,
             name,
             r#type,
             description,
@@ -320,6 +369,7 @@ async fn main() {
             parent_id,
         }),
         Commands::Run {
+            engine: _,
             name,
             r#type,
             description,
@@ -341,6 +391,7 @@ async fn main() {
             repo,
         }),
         Commands::Shell {
+            engine: _,
             name,
             r#type,
             description,
@@ -365,6 +416,7 @@ async fn main() {
         Commands::Clean => Box::new(CleanCommand),
         Commands::Delete { task_ids } => Box::new(DeleteCommand { task_ids }),
         Commands::Retry {
+            engine: _,
             task_ids,
             name,
             edit,
@@ -383,6 +435,7 @@ async fn main() {
         }),
         Commands::Server(server_args) => match server_args.command {
             ServerCommands::Start {
+                engine: _,
                 workers,
                 quit,
                 sound,
@@ -395,6 +448,7 @@ async fn main() {
         },
         Commands::Docker(docker_args) => match docker_args.command {
             DockerCommands::Build {
+                engine: _,
                 no_cache,
                 stack,
                 agent,

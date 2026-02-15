@@ -8,8 +8,143 @@ use futures_util::stream::{Stream, StreamExt};
 use is_terminal::IsTerminal;
 use std::collections::HashMap;
 
+use super::ContainerEngine;
+
 #[cfg(not(windows))]
 use tokio::signal::unix::{SignalKind, signal};
+
+/// Strip `unix://` prefix from a socket path if present
+fn strip_unix_prefix(path: &str) -> &str {
+    path.strip_prefix("unix://").unwrap_or(path)
+}
+
+/// Detect the Podman API socket path
+///
+/// Checks in order:
+/// 1. DOCKER_HOST environment variable
+/// 2. `podman machine inspect` output (macOS)
+/// 3. `podman info --format` output (Linux)
+/// 4. XDG_RUNTIME_DIR/podman/podman.sock
+/// 5. /run/user/<UID>/podman/podman.sock
+fn detect_podman_socket() -> String {
+    // 1. Check DOCKER_HOST env var
+    if let Ok(host) = std::env::var("DOCKER_HOST") {
+        let path = strip_unix_prefix(&host);
+        if std::path::Path::new(path).exists() {
+            return path.to_string();
+        }
+    }
+
+    // 2. Try `podman machine inspect` (macOS)
+    if let Ok(output) = std::process::Command::new("podman")
+        .args(["machine", "inspect"])
+        .output()
+        && output.status.success()
+    {
+        let json_str = String::from_utf8_lossy(&output.stdout);
+        if let Some(socket_path) = extract_machine_socket_path(&json_str) {
+            let path = strip_unix_prefix(&socket_path);
+            if std::path::Path::new(path).exists() {
+                return path.to_string();
+            }
+        }
+    }
+
+    // 3. Try `podman info --format`
+    if let Ok(output) = std::process::Command::new("podman")
+        .args(["info", "--format", "{{.Host.RemoteSocket.Path}}"])
+        .output()
+        && output.status.success()
+    {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() && std::path::Path::new(&path).exists() {
+            return path;
+        }
+    }
+
+    // 4. XDG_RUNTIME_DIR/podman/podman.sock
+    if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+        let path = format!("{runtime_dir}/podman/podman.sock");
+        if std::path::Path::new(&path).exists() {
+            return path;
+        }
+    }
+
+    // 5. /run/user/<UID>/podman/podman.sock
+    let uid = unsafe { libc::getuid() };
+    let path = format!("/run/user/{uid}/podman/podman.sock");
+    if std::path::Path::new(&path).exists() {
+        return path;
+    }
+
+    // Default fallback
+    if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+        format!("{runtime_dir}/podman/podman.sock")
+    } else {
+        let uid = unsafe { libc::getuid() };
+        format!("/run/user/{uid}/podman/podman.sock")
+    }
+}
+
+/// Extract the Podman machine socket path from `podman machine inspect` JSON output
+fn extract_machine_socket_path(json_str: &str) -> Option<String> {
+    // Parse as JSON array (podman machine inspect returns an array)
+    let parsed: serde_json::Value = serde_json::from_str(json_str).ok()?;
+    let machines = parsed.as_array()?;
+    let machine = machines.first()?;
+    let socket_path = machine
+        .get("ConnectionInfo")?
+        .get("PodmanSocket")?
+        .get("Path")?
+        .as_str()?;
+    Some(socket_path.to_string())
+}
+
+/// Ensure the Podman API service is available at the given socket path
+///
+/// On macOS, panics with instructions to start the Podman machine.
+/// On Linux, spawns `podman system service` and waits for the socket.
+fn ensure_podman_service(socket_path: &str) {
+    if std::path::Path::new(socket_path).exists() {
+        return;
+    }
+
+    if cfg!(target_os = "macos") {
+        panic!(
+            "Podman socket not found at {socket_path}\n\n\
+            Please start Podman machine:\n\
+              podman machine start\n\n\
+            Then try again."
+        );
+    }
+
+    // Linux: try to start the service
+    eprintln!("Podman socket not found at {socket_path}, starting podman system service...");
+    let child = std::process::Command::new("podman")
+        .args(["system", "service", "--timeout=0"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("Failed to start podman system service");
+
+    // Intentionally leak the child handle: this is a long-running daemon process
+    // that should outlive the current tsk invocation.
+    std::mem::forget(child);
+
+    // Wait up to 10 seconds for the socket to appear
+    for _ in 0..100 {
+        if std::path::Path::new(socket_path).exists() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    panic!(
+        "Podman socket did not appear at {socket_path} after 10 seconds.\n\n\
+        Please ensure Podman is installed and configured correctly."
+    );
+}
 
 #[async_trait]
 pub trait DockerClient: Send + Sync {
@@ -173,26 +308,46 @@ pub struct DefaultDockerClient {
 
 impl DefaultDockerClient {
     #[allow(dead_code)] // Used in production code when no mock is provided
-    pub fn new() -> Self {
-        match Docker::connect_with_local_defaults() {
-            Ok(docker) => Self { docker },
-            Err(e) => panic!(
-                "Failed to connect to Docker: {e}\n\n\
-                Please ensure Docker is installed and running:\n\
-                  - On macOS: Open Docker Desktop application\n\
-                  - On Linux: Run 'sudo systemctl start docker' or 'sudo service docker start'\n\
-                  - Check Docker status with: 'docker ps'\n\n\
-                If Docker is running, check permissions:\n\
-                  - On Linux: Ensure your user is in the docker group: 'sudo usermod -aG docker $USER'\n\
-                    - Then log out and back in for group changes to take effect"
-            ),
+    pub fn new(engine: &ContainerEngine) -> Self {
+        match engine {
+            ContainerEngine::Docker => match Docker::connect_with_local_defaults() {
+                Ok(docker) => Self { docker },
+                Err(e) => panic!(
+                    "Failed to connect to Docker: {e}\n\n\
+                    Please ensure Docker is installed and running:\n\
+                      - On macOS: Open Docker Desktop application\n\
+                      - On Linux: Run 'sudo systemctl start docker' or 'sudo service docker start'\n\
+                      - Check Docker status with: 'docker ps'\n\n\
+                    If Docker is running, check permissions:\n\
+                      - On Linux: Ensure your user is in the docker group: 'sudo usermod -aG docker $USER'\n\
+                        - Then log out and back in for group changes to take effect"
+                ),
+            },
+            ContainerEngine::Podman => {
+                let socket_path = detect_podman_socket();
+                ensure_podman_service(&socket_path);
+                let client_version = bollard::ClientVersion {
+                    major_version: 1,
+                    minor_version: 41,
+                };
+                match Docker::connect_with_unix(&socket_path, 120, &client_version) {
+                    Ok(docker) => Self { docker },
+                    Err(e) => panic!(
+                        "Failed to connect to Podman at {socket_path}: {e}\n\n\
+                        Please ensure Podman is installed and running:\n\
+                        - On macOS: Run 'podman machine start'\n\
+                        - On Linux: Run 'podman system service --timeout=0 &'\n\
+                        - Check Podman status with: 'podman info'"
+                    ),
+                }
+            }
         }
     }
 }
 
 impl Default for DefaultDockerClient {
     fn default() -> Self {
-        Self::new()
+        Self::new(&ContainerEngine::Docker)
     }
 }
 

@@ -43,3 +43,17 @@ update-deps:
 # Run network isolation tests (must be run inside a TSK container)
 network-isolation-test:
     ./scripts/network-isolation-test.sh
+
+# Smoke test for Podman engine support
+podman-smoke-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    MANIFEST="$(pwd)/Cargo.toml"
+    WORK_DIR=$(mktemp -d)
+    trap 'rm -rf "$WORK_DIR"' EXIT
+    cd "$WORK_DIR"
+    git init
+    git commit --allow-empty -m "init"
+    OUTPUT=$(cargo run --manifest-path "$MANIFEST" -- run --container-engine podman --agent no-op --type feat --name podman-test --stack default --description "Podman smoke test" 2>&1) || true
+    echo "$OUTPUT"
+    echo "$OUTPUT" | grep -q "Container execution completed successfully"

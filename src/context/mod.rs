@@ -6,7 +6,7 @@ pub mod tsk_env;
 
 // Re-export TskConfig types from tsk_config module
 // Types used in production code
-pub use tsk_config::{TskConfig, VolumeMount};
+pub use tsk_config::{ContainerEngine, TskConfig, VolumeMount};
 // Types only used in tests
 #[cfg(test)]
 pub use tsk_config::{BindMount, DockerOptions, EnvVar, NamedVolume, ProjectConfig};
@@ -69,6 +69,7 @@ impl AppContext {
 }
 
 pub struct AppContextBuilder {
+    container_engine: Option<ContainerEngine>,
     docker_client: Option<Arc<dyn DockerClient>>,
     git_sync_manager: Option<Arc<GitSyncManager>>,
     notification_client: Option<Arc<NotificationClient>>,
@@ -85,6 +86,7 @@ impl Default for AppContextBuilder {
 impl AppContextBuilder {
     pub fn new() -> Self {
         Self {
+            container_engine: None,
             docker_client: None,
             git_sync_manager: None,
             notification_client: None,
@@ -117,6 +119,14 @@ impl AppContextBuilder {
     #[allow(dead_code)]
     pub fn with_tsk_config(mut self, config: TskConfig) -> Self {
         self.tsk_config = Some(Arc::new(config));
+        self
+    }
+
+    /// Set the container engine (CLI override)
+    ///
+    /// When set, overrides the container_engine from tsk.toml config.
+    pub fn with_container_engine(mut self, engine: Option<ContainerEngine>) -> Self {
+        self.container_engine = engine;
         self
     }
 
@@ -177,13 +187,20 @@ impl AppContextBuilder {
             });
 
             // Load tsk_config from TOML file or use provided/default
-            let tsk_config = self
-                .tsk_config
-                .unwrap_or_else(|| Arc::new(tsk_config::load_config(tsk_env.config_dir())));
+            let tsk_config = self.tsk_config.unwrap_or_else(|| {
+                let mut config = tsk_config::load_config(tsk_env.config_dir());
+                // CLI override for container engine
+                if let Some(engine) = self.container_engine {
+                    config.docker.container_engine = engine;
+                }
+                Arc::new(config)
+            });
 
-            let docker_client = self
-                .docker_client
-                .unwrap_or_else(|| Arc::new(docker_client::DefaultDockerClient::new()));
+            let docker_client = self.docker_client.unwrap_or_else(|| {
+                Arc::new(docker_client::DefaultDockerClient::new(
+                    &tsk_config.docker.container_engine,
+                ))
+            });
 
             AppContext {
                 docker_client,
