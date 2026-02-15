@@ -2,13 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
-
-TSK is a Rust-based CLI tool for delegating development tasks to AI agents running in sandboxed container environments (Docker or Podman). The project enables a "lead engineer + AI team" workflow where tasks are executed autonomously in isolated containers and produce reviewable git branches. TSK supports parallel task execution with configurable worker counts for improved throughput.
-
-## Development Commands
-
-See @justfile.
+Important files:
+- @justfile - key development commands. These should be used when possible over raw cargo commands.
+- @README.md - user facing documentation for the project. This could cover key user facing details without going into too much detail. Make sure it stays up to date with your changes.
 
 ## Architecture Overview
 
@@ -85,46 +81,9 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Runtime directory for PID file
 
 **Configuration File** (`$XDG_CONFIG_HOME/tsk/tsk.toml`)
-- Optional TOML configuration file for user-configurable options
 - Loaded at startup and accessible via `AppContext::tsk_config()`
 - Missing file or invalid TOML uses defaults (fail-open with warnings)
-- Supports Docker container resource limits and project-specific settings:
-  ```toml
-  [docker]
-  container_engine = "docker"  # "docker" (default) or "podman"
-  memory_limit_gb = 12.0       # gigabytes (default: 12.0)
-  cpu_limit = 8                # number of CPUs (default: 8)
-
-  [git_town]
-  enabled = true  # Enable git-town parent branch tracking (default: false)
-
-  [server]
-  auto_clean_enabled = true   # Enable automatic cleanup of old tasks (default: true)
-  auto_clean_age_days = 7.0   # Minimum age in days before cleanup (default: 7.0)
-
-  [proxy]
-  # Ports forwarded from proxy to host.docker.internal (agents connect to tsk-proxy:<port>)
-  host_services = [5432, 6379, 3000]  # PostgreSQL, Redis, dev server
-
-  # Project-specific configuration (matches project name from --project or auto-detection)
-  [project.my-go-project]
-  agent = "claude"            # Default agent for this project
-  stack = "go"                # Default stack for this project
-  volumes = [
-      # Bind mount: map host path to container path (supports ~ expansion)
-      { host = "~/.cache/go-mod", container = "/go/pkg/mod" },
-      # Named volume: Docker-managed volume (prefixed with "tsk-")
-      { name = "go-build-cache", container = "/home/agent/.cache/go-build" },
-      # Read-only mount
-      { host = "/etc/ssl/certs", container = "/etc/ssl/certs", readonly = true }
-  ]
-  env = [
-      # Environment variables passed to the container
-      { name = "DATABASE_URL", value = "postgres://tsk-proxy:5432/mydb" },
-      { name = "REDIS_URL", value = "redis://tsk-proxy:6379" },
-  ]
-  ```
-- **Priority order**: CLI flags > project config > auto-detection > defaults
+- See README.md for full configuration reference and examples
 
 **Server Mode** (`src/server/`)
 - `TskServer`: Continuous task execution daemon
@@ -230,16 +189,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 
 ### Docker Infrastructure
 
-- **Layered Images**: Four-layer system for flexible customization
-  - Base layer: Ubuntu 24.04 base OS and common tools (stored as `dockerfiles/base/default.dockerfile`)
-  - Stack layer: Language-specific toolchains (stored as `dockerfiles/stack/{name}.dockerfile` for rust, python, node, go, java, lua, etc.)
-  - Agent layer: AI agent installations (stored as `dockerfiles/agent/{name}.dockerfile` for claude, codex, etc.)
-  - Project layer: Project-specific dependencies (stored as `dockerfiles/project/{name}.dockerfile`, optional, falls back to default)
-- **Custom Project Dockerfiles**: Place project-specific Dockerfiles in `.tsk/dockerfiles/project/{project-name}.dockerfile`
-- **Proxy Image** (`dockerfiles/tsk-proxy/`): Squid proxy for controlled network access
-  - Custom proxy configuration: Place a `squid.conf` file in the TSK config directory (`~/.config/tsk/squid.conf` by default) to override the default proxy configuration
-  - Proxy is automatically rebuilt on each startup to pick up config changes (Docker layer caching makes unchanged rebuilds fast)
-  - Proxy automatically stops when no agent containers are connected and no tasks are queued
+- See README.md for the layered image system, custom dockerfiles, and proxy configuration
 - Git configuration resolved dynamically from the repository being built (respects per-repo author settings)
 - Automatic image rebuilding when missing during task execution
 - Agent version tracking: Docker images are rebuilt when agent versions change (via `TSK_AGENT_VERSION` ARG)
