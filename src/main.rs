@@ -144,9 +144,6 @@ enum Commands {
     },
     /// Queue a task for later execution by the TSK server
     Add {
-        #[command(flatten)]
-        engine: ContainerEngineArgs,
-
         /// Unique identifier for the task (defaults to task type if not specified)
         #[arg(short, long)]
         name: Option<String>,
@@ -235,7 +232,7 @@ impl Commands {
         match self {
             Commands::Run { engine, .. } => engine.container_engine.clone(),
             Commands::Shell { engine, .. } => engine.container_engine.clone(),
-            Commands::Add { engine, .. } => engine.container_engine.clone(),
+            Commands::Add { .. } => None,
             Commands::Retry { engine, .. } => engine.container_engine.clone(),
             Commands::Server(args) => match &args.command {
                 ServerCommands::Start { engine, .. } => engine.container_engine.clone(),
@@ -345,7 +342,6 @@ async fn main() {
 
     let command: Box<dyn Command> = match cli.command {
         Commands::Add {
-            engine: _,
             name,
             r#type,
             description,

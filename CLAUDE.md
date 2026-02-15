@@ -61,7 +61,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - If parent task fails, all child tasks are marked as Failed (cascading failure)
 
 **Docker Integration** (`src/docker/`)
-- **Container engine**: Supports Docker (default) and Podman via `--container-engine` flag on container-related subcommands (`run`, `shell`, `add`, `retry`, `server start`, `docker build`) or `container_engine` in `[docker]` config. Podman uses host network mode for builds and case-insensitive error matching.
+- **Container engine**: Supports Docker (default) and Podman via `--container-engine` flag on container-related subcommands (`run`, `shell`, `retry`, `server start`, `docker build`) or `container_engine` in `[docker]` config. Podman uses host network mode for builds and case-insensitive error matching.
 - `DockerImageManager`: Centralized Docker image management with intelligent layering
 - `ProxyManager`: Dedicated proxy lifecycle management with automatic cleanup and network isolation
   - Skips proxy build if proxy is already running (faster startup)

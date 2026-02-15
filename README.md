@@ -1,6 +1,6 @@
 # TSK - AI Agent Task Manager
 
-A Rust CLI tool that lets you delegate development tasks to AI agents running in sandboxed Docker environments. Get back git branches for human review.
+A Rust CLI tool that lets you delegate development tasks to AI agents running in sandboxed Docker or Podman environments. Get back git branches for human review.
 
 Currently Claude Code and Codex coding agents are supported.
 
@@ -10,7 +10,7 @@ Currently Claude Code and Codex coding agents are supported.
 
 TSK enables a "lead engineer + AI team" workflow:
 1. **Assign tasks** to AI agents using task type templates to automate prompt boilerplate and enable powerful multi-agent workflows
-2. **Agents work autonomously** in parallel isolated Docker containers with file system and network isolation
+2. **Agents work autonomously** in parallel isolated containers with file system and network isolation
 3. **Get git branches** back with their changes for review
 4. **Review and merge** using your normal git workflow
 
@@ -21,7 +21,7 @@ Think of it as having a team of engineers who work independently and submit pull
 ### Requirements
 
 - [Rust](https://rustup.rs/) - Rust toolchain and Cargo
-- [Docker](https://docs.docker.com/get-docker/) - Container runtime
+- [Docker](https://docs.docker.com/get-docker/) or [Podman](https://podman.io/) - Container runtime
 - [Git](https://git-scm.com/downloads) - Version control system
 - One of the supported coding agents:
   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
@@ -55,7 +55,7 @@ The `tsk shell` command will:
 - Make a copy of your repo
 - Create a new git branch for you to work on
 - Start a proxy to limit internet access
-- Build and start a docker container with your stack (go, python, rust, etc.) and agent (default: claude) installed
+- Build and start a container with your stack (go, python, rust, etc.) and agent (default: claude) installed
 - Drop you into an interactive shell
 
 After you exit the interactive shell (ctrl-d or `exit`), TSK will save any work you've done as a new branch in your original repo.
@@ -182,9 +182,9 @@ Manage the TSK server daemon for parallel task execution. The server automatical
 
 ### Configuration Commands
 
-Build Docker images and manage task templates.
+Build container images and manage task templates.
 
-- `tsk docker build` - Build required docker images
+- `tsk docker build` - Build required container images
 - `tsk template list` - View available task type templates and where they are installed
 
 Run `tsk help` or `tsk help <command>` for detailed options.
@@ -205,10 +205,11 @@ Each configuration directory can contain:
 TSK can be configured via `~/.config/tsk/tsk.toml`. All settings are optional.
 
 ```toml
-# Docker container resource limits
+# Container engine and resource limits
 [docker]
-memory_limit_gb = 12.0  # Container memory limit (default: 12.0)
-cpu_limit = 8           # Number of CPUs (default: 8)
+container_engine = "docker"  # "docker" (default) or "podman"
+memory_limit_gb = 12.0       # Container memory limit (default: 12.0)
+cpu_limit = 8                # Number of CPUs (default: 8)
 
 # Proxy configuration
 [proxy]
@@ -233,7 +234,7 @@ stack = "go"            # Default stack for auto-detection override
 volumes = [
     # Bind mount: Share host directories with containers (supports ~ expansion)
     { host = "~/.cache/go-mod", container = "/go/pkg/mod" },
-    # Named volume: Docker-managed persistent storage (prefixed with tsk-)
+    # Named volume: Container-managed persistent storage (prefixed with tsk-)
     { name = "go-build-cache", container = "/home/agent/.cache/go-build" },
     # Read-only mount: Provide artifacts without modification risk
     { host = "~/debug-logs", container = "/debug-logs", readonly = true }
@@ -252,6 +253,8 @@ Volume mounts are particularly useful for:
 
 Environment variables (`env`) let you pass configuration to task containers, such as database URLs or API keys. Use `tsk-proxy:<port>` to connect to host services forwarded through the proxy.
 
+The container engine can also be set per-command with the `--container-engine` flag (available on `run`, `shell`, `retry`, `server start`, and `docker build`).
+
 The `[proxy]` section lets you expose host services to task containers. Agents connect to `tsk-proxy:<port>` to reach services running on your host machine (e.g., local databases or dev servers).
 
 The `[git_town]` section enables integration with [git-town](https://www.git-town.com/), a tool for branch-based workflow automation. When enabled, TSK sets the parent branch metadata on task branches, allowing git-town commands like `git town sync` to work correctly with TSK-created branches.
@@ -260,7 +263,7 @@ Configuration priority: CLI flags > project config > auto-detection > defaults
 
 ### Customizing the TSK Sandbox Environment
 
-Each TSK sandbox docker image has 4 main parts:
+Each TSK sandbox container image has 4 main parts:
 - A [base dockerfile](./dockerfiles/base/default.dockerfile) that includes the OS and a set of basic development tools e.g. `git`
 - A `stack` snippet that defines language specific build steps. See:
   - [default](./dockerfiles/stack/default.dockerfile) - minimal fallback stack
