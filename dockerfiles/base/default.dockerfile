@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y \
     sudo \
     unzip \
     vim \
+    zip \
     && rm -rf /var/lib/apt/lists/*
 
 # Ubuntu 24.04 already has a ubuntu user with UID/GID 1000
