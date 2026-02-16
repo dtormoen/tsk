@@ -8,6 +8,7 @@ use crate::task::Task;
 ///
 /// Contains information about the executed task including the branch name
 /// and task-specific results.
+#[derive(Debug)]
 pub struct TaskExecutionResult {
     pub branch_name: String,
     pub task_result: crate::agent::TaskResult,
@@ -135,11 +136,22 @@ impl TaskRunner {
         }
 
         // Run the container using the unified method
-        let (_output, task_result) = self
+        let (_output, task_result) = match self
             .docker_manager
             .run_task_container(&docker_image_tag, task, agent.as_ref())
             .await
-            .map_err(|e| format!("Error running container: {e}"))?;
+        {
+            Ok(result) => result,
+            Err(e) => {
+                let message = format!("Error running container: {e}");
+                self.ctx.notification_client().notify_task_complete(
+                    &task.name,
+                    false,
+                    Some(&message),
+                );
+                return Err(message.into());
+            }
+        };
 
         println!("\n{}", "=".repeat(60));
         if task_result.success {
@@ -273,5 +285,69 @@ mod tests {
         let execution_result = result.unwrap();
         assert!(execution_result.branch_name.contains("test-task"));
         assert!(execution_result.task_result.success);
+    }
+
+    #[tokio::test]
+    async fn test_execute_task_infrastructure_failure() {
+        use crate::context::AppContext;
+        use crate::test_utils::FixedResponseDockerClient;
+
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        test_repo
+            .create_file(".tsk/tasks/instructions.md", "Test task instructions")
+            .unwrap();
+        test_repo.create_file("test.txt", "test content").unwrap();
+        test_repo.stage_all().unwrap();
+        test_repo.commit("Add test files").unwrap();
+
+        // Docker client that fails on container start (infrastructure failure)
+        let docker_client = Arc::new(FixedResponseDockerClient {
+            should_fail_start: true,
+            ..Default::default()
+        });
+
+        let ctx = AppContext::builder()
+            .with_docker_client(docker_client)
+            .build();
+        let tsk_env = ctx.tsk_env();
+
+        let claude_json_path = tsk_env.claude_config_dir().join("..").join(".claude.json");
+        if let Some(parent) = claude_json_path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&claude_json_path, "{}").unwrap();
+
+        let task_runner = TaskRunner::new(&ctx);
+        let task_copy_dir = tsk_env.task_dir("infra-fail-123");
+
+        crate::file_system::copy_dir(test_repo.path(), &task_copy_dir)
+            .await
+            .unwrap();
+
+        let task = Task {
+            id: "infra-fail-123".to_string(),
+            repo_root: test_repo.path().to_path_buf(),
+            task_type: "feature".to_string(),
+            instructions_file: task_copy_dir
+                .join(".tsk/tasks/instructions.md")
+                .to_string_lossy()
+                .to_string(),
+            branch_name: "tsk/feature/infra-fail/infra-fail-123".to_string(),
+            source_commit: test_repo.get_current_commit().unwrap(),
+            copied_repo_path: Some(task_copy_dir),
+            ..Task::test_default()
+        };
+
+        let result = task_runner.execute_task(&task).await;
+
+        assert!(result.is_err());
+        let error = result.unwrap_err();
+        assert!(
+            error.message.contains("Error running container"),
+            "Expected infrastructure error, got: {}",
+            error.message
+        );
+        assert!(!error.is_warmup_failure);
     }
 }
