@@ -116,10 +116,20 @@ impl TaskManager {
                     updated_task.status = TaskStatus::Complete;
                 }
 
-                if let Err(e) = self.task_storage.update_task(updated_task).await {
+                if let Err(e) = self.task_storage.update_task(updated_task.clone()).await {
                     eprintln!("Error updating task status: {e}");
                 }
-                Ok(result)
+
+                if updated_task.status == TaskStatus::Failed {
+                    Err(TaskExecutionError {
+                        message: updated_task
+                            .error_message
+                            .unwrap_or_else(|| "Task failed".to_string()),
+                        is_warmup_failure: false,
+                    })
+                } else {
+                    Ok(result)
+                }
             }
             Err(e) => {
                 // Update task status to failed

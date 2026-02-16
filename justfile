@@ -54,6 +54,4 @@ podman-smoke-test:
     cd "$WORK_DIR"
     git init
     git commit --allow-empty -m "init"
-    OUTPUT=$(cargo run --manifest-path "$MANIFEST" -- run --container-engine podman --agent no-op --type feat --name podman-test --stack default --description "Podman smoke test" 2>&1) || true
-    echo "$OUTPUT"
-    echo "$OUTPUT" | grep -q "Container execution completed successfully"
+    cargo run --manifest-path "$MANIFEST" -- run --container-engine podman --agent no-op --type feat --name podman-test --stack default --description "Podman smoke test"
