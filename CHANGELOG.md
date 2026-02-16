@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.3](https://github.com/dtormoen/tsk/compare/v0.8.2...v0.8.3) - 2026-02-16
+
+### Added
+
+- add --no-network-isolation flag to disable per-container network isolation
+
+### Fixed
+
+- improve Docker image portability and Java proxy support
+- send notification on container infrastructure failures
+- unify task success/failure into single TaskResult synthesis
+- align CLI exit codes with task success/failure status
+
+### Other
+
+- centralize resource cleanup in DockerManager::run_task_container
+
 ## [0.8.2](https://github.com/dtormoen/tsk/compare/v0.8.1...v0.8.2) - 2026-02-15
 
 This release adds support for Podman as an alternative to Docker. Enable Podman
