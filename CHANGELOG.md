@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.8.2](https://github.com/dtormoen/tsk/compare/v0.8.1...v0.8.2) - 2026-02-15
 
+This release adds support for Podman as an alternative to Docker. Enable Podman
+by setting the following in your `tsk.toml`:
+
+```toml
+[docker]
+container_engine = "podman"
+```
+
 ### Added
 
 - add Podman as alternative container engine for host-machine use
