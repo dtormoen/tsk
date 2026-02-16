@@ -103,32 +103,23 @@ impl TaskManager {
                 updated_task.completed_at = Some(chrono::Utc::now());
                 updated_task.branch_name = result.branch_name.clone();
 
-                // Check if we have a parsed result from the log processor
-                if let Some(task_result) = result.task_result.as_ref() {
-                    if task_result.success {
-                        updated_task.status = TaskStatus::Complete;
-                    } else {
-                        updated_task.status = TaskStatus::Failed;
-                        updated_task.error_message = Some(task_result.message.clone());
-                    }
-                } else {
-                    // Default to complete if no explicit result was found
+                if result.task_result.success {
                     updated_task.status = TaskStatus::Complete;
-                }
-
-                if let Err(e) = self.task_storage.update_task(updated_task.clone()).await {
-                    eprintln!("Error updating task status: {e}");
-                }
-
-                if updated_task.status == TaskStatus::Failed {
+                    if let Err(e) = self.task_storage.update_task(updated_task).await {
+                        eprintln!("Error updating task status: {e}");
+                    }
+                    Ok(result)
+                } else {
+                    let message = result.task_result.message.clone();
+                    updated_task.status = TaskStatus::Failed;
+                    updated_task.error_message = Some(message.clone());
+                    if let Err(e) = self.task_storage.update_task(updated_task).await {
+                        eprintln!("Error updating task status: {e}");
+                    }
                     Err(TaskExecutionError {
-                        message: updated_task
-                            .error_message
-                            .unwrap_or_else(|| "Task failed".to_string()),
+                        message,
                         is_warmup_failure: false,
                     })
-                } else {
-                    Ok(result)
                 }
             }
             Err(e) => {

@@ -281,14 +281,14 @@ impl DockerManager {
     /// * `agent` - The agent to use for the task
     ///
     /// # Returns
-    /// * `Ok((output, task_result))` - The container output and optional task result
-    /// * `Err(String)` - Error message if container execution fails
+    /// * `Ok((output, task_result))` - The container output and synthesized task result
+    /// * `Err(String)` - Error message if container infrastructure fails
     pub async fn run_task_container(
         &self,
         docker_image_tag: &str,
         task: &crate::task::Task,
         agent: &dyn Agent,
-    ) -> Result<(String, Option<crate::agent::TaskResult>), String> {
+    ) -> Result<(String, crate::agent::TaskResult), String> {
         // --- Setup: conditionally create network and connect proxy ---
         let network_name = if task.network_isolation {
             if let Err(e) = self.proxy_manager.ensure_proxy().await {
@@ -347,7 +347,7 @@ impl DockerManager {
         network_name: Option<&str>,
     ) -> (
         Option<String>,
-        Result<(String, Option<crate::agent::TaskResult>), String>,
+        Result<(String, crate::agent::TaskResult), String>,
     ) {
         let config = self.create_container_config(docker_image_tag, task, agent, network_name);
         let container_name = self.build_container_name(task);
@@ -397,7 +397,15 @@ impl DockerManager {
             {
                 Ok(()) => {
                     println!("\nInteractive session ended");
-                    Ok((String::new(), None))
+                    Ok((
+                        String::new(),
+                        crate::agent::TaskResult {
+                            success: true,
+                            message: "Interactive session completed".to_string(),
+                            cost_usd: None,
+                            duration_ms: None,
+                        },
+                    ))
                 }
                 Err(e) => {
                     eprintln!("Interactive session ended with error: {e}");
@@ -414,7 +422,31 @@ impl DockerManager {
             let task_result = log_processor.get_final_result().cloned();
 
             match output {
-                Ok(output) => Ok((output, task_result)),
+                Ok((output, exit_code)) => {
+                    let task_result = match (exit_code, task_result) {
+                        // Non-zero exit code: always failure
+                        (code, Some(mut r)) if code != 0 => {
+                            r.success = false;
+                            r
+                        }
+                        (code, None) if code != 0 => crate::agent::TaskResult {
+                            success: false,
+                            message: format!("Container exited with status {code}"),
+                            cost_usd: None,
+                            duration_ms: None,
+                        },
+                        // Zero exit code: use agent result if available
+                        (_, Some(r)) => r,
+                        // Zero exit code, no agent result: success
+                        (_, None) => crate::agent::TaskResult {
+                            success: true,
+                            message: "Task completed".to_string(),
+                            cost_usd: None,
+                            duration_ms: None,
+                        },
+                    };
+                    Ok((output, task_result))
+                }
                 Err(e) => Err(e),
             }
         };
@@ -422,12 +454,15 @@ impl DockerManager {
         (Some(container_id), result)
     }
 
-    /// Stream container logs and process them through the log processor
+    /// Stream container logs and process them through the log processor.
+    ///
+    /// Returns the accumulated log output and the container's exit code.
+    /// `Err` is reserved for Docker API / infrastructure failures only.
     async fn stream_container_logs(
         &self,
         container_id: &str,
         log_processor: &mut dyn LogProcessor,
-    ) -> Result<String, String> {
+    ) -> Result<(String, i64), String> {
         // Start a background task to stream logs
         let client_clone = self.ctx.docker_client();
         let container_id_clone = container_id.to_string();
@@ -517,13 +552,7 @@ impl DockerManager {
                     // Abort the log task
                     log_task.abort();
 
-                    if exit_code == 0 {
-                        return Ok(all_logs);
-                    } else {
-                        return Err(format!(
-                            "Container exited with non-zero status: {exit_code}. Output:\n{all_logs}"
-                        ));
-                    }
+                    return Ok((all_logs, exit_code));
                 }
             }
         }
@@ -589,7 +618,8 @@ mod tests {
         assert!(result.is_ok());
         let (output, task_result) = result.unwrap();
         assert_eq!(output, "Container logs");
-        assert!(task_result.is_none());
+        assert!(task_result.success);
+        assert_eq!(task_result.message, "Task completed");
 
         let create_calls = mock_client.create_container_calls.lock().unwrap();
         assert_eq!(create_calls.len(), 2); // One for proxy, one for task container
@@ -658,9 +688,10 @@ mod tests {
         // Interactive mode should succeed with mock client
         assert!(result.is_ok());
         let (output, task_result) = result.unwrap();
-        // Interactive mode returns empty output and no task result
+        // Interactive mode returns empty output and a success task result
         assert_eq!(output, "");
-        assert!(task_result.is_none());
+        assert!(task_result.success);
+        assert_eq!(task_result.message, "Interactive session completed");
 
         let create_calls = mock_client.create_container_calls.lock().unwrap();
         assert_eq!(create_calls.len(), 2); // One for proxy, one for task container
@@ -712,14 +743,18 @@ mod tests {
         // Run the task container
         let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
-        // With the new behavior, the container logs are returned even with non-zero exit
-        // The error handling is now done by the agent's log processor
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err();
-        assert!(error_msg.contains("Container exited with non-zero status: 1"));
-        assert!(error_msg.contains("Container logs")); // Should include the output
+        // Non-zero exit is not an infrastructure error; it returns Ok with a failed TaskResult
+        assert!(result.is_ok());
+        let (output, task_result) = result.unwrap();
+        assert!(!task_result.success);
+        assert!(
+            task_result
+                .message
+                .contains("Container exited with status 1")
+        );
+        assert!(output.contains("Container logs"));
 
-        // Cleanup now always happens even on error
+        // Cleanup still happens
         let remove_calls = mock_client.remove_container_calls.lock().unwrap();
         assert_eq!(remove_calls.len(), 1);
         assert_eq!(remove_calls[0].0, "test-container-id-1");

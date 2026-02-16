@@ -10,7 +10,7 @@ use crate::task::Task;
 /// and task-specific results.
 pub struct TaskExecutionResult {
     pub branch_name: String,
-    pub task_result: Option<crate::agent::TaskResult>,
+    pub task_result: crate::agent::TaskResult,
 }
 
 #[derive(Debug)]
@@ -142,7 +142,14 @@ impl TaskRunner {
             .map_err(|e| format!("Error running container: {e}"))?;
 
         println!("\n{}", "=".repeat(60));
-        println!("Container execution completed successfully");
+        if task_result.success {
+            println!("Container execution completed successfully");
+        } else {
+            println!(
+                "Container execution completed with failure: {}",
+                task_result.message
+            );
+        }
 
         // Commit any changes made by the container
         let commit_message = format!("TSK automated changes for task: {}", task.name);
@@ -179,8 +186,8 @@ impl TaskRunner {
         }
 
         // Send notification about task completion
-        let success = task_result.as_ref().map(|r| r.success).unwrap_or(false);
-        let message = task_result.as_ref().map(|r| r.message.as_str());
+        let success = task_result.success;
+        let message = Some(task_result.message.as_str());
         self.ctx
             .notification_client()
             .notify_task_complete(&task.name, success, message);
@@ -265,5 +272,6 @@ mod tests {
         assert!(result.is_ok(), "Error: {:?}", result.as_ref().err());
         let execution_result = result.unwrap();
         assert!(execution_result.branch_name.contains("test-task"));
+        assert!(execution_result.task_result.success);
     }
 }
