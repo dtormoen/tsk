@@ -77,6 +77,9 @@ RUN mkdir -p /home/agent/.config/containers && \
     > /home/agent/.config/containers/storage.conf && \
     chown -R agent:agent /home/agent/.config
 
+# Alias docker to podman so agents and scripts that use `docker` commands work seamlessly
+RUN ln -s /usr/bin/podman /usr/local/bin/docker
+
 # Set up working directory
 WORKDIR /workspace
 RUN chown -R agent:agent /workspace
