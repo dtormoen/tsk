@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 # Integration test runner for TSK stack layers
@@ -68,8 +68,10 @@ if ! cargo build --manifest-path "$MANIFEST" 2>&1; then
 fi
 echo ""
 
-# Collect stack names for later result checking
+# Collect stack names and their work directories for later result checking
 stacks=()
+declare -A stack_work_dirs
+declare -A stack_project_dirs
 
 # Phase 1: Queue all tasks via tsk add
 echo "--------------------------------------------"
@@ -78,10 +80,12 @@ echo "--------------------------------------------"
 for project_dir in "$PROJECTS_DIR"/*/; do
     stack=$(basename "$project_dir")
     stacks+=("$stack")
+    stack_project_dirs[$stack]="$project_dir"
 
     # Create a temporary git repo with the project files
     WORK_DIR=$(mktemp -d)
     cleanup_dirs+=("$WORK_DIR")
+    stack_work_dirs[$stack]="$WORK_DIR"
 
     git init -q -b main "$WORK_DIR"
     git -C "$WORK_DIR" config user.email "integ-test@tsk.dev"
@@ -160,6 +164,58 @@ for stack in "${stacks[@]}"; do
         failed=$((failed + 1))
         failed_stacks+=("$stack")
     fi
+done
+echo ""
+
+# Phase 5: Run verification scripts on task branches
+# For completed tasks that have a tsk-integ-verify.sh, check out the task branch
+# and run the verification script to validate the final state of the repository.
+echo "--------------------------------------------"
+echo "  Verifying task branches"
+echo "--------------------------------------------"
+for stack in "${stacks[@]}"; do
+    project_dir="${stack_project_dirs[$stack]}"
+    verify_script="$project_dir/tsk-integ-verify.sh"
+
+    # Skip stacks without a verify script
+    if [ ! -f "$verify_script" ]; then
+        continue
+    fi
+
+    # Skip stacks that already failed
+    task_line=$(echo "$LIST_OUTPUT" | grep "integ-${stack} " || true)
+    if ! echo "$task_line" | grep -q "COMPLETE"; then
+        continue
+    fi
+
+    work_dir="${stack_work_dirs[$stack]}"
+
+    # Find the task branch (pattern: tsk/feat/integ-<stack>/*)
+    branch=$(git -C "$work_dir" branch --list "tsk/feat/integ-${stack}/*" | head -1 | sed 's/^[* ]*//' || true)
+    if [ -z "$branch" ]; then
+        echo -e "  ${RED}VERIFY FAILED${NC}: $stack (no task branch found)"
+        failed=$((failed + 1))
+        failed_stacks+=("$stack (verify: no branch)")
+        # Undo the pass count from phase 4
+        passed=$((passed - 1))
+        continue
+    fi
+
+    echo -e "  Verifying: ${YELLOW}${stack}${NC} (branch: $branch)"
+    git -C "$work_dir" checkout -q "$branch"
+
+    if (cd "$work_dir" && bash "$verify_script") 2>&1 | tee "$LOG_DIR/${stack}-verify.log"; then
+        echo -e "  ${GREEN}VERIFIED${NC}: $stack"
+    else
+        echo -e "  ${RED}VERIFY FAILED${NC}: $stack"
+        failed=$((failed + 1))
+        failed_stacks+=("$stack (verify)")
+        # Undo the pass count from phase 4
+        passed=$((passed - 1))
+    fi
+
+    # Return to main branch
+    git -C "$work_dir" checkout -q main
 done
 echo ""
 

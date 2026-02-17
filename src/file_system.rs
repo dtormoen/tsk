@@ -119,9 +119,11 @@ pub async fn remove_file(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Copies a file from source to destination.
+/// Copies a file from source to destination, preserving file permissions.
 pub async fn copy_file(from: &Path, to: &Path) -> Result<()> {
     tokio::fs::copy(from, to).await?;
+    let metadata = tokio::fs::metadata(from).await?;
+    tokio::fs::set_permissions(to, metadata.permissions()).await?;
     Ok(())
 }
 
@@ -463,5 +465,36 @@ mod tests {
         for handle in handles {
             handle.await.unwrap();
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_copy_file_preserves_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+
+        let source_path = temp_dir.path().join("executable.sh");
+        let dest_path = temp_dir.path().join("executable_copy.sh");
+
+        write_file(&source_path, "#!/bin/bash\necho hello")
+            .await
+            .unwrap();
+
+        // Make the source file executable
+        let perms = std::fs::Permissions::from_mode(0o755);
+        tokio::fs::set_permissions(&source_path, perms)
+            .await
+            .unwrap();
+
+        copy_file(&source_path, &dest_path).await.unwrap();
+
+        let dest_metadata = tokio::fs::metadata(&dest_path).await.unwrap();
+        let dest_mode = dest_metadata.permissions().mode();
+        assert_eq!(
+            dest_mode & 0o777,
+            0o755,
+            "Destination file should preserve executable permissions"
+        );
     }
 }
