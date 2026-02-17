@@ -1,4 +1,4 @@
-use super::{Agent, ClaudeAgent, CodexAgent, NoOpAgent};
+use super::{Agent, ClaudeAgent, CodexAgent, IntegAgent, NoOpAgent};
 use crate::context::tsk_env::TskEnv;
 use std::sync::Arc;
 
@@ -19,11 +19,12 @@ impl AgentProvider {
             "claude" => Ok(Arc::new(ClaudeAgent::with_tsk_env(tsk_env))),
             "codex" => Ok(Arc::new(CodexAgent::with_tsk_env(tsk_env))),
             "no-op" => Ok(Arc::new(NoOpAgent)),
+            "integ" => Ok(Arc::new(IntegAgent)),
             _ => Err(anyhow::anyhow!("Unknown agent: {}", name)),
         }
     }
 
-    /// List all available agents
+    /// List user-facing agents
     pub fn list_agents() -> Vec<&'static str> {
         vec!["claude", "codex", "no-op"]
     }
@@ -33,9 +34,9 @@ impl AgentProvider {
         "claude"
     }
 
-    /// Validate an agent name
+    /// Validate an agent name (includes internal agents like integ)
     pub fn is_valid_agent(name: &str) -> bool {
-        Self::list_agents().contains(&name)
+        Self::list_agents().contains(&name) || name == "integ"
     }
 }
 

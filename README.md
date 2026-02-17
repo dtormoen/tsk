@@ -305,11 +305,17 @@ TSK uses the following directories for storing data while running tasks:
   - **<taskid>/output**: Directory containing a log file with the agent's actions
   - **<taskid>/instructions.md**: The instructions that were passed to an agent
 
+These default paths follow XDG conventions. You can override them with TSK-specific environment variables without affecting other XDG-aware software. Like XDG variables, these specify the base directory; TSK appends `/tsk` automatically:
+- `TSK_DATA_HOME` - overrides `XDG_DATA_HOME` for TSK (default: `~/.local/share`)
+- `TSK_RUNTIME_DIR` - overrides `XDG_RUNTIME_DIR` for TSK (default: `/tmp`)
+- `TSK_CONFIG_HOME` - overrides `XDG_CONFIG_HOME` for TSK (default: `~/.config`)
+
 ## Contributing
 
 This project uses:
 - `cargo test` for running tests
 - `just precommit` for full CI checks
+- `just integration-test` for stack layer integration tests (requires Docker/Podman)
 - See [CLAUDE.md](CLAUDE.md) for development guidelines
 
 ## License
