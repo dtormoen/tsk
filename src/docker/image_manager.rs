@@ -388,6 +388,38 @@ impl DockerImageManager {
             build_args.insert("TSK_AGENT_VERSION".to_string(), version.to_string());
         }
 
+        if self.ctx.tsk_config().docker.container_engine == ContainerEngine::Podman {
+            if std::env::var("TSK_CONTAINER").is_ok() {
+                // Inside a TSK container, forward proxy env vars so Podman builds
+                // route through the Squid proxy (Bollard API doesn't inherit env vars).
+                for var in [
+                    "HTTP_PROXY",
+                    "HTTPS_PROXY",
+                    "http_proxy",
+                    "https_proxy",
+                    "NO_PROXY",
+                    "no_proxy",
+                ] {
+                    if let Ok(val) = std::env::var(var) {
+                        build_args.insert(var.to_string(), val);
+                    }
+                }
+            } else {
+                // On host machines, clear any inherited proxy env vars so builds
+                // can access the internet directly with host networking.
+                for var in [
+                    "HTTP_PROXY",
+                    "HTTPS_PROXY",
+                    "http_proxy",
+                    "https_proxy",
+                    "NO_PROXY",
+                    "no_proxy",
+                ] {
+                    build_args.insert(var.to_string(), String::new());
+                }
+            }
+        }
+
         let mut options_builder = bollard::query_parameters::BuildImageOptionsBuilder::default();
         options_builder = options_builder.dockerfile("Dockerfile.tsk");
         options_builder = options_builder.t(&composed.image_tag);
@@ -436,6 +468,9 @@ impl DockerImageManager {
         let mut tar_data = Vec::new();
         {
             let mut builder = Builder::new(&mut tar_data);
+            // Use deterministic mode (uid=0, gid=0, mtime=0) for reproducible builds
+            // and to avoid lchown failures in rootless Podman where only uid 0 is mapped
+            builder.mode(tar::HeaderMode::Deterministic);
 
             // Add Dockerfile with TSK-specific name to avoid conflicts
             let dockerfile_bytes = composed.dockerfile_content.as_bytes();

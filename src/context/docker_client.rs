@@ -77,12 +77,20 @@ fn detect_podman_socket() -> String {
         return path;
     }
 
-    // Default fallback
+    // 6. /tmp/podman-run-<UID>/podman/podman.sock (Podman's fallback when XDG_RUNTIME_DIR is unset)
+    let path = format!("/tmp/podman-run-{uid}/podman/podman.sock");
+    if std::path::Path::new(&path).exists() {
+        return path;
+    }
+
+    // Default fallback: prefer paths in order of likelihood
     if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
         format!("{runtime_dir}/podman/podman.sock")
-    } else {
-        let uid = unsafe { libc::getuid() };
+    } else if std::path::Path::new(&format!("/run/user/{uid}")).exists() {
         format!("/run/user/{uid}/podman/podman.sock")
+    } else {
+        // Match Podman's own fallback when XDG_RUNTIME_DIR is unset
+        format!("/tmp/podman-run-{uid}/podman/podman.sock")
     }
 }
 
@@ -98,6 +106,67 @@ fn extract_machine_socket_path(json_str: &str) -> Option<String> {
         .get("Path")?
         .as_str()?;
     Some(socket_path.to_string())
+}
+
+/// Configure Podman defaults so nested container builds work out of the box.
+///
+/// Creates `~/.config/containers/containers.conf` with `netns = "host"` and
+/// `pidns = "host"` if no config file exists. This avoids `mount proc: Operation
+/// not permitted` errors when building images inside a container (e.g., when TSK
+/// itself runs inside Docker/Podman).
+///
+/// If a config file already exists, it is left untouched to respect user
+/// customizations. A warning is printed if the existing config uses a restrictive
+/// `netns` setting that may cause build failures.
+fn configure_podman_defaults() {
+    use std::path::PathBuf;
+
+    let config_dir = std::env::var("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+            PathBuf::from(home).join(".config")
+        })
+        .join("containers");
+
+    let config_path = config_dir.join("containers.conf");
+
+    if config_path.exists() {
+        // Warn about restrictive netns setting, but not inside TSK containers
+        // where netns = "none" is intentionally set for network isolation
+        if std::env::var("TSK_CONTAINER").is_err()
+            && let Ok(contents) = std::fs::read_to_string(&config_path)
+            && contents.contains(r#"netns = "none""#)
+        {
+            eprintln!(
+                "Warning: containers.conf has netns = \"none\" which may cause \
+                 Podman build failures in nested containers.\n\
+                 Consider changing to netns = \"host\" in: {}",
+                config_path.display()
+            );
+        }
+        return;
+    }
+
+    if let Err(e) = std::fs::create_dir_all(&config_dir) {
+        eprintln!("Warning: could not create containers config dir: {e}");
+        return;
+    }
+
+    let config_content = "\
+[containers]
+default_sysctls = []
+netns = \"host\"
+pidns = \"host\"
+";
+
+    match std::fs::write(&config_path, config_content) {
+        Ok(()) => eprintln!(
+            "Created Podman config for nested container support: {}",
+            config_path.display()
+        ),
+        Err(e) => eprintln!("Warning: could not write containers.conf: {e}"),
+    }
 }
 
 /// Ensure the Podman API service is available at the given socket path
@@ -120,29 +189,61 @@ fn ensure_podman_service(socket_path: &str) {
 
     // Linux: try to start the service
     eprintln!("Podman socket not found at {socket_path}, starting podman system service...");
-    let child = std::process::Command::new("podman")
-        .args(["system", "service", "--timeout=0"])
+
+    // Create parent directory for the socket if it doesn't exist
+    if let Some(parent) = std::path::Path::new(socket_path).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    // Pass the socket path to podman so it creates the socket where we expect it
+    let socket_uri = format!("unix://{socket_path}");
+
+    // Stderr must be /dev/null, not a pipe. When stderr is piped and the
+    // read end is never consumed (as happens after mem::forget below), the
+    // 64 KB kernel pipe buffer fills up once the service emits enough log
+    // output, blocking Go's logger goroutine and eventually deadlocking the
+    // entire Podman process.
+    //
+    // We still detect startup failures via try_wait() on the process exit
+    // code — the error message text is lost but the failure is not silent.
+    let mut child = std::process::Command::new("podman")
+        .args(["system", "service", "--timeout=0", &socket_uri])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
         .expect("Failed to start podman system service");
 
-    // Intentionally leak the child handle: this is a long-running daemon process
-    // that should outlive the current tsk invocation.
-    std::mem::forget(child);
-
     // Wait up to 10 seconds for the socket to appear
     for _ in 0..100 {
         if std::path::Path::new(socket_path).exists() {
+            // Service started successfully, leak the child handle so it outlives this process
+            std::mem::forget(child);
             return;
+        }
+        // Check if the process has already exited (indicating failure)
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                panic!(
+                    "Podman system service exited with {status}.\n\n\
+                    Please ensure Podman is installed and configured correctly.\n\
+                    Try running manually: podman system service --timeout=0"
+                );
+            }
+            Ok(None) => {} // Still running, continue waiting
+            Err(e) => {
+                eprintln!("Warning: could not check podman service status: {e}");
+            }
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
+    // Timed out waiting for socket, kill the child and report
+    let _ = child.kill();
     panic!(
         "Podman socket did not appear at {socket_path} after 10 seconds.\n\n\
-        Please ensure Podman is installed and configured correctly."
+        Please ensure Podman is installed and configured correctly.\n\
+        Try running manually: podman system service --timeout=0"
     );
 }
 
@@ -324,6 +425,7 @@ impl DefaultDockerClient {
                 ),
             },
             ContainerEngine::Podman => {
+                configure_podman_defaults();
                 let socket_path = detect_podman_socket();
                 ensure_podman_service(&socket_path);
                 let client_version = bollard::ClientVersion {

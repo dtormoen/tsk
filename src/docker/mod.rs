@@ -8,15 +8,18 @@ pub mod template_manager;
 
 use crate::agent::{Agent, LogProcessor};
 use crate::context::AppContext;
+use crate::context::ContainerEngine;
 use crate::context::VolumeMount;
 use crate::docker::proxy_manager::ProxyManager;
 use bollard::models::{ContainerCreateBody, HostConfig};
 use bollard::query_parameters::{LogsOptions, RemoveContainerOptions};
 use futures_util::stream::StreamExt;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 const CONTAINER_WORKSPACE_BASE: &str = "/workspace";
 const CONTAINER_USER: &str = "agent";
+const SECCOMP_DIND_PROFILE: &str = include_str!("seccomp_dind.json");
 
 fn container_working_dir(project: &str) -> String {
     format!("{CONTAINER_WORKSPACE_BASE}/{project}")
@@ -47,8 +50,54 @@ impl DockerManager {
         }
     }
 
-    /// Build proxy environment variables
+    /// Returns true when TSK is running inside a TSK container with proxy
+    /// env vars pointing to `tsk-proxy`.
+    ///
+    /// In this case, proxy and network isolation are handled by the outer
+    /// container's Docker environment, so we skip them for nested containers.
+    /// We require proxy env vars to reference `tsk-proxy` to avoid silently
+    /// granting unrestricted internet access when `TSK_CONTAINER=1` is set
+    /// without a properly configured proxy.
+    fn is_nested(&self) -> bool {
+        // In tests, always use the normal proxy/network path so mocks work correctly
+        if cfg!(test) {
+            return false;
+        }
+        std::env::var("TSK_CONTAINER").is_ok() && Self::has_tsk_proxy_env()
+    }
+
+    /// Returns true if at least one proxy env var references the `tsk-proxy` host.
+    fn has_tsk_proxy_env() -> bool {
+        ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]
+            .iter()
+            .any(|var| {
+                std::env::var(var)
+                    .map(|val| val.contains("tsk-proxy"))
+                    .unwrap_or(false)
+            })
+    }
+
+    /// Build proxy environment variables for nested containers.
     fn build_proxy_env_vars(&self) -> Vec<String> {
+        if self.is_nested() {
+            // Forward proxy env vars from the outer container's environment.
+            // The outer TSK container already has network isolation via Docker.
+            let mut env = Vec::new();
+            for var in [
+                "HTTP_PROXY",
+                "HTTPS_PROXY",
+                "http_proxy",
+                "https_proxy",
+                "NO_PROXY",
+                "no_proxy",
+            ] {
+                if let Ok(val) = std::env::var(var) {
+                    env.push(format!("{var}={val}"));
+                }
+            }
+            return env;
+        }
+
         let proxy_url = self.proxy_manager.proxy_url();
         let mut env = vec![
             format!("HTTP_PROXY={proxy_url}"),
@@ -188,7 +237,7 @@ impl DockerManager {
         let instructions_file_path = PathBuf::from(&task.instructions_file);
         let working_dir = container_working_dir(&task.project);
 
-        let mut env_vars = if network_name.is_some() {
+        let mut env_vars = if network_name.is_some() || self.is_nested() {
             self.build_proxy_env_vars()
         } else {
             Vec::new()
@@ -229,6 +278,25 @@ impl DockerManager {
         // Load Docker resource limits from user configuration
         let docker_config = &self.ctx.tsk_config().docker;
 
+        // Build security options based on container engine.
+        // Docker accepts inline seccomp JSON; Podman requires a file path.
+        let mut security_opts = if docker_config.container_engine == ContainerEngine::Podman {
+            let seccomp_path = self.ctx.tsk_env().config_dir().join("seccomp_dind.json");
+            if std::fs::write(&seccomp_path, SECCOMP_DIND_PROFILE).is_ok() {
+                vec![format!("seccomp={}", seccomp_path.display())]
+            } else {
+                // Fall back to unconfined if we can't write the file
+                vec!["seccomp=unconfined".to_string()]
+            }
+        } else {
+            vec![format!("seccomp={SECCOMP_DIND_PROFILE}")]
+        };
+        // Disable AppArmor so the inner OCI runtime (crun) can perform mounts,
+        // namespace creation, and pivot_root needed for rootless Podman DIND.
+        // Docker's default AppArmor profile blocks these independently of seccomp.
+        security_opts.push("apparmor=unconfined".to_string());
+        let security_opt = Some(security_opts);
+
         let mut cap_drop = vec![
             "NET_ADMIN".to_string(),
             "SETPCAP".to_string(),
@@ -236,8 +304,10 @@ impl DockerManager {
             "SYS_PTRACE".to_string(),
             "DAC_OVERRIDE".to_string(),
             "AUDIT_WRITE".to_string(),
-            "SETUID".to_string(),
-            "SETGID".to_string(),
+            // SETUID and SETGID must remain in the bounding set for rootless Podman DIND.
+            // newuidmap/newgidmap use file capabilities (cap_setuid+ep / cap_setgid+ep) to
+            // write /proc/<pid>/uid_map for user namespace setup. File caps run as the calling
+            // user (not root), so DAC_OVERRIDE is not needed — the user owns the uid_map file.
         ];
         if network_name.is_some() {
             cap_drop.push("NET_RAW".to_string());
@@ -250,10 +320,46 @@ impl DockerManager {
             cmd: command,
             host_config: Some(HostConfig {
                 binds: Some(binds),
-                network_mode: network_name.map(|n| n.to_string()),
-                memory: Some(docker_config.memory_limit_bytes()),
-                cpu_quota: Some(docker_config.cpu_quota_microseconds()),
+                // In nested containers, use host networking so the inner container
+                // shares the outer container's network namespace and can resolve
+                // `tsk-proxy` via Docker's embedded DNS. Without this, Podman's
+                // `netns = "none"` in containers.conf gives the inner container
+                // no network, causing DNS failures and proxy connection errors.
+                network_mode: if self.is_nested() {
+                    Some("host".to_string())
+                } else {
+                    network_name.map(|n| n.to_string())
+                },
+                memory: if self.is_nested() {
+                    None
+                } else {
+                    Some(docker_config.memory_limit_bytes())
+                },
+                cpu_quota: if self.is_nested() {
+                    None
+                } else {
+                    Some(docker_config.cpu_quota_microseconds())
+                },
                 cap_drop: Some(cap_drop),
+                security_opt,
+                // WORKAROUND: Mount tmpfs at Podman's storage path so it uses native
+                // kernel overlay instead of fuse-overlayfs. Without this, execve()
+                // returns EINVAL for any binary on a FUSE mount inside a user
+                // namespace — a kernel bug in LinuxKit 6.10.14+ (Docker Desktop
+                // 4.33.0+). This breaks all `podman build` and `podman run` inside
+                // TSK containers. Native overlay on tmpfs avoids the broken code
+                // path entirely. Remove this once docker/for-mac#7413 is fixed.
+                tmpfs: Some(HashMap::from([(
+                    "/home/agent/.local/share/containers/storage".to_string(),
+                    "size=20G".to_string(),
+                )])),
+                // In nested containers, keep the host UID mapping so bind-mounted
+                // files retain correct ownership (rootless Podman remaps UIDs otherwise).
+                userns_mode: if self.is_nested() {
+                    Some("keep-id".to_string())
+                } else {
+                    None
+                },
                 ..Default::default()
             }),
             working_dir: Some(working_dir),
@@ -290,7 +396,9 @@ impl DockerManager {
         agent: &dyn Agent,
     ) -> Result<(String, crate::agent::TaskResult), String> {
         // --- Setup: conditionally create network and connect proxy ---
-        let network_name = if task.network_isolation {
+        // When nested inside a TSK container, skip proxy/network setup since the
+        // outer container already provides network isolation.
+        let network_name = if task.network_isolation && !self.is_nested() {
             if let Err(e) = self.proxy_manager.ensure_proxy().await {
                 return Err(format!(
                     "Failed to ensure proxy is running and healthy: {e}. \

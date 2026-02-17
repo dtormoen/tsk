@@ -73,8 +73,13 @@ pub struct DockerOptions {
 
 impl Default for DockerOptions {
     fn default() -> Self {
+        let container_engine = if std::env::var("TSK_CONTAINER").is_ok() {
+            ContainerEngine::Podman
+        } else {
+            ContainerEngine::default()
+        };
         Self {
-            container_engine: ContainerEngine::Docker,
+            container_engine,
             memory_limit_gb: 12.0, // 12GB
             cpu_limit: 8,          // 8 CPUs
         }
@@ -799,5 +804,15 @@ memory_limit_gb = 8.0
 
         assert_eq!(config.docker.container_engine, ContainerEngine::Podman);
         assert_eq!(config.docker.memory_limit_gb, 8.0);
+    }
+
+    #[test]
+    fn test_container_engine_default_depends_on_environment() {
+        let config = TskConfig::default();
+        if std::env::var("TSK_CONTAINER").is_ok() {
+            assert_eq!(config.docker.container_engine, ContainerEngine::Podman);
+        } else {
+            assert_eq!(config.docker.container_engine, ContainerEngine::Docker);
+        }
     }
 }
