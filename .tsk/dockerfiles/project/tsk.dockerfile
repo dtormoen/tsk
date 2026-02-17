@@ -16,7 +16,7 @@ RUN mkdir -p src && \
 # The compiled artifacts will be cached in $CARGO_TARGET_DIR (set in tech-stack layer)
 RUN cargo build
 
-# Remove dummy source files
+# Remove dummy source and dependency files
 # The actual source code will be mounted at runtime
-RUN rm -rf src
+RUN rm -rf src Cargo.toml Cargo.lock
 
