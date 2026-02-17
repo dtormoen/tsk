@@ -36,7 +36,7 @@ cargo install tsk-ai
 # Or build from source!
 gh repo clone dtormoen/tsk
 cd tsk
-cargo install .
+cargo install --path .
 ```
 
 ## Quick Start Guide
