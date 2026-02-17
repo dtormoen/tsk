@@ -12,6 +12,7 @@ pub struct RetryCommand {
     pub stack: Option<String>,
     pub project: Option<String>,
     pub parent_id: Option<String>,
+    pub dind: Option<bool>,
 }
 
 #[async_trait]
@@ -33,6 +34,7 @@ impl Command for RetryCommand {
                 stack: self.stack.clone(),
                 project: self.project.clone(),
                 parent_id: self.parent_id.clone(),
+                dind: self.dind,
             };
             match task_manager
                 .retry_task(task_id, self.edit, overrides, ctx)
@@ -135,6 +137,7 @@ mod tests {
             stack: None,
             project: None,
             parent_id: None,
+            dind: None,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -168,6 +171,7 @@ mod tests {
             stack: None,
             project: None,
             parent_id: None,
+            dind: None,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -200,6 +204,7 @@ mod tests {
             stack: None,
             project: None,
             parent_id: None,
+            dind: None,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -240,6 +245,7 @@ mod tests {
             stack: None,
             project: None,
             parent_id: None,
+            dind: None,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -280,6 +286,7 @@ mod tests {
             stack: None,
             project: None,
             parent_id: None,
+            dind: None,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -324,6 +331,7 @@ mod tests {
             stack: None,
             project: None,
             parent_id: None,
+            dind: None,
         };
 
         let result = cmd.execute(&ctx).await;

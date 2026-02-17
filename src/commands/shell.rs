@@ -24,6 +24,7 @@ pub struct ShellCommand {
     pub project: Option<String>,
     pub repo: Option<String>,
     pub no_network_isolation: bool,
+    pub dind: bool,
 }
 
 #[async_trait]
@@ -54,6 +55,7 @@ impl Command for ShellCommand {
             .stack(self.stack.clone())
             .project(self.project.clone())
             .network_isolation(!self.no_network_isolation)
+            .dind(if self.dind { Some(true) } else { None })
             .with_interactive(true) // Shell sessions are always interactive
             .build(ctx)
             .await?;
@@ -101,6 +103,7 @@ mod tests {
             project: None,
             repo: None,
             no_network_isolation: false,
+            dind: false,
         };
 
         // Verify the command has the expected fields

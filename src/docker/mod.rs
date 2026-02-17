@@ -278,24 +278,23 @@ impl DockerManager {
         // Load Docker resource limits from user configuration
         let docker_config = &self.ctx.tsk_config().docker;
 
-        // Build security options based on container engine.
-        // Docker accepts inline seccomp JSON; Podman requires a file path.
-        let mut security_opts = if docker_config.container_engine == ContainerEngine::Podman {
-            let seccomp_path = self.ctx.tsk_env().config_dir().join("seccomp_dind.json");
-            if std::fs::write(&seccomp_path, SECCOMP_DIND_PROFILE).is_ok() {
-                vec![format!("seccomp={}", seccomp_path.display())]
+        // DIND security relaxations (seccomp profile, AppArmor, SETUID/SETGID) are opt-in
+        let security_opt = if task.dind {
+            let mut security_opts = if docker_config.container_engine == ContainerEngine::Podman {
+                let seccomp_path = self.ctx.tsk_env().config_dir().join("seccomp_dind.json");
+                if std::fs::write(&seccomp_path, SECCOMP_DIND_PROFILE).is_ok() {
+                    vec![format!("seccomp={}", seccomp_path.display())]
+                } else {
+                    vec!["seccomp=unconfined".to_string()]
+                }
             } else {
-                // Fall back to unconfined if we can't write the file
-                vec!["seccomp=unconfined".to_string()]
-            }
+                vec![format!("seccomp={SECCOMP_DIND_PROFILE}")]
+            };
+            security_opts.push("apparmor=unconfined".to_string());
+            Some(security_opts)
         } else {
-            vec![format!("seccomp={SECCOMP_DIND_PROFILE}")]
+            None
         };
-        // Disable AppArmor so the inner OCI runtime (crun) can perform mounts,
-        // namespace creation, and pivot_root needed for rootless Podman DIND.
-        // Docker's default AppArmor profile blocks these independently of seccomp.
-        security_opts.push("apparmor=unconfined".to_string());
-        let security_opt = Some(security_opts);
 
         let mut cap_drop = vec![
             "NET_ADMIN".to_string(),
@@ -304,11 +303,11 @@ impl DockerManager {
             "SYS_PTRACE".to_string(),
             "DAC_OVERRIDE".to_string(),
             "AUDIT_WRITE".to_string(),
-            // SETUID and SETGID must remain in the bounding set for rootless Podman DIND.
-            // newuidmap/newgidmap use file capabilities (cap_setuid+ep / cap_setgid+ep) to
-            // write /proc/<pid>/uid_map for user namespace setup. File caps run as the calling
-            // user (not root), so DAC_OVERRIDE is not needed — the user owns the uid_map file.
         ];
+        if !task.dind {
+            cap_drop.push("SETUID".to_string());
+            cap_drop.push("SETGID".to_string());
+        }
         if network_name.is_some() {
             cap_drop.push("NET_RAW".to_string());
         }
@@ -993,6 +992,21 @@ mod tests {
         assert!(env.contains(&"HTTPS_PROXY=http://tsk-proxy:3128".to_string()));
         assert!(env.contains(&"NO_PROXY=localhost,127.0.0.1,tsk-proxy".to_string()));
         assert!(env.contains(&"no_proxy=localhost,127.0.0.1,tsk-proxy".to_string()));
+
+        // Non-DIND task: security_opt should be None, cap_drop should include SETUID/SETGID
+        assert!(
+            host_config.security_opt.is_none(),
+            "security_opt should be None when dind is disabled"
+        );
+        let cap_drop = host_config.cap_drop.as_ref().unwrap();
+        assert!(
+            cap_drop.contains(&"SETUID".to_string()),
+            "SETUID should be dropped when dind is disabled"
+        );
+        assert!(
+            cap_drop.contains(&"SETGID".to_string()),
+            "SETGID should be dropped when dind is disabled"
+        );
         drop(create_calls);
 
         // Verify network lifecycle operations were called
@@ -1111,6 +1125,7 @@ mod tests {
             ProjectConfig {
                 agent: None,
                 stack: None,
+                dind: None,
                 volumes: vec![VolumeMount::Bind(BindMount {
                     host: "/host/cache".to_string(),
                     container: "/container/cache".to_string(),
@@ -1164,6 +1179,7 @@ mod tests {
             ProjectConfig {
                 agent: None,
                 stack: None,
+                dind: None,
                 volumes: vec![VolumeMount::Named(NamedVolume {
                     name: "build-cache".to_string(),
                     container: "/container/cache".to_string(),
@@ -1217,6 +1233,7 @@ mod tests {
             ProjectConfig {
                 agent: None,
                 stack: None,
+                dind: None,
                 volumes: vec![VolumeMount::Bind(BindMount {
                     host: "/etc/ssl/certs".to_string(),
                     container: "/etc/ssl/certs".to_string(),
@@ -1295,6 +1312,7 @@ mod tests {
             ProjectConfig {
                 agent: None,
                 stack: None,
+                dind: None,
                 volumes: vec![],
                 env: vec![
                     EnvVar {
@@ -1540,5 +1558,93 @@ mod tests {
 
         let remove_network_calls = mock_client.remove_network_calls.lock().unwrap();
         assert_eq!(remove_network_calls.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_dind_security_relaxations() {
+        let mock_client = Arc::new(TrackedDockerClient::default());
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .build();
+        let manager = DockerManager::new(&ctx);
+
+        let mut task = create_test_task(false);
+        task.dind = true;
+        let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
+        let _ = manager.run_task_container("tsk/base", &task, &agent).await;
+
+        let create_calls = mock_client.create_container_calls.lock().unwrap();
+        let task_config = &create_calls[1].1;
+        let host_config = task_config.host_config.as_ref().unwrap();
+
+        // DIND: security_opt should be set with seccomp profile and apparmor=unconfined
+        let security_opt = host_config
+            .security_opt
+            .as_ref()
+            .expect("security_opt should be Some when dind is enabled");
+        assert!(
+            security_opt.iter().any(|s| s.starts_with("seccomp=")),
+            "Should have seccomp profile"
+        );
+        assert!(
+            security_opt.iter().any(|s| s == "apparmor=unconfined"),
+            "Should have apparmor=unconfined"
+        );
+
+        // DIND: SETUID and SETGID should NOT be in cap_drop
+        let cap_drop = host_config.cap_drop.as_ref().unwrap();
+        assert!(
+            !cap_drop.contains(&"SETUID".to_string()),
+            "SETUID should not be dropped when dind is enabled"
+        );
+        assert!(
+            !cap_drop.contains(&"SETGID".to_string()),
+            "SETGID should not be dropped when dind is enabled"
+        );
+
+        // Other capabilities should still be dropped
+        assert!(cap_drop.contains(&"NET_ADMIN".to_string()));
+        assert!(cap_drop.contains(&"SYS_ADMIN".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_non_dind_security_defaults() {
+        let mock_client = Arc::new(TrackedDockerClient::default());
+        let ctx = AppContext::builder()
+            .with_docker_client(mock_client.clone())
+            .build();
+        let manager = DockerManager::new(&ctx);
+
+        let task = create_test_task(false); // dind defaults to false
+        let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
+        let _ = manager.run_task_container("tsk/base", &task, &agent).await;
+
+        let create_calls = mock_client.create_container_calls.lock().unwrap();
+        let task_config = &create_calls[1].1;
+        let host_config = task_config.host_config.as_ref().unwrap();
+
+        // Non-DIND: security_opt should be None
+        assert!(
+            host_config.security_opt.is_none(),
+            "security_opt should be None when dind is disabled"
+        );
+
+        // Non-DIND: SETUID and SETGID should be in cap_drop
+        let cap_drop = host_config.cap_drop.as_ref().unwrap();
+        assert!(
+            cap_drop.contains(&"SETUID".to_string()),
+            "SETUID should be dropped when dind is disabled"
+        );
+        assert!(
+            cap_drop.contains(&"SETGID".to_string()),
+            "SETGID should be dropped when dind is disabled"
+        );
+
+        // Other capabilities should still be dropped
+        assert!(cap_drop.contains(&"NET_ADMIN".to_string()));
+        assert!(cap_drop.contains(&"SYS_ADMIN".to_string()));
+        assert!(cap_drop.contains(&"SYS_PTRACE".to_string()));
+        assert!(cap_drop.contains(&"DAC_OVERRIDE".to_string()));
+        assert!(cap_drop.contains(&"AUDIT_WRITE".to_string()));
     }
 }

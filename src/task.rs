@@ -107,6 +107,9 @@ pub struct Task {
     /// Whether per-container network isolation is enabled for this task
     #[serde(default = "default_true")]
     pub network_isolation: bool,
+    /// Whether Docker-in-Docker support is enabled (relaxes container security)
+    #[serde(default)]
+    pub dind: bool,
 }
 
 impl Task {
@@ -129,6 +132,7 @@ impl Task {
         is_interactive: bool,
         parent_ids: Vec<String>,
         network_isolation: bool,
+        dind: bool,
     ) -> Self {
         Self {
             id,
@@ -151,6 +155,7 @@ impl Task {
             is_interactive,
             parent_ids,
             network_isolation,
+            dind,
         }
     }
 }
@@ -187,6 +192,7 @@ impl Task {
             is_interactive: false,
             parent_ids: vec![],
             network_isolation: true,
+            dind: false,
         }
     }
 }

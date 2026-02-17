@@ -20,6 +20,7 @@ pub struct AddCommand {
     pub repo: Option<String>,
     pub parent_id: Option<String>,
     pub no_network_isolation: bool,
+    pub dind: bool,
 }
 
 #[async_trait]
@@ -77,6 +78,7 @@ impl Command for AddCommand {
                     .project(self.project.clone())
                     .parent_id(self.parent_id.clone())
                     .network_isolation(!self.no_network_isolation)
+                    .dind(if self.dind { Some(true) } else { None })
                     .build(ctx)
                     .await?;
 
@@ -99,7 +101,8 @@ impl Command for AddCommand {
                     .stack(self.stack.clone())
                     .project(self.project.clone())
                     .parent_id(self.parent_id.clone())
-                    .network_isolation(!self.no_network_isolation);
+                    .network_isolation(!self.no_network_isolation)
+                    .dind(if self.dind { Some(true) } else { None });
 
                 if let Some(ref instructions_content) = first_task_instructions {
                     // Write instructions to temporary file for this task
@@ -196,6 +199,7 @@ mod tests {
             repo: Some(".".to_string()),
             parent_id: None,
             no_network_isolation: false,
+            dind: false,
         };
 
         let ctx = create_test_context();
@@ -223,6 +227,7 @@ mod tests {
             repo: Some(".".to_string()),
             parent_id: None,
             no_network_isolation: false,
+            dind: false,
         };
 
         let ctx = create_test_context();
@@ -265,6 +270,7 @@ mod tests {
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             parent_id: None,
             no_network_isolation: false,
+            dind: false,
         };
 
         // Execute should succeed
@@ -305,6 +311,7 @@ mod tests {
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             parent_id: None,
             no_network_isolation: false,
+            dind: false,
         };
 
         // Execute should succeed without changing directories
@@ -347,6 +354,7 @@ mod tests {
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             parent_id: None,
             no_network_isolation: false,
+            dind: false,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -388,6 +396,7 @@ mod tests {
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             parent_id: None,
             no_network_isolation: false,
+            dind: false,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -419,6 +428,7 @@ mod tests {
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             parent_id: None,
             no_network_isolation: false,
+            dind: false,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -463,6 +473,7 @@ mod tests {
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             parent_id: None,
             no_network_isolation: false,
+            dind: false,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -538,6 +549,7 @@ mod tests {
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             parent_id: None,
             no_network_isolation: false,
+            dind: false,
         };
 
         let result = cmd.execute(&ctx).await;

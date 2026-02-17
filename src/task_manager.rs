@@ -20,6 +20,7 @@ pub struct RetryOverrides {
     pub stack: Option<String>,
     pub project: Option<String>,
     pub parent_id: Option<String>,
+    pub dind: Option<bool>,
 }
 
 #[cfg(test)]
@@ -308,6 +309,9 @@ impl TaskManager {
         }
         if let Some(parent_id) = overrides.parent_id {
             builder = builder.parent_id(Some(parent_id));
+        }
+        if let Some(dind) = overrides.dind {
+            builder = builder.dind(Some(dind));
         }
 
         let new_task = builder

@@ -15,13 +15,13 @@ TSK implements a command pattern with dependency injection for testability. The 
 **CLI Commands** (`src/commands/`)
 
 *Task Commands (implicit "task" noun):*
-- `run`: Immediately execute single tasks (tracked in DB, supports piped input via stdin for descriptions, supports `--no-network-isolation`)
-- `shell`: Launch sandbox container with agent for interactive use (tracked in DB, supports piped input via stdin for descriptions, supports `--no-network-isolation`)
-- `add`: Queue tasks with descriptions and templates (supports piped input via stdin for descriptions, supports `--parent <taskid>` for task chaining, supports `--no-network-isolation`)
+- `run`: Immediately execute single tasks (tracked in DB, supports piped input via stdin for descriptions, supports `--no-network-isolation`, supports `--dind`)
+- `shell`: Launch sandbox container with agent for interactive use (tracked in DB, supports piped input via stdin for descriptions, supports `--no-network-isolation`, supports `--dind`)
+- `add`: Queue tasks with descriptions and templates (supports piped input via stdin for descriptions, supports `--parent <taskid>` for task chaining, supports `--no-network-isolation`, supports `--dind`)
 - `list`: Display task status and results (shows parent task information)
 - `clean`: Delete completed tasks (skips parents with queued/running children)
 - `delete <task-id>`: Delete a specific task
-- `retry <task-id>`: Retry a previous task
+- `retry <task-id>`: Retry a previous task (supports `--dind`)
 
 *Subcommand Groups:*
 - `server start`: Start the TSK server daemon (supports `-w/--workers`, `-q/--quit`, `-s/--sound`)
@@ -66,6 +66,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Uses Docker network inspection to count connected agent containers
 - `DockerManager`: Container execution with unified support for interactive and non-interactive modes
 - Security-first containers with dropped capabilities
+- **Docker-in-Docker (DIND) support**: Opt-in via `--dind` flag or config (`dind = true` in `[docker]` or `[project.<name>]`). When enabled, applies a custom seccomp profile allowing nested container operations, disables AppArmor confinement, and keeps SETUID/SETGID capabilities for rootless Podman user-namespace setup. When disabled (default), security_opt is left at Docker/Podman defaults and SETUID/SETGID are dropped. Resolution order: CLI flag > project config > `[docker]` config > default (false).
 - **Per-container network isolation**: Each agent runs in an isolated internal network that can only communicate with the proxy (see [Network Isolation Guide](docs/network-isolation.md)). Can be disabled per-task with `--no-network-isolation`
 - Proxy-based URL filtering (Squid) for API-only access with domain allowlist
 - Host service access via TCP port forwarding through the proxy container (configured in `[proxy]` section of tsk.toml)

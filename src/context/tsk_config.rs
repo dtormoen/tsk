@@ -69,6 +69,9 @@ pub struct DockerOptions {
     pub memory_limit_gb: f64,
     /// Number of CPUs available to container (default: 8)
     pub cpu_limit: u32,
+    /// Enable Docker-in-Docker support by default (default: false)
+    #[serde(default)]
+    pub dind: bool,
 }
 
 impl Default for DockerOptions {
@@ -82,6 +85,7 @@ impl Default for DockerOptions {
             container_engine,
             memory_limit_gb: 12.0, // 12GB
             cpu_limit: 8,          // 8 CPUs
+            dind: false,
         }
     }
 }
@@ -181,6 +185,9 @@ pub struct ProjectConfig {
     pub agent: Option<String>,
     /// Default stack for this project (e.g., "go", "rust", "python")
     pub stack: Option<String>,
+    /// Enable Docker-in-Docker support for this project
+    #[serde(default)]
+    pub dind: Option<bool>,
     /// Volume mounts for Docker containers
     #[serde(default)]
     pub volumes: Vec<VolumeMount>,
@@ -804,6 +811,41 @@ memory_limit_gb = 8.0
 
         assert_eq!(config.docker.container_engine, ContainerEngine::Podman);
         assert_eq!(config.docker.memory_limit_gb, 8.0);
+    }
+
+    #[test]
+    fn test_dind_config_parsing() {
+        use std::io::Write;
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_dir = temp_dir.path();
+
+        let toml_content = r#"
+[docker]
+dind = true
+
+[project.my-project]
+dind = false
+
+[project.other-project]
+agent = "codex"
+"#;
+        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+
+        let config = load_config(config_dir);
+
+        assert!(config.docker.dind, "docker.dind should be true");
+        assert_eq!(
+            config.project.get("my-project").unwrap().dind,
+            Some(false),
+            "project.my-project.dind should be Some(false)"
+        );
+        assert_eq!(
+            config.project.get("other-project").unwrap().dind,
+            None,
+            "project.other-project.dind should be None when not specified"
+        );
     }
 
     #[test]

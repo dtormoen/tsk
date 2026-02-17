@@ -19,6 +19,7 @@ pub struct RunCommand {
     pub project: Option<String>,
     pub repo: Option<String>,
     pub no_network_isolation: bool,
+    pub dind: bool,
 }
 
 #[async_trait]
@@ -78,6 +79,7 @@ impl Command for RunCommand {
             .stack(self.stack.clone())
             .project(self.project.clone())
             .network_isolation(!self.no_network_isolation)
+            .dind(if self.dind { Some(true) } else { None })
             .build(ctx)
             .await?;
 
@@ -132,6 +134,7 @@ mod tests {
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             no_network_isolation: false,
+            dind: false,
         };
 
         let ctx = create_test_context();
@@ -174,6 +177,7 @@ mod tests {
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             no_network_isolation: false,
+            dind: false,
         };
 
         // Execute should succeed for templates without {{DESCRIPTION}} placeholder
@@ -207,6 +211,7 @@ mod tests {
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             no_network_isolation: false,
+            dind: false,
         };
 
         let ctx = create_test_context();
@@ -248,6 +253,7 @@ mod tests {
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             no_network_isolation: false,
+            dind: false,
         };
 
         // Execute should succeed, using type as the name
@@ -281,6 +287,7 @@ mod tests {
             project: None,
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             no_network_isolation: false,
+            dind: false,
         };
 
         let ctx = create_test_context();

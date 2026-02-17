@@ -38,6 +38,7 @@ pub struct TaskBuilder {
     /// Parent task ID that this task is chained to
     parent_id: Option<String>,
     network_isolation: bool,
+    dind: Option<bool>,
 }
 
 impl TaskBuilder {
@@ -57,6 +58,7 @@ impl TaskBuilder {
             is_interactive: false,
             parent_id: None,
             network_isolation: true,
+            dind: None,
         }
     }
 
@@ -72,6 +74,7 @@ impl TaskBuilder {
         builder.copied_repo_path = task.copied_repo_path.clone();
         builder.is_interactive = task.is_interactive;
         builder.network_isolation = task.network_isolation;
+        builder.dind = Some(task.dind);
         // Note: We intentionally don't copy parent_id when retrying a task.
         // The retry creates a fresh task from the current repository state.
 
@@ -153,6 +156,14 @@ impl TaskBuilder {
     /// When disabled, the container runs on the default Docker network with direct internet access.
     pub fn network_isolation(mut self, enabled: bool) -> Self {
         self.network_isolation = enabled;
+        self
+    }
+
+    /// Sets whether Docker-in-Docker support is enabled.
+    /// When enabled, container security is relaxed to allow nested container builds.
+    /// Uses `Option<bool>` so `None` defers to config-file defaults.
+    pub fn dind(mut self, enabled: Option<bool>) -> Self {
+        self.dind = enabled;
         self
     }
 
@@ -365,6 +376,13 @@ impl TaskBuilder {
             }
         };
 
+        // Resolve dind: CLI flag > project config > docker config > default
+        let dind = self.dind.unwrap_or_else(|| {
+            project_config
+                .and_then(|pc| pc.dind)
+                .unwrap_or(tsk_config.docker.dind)
+        });
+
         // Generate human-readable branch name with format: tsk/{task-type}/{task-name}/{task-id}
         let sanitized_task_type = sanitize_for_branch_name(&task_type);
         let sanitized_name = sanitize_for_branch_name(&name);
@@ -456,6 +474,7 @@ impl TaskBuilder {
             self.is_interactive,
             self.parent_id.into_iter().collect::<Vec<String>>(),
             self.network_isolation,
+            dind,
         );
 
         Ok(task)
@@ -956,6 +975,7 @@ mod tests {
             ProjectConfig {
                 agent: Some("no-op".to_string()),
                 stack: Some("python".to_string()),
+                dind: None,
                 volumes: vec![],
                 env: vec![],
             },
@@ -1014,6 +1034,7 @@ mod tests {
             ProjectConfig {
                 agent: Some("no-op".to_string()),
                 stack: Some("python".to_string()),
+                dind: None,
                 volumes: vec![],
                 env: vec![],
             },
@@ -1066,6 +1087,7 @@ mod tests {
             ProjectConfig {
                 agent: Some("no-op".to_string()),
                 stack: None, // Not specified, should auto-detect
+                dind: None,
                 volumes: vec![],
                 env: vec![],
             },
@@ -1120,6 +1142,92 @@ mod tests {
         // Should use defaults: claude for agent, auto-detect for stack
         assert_eq!(task.agent, "claude", "Agent should use default");
         assert_eq!(task.stack, "rust", "Stack should be auto-detected");
+    }
+
+    #[tokio::test]
+    async fn test_dind_config_resolution_chain() {
+        use crate::context::{DockerOptions, ProjectConfig, TskConfig};
+        use crate::test_utils::TestGitRepository;
+        use std::collections::HashMap;
+
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        let repo_path = test_repo.path().to_path_buf();
+        let project_name = "test-project".to_string();
+
+        // Case 1: docker.dind = true, no project config, no CLI flag -> true
+        let tsk_config = TskConfig {
+            docker: DockerOptions {
+                dind: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let ctx = AppContext::builder().with_tsk_config(tsk_config).build();
+        let task = TaskBuilder::new()
+            .repo_root(repo_path.clone())
+            .name("dind-docker-default".to_string())
+            .description(Some("Test".to_string()))
+            .build(&ctx)
+            .await
+            .unwrap();
+        assert!(task.dind, "docker.dind = true should propagate");
+
+        // Case 2: docker.dind = true, project.dind = Some(false) -> false (project overrides)
+        let mut project_configs = HashMap::new();
+        project_configs.insert(
+            project_name.clone(),
+            ProjectConfig {
+                dind: Some(false),
+                ..Default::default()
+            },
+        );
+        let tsk_config = TskConfig {
+            docker: DockerOptions {
+                dind: true,
+                ..Default::default()
+            },
+            project: project_configs,
+            ..Default::default()
+        };
+        let ctx = AppContext::builder().with_tsk_config(tsk_config).build();
+        let task = TaskBuilder::new()
+            .repo_root(repo_path.clone())
+            .name("dind-project-override".to_string())
+            .description(Some("Test".to_string()))
+            .project(Some(project_name.clone()))
+            .build(&ctx)
+            .await
+            .unwrap();
+        assert!(
+            !task.dind,
+            "project.dind = false should override docker.dind = true"
+        );
+
+        // Case 3: project.dind = Some(false), CLI --dind -> true (CLI overrides)
+        let mut project_configs = HashMap::new();
+        project_configs.insert(
+            project_name.clone(),
+            ProjectConfig {
+                dind: Some(false),
+                ..Default::default()
+            },
+        );
+        let tsk_config = TskConfig {
+            project: project_configs,
+            ..Default::default()
+        };
+        let ctx = AppContext::builder().with_tsk_config(tsk_config).build();
+        let task = TaskBuilder::new()
+            .repo_root(repo_path.clone())
+            .name("dind-cli-override".to_string())
+            .description(Some("Test".to_string()))
+            .project(Some(project_name))
+            .dind(Some(true))
+            .build(&ctx)
+            .await
+            .unwrap();
+        assert!(task.dind, "CLI --dind should override project.dind = false");
     }
 
     #[tokio::test]

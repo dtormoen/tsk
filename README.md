@@ -210,6 +210,7 @@ TSK can be configured via `~/.config/tsk/tsk.toml`. All settings are optional.
 container_engine = "docker"  # "docker" (default) or "podman"
 memory_limit_gb = 12.0       # Container memory limit (default: 12.0)
 cpu_limit = 8                # Number of CPUs (default: 8)
+dind = false                 # Enable Docker-in-Docker support (default: false)
 
 # Proxy configuration
 [proxy]
@@ -231,6 +232,7 @@ auto_clean_age_days = 7.0   # Minimum age in days before cleanup (default: 7.0)
 [project.my-project]
 agent = "claude"        # Default agent (claude or codex)
 stack = "go"            # Default stack for auto-detection override
+dind = false            # Enable Docker-in-Docker for this project (default: false)
 volumes = [
     # Bind mount: Share host directories with containers (supports ~ expansion)
     { host = "~/.cache/go-mod", container = "/go/pkg/mod" },

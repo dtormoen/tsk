@@ -104,6 +104,10 @@ enum Commands {
         /// Disable per-container network isolation (allows direct internet access)
         #[arg(long)]
         no_network_isolation: bool,
+
+        /// Enable Docker-in-Docker support (relaxes container security for nested builds)
+        #[arg(long)]
+        dind: bool,
     },
     /// Launch a sandbox container with an agent for interactive use
     Shell {
@@ -149,6 +153,10 @@ enum Commands {
         /// Disable per-container network isolation (allows direct internet access)
         #[arg(long)]
         no_network_isolation: bool,
+
+        /// Enable Docker-in-Docker support (relaxes container security for nested builds)
+        #[arg(long)]
+        dind: bool,
     },
     /// Queue a task for later execution by the TSK server
     Add {
@@ -195,6 +203,10 @@ enum Commands {
         /// Disable per-container network isolation (allows direct internet access)
         #[arg(long)]
         no_network_isolation: bool,
+
+        /// Enable Docker-in-Docker support (relaxes container security for nested builds)
+        #[arg(long)]
+        dind: bool,
     },
     /// Start or stop the TSK server daemon that runs queued tasks in containers
     Server(ServerArgs),
@@ -232,6 +244,10 @@ enum Commands {
         /// Parent task ID (task will wait for parent to complete before starting)
         #[arg(short = 'p', long = "parent")]
         parent_id: Option<String>,
+
+        /// Enable Docker-in-Docker support (relaxes container security for nested builds)
+        #[arg(long)]
+        dind: bool,
     },
     /// Docker operations - build and manage TSK Docker images
     Docker(DockerArgs),
@@ -365,6 +381,7 @@ async fn main() {
             repo,
             parent_id,
             no_network_isolation,
+            dind,
         } => Box::new(AddCommand {
             name,
             r#type,
@@ -377,6 +394,7 @@ async fn main() {
             repo,
             parent_id,
             no_network_isolation,
+            dind,
         }),
         Commands::Run {
             engine: _,
@@ -390,6 +408,7 @@ async fn main() {
             project,
             repo,
             no_network_isolation,
+            dind,
         } => Box::new(RunCommand {
             name,
             r#type,
@@ -401,6 +420,7 @@ async fn main() {
             project,
             repo,
             no_network_isolation,
+            dind,
         }),
         Commands::Shell {
             engine: _,
@@ -414,6 +434,7 @@ async fn main() {
             project,
             repo,
             no_network_isolation,
+            dind,
         } => Box::new(ShellCommand {
             name,
             r#type,
@@ -425,6 +446,7 @@ async fn main() {
             project,
             repo,
             no_network_isolation,
+            dind,
         }),
         Commands::List => Box::new(ListCommand),
         Commands::Clean => Box::new(CleanCommand),
@@ -438,6 +460,7 @@ async fn main() {
             stack,
             project,
             parent_id,
+            dind,
         } => Box::new(RetryCommand {
             task_ids,
             edit,
@@ -446,6 +469,7 @@ async fn main() {
             stack,
             project,
             parent_id,
+            dind: if dind { Some(true) } else { None },
         }),
         Commands::Server(server_args) => match server_args.command {
             ServerCommands::Start {
