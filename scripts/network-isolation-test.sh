@@ -487,6 +487,7 @@ main() {
     run_test test_http_proxy "https://registry.npmjs.org" "pass" "npm registry"
     run_test test_http_proxy "https://proxy.golang.org" "pass" "Go proxy"
     run_test test_http_proxy "https://repo.maven.apache.org/maven2/" "pass" "Maven Central"
+    run_test test_http_proxy "https://github.com" "pass" "GitHub"
 
     # =========================================================================
     # SECTION 2: HTTP/HTTPS Through Proxy - Blocked Domains
@@ -494,7 +495,6 @@ main() {
     print_header "HTTP/HTTPS Through Proxy - Blocked Domains (should fail)" > /dev/null
 
     run_test test_http_proxy "https://www.google.com" "fail" "Google (blocked)"
-    run_test test_http_proxy "https://github.com" "fail" "GitHub (blocked)"
     run_test test_http_proxy "https://www.example.com" "fail" "example.com (blocked)"
     run_test test_http_proxy "https://httpbin.org/get" "fail" "httpbin.org (blocked)"
     run_test test_http_proxy "https://icanhazip.com" "fail" "icanhazip.com (blocked)"

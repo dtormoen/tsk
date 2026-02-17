@@ -16,6 +16,15 @@ pub enum TskEnvError {
 /// XDG-compliant paths and editor settings.
 /// It does NOT contain user-configurable options from tsk.toml -
 /// those are managed separately.
+///
+/// Path resolution priority (highest to lowest):
+/// 1. Builder override (test-only)
+/// 2. TSK-specific env var (`TSK_DATA_HOME`, `TSK_RUNTIME_DIR`, `TSK_CONFIG_HOME`)
+/// 3. XDG env var (`XDG_DATA_HOME`, `XDG_RUNTIME_DIR`, `XDG_CONFIG_HOME`)
+/// 4. Default fallback (`~/.local/share`, `/tmp`, `~/.config`)
+///
+/// TSK-specific env vars allow isolating TSK's directories without
+/// affecting other XDG-aware software.
 #[derive(Debug, Clone)]
 pub struct TskEnv {
     data_dir: PathBuf,
@@ -30,10 +39,10 @@ pub struct TskEnv {
 impl TskEnv {
     /// Create new TSK environment instance with default paths from environment
     ///
-    /// Uses XDG Base Directory specification:
-    /// - XDG_DATA_HOME for data directory (defaults to ~/.local/share/tsk)
-    /// - XDG_RUNTIME_DIR for runtime directory (defaults to /tmp/tsk-$UID)
-    /// - XDG_CONFIG_HOME for config directory (defaults to ~/.config/tsk)
+    /// Checks TSK-specific env vars first, then falls back to XDG:
+    /// - TSK_DATA_HOME / XDG_DATA_HOME for data directory (defaults to ~/.local/share/tsk)
+    /// - TSK_RUNTIME_DIR / XDG_RUNTIME_DIR for runtime directory (defaults to /tmp/tsk-$UID)
+    /// - TSK_CONFIG_HOME / XDG_CONFIG_HOME for config directory (defaults to ~/.config/tsk)
     pub fn new() -> Result<Self, TskEnvError> {
         let data_dir = Self::resolve_data_dir(None)?;
         let runtime_dir = Self::resolve_runtime_dir(None)?;
@@ -134,6 +143,11 @@ impl TskEnv {
             return Ok(data_dir.join("tsk"));
         }
 
+        // Check TSK_DATA_HOME for TSK-specific isolation
+        if let Ok(tsk_data) = env::var("TSK_DATA_HOME") {
+            return Ok(PathBuf::from(tsk_data).join("tsk"));
+        }
+
         // Check XDG_DATA_HOME environment variable
         if let Ok(xdg_data) = env::var("XDG_DATA_HOME") {
             return Ok(PathBuf::from(xdg_data).join("tsk"));
@@ -151,6 +165,11 @@ impl TskEnv {
         // Check override first
         if let Some(runtime_dir) = override_dir {
             return Ok(runtime_dir.join("tsk"));
+        }
+
+        // Check TSK_RUNTIME_DIR for TSK-specific isolation
+        if let Ok(tsk_runtime) = env::var("TSK_RUNTIME_DIR") {
+            return Ok(PathBuf::from(tsk_runtime).join("tsk"));
         }
 
         // Check XDG_RUNTIME_DIR environment variable
@@ -178,6 +197,11 @@ impl TskEnv {
         // Check override first
         if let Some(config_dir) = override_dir {
             return Ok(config_dir.join("tsk"));
+        }
+
+        // Check TSK_CONFIG_HOME for TSK-specific isolation
+        if let Ok(tsk_config) = env::var("TSK_CONFIG_HOME") {
+            return Ok(PathBuf::from(tsk_config).join("tsk"));
         }
 
         // Check XDG_CONFIG_HOME environment variable

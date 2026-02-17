@@ -71,12 +71,13 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Proxy-based URL filtering (Squid) for API-only access with domain allowlist
 - Host service access via TCP port forwarding through the proxy container (configured in `[proxy]` section of tsk.toml)
 - **Container environment variables**: All task containers receive `TSK_CONTAINER=1` and `TSK_TASK_ID=<task-id>` for in-container detection. When `TSK_CONTAINER=1` is set, TSK auto-defaults to Podman and skips proxy/network isolation (handled by outer container).
+- **Directory override environment variables**: `TSK_DATA_HOME`, `TSK_RUNTIME_DIR`, and `TSK_CONFIG_HOME` override the corresponding XDG base directories for TSK only (without affecting other XDG-aware software). Resolution priority: builder override > TSK env var > XDG env var > default fallback.
 - Volume mounting for repository copies and agent config
 - Layered image system: base → tech-stack → agent → project
 - Automatic fallback to default project layer when specific layer is missing
 
 **Storage** (`src/context/`)
-- `TskEnv`: Manages XDG-compliant directory paths (data_dir, runtime_dir, config_dir) and runtime environment settings (editor, terminal type)
+- `TskEnv`: Manages directory paths (data_dir, runtime_dir, config_dir) and runtime environment settings (editor, terminal type). TSK-specific env vars (`TSK_DATA_HOME`, `TSK_RUNTIME_DIR`, `TSK_CONFIG_HOME`) take precedence over XDG vars, enabling isolated testing without affecting other XDG-aware software
 - `TskConfig`: User configuration loaded from tsk.toml (docker limits, project-specific settings)
 - Centralized task storage across all repositories
 - Runtime directory for PID file
@@ -146,6 +147,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Available agents:
   - `claude`: Claude AI agent (default) - automatically detects version from `claude --version`
   - `codex`: Codex AI agent - automatically detects version from `codex --version`
+  - `integ`: Integration test agent that runs `tsk-integ-test.sh` from the project workspace
   - `no-op`: Simple agent for testing that displays instructions
 - Interactive debugging mode shows task instructions and the normal command before providing shell access
 
@@ -181,6 +183,13 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Keep tests simple and concise while still testing core functionality. Improving existing tests is always preferred over adding new ones
 - Avoid using `#[allow(dead_code)]`
 - Limit `#[cfg(test)]` to tests and test utilities
+
+### Integration Tests
+
+- Stack layer integration tests live in `tests/integration/projects/<stack>/`
+- Each project has a `tsk-integ-test.sh` script that validates the stack works
+- Run with `just integration-test` (requires Docker/Podman and internet access for image builds)
+- To add a new test: create a directory in `tests/integration/projects/` with project files and a `tsk-integ-test.sh`
 
 ### Branch and Task Conventions
 
