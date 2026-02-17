@@ -3,13 +3,9 @@
 # Switch to root temporarily for system package installation
 USER root
 
-# Install Neovim, LuaJIT, and development tools
+# Install LuaJIT and development tools
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends software-properties-common && \
-    add-apt-repository ppa:neovim-ppa/stable && \
-    apt-get update && \
     apt-get install -y --no-install-recommends \
-    neovim \
     luajit \
     libluajit-5.1-dev \
     lua5.1 \
@@ -17,6 +13,15 @@ RUN apt-get update && \
     luarocks \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Neovim from GitHub releases (PPA doesn't support Ubuntu 25.10+)
+RUN ARCH=$(dpkg --print-architecture) && \
+    case "$ARCH" in \
+        amd64) NVIM_ARCH="linux-x86_64" ;; \
+        arm64) NVIM_ARCH="linux-arm64" ;; \
+    esac && \
+    curl -fsSL "https://github.com/neovim/neovim/releases/latest/download/nvim-${NVIM_ARCH}.tar.gz" \
+        | tar xz -C /usr/local --strip-components=1
 
 # Install stylua from prebuilt binary
 RUN ARCH=$(dpkg --print-architecture) && \

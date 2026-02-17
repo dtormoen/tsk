@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM ubuntu:25.10
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -35,7 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zip \
     && rm -rf /var/lib/apt/lists/*
 
-# Ubuntu 24.04 already has a ubuntu user with UID/GID 1000
+# Ubuntu already has a ubuntu user with UID/GID 1000
 # We'll rename it to agent and ensure proper permissions
 RUN usermod -l agent ubuntu && \
     groupmod -n agent ubuntu && \
