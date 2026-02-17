@@ -259,6 +259,15 @@ impl DockerManager {
             }
         }
 
+        // Use chroot isolation for Podman/Buildah builds inside DIND containers.
+        // Full OCI isolation fails in nested user namespaces because the kernel
+        // denies devpts mounts (Permission denied). Chroot isolation avoids
+        // creating new namespaces or mounting devpts/proc/sysfs during RUN steps,
+        // which is safe since we're already inside a container.
+        if task.dind {
+            env_vars.push("BUILDAH_ISOLATION=chroot".to_string());
+        }
+
         // Set PYTHONPATH for Python stacks so imports work from the project directory
         if task.stack == "python" {
             env_vars.push(format!("PYTHONPATH={working_dir}"));
@@ -1605,6 +1614,13 @@ mod tests {
         // Other capabilities should still be dropped
         assert!(cap_drop.contains(&"NET_ADMIN".to_string()));
         assert!(cap_drop.contains(&"SYS_ADMIN".to_string()));
+
+        // DIND: BUILDAH_ISOLATION=chroot should be set for nested Podman builds
+        let env = task_config.env.as_ref().unwrap();
+        assert!(
+            env.contains(&"BUILDAH_ISOLATION=chroot".to_string()),
+            "BUILDAH_ISOLATION=chroot should be set when dind is enabled"
+        );
     }
 
     #[tokio::test]
@@ -1646,5 +1662,12 @@ mod tests {
         assert!(cap_drop.contains(&"SYS_PTRACE".to_string()));
         assert!(cap_drop.contains(&"DAC_OVERRIDE".to_string()));
         assert!(cap_drop.contains(&"AUDIT_WRITE".to_string()));
+
+        // Non-DIND: BUILDAH_ISOLATION should not be set
+        let env = task_config.env.as_ref().unwrap();
+        assert!(
+            !env.contains(&"BUILDAH_ISOLATION=chroot".to_string()),
+            "BUILDAH_ISOLATION should not be set when dind is disabled"
+        );
     }
 }
