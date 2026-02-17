@@ -2,7 +2,6 @@
 
 # Install Rust for agent user
 RUN curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-RUN . /home/agent/.cargo/env && cargo install just
 
 # Add Rust to PATH
 ENV PATH="/home/agent/.cargo/bin:${PATH}"

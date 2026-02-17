@@ -8,31 +8,12 @@ RUN uv venv /home/agent/.venv
 ENV VIRTUAL_ENV=/home/agent/.venv
 ENV PATH="/home/agent/.venv/bin:${PATH}"
 
-# Install common Python development dependencies using uv
-# These are commonly needed tools for Python development
+# Install common Python development tools
 RUN uv pip install \
     pytest \
-    pytest-cov \
-    pytest-asyncio \
-    pytest-mock \
     pip \
     black \
     ruff \
     ty \
     mypy \
-    ipython \
-    ipdb \
-    requests \
-    httpx \
-    pydantic \
-    typing-extensions \
-    python-dotenv \
-    rich \
-    click \
-    tqdm
-
-# Install Poetry separately as it's a package manager that some projects might use
-RUN uv pip install poetry
-
-# Set Python environment variables
-ENV PYTHONUNBUFFERED=1
+    poetry
