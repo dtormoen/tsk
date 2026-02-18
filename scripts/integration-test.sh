@@ -264,6 +264,16 @@ run_nested_test() {
     export TSK_RUNTIME_DIR="$iso_dir/runtime"
     export TSK_CONFIG_HOME="$iso_dir/config"
 
+    # The nested container builds all 7 stack images from scratch in parallel.
+    # The default 12 GB memory limit is too low — tmpfs-backed Podman storage
+    # alone can exceed 10 GB during concurrent java + rust image builds,
+    # triggering OOM kills. 30 GB provides sufficient headroom.
+    mkdir -p "$iso_dir/config/tsk"
+    cat > "$iso_dir/config/tsk/tsk.toml" << 'EOF'
+[docker]
+memory_limit_gb = 30.0
+EOF
+
     echo -e "  Running: ${YELLOW}nested-${engine}${NC}"
 
     if cargo run --manifest-path "$MANIFEST" -- run \
@@ -316,10 +326,9 @@ if [ "${TSK_CONTAINER:-}" != "1" ]; then
     run_nested_test "docker"
 
     echo "--------------------------------------------"
-    echo "  podman-in-podman (disabled)"
+    echo "  podman-in-podman"
     echo "--------------------------------------------"
-    # This currently is not passing and will need some digging.
-    # run_nested_test "podman"
+    run_nested_test "podman"
 else
     echo "Skipping nested tests (inside TSK container)"
     echo ""
@@ -331,7 +340,7 @@ if [ "${TSK_CONTAINER:-}" != "1" ]; then
     echo "  Docker Engine Stack Tests"
     echo "============================================"
     echo ""
-    # run_stack_tests "docker"
+    run_stack_tests "docker"
 else
     echo "Skipping Docker engine tests (inside TSK container)"
     echo ""
