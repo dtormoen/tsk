@@ -300,6 +300,14 @@ impl DockerManager {
                 vec![format!("seccomp={SECCOMP_DIND_PROFILE}")]
             };
             security_opts.push("apparmor=unconfined".to_string());
+            // Podman-in-Podman: disable SELinux confinement so nested Podman
+            // can fchown stdio file descriptors. Without this, SELinux's
+            // container_t context blocks fchown with EACCES, which crun treats
+            // as fatal (unlike EPERM which crun ignores). Not needed for
+            // Docker-in-Podman since Docker does not apply SELinux container_t.
+            if docker_config.container_engine == ContainerEngine::Podman {
+                security_opts.push("label=disable".to_string());
+            }
             Some(security_opts)
         } else {
             None
@@ -359,7 +367,7 @@ impl DockerManager {
                 // path entirely. Remove this once docker/for-mac#7413 is fixed.
                 tmpfs: Some(HashMap::from([(
                     "/home/agent/.local/share/containers/storage".to_string(),
-                    "size=20G".to_string(),
+                    "size=40G".to_string(),
                 )])),
                 // In nested containers, keep the host UID mapping so bind-mounted
                 // files retain correct ownership (rootless Podman remaps UIDs otherwise).
