@@ -150,9 +150,6 @@ impl Command for AddCommand {
             println!("\nTask successfully added to queue!");
             println!("Task ID: {}", task.id);
             println!("Type: {}", self.r#type);
-            if let Some(ref desc) = final_description {
-                println!("Description: {desc}");
-            }
             if self.prompt.is_some() {
                 println!("Prompt: Copied to task directory");
             }
@@ -164,9 +161,6 @@ impl Command for AddCommand {
                 created_tasks.len()
             );
             println!("Type: {}", self.r#type);
-            if let Some(ref desc) = final_description {
-                println!("Description: {desc}");
-            }
             println!("\nCreated tasks:");
             for task in &created_tasks {
                 println!("  - Task ID: {} (Agent: {})", task.id, task.agent);
