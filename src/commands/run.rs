@@ -1,28 +1,15 @@
 use super::Command;
+use super::task_args::TaskArgs;
 use crate::context::AppContext;
 use crate::context::docker_client::DefaultDockerClient;
 use crate::docker::DockerManager;
-use crate::repo_utils::find_repository_root;
-use crate::stdin_utils::{merge_description_with_stdin, read_piped_input};
-use crate::task::TaskBuilder;
 use crate::task_runner::TaskRunner;
 use async_trait::async_trait;
 use std::error::Error;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub struct RunCommand {
-    pub name: Option<String>,
-    pub r#type: String,
-    pub description: Option<String>,
-    pub prompt: Option<String>,
-    pub edit: bool,
-    pub agent: Option<String>,
-    pub stack: Option<String>,
-    pub project: Option<String>,
-    pub repo: Option<String>,
-    pub no_network_isolation: bool,
-    pub dind: bool,
+    pub task_args: TaskArgs,
     /// Optional Docker client override for dependency injection (used in tests)
     pub docker_client_override: Option<Arc<dyn crate::context::docker_client::DockerClient>>,
 }
@@ -30,29 +17,13 @@ pub struct RunCommand {
 #[async_trait]
 impl Command for RunCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
-        // Resolve name: use provided name or default to task type
-        let name = self.name.clone().unwrap_or_else(|| self.r#type.clone());
+        let args = &self.task_args;
+        let name = args.resolved_name();
 
-        println!("Running task: {}", name);
-        println!("Type: {}", self.r#type);
+        println!("Running task: {name}");
+        println!("Type: {}", args.r#type);
 
-        // Parse comma-separated agents or use default
-        let agents: Vec<String> = match &self.agent {
-            Some(agent_str) => agent_str.split(',').map(|s| s.trim().to_string()).collect(),
-            None => vec![crate::agent::AgentProvider::default_agent().to_string()],
-        };
-
-        // Validate all agents before creating any tasks
-        for agent in &agents {
-            if !crate::agent::AgentProvider::is_valid_agent(agent) {
-                let available_agents = crate::agent::AgentProvider::list_agents().join(", ");
-                return Err(format!(
-                    "Unknown agent '{}'. Available agents: {}",
-                    agent, available_agents
-                )
-                .into());
-            }
-        }
+        let agents = args.parse_and_validate_agents()?;
 
         // Run command only supports single agent (no multi-agent execution)
         if agents.len() > 1 {
@@ -62,29 +33,16 @@ impl Command for RunCommand {
             );
         }
 
-        // Read from stdin if data is piped
-        let piped_input = read_piped_input()?;
+        let description = args.resolve_description()?;
+        let repo_root = args.resolve_repo_root()?;
 
-        // Merge piped input with CLI description (piped input takes precedence)
-        let final_description = merge_description_with_stdin(self.description.clone(), piped_input);
-
-        // Find repository root
-        let start_path = self.repo.as_deref().unwrap_or(".");
-        let repo_root = find_repository_root(Path::new(start_path))?;
-
-        // Create task using TaskBuilder
-        let task = TaskBuilder::new()
-            .repo_root(repo_root.clone())
-            .name(name.clone())
-            .task_type(self.r#type.clone())
-            .description(final_description)
-            .instructions_file(self.prompt.as_ref().map(PathBuf::from))
-            .edit(self.edit)
-            .agent(Some(agents[0].clone()))
-            .stack(self.stack.clone())
-            .project(self.project.clone())
-            .network_isolation(!self.no_network_isolation)
-            .dind(if self.dind { Some(true) } else { None })
+        let task = args
+            .configure_builder(
+                repo_root,
+                name.clone(),
+                Some(agents[0].clone()),
+                description,
+            )
             .build(ctx)
             .await?;
 
@@ -92,8 +50,7 @@ impl Command for RunCommand {
         println!("Task ID: {}", task.id);
 
         // Update terminal title for the task
-        ctx.terminal_operations()
-            .set_title(&format!("TSK: {}", name));
+        ctx.terminal_operations().set_title(&format!("TSK: {name}"));
 
         // Execute the task
         let docker_client: Arc<dyn crate::context::docker_client::DockerClient> =
@@ -141,17 +98,12 @@ mod tests {
         test_repo.init_with_commit().unwrap();
 
         let cmd = RunCommand {
-            name: Some("test".to_string()),
-            r#type: "generic".to_string(),
-            description: None,
-            prompt: None,
-            edit: false,
-            agent: None,
-            stack: None,
-            project: None,
-            repo: Some(test_repo.path().to_string_lossy().to_string()),
-            no_network_isolation: false,
-            dind: false,
+            task_args: TaskArgs {
+                name: Some("test".to_string()),
+                r#type: "generic".to_string(),
+                repo: Some(test_repo.path().to_string_lossy().to_string()),
+                ..Default::default()
+            },
             docker_client_override: mock_docker_client(),
         };
 
@@ -181,17 +133,12 @@ mod tests {
         let ctx = AppContext::builder().build();
 
         let cmd = RunCommand {
-            name: Some("test-ack".to_string()),
-            r#type: "ack".to_string(),
-            description: None,
-            prompt: None,
-            edit: false,
-            agent: None,
-            stack: None,
-            project: None,
-            repo: Some(test_repo.path().to_string_lossy().to_string()),
-            no_network_isolation: false,
-            dind: false,
+            task_args: TaskArgs {
+                name: Some("test-ack".to_string()),
+                r#type: "ack".to_string(),
+                repo: Some(test_repo.path().to_string_lossy().to_string()),
+                ..Default::default()
+            },
             docker_client_override: mock_docker_client(),
         };
 
@@ -211,17 +158,14 @@ mod tests {
         test_repo.init_with_commit().unwrap();
 
         let cmd = RunCommand {
-            name: Some("test-multi".to_string()),
-            r#type: "generic".to_string(),
-            description: Some("Test description".to_string()),
-            prompt: None,
-            edit: false,
-            agent: Some("codex,claude".to_string()),
-            stack: None,
-            project: None,
-            repo: Some(test_repo.path().to_string_lossy().to_string()),
-            no_network_isolation: false,
-            dind: false,
+            task_args: TaskArgs {
+                name: Some("test-multi".to_string()),
+                r#type: "generic".to_string(),
+                description: Some("Test description".to_string()),
+                agent: Some("codex,claude".to_string()),
+                repo: Some(test_repo.path().to_string_lossy().to_string()),
+                ..Default::default()
+            },
             docker_client_override: mock_docker_client(),
         };
 
@@ -251,17 +195,11 @@ mod tests {
         let ctx = AppContext::builder().build();
 
         let cmd = RunCommand {
-            name: None,
-            r#type: "ack".to_string(),
-            description: None,
-            prompt: None,
-            edit: false,
-            agent: None,
-            stack: None,
-            project: None,
-            repo: Some(test_repo.path().to_string_lossy().to_string()),
-            no_network_isolation: false,
-            dind: false,
+            task_args: TaskArgs {
+                r#type: "ack".to_string(),
+                repo: Some(test_repo.path().to_string_lossy().to_string()),
+                ..Default::default()
+            },
             docker_client_override: mock_docker_client(),
         };
 
@@ -285,17 +223,13 @@ mod tests {
             .unwrap();
 
         let cmd = RunCommand {
-            name: Some("test-single".to_string()),
-            r#type: "ack".to_string(),
-            description: None,
-            prompt: None,
-            edit: false,
-            agent: Some("codex".to_string()),
-            stack: None,
-            project: None,
-            repo: Some(test_repo.path().to_string_lossy().to_string()),
-            no_network_isolation: false,
-            dind: false,
+            task_args: TaskArgs {
+                name: Some("test-single".to_string()),
+                r#type: "ack".to_string(),
+                agent: Some("codex".to_string()),
+                repo: Some(test_repo.path().to_string_lossy().to_string()),
+                ..Default::default()
+            },
             docker_client_override: mock_docker_client(),
         };
 

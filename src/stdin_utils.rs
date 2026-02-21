@@ -91,6 +91,7 @@ mod tests {
     async fn test_add_command_with_piped_input() {
         use crate::commands::AddCommand;
         use crate::commands::Command;
+        use crate::commands::task_args::TaskArgs;
 
         // Create a test git repository
         let test_repo = TestGitRepository::new().unwrap();
@@ -107,18 +108,13 @@ mod tests {
 
         // Test 1: Command without description should fail normally (when not piped)
         let cmd = AddCommand {
-            name: Some("test-no-desc".to_string()),
-            r#type: "generic".to_string(),
-            description: None,
-            prompt: None,
-            edit: false,
-            agent: None,
-            stack: None,
-            project: None,
-            repo: Some(test_repo.path().to_string_lossy().to_string()),
+            task_args: TaskArgs {
+                name: Some("test-no-desc".to_string()),
+                r#type: "generic".to_string(),
+                repo: Some(test_repo.path().to_string_lossy().to_string()),
+                ..Default::default()
+            },
             parent_id: None,
-            no_network_isolation: false,
-            dind: false,
         };
 
         // Should fail without piped input
@@ -127,18 +123,14 @@ mod tests {
 
         // Test 2: Command with CLI description should work
         let cmd_with_desc = AddCommand {
-            name: Some("test-with-desc".to_string()),
-            r#type: "generic".to_string(),
-            description: Some("CLI description".to_string()),
-            prompt: None,
-            edit: false,
-            agent: None,
-            stack: None,
-            project: None,
-            repo: Some(test_repo.path().to_string_lossy().to_string()),
+            task_args: TaskArgs {
+                name: Some("test-with-desc".to_string()),
+                r#type: "generic".to_string(),
+                description: Some("CLI description".to_string()),
+                repo: Some(test_repo.path().to_string_lossy().to_string()),
+                ..Default::default()
+            },
             parent_id: None,
-            no_network_isolation: false,
-            dind: false,
         };
 
         let result = cmd_with_desc.execute(&ctx).await;
@@ -152,6 +144,7 @@ mod tests {
     async fn test_run_command_with_piped_input() {
         use crate::commands::Command;
         use crate::commands::RunCommand;
+        use crate::commands::task_args::TaskArgs;
         use crate::test_utils::NoOpDockerClient;
         use std::sync::Arc;
 
@@ -170,17 +163,12 @@ mod tests {
 
         // Test: Command without description should work for templates without placeholder
         let cmd = RunCommand {
-            name: Some("test-ack".to_string()),
-            r#type: "ack".to_string(),
-            description: None,
-            prompt: None,
-            edit: false,
-            agent: None,
-            stack: None,
-            project: None,
-            repo: Some(test_repo.path().to_string_lossy().to_string()),
-            no_network_isolation: false,
-            dind: false,
+            task_args: TaskArgs {
+                name: Some("test-ack".to_string()),
+                r#type: "ack".to_string(),
+                repo: Some(test_repo.path().to_string_lossy().to_string()),
+                ..Default::default()
+            },
             docker_client_override: Some(Arc::new(NoOpDockerClient)),
         };
 
@@ -195,30 +183,27 @@ mod tests {
     #[tokio::test]
     async fn test_shell_command_structure() {
         use crate::commands::ShellCommand;
+        use crate::commands::task_args::TaskArgs;
 
         let cmd = ShellCommand {
-            name: "test-shell".to_string(),
-            r#type: "generic".to_string(),
-            description: Some("Test description".to_string()),
-            prompt: None,
-            edit: false,
-            agent: Some("claude".to_string()),
-            stack: None,
-            project: None,
-            repo: None,
-            no_network_isolation: false,
-            dind: false,
+            task_args: TaskArgs {
+                name: Some("test-shell".to_string()),
+                r#type: "generic".to_string(),
+                description: Some("Test description".to_string()),
+                agent: Some("claude".to_string()),
+                ..Default::default()
+            },
         };
 
-        // Verify the command has the expected fields
-        assert_eq!(cmd.name, "test-shell");
-        assert_eq!(cmd.r#type, "generic");
-        assert_eq!(cmd.description, Some("Test description".to_string()));
-        assert_eq!(cmd.prompt, None);
-        assert!(!cmd.edit);
-        assert_eq!(cmd.agent, Some("claude".to_string()));
-        assert_eq!(cmd.stack, None);
-        assert_eq!(cmd.project, None);
-        assert_eq!(cmd.repo, None);
+        let args = &cmd.task_args;
+        assert_eq!(args.resolved_name(), "test-shell");
+        assert_eq!(args.r#type, "generic");
+        assert_eq!(args.description, Some("Test description".to_string()));
+        assert_eq!(args.prompt, None);
+        assert!(!args.edit);
+        assert_eq!(args.agent, Some("claude".to_string()));
+        assert_eq!(args.stack, None);
+        assert_eq!(args.project, None);
+        assert_eq!(args.repo, None);
     }
 }
