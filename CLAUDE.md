@@ -173,6 +173,21 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Keep CLAUDE.md file simple, but up to date
 - Avoid `unsafe` blocks
 
+### Commit Conventions
+
+Commits use conventional commit prefixes. These map to changelog groups via `release-plz.toml`:
+
+- `feat`: New user-facing functionality or capabilities (appears in release notes under "added")
+- `fix`: Bug fixes to existing behavior (appears in release notes under "fixed")
+- `docs`: Documentation-only changes (appears in release notes under "documentation")
+- `test`: Adding or updating tests with no production code changes (excluded from release notes)
+- `refactor`: Code restructuring with no behavior change (excluded from release notes)
+- `chore`: Maintenance tasks like dependency updates, CI config, releases (excluded from release notes)
+
+Use `refactor` when reorganizing code internals without changing what the software does. Use `chore` for non-code changes or tooling. Both are skipped in changelogs, so use `feat` or `fix` if the change is meaningful to users.
+
+For user-facing breaking changes, add `!` after the type (e.g., `feat!:`, `fix!:`). The commit title must explain why the change is breaking so users understand the impact without reading the full diff (e.g., `feat!: rename --workers to --concurrency for clarity`).
+
 ### Testing Conventions
 
 - Prefer integration tests using real implementations over mocks
