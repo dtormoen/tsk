@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.4](https://github.com/dtormoen/tsk/compare/v0.8.3...v0.8.4) - 2026-02-19
+
+### Fixed
+
+- stop echoing piped description content in tsk add output
+- slim down Docker images by removing unnecessary dependencies
+
+### Other
+
+- update install directions ([#38](https://github.com/dtormoen/tsk/pull/38))
+
 ## [0.8.3](https://github.com/dtormoen/tsk/compare/v0.8.2...v0.8.3) - 2026-02-16
 
 ### Added
