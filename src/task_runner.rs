@@ -245,11 +245,7 @@ impl TaskRunner {
         task: &Task,
     ) -> Result<TaskExecutionResult, TaskExecutionError> {
         // Update task status to running
-        let mut running_task = task.clone();
-        running_task.status = TaskStatus::Running;
-        running_task.started_at = Some(chrono::Utc::now());
-
-        if let Err(e) = self.task_storage.update_task(running_task.clone()).await {
+        if let Err(e) = self.task_storage.mark_running(&task.id).await {
             eprintln!("Error updating task status: {e}");
         }
 
@@ -258,23 +254,18 @@ impl TaskRunner {
 
         match execution_result {
             Ok(result) => {
-                // Update task status based on the task result
-                // Use running_task to preserve started_at timestamp
-                let mut updated_task = running_task;
-                updated_task.completed_at = Some(chrono::Utc::now());
-                updated_task.branch_name = result.branch_name.clone();
-
                 if result.task_result.success {
-                    updated_task.status = TaskStatus::Complete;
-                    if let Err(e) = self.task_storage.update_task(updated_task).await {
+                    if let Err(e) = self
+                        .task_storage
+                        .mark_complete(&task.id, &result.branch_name)
+                        .await
+                    {
                         eprintln!("Error updating task status: {e}");
                     }
                     Ok(result)
                 } else {
                     let message = result.task_result.message.clone();
-                    updated_task.status = TaskStatus::Failed;
-                    updated_task.error_message = Some(message.clone());
-                    if let Err(e) = self.task_storage.update_task(updated_task).await {
+                    if let Err(e) = self.task_storage.mark_failed(&task.id, &message).await {
                         eprintln!("Error updating task status: {e}");
                     }
                     Err(TaskExecutionError {
@@ -284,13 +275,8 @@ impl TaskRunner {
                 }
             }
             Err(e) => {
-                // Update task status to failed
-                // Use running_task to preserve started_at timestamp
-                running_task.status = TaskStatus::Failed;
-                running_task.error_message = Some(e.message.clone());
-                running_task.completed_at = Some(chrono::Utc::now());
-
-                if let Err(storage_err) = self.task_storage.update_task(running_task).await {
+                if let Err(storage_err) = self.task_storage.mark_failed(&task.id, &e.message).await
+                {
                     eprintln!("Error updating task status: {storage_err}");
                 }
                 Err(e)

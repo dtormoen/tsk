@@ -155,15 +155,7 @@ impl TskServer {
             if let Ok(Some(task)) = storage.get_task(task_id).await
                 && task.status == TaskStatus::Running
             {
-                let _ = storage
-                    .update_task_status(
-                        task_id,
-                        TaskStatus::Failed,
-                        None,
-                        Some(chrono::Utc::now()),
-                        Some("Server shutdown".to_string()),
-                    )
-                    .await;
+                let _ = storage.mark_failed(task_id, "Server shutdown").await;
             }
         }
 
@@ -210,26 +202,8 @@ mod tests {
         storage.add_task(task2).await.unwrap();
 
         // Mark both tasks as Running
-        storage
-            .update_task_status(
-                "task-1",
-                TaskStatus::Running,
-                Some(chrono::Utc::now()),
-                None,
-                None,
-            )
-            .await
-            .unwrap();
-        storage
-            .update_task_status(
-                "task-2",
-                TaskStatus::Running,
-                Some(chrono::Utc::now()),
-                None,
-                None,
-            )
-            .await
-            .unwrap();
+        storage.mark_running("task-1").await.unwrap();
+        storage.mark_running("task-2").await.unwrap();
 
         // Simulate that these tasks are submitted to the scheduler
         {
@@ -287,13 +261,7 @@ mod tests {
         };
         storage.add_task(task).await.unwrap();
         storage
-            .update_task_status(
-                "task-done",
-                TaskStatus::Complete,
-                None,
-                Some(chrono::Utc::now()),
-                None,
-            )
+            .mark_complete("task-done", "tsk/test/task-done")
             .await
             .unwrap();
 

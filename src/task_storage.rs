@@ -1,8 +1,13 @@
 use crate::context::tsk_env::TskEnv;
-use crate::task::{Task, TaskStatus};
+use crate::task::Task;
+use std::path::PathBuf;
 use std::sync::Arc;
 
-// Trait for task storage abstraction
+/// Trait for task storage abstraction.
+///
+/// Status mutations use explicit named transition methods that perform targeted
+/// SQL updates and return the full updated row, eliminating clone-mutate-replace
+/// patterns and ensuring callers always receive the authoritative DB state.
 #[async_trait::async_trait]
 pub trait TaskStorage: Send + Sync {
     async fn add_task(&self, task: Task) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
@@ -11,17 +16,43 @@ pub trait TaskStorage: Send + Sync {
         id: &str,
     ) -> Result<Option<Task>, Box<dyn std::error::Error + Send + Sync>>;
     async fn list_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error + Send + Sync>>;
-    async fn update_task(&self, task: Task)
-    -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
-    async fn update_task_status(
+    async fn delete_task(&self, id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+
+    /// Transition a task to Running status, setting `started_at` to now.
+    async fn mark_running(
         &self,
         id: &str,
-        status: TaskStatus,
-        started_at: Option<chrono::DateTime<chrono::Utc>>,
-        completed_at: Option<chrono::DateTime<chrono::Utc>>,
-        error_message: Option<String>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
-    async fn delete_task(&self, id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    ) -> Result<Task, Box<dyn std::error::Error + Send + Sync>>;
+
+    /// Transition a task to Complete status, setting `completed_at` to now and `branch_name`.
+    async fn mark_complete(
+        &self,
+        id: &str,
+        branch_name: &str,
+    ) -> Result<Task, Box<dyn std::error::Error + Send + Sync>>;
+
+    /// Transition a task to Failed status, setting `completed_at` to now and `error_message`.
+    async fn mark_failed(
+        &self,
+        id: &str,
+        error_message: &str,
+    ) -> Result<Task, Box<dyn std::error::Error + Send + Sync>>;
+
+    /// Reset a task to Queued status, clearing `started_at`, `completed_at`, and `error_message`.
+    async fn reset_to_queued(
+        &self,
+        id: &str,
+    ) -> Result<Task, Box<dyn std::error::Error + Send + Sync>>;
+
+    /// Update a child task's repository fields after copying from its parent.
+    /// Sets `copied_repo_path`, `source_commit`, and `source_branch`.
+    async fn prepare_child_task(
+        &self,
+        id: &str,
+        copied_repo_path: PathBuf,
+        source_commit: &str,
+        source_branch: &str,
+    ) -> Result<Task, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 /// Creates a new SQLite-backed task storage instance for the given environment.
@@ -37,7 +68,7 @@ mod tests {
     use super::*;
     use crate::context::AppContext;
     use crate::sqlite_task_storage::SqliteTaskStorage;
-    use crate::task::Task;
+    use crate::task::{Task, TaskStatus};
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -60,9 +91,8 @@ mod tests {
         let tasks = storage.list_tasks().await.unwrap();
         assert_eq!(tasks.len(), 1);
 
-        let mut updated_task = task.clone();
-        updated_task.status = TaskStatus::Running;
-        storage.update_task(updated_task).await.unwrap();
+        let updated = storage.mark_running(&task.id).await.unwrap();
+        assert_eq!(updated.status, TaskStatus::Running);
 
         let retrieved = storage.get_task(&task.id).await.unwrap().unwrap();
         assert_eq!(retrieved.status, TaskStatus::Running);
@@ -199,84 +229,149 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sqlite_update_task_status() {
+    async fn test_mark_running() {
         let ctx = AppContext::builder().build();
         let tsk_env = ctx.tsk_env();
-
-        let db_path = tsk_env.data_dir().join("test_status_update.db");
+        let db_path = tsk_env.data_dir().join("test_mark_running.db");
         let storage = SqliteTaskStorage::new(db_path).unwrap();
 
         let task = Task {
-            id: "status1234".to_string(),
+            id: "run1234".to_string(),
             repo_root: tsk_env.data_dir().to_path_buf(),
-            name: "status-task".to_string(),
-            task_type: "fix".to_string(),
-            branch_name: "tsk/fix/status-task/status1234".to_string(),
+            branch_name: "tsk/fix/run-task/run1234".to_string(),
             copied_repo_path: Some(tsk_env.data_dir().to_path_buf()),
             ..Task::test_default()
         };
-
         storage.add_task(task).await.unwrap();
 
-        // Update to Running with started_at
-        let started = chrono::Utc::now();
-        storage
-            .update_task_status("status1234", TaskStatus::Running, Some(started), None, None)
+        let updated = storage.mark_running("run1234").await.unwrap();
+        assert_eq!(updated.status, TaskStatus::Running);
+        assert!(updated.started_at.is_some());
+        assert!(updated.completed_at.is_none());
+        assert!(updated.error_message.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_mark_complete() {
+        let ctx = AppContext::builder().build();
+        let tsk_env = ctx.tsk_env();
+        let db_path = tsk_env.data_dir().join("test_mark_complete.db");
+        let storage = SqliteTaskStorage::new(db_path).unwrap();
+
+        let task = Task {
+            id: "comp1234".to_string(),
+            repo_root: tsk_env.data_dir().to_path_buf(),
+            branch_name: "tsk/fix/comp-task/comp1234".to_string(),
+            copied_repo_path: Some(tsk_env.data_dir().to_path_buf()),
+            ..Task::test_default()
+        };
+        storage.add_task(task).await.unwrap();
+
+        // First mark running, then complete
+        storage.mark_running("comp1234").await.unwrap();
+        let updated = storage
+            .mark_complete("comp1234", "tsk/fix/new-branch/comp1234")
             .await
             .unwrap();
+        assert_eq!(updated.status, TaskStatus::Complete);
+        assert!(updated.completed_at.is_some());
+        assert_eq!(updated.branch_name, "tsk/fix/new-branch/comp1234");
+        // started_at should be preserved from mark_running
+        assert!(updated.started_at.is_some());
+    }
 
-        let retrieved = storage.get_task("status1234").await.unwrap().unwrap();
-        assert_eq!(retrieved.status, TaskStatus::Running);
-        assert_eq!(
-            retrieved.started_at.unwrap().to_rfc3339(),
-            started.to_rfc3339()
-        );
-        assert!(retrieved.completed_at.is_none());
-        assert!(retrieved.error_message.is_none());
+    #[tokio::test]
+    async fn test_mark_failed() {
+        let ctx = AppContext::builder().build();
+        let tsk_env = ctx.tsk_env();
+        let db_path = tsk_env.data_dir().join("test_mark_failed.db");
+        let storage = SqliteTaskStorage::new(db_path).unwrap();
 
-        // Update to Complete with completed_at
-        let completed = chrono::Utc::now();
+        let task = Task {
+            id: "fail1234".to_string(),
+            repo_root: tsk_env.data_dir().to_path_buf(),
+            branch_name: "tsk/fix/fail-task/fail1234".to_string(),
+            copied_repo_path: Some(tsk_env.data_dir().to_path_buf()),
+            ..Task::test_default()
+        };
+        storage.add_task(task).await.unwrap();
+
+        storage.mark_running("fail1234").await.unwrap();
+        let updated = storage
+            .mark_failed("fail1234", "agent crashed")
+            .await
+            .unwrap();
+        assert_eq!(updated.status, TaskStatus::Failed);
+        assert!(updated.completed_at.is_some());
+        assert_eq!(updated.error_message, Some("agent crashed".to_string()));
+        // started_at should be preserved from mark_running
+        assert!(updated.started_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_reset_to_queued() {
+        let ctx = AppContext::builder().build();
+        let tsk_env = ctx.tsk_env();
+        let db_path = tsk_env.data_dir().join("test_reset_queued.db");
+        let storage = SqliteTaskStorage::new(db_path).unwrap();
+
+        let task = Task {
+            id: "reset1234".to_string(),
+            repo_root: tsk_env.data_dir().to_path_buf(),
+            branch_name: "tsk/fix/reset-task/reset1234".to_string(),
+            copied_repo_path: Some(tsk_env.data_dir().to_path_buf()),
+            ..Task::test_default()
+        };
+        storage.add_task(task).await.unwrap();
+
+        // Move through Running → Failed, then reset
+        storage.mark_running("reset1234").await.unwrap();
         storage
-            .update_task_status(
-                "status1234",
-                TaskStatus::Complete,
-                None,
-                Some(completed),
-                None,
+            .mark_failed("reset1234", "temporary error")
+            .await
+            .unwrap();
+        let updated = storage.reset_to_queued("reset1234").await.unwrap();
+        assert_eq!(updated.status, TaskStatus::Queued);
+        assert!(updated.started_at.is_none());
+        assert!(updated.completed_at.is_none());
+        assert!(updated.error_message.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_prepare_child_task() {
+        let ctx = AppContext::builder().build();
+        let tsk_env = ctx.tsk_env();
+        let db_path = tsk_env.data_dir().join("test_prepare_child.db");
+        let storage = SqliteTaskStorage::new(db_path).unwrap();
+
+        let task = Task {
+            id: "child1234".to_string(),
+            repo_root: tsk_env.data_dir().to_path_buf(),
+            branch_name: "tsk/feat/child-task/child1234".to_string(),
+            source_commit: "old_commit".to_string(),
+            parent_ids: vec!["parent1234".to_string()],
+            ..Task::test_default()
+        };
+        storage.add_task(task).await.unwrap();
+
+        let repo_path = tsk_env.data_dir().join("copied-repo");
+        let updated = storage
+            .prepare_child_task(
+                "child1234",
+                repo_path.clone(),
+                "new_commit_sha",
+                "tsk/feat/parent-branch/parent1234",
             )
             .await
             .unwrap();
-
-        let retrieved = storage.get_task("status1234").await.unwrap().unwrap();
-        assert_eq!(retrieved.status, TaskStatus::Complete);
-        // started_at should still be preserved from the previous update
+        assert_eq!(updated.copied_repo_path, Some(repo_path));
+        assert_eq!(updated.source_commit, "new_commit_sha");
         assert_eq!(
-            retrieved.started_at.unwrap().to_rfc3339(),
-            started.to_rfc3339()
+            updated.source_branch,
+            Some("tsk/feat/parent-branch/parent1234".to_string())
         );
-        assert_eq!(
-            retrieved.completed_at.unwrap().to_rfc3339(),
-            completed.to_rfc3339()
-        );
-
-        // Update to Failed with error_message
-        storage
-            .update_task_status(
-                "status1234",
-                TaskStatus::Failed,
-                None,
-                None,
-                Some("agent crashed".to_string()),
-            )
-            .await
-            .unwrap();
-
-        let retrieved = storage.get_task("status1234").await.unwrap().unwrap();
-        assert_eq!(retrieved.status, TaskStatus::Failed);
-        assert_eq!(retrieved.error_message, Some("agent crashed".to_string()));
-        // started_at and completed_at should still be preserved
-        assert!(retrieved.started_at.is_some());
-        assert!(retrieved.completed_at.is_some());
+        // branch_name should remain unchanged (it's the child's own branch)
+        assert_eq!(updated.branch_name, "tsk/feat/child-task/child1234");
     }
 
     #[tokio::test]

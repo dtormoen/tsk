@@ -1,4 +1,5 @@
-use crate::task::{Task, TaskStatus};
+use crate::task::Task;
+use crate::task::TaskStatus;
 use crate::task_storage::TaskStorage;
 use chrono::DateTime;
 use rusqlite::Connection;
@@ -106,6 +107,23 @@ fn row_to_task(row: &rusqlite::Row) -> rusqlite::Result<Task> {
         network_isolation: network_isolation_int != 0,
         dind: dind_int != 0,
     })
+}
+
+/// Read a single task by ID from the database, returning an error if not found.
+fn read_task_by_id(
+    conn: &Connection,
+    id: &str,
+) -> Result<Task, Box<dyn std::error::Error + Send + Sync>> {
+    let mut stmt = conn.prepare("SELECT * FROM tasks WHERE id = ?1")?;
+    let task = stmt
+        .query_row(rusqlite::params![id], row_to_task)
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => {
+                Box::<dyn std::error::Error + Send + Sync>::from("Task not found")
+            }
+            other => Box::<dyn std::error::Error + Send + Sync>::from(other),
+        })?;
+    Ok(task)
 }
 
 fn insert_task(
@@ -339,83 +357,6 @@ impl TaskStorage for SqliteTaskStorage {
         .await?
     }
 
-    async fn update_task(
-        &self,
-        task: Task,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let conn = Arc::clone(&self.conn);
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
-            let repo_root = path_to_string(&task.repo_root)?;
-            let copied_repo_path = task
-                .copied_repo_path
-                .as_ref()
-                .map(|p| path_to_string(p))
-                .transpose()?;
-            let rows_affected = conn.execute(
-                "UPDATE tasks SET repo_root = ?1, name = ?2, task_type = ?3, instructions_file = ?4, agent = ?5, status = ?6, created_at = ?7, started_at = ?8, completed_at = ?9, branch_name = ?10, error_message = ?11, source_commit = ?12, source_branch = ?13, stack = ?14, project = ?15, copied_repo_path = ?16, is_interactive = ?17, parent_ids = ?18, network_isolation = ?19, dind = ?20 WHERE id = ?21",
-                rusqlite::params![
-                    repo_root,
-                    task.name,
-                    task.task_type,
-                    task.instructions_file,
-                    task.agent,
-                    task_status_to_str(&task.status),
-                    task.created_at.to_rfc3339(),
-                    task.started_at.map(|dt| dt.to_rfc3339()),
-                    task.completed_at.map(|dt| dt.to_rfc3339()),
-                    task.branch_name,
-                    task.error_message,
-                    task.source_commit,
-                    task.source_branch,
-                    task.stack,
-                    task.project,
-                    copied_repo_path,
-                    task.is_interactive as i32,
-                    if task.parent_ids.is_empty() { None::<String> } else { Some(serde_json::to_string(&task.parent_ids).unwrap()) },
-                    task.network_isolation as i32,
-                    task.dind as i32,
-                    task.id,
-                ],
-            )?;
-            if rows_affected == 0 {
-                return Err("Task not found".into());
-            }
-            Ok(())
-        })
-        .await?
-    }
-
-    async fn update_task_status(
-        &self,
-        id: &str,
-        status: TaskStatus,
-        started_at: Option<chrono::DateTime<chrono::Utc>>,
-        completed_at: Option<chrono::DateTime<chrono::Utc>>,
-        error_message: Option<String>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let conn = Arc::clone(&self.conn);
-        let id = id.to_string();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
-            let rows_affected = conn.execute(
-                "UPDATE tasks SET status = ?1, started_at = COALESCE(?2, started_at), completed_at = COALESCE(?3, completed_at), error_message = COALESCE(?4, error_message) WHERE id = ?5",
-                rusqlite::params![
-                    task_status_to_str(&status),
-                    started_at.map(|dt| dt.to_rfc3339()),
-                    completed_at.map(|dt| dt.to_rfc3339()),
-                    error_message,
-                    id,
-                ],
-            )?;
-            if rows_affected == 0 {
-                return Err("Task not found".into());
-            }
-            Ok(())
-        })
-        .await?
-    }
-
     async fn delete_task(&self, id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let conn = Arc::clone(&self.conn);
         let id = id.to_string();
@@ -427,6 +368,119 @@ impl TaskStorage for SqliteTaskStorage {
                 return Err("Task not found".into());
             }
             Ok(())
+        })
+        .await?
+    }
+
+    async fn mark_running(
+        &self,
+        id: &str,
+    ) -> Result<Task, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = Arc::clone(&self.conn);
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+            let now = chrono::Utc::now().to_rfc3339();
+            let rows_affected = conn.execute(
+                "UPDATE tasks SET status = 'RUNNING', started_at = ?1 WHERE id = ?2",
+                rusqlite::params![now, id],
+            )?;
+            if rows_affected == 0 {
+                return Err("Task not found".into());
+            }
+            read_task_by_id(&conn, &id)
+        })
+        .await?
+    }
+
+    async fn mark_complete(
+        &self,
+        id: &str,
+        branch_name: &str,
+    ) -> Result<Task, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = Arc::clone(&self.conn);
+        let id = id.to_string();
+        let branch_name = branch_name.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+            let now = chrono::Utc::now().to_rfc3339();
+            let rows_affected = conn.execute(
+                "UPDATE tasks SET status = 'COMPLETE', completed_at = ?1, branch_name = ?2 WHERE id = ?3",
+                rusqlite::params![now, branch_name, id],
+            )?;
+            if rows_affected == 0 {
+                return Err("Task not found".into());
+            }
+            read_task_by_id(&conn, &id)
+        })
+        .await?
+    }
+
+    async fn mark_failed(
+        &self,
+        id: &str,
+        error_message: &str,
+    ) -> Result<Task, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = Arc::clone(&self.conn);
+        let id = id.to_string();
+        let error_message = error_message.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+            let now = chrono::Utc::now().to_rfc3339();
+            let rows_affected = conn.execute(
+                "UPDATE tasks SET status = 'FAILED', completed_at = ?1, error_message = ?2 WHERE id = ?3",
+                rusqlite::params![now, error_message, id],
+            )?;
+            if rows_affected == 0 {
+                return Err("Task not found".into());
+            }
+            read_task_by_id(&conn, &id)
+        })
+        .await?
+    }
+
+    async fn reset_to_queued(
+        &self,
+        id: &str,
+    ) -> Result<Task, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = Arc::clone(&self.conn);
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+            let rows_affected = conn.execute(
+                "UPDATE tasks SET status = 'QUEUED', started_at = NULL, completed_at = NULL, error_message = NULL WHERE id = ?1",
+                rusqlite::params![id],
+            )?;
+            if rows_affected == 0 {
+                return Err("Task not found".into());
+            }
+            read_task_by_id(&conn, &id)
+        })
+        .await?
+    }
+
+    async fn prepare_child_task(
+        &self,
+        id: &str,
+        copied_repo_path: PathBuf,
+        source_commit: &str,
+        source_branch: &str,
+    ) -> Result<Task, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = Arc::clone(&self.conn);
+        let id = id.to_string();
+        let copied_repo_path_str = path_to_string(&copied_repo_path)?;
+        let source_commit = source_commit.to_string();
+        let source_branch = source_branch.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+            let rows_affected = conn.execute(
+                "UPDATE tasks SET copied_repo_path = ?1, source_commit = ?2, source_branch = ?3 WHERE id = ?4",
+                rusqlite::params![copied_repo_path_str, source_commit, source_branch, id],
+            )?;
+            if rows_affected == 0 {
+                return Err("Task not found".into());
+            }
+            read_task_by_id(&conn, &id)
         })
         .await?
     }

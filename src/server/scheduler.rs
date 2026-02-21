@@ -119,8 +119,8 @@ impl TaskScheduler {
 
     /// Prepare a child task for scheduling by copying the repository from the parent task.
     ///
-    /// This updates the task's `copied_repo_path`, `source_commit`, and `source_branch` fields.
-    /// Returns the updated task, or an error if preparation fails.
+    /// Copies the repo, then persists the updated fields (`copied_repo_path`, `source_commit`,
+    /// `source_branch`) via `storage.prepare_child_task`. Returns the authoritative DB row.
     async fn prepare_child_task(&self, task: &Task, parent_task: &Task) -> Result<Task, String> {
         // Get the parent task's copied repo path
         let parent_repo_path = parent_task
@@ -135,7 +135,7 @@ impl TaskScheduler {
 
         // Copy the repository from the parent task's folder
         let repo_manager = RepoManager::new(&self.context);
-        let (copied_repo_path, _branch_name) = repo_manager
+        let (copied_repo_path, _) = repo_manager
             .copy_repo(
                 &task.id,
                 parent_repo_path,
@@ -145,14 +145,17 @@ impl TaskScheduler {
             .await
             .map_err(|e| format!("Failed to copy repo from parent task: {e}"))?;
 
-        // Create the updated task
-        let mut updated_task = task.clone();
-        updated_task.copied_repo_path = Some(copied_repo_path);
-        updated_task.source_commit = source_commit;
-        // Set source_branch to the parent's branch for git-town integration
-        updated_task.source_branch = Some(parent_task.branch_name.clone());
-
-        Ok(updated_task)
+        // Persist the updated fields and return the authoritative DB row.
+        // source_branch is set to the parent's branch name for git-town integration.
+        self.storage
+            .prepare_child_task(
+                &task.id,
+                copied_repo_path,
+                &source_commit,
+                &parent_task.branch_name,
+            )
+            .await
+            .map_err(|e| format!("Failed to update prepared task in storage: {e}"))
     }
 
     /// Mark child tasks as failed when their parent task fails.
@@ -176,13 +179,7 @@ impl TaskScheduler {
                 task.id
             );
             self.storage
-                .update_task_status(
-                    &task.id,
-                    TaskStatus::Failed,
-                    None,
-                    Some(chrono::Utc::now()),
-                    Some(format!("Parent task {} failed", failed_task_id)),
-                )
+                .mark_failed(&task.id, &format!("Parent task {} failed", failed_task_id))
                 .await?;
         }
 
@@ -375,28 +372,13 @@ impl TaskScheduler {
                             );
                             let _ = self
                                 .storage
-                                .update_task_status(
-                                    &task.id,
-                                    TaskStatus::Failed,
-                                    None,
-                                    Some(chrono::Utc::now()),
-                                    Some(format!("Parent task {} not found", pid)),
-                                )
+                                .mark_failed(&task.id, &format!("Parent task {} not found", pid))
                                 .await;
                         }
                         Some(ParentStatus::Failed(msg)) => {
                             // Mark task as failed - parent failed (cascade)
                             eprintln!("Task {} has failed parent, marking as failed", task.id);
-                            let _ = self
-                                .storage
-                                .update_task_status(
-                                    &task.id,
-                                    TaskStatus::Failed,
-                                    None,
-                                    Some(chrono::Utc::now()),
-                                    Some(msg),
-                                )
-                                .await;
+                            let _ = self.storage.mark_failed(&task.id, &msg).await;
                         }
                         _ => {}
                     }
@@ -424,28 +406,15 @@ impl TaskScheduler {
                             );
                             match self.prepare_child_task(&task, &parent_task).await {
                                 Ok(prepared_task) => {
-                                    // Update the task in storage with the prepared fields
-                                    if let Err(e) =
-                                        self.storage.update_task(prepared_task.clone()).await
-                                    {
-                                        eprintln!(
-                                            "Failed to update prepared task in storage: {}",
-                                            e
-                                        );
-                                        continue;
-                                    }
                                     task = prepared_task;
                                 }
                                 Err(e) => {
                                     eprintln!("Failed to prepare child task {}: {}", task.id, e);
                                     let _ = self
                                         .storage
-                                        .update_task_status(
+                                        .mark_failed(
                                             &task.id,
-                                            TaskStatus::Failed,
-                                            None,
-                                            Some(chrono::Utc::now()),
-                                            Some(format!("Failed to prepare repository: {}", e)),
+                                            &format!("Failed to prepare repository: {}", e),
                                         )
                                         .await;
                                     continue;
@@ -457,19 +426,13 @@ impl TaskScheduler {
                     println!("Scheduling task: {} ({})", task.name, task.id);
 
                     // Update task status to running
-                    let mut running_task = task.clone();
-                    running_task.status = TaskStatus::Running;
-                    running_task.started_at = Some(chrono::Utc::now());
-
-                    self.storage
-                        .update_task_status(
-                            &running_task.id,
-                            TaskStatus::Running,
-                            Some(chrono::Utc::now()),
-                            None,
-                            None,
-                        )
-                        .await?;
+                    let running_task = match self.storage.mark_running(&task.id).await {
+                        Ok(t) => t,
+                        Err(e) => {
+                            eprintln!("Error marking task as running: {e}");
+                            continue;
+                        }
+                    };
 
                     // Mark task as submitted
                     self.submitted_tasks
@@ -497,10 +460,7 @@ impl TaskScheduler {
                             self.submitted_tasks.lock().await.remove(&task.id);
 
                             // Revert task status
-                            let _ = self
-                                .storage
-                                .update_task_status(&task.id, TaskStatus::Queued, None, None, None)
-                                .await;
+                            let _ = self.storage.reset_to_queued(&task.id).await;
                         }
                         Err(e) => {
                             eprintln!("Failed to submit job: {}", e);
@@ -508,10 +468,7 @@ impl TaskScheduler {
                             self.submitted_tasks.lock().await.remove(&task.id);
 
                             // Revert task status
-                            let _ = self
-                                .storage
-                                .update_task_status(&task.id, TaskStatus::Queued, None, None, None)
-                                .await;
+                            let _ = self.storage.reset_to_queued(&task.id).await;
                         }
                     }
                 }
@@ -604,17 +561,7 @@ impl AsyncJob for TaskJob {
                     *self.warmup_failure_wait_until.lock().await = Some(wait_until);
 
                     // Reset task status to QUEUED so it can be retried
-                    if let Err(e) = self
-                        .storage
-                        .update_task_status(
-                            &self.task.id,
-                            TaskStatus::Queued,
-                            None,
-                            None,
-                            Some("Warmup failed, will retry after wait period".to_string()),
-                        )
-                        .await
-                    {
+                    if let Err(e) = self.storage.reset_to_queued(&self.task.id).await {
                         eprintln!("Failed to reset task status to QUEUED: {e}");
                     }
                 }
