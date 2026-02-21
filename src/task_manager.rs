@@ -1,6 +1,5 @@
 use crate::context::AppContext;
 use crate::task::{Task, TaskBuilder, TaskStatus};
-use crate::task_runner::{TaskExecutionError, TaskExecutionResult, TaskRunner};
 use crate::task_storage::{TaskStorage, get_task_storage};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -26,17 +25,16 @@ pub struct RetryOverrides {
 #[cfg(test)]
 use crate::context::tsk_env::TskEnv;
 
-/// Manages task execution and storage operations.
+/// Manages task storage operations.
 ///
-/// TaskManager provides a unified interface for creating, executing, and managing tasks.
-/// It handles task persistence through TaskStorage and delegates execution to TaskRunner.
+/// TaskManager provides an interface for creating and managing tasks including
+/// delete, clean, retry, and list operations via TaskStorage.
 pub struct TaskManager {
-    task_runner: Option<TaskRunner>,
     task_storage: Arc<dyn TaskStorage>,
 }
 
 impl TaskManager {
-    /// Creates a TaskManager without Docker capabilities (for clean, delete, retry, list).
+    /// Creates a TaskManager for storage operations (clean, delete, retry, list).
     ///
     /// # Arguments
     ///
@@ -47,115 +45,8 @@ impl TaskManager {
     /// Returns a configured TaskManager or an error if initialization fails.
     pub fn new(ctx: &AppContext) -> Result<Self, String> {
         Ok(Self {
-            task_runner: None,
             task_storage: get_task_storage(ctx.tsk_env()),
         })
-    }
-
-    /// Creates a TaskManager with Docker execution capabilities (for run, shell, server).
-    ///
-    /// # Arguments
-    ///
-    /// * `ctx` - The application context providing dependencies
-    /// * `task_runner` - The TaskRunner for executing tasks in Docker containers
-    pub fn with_runner(ctx: &AppContext, task_runner: TaskRunner) -> Result<Self, String> {
-        Ok(Self {
-            task_runner: Some(task_runner),
-            task_storage: get_task_storage(ctx.tsk_env()),
-        })
-    }
-
-    /// Stores and executes a task inline, for use by `run` and `shell` commands.
-    ///
-    /// Unlike server-scheduled tasks (which are added to the queue as `Queued` and later picked
-    /// up by the scheduler), `run` and `shell` execute tasks directly. This method persists the
-    /// task as `Running` before execution so it appears in `tsk list` and can be used as a
-    /// parent for task chaining. The `Running` status prevents the server scheduler from
-    /// picking it up.
-    pub async fn store_and_execute_task(
-        &self,
-        task: &Task,
-    ) -> Result<TaskExecutionResult, TaskExecutionError> {
-        let mut stored_task = task.clone();
-        stored_task.status = TaskStatus::Running;
-        stored_task.started_at = Some(chrono::Utc::now());
-        if let Err(e) = self.task_storage.add_task(stored_task).await {
-            eprintln!("Error storing task: {e}");
-        }
-        self.execute_queued_task(task).await
-    }
-
-    /// Execute a task from the queue with status updates.
-    ///
-    /// Updates task status in storage throughout the execution lifecycle:
-    /// - Sets status to Running when execution starts
-    /// - Updates to Complete/Failed based on execution result
-    /// - Records timestamps and error messages
-    pub async fn execute_queued_task(
-        &self,
-        task: &Task,
-    ) -> Result<TaskExecutionResult, TaskExecutionError> {
-        let task_runner = self
-            .task_runner
-            .as_ref()
-            .ok_or_else(|| TaskExecutionError {
-                message: "TaskRunner not available - Docker client required for task execution"
-                    .to_string(),
-                is_warmup_failure: false,
-            })?;
-
-        // Update task status to running
-        let mut running_task = task.clone();
-        running_task.status = TaskStatus::Running;
-        running_task.started_at = Some(chrono::Utc::now());
-
-        if let Err(e) = self.task_storage.update_task(running_task.clone()).await {
-            eprintln!("Error updating task status: {e}");
-        }
-
-        // Execute the task
-        let execution_result = task_runner.execute_task(task).await;
-
-        match execution_result {
-            Ok(result) => {
-                // Update task status based on the task result
-                // Use running_task to preserve started_at timestamp
-                let mut updated_task = running_task;
-                updated_task.completed_at = Some(chrono::Utc::now());
-                updated_task.branch_name = result.branch_name.clone();
-
-                if result.task_result.success {
-                    updated_task.status = TaskStatus::Complete;
-                    if let Err(e) = self.task_storage.update_task(updated_task).await {
-                        eprintln!("Error updating task status: {e}");
-                    }
-                    Ok(result)
-                } else {
-                    let message = result.task_result.message.clone();
-                    updated_task.status = TaskStatus::Failed;
-                    updated_task.error_message = Some(message.clone());
-                    if let Err(e) = self.task_storage.update_task(updated_task).await {
-                        eprintln!("Error updating task status: {e}");
-                    }
-                    Err(TaskExecutionError {
-                        message,
-                        is_warmup_failure: false,
-                    })
-                }
-            }
-            Err(e) => {
-                // Update task status to failed
-                // Use running_task to preserve started_at timestamp
-                running_task.status = TaskStatus::Failed;
-                running_task.error_message = Some(e.message.clone());
-                running_task.completed_at = Some(chrono::Utc::now());
-
-                if let Err(storage_err) = self.task_storage.update_task(running_task).await {
-                    eprintln!("Error updating task status: {storage_err}");
-                }
-                Err(e)
-            }
-        }
     }
 
     /// Delete a specific task and its associated directory.
@@ -801,58 +692,6 @@ mod tests {
         assert!(
             result.is_ok(),
             "TaskManager::new should work without a git repository"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_store_and_execute_task() {
-        use crate::context::docker_client::DockerClient;
-        use crate::docker::DockerManager;
-        use crate::test_utils::NoOpDockerClient;
-
-        let (tsk_env, test_repo, ctx) = setup_test_environment().await.unwrap();
-        let repo_root = test_repo.path().to_path_buf();
-
-        let task_id = "store-exec-1".to_string();
-        let task_dir_path = setup_task_directory(&tsk_env, &task_id, "Test instructions")
-            .await
-            .unwrap();
-
-        let task = Task {
-            id: task_id.clone(),
-            repo_root,
-            name: "store-exec-task".to_string(),
-            branch_name: format!("tsk/{task_id}"),
-            copied_repo_path: Some(task_dir_path.join("repo")),
-            ..Task::test_default()
-        };
-
-        let docker_client: Arc<dyn DockerClient> = Arc::new(NoOpDockerClient);
-        let docker_manager = DockerManager::new(&ctx, docker_client);
-        let task_runner = crate::task_runner::TaskRunner::new(&ctx, docker_manager);
-        let task_manager = TaskManager::with_runner(&ctx, task_runner).unwrap();
-        let _result = task_manager.store_and_execute_task(&task).await;
-
-        // Verify the task exists in storage after execution
-        let stored = task_manager.task_storage.get_task(&task_id).await.unwrap();
-        assert!(stored.is_some(), "Task should exist in storage");
-
-        let stored_task = stored.unwrap();
-        assert_ne!(
-            stored_task.status,
-            TaskStatus::Queued,
-            "Task should not be Queued after store_and_execute_task"
-        );
-        assert!(
-            stored_task.started_at.is_some(),
-            "Task should have started_at set"
-        );
-
-        // Verify the task appears in list_tasks
-        let all_tasks = task_manager.task_storage.list_tasks().await.unwrap();
-        assert!(
-            all_tasks.iter().any(|t| t.id == task_id),
-            "Task should appear in the list of all tasks"
         );
     }
 

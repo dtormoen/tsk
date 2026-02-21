@@ -579,7 +579,6 @@ pub struct TaskJob {
 
 impl AsyncJob for TaskJob {
     async fn execute(self) -> Result<JobResult, JobError> {
-        // Execute the task using TaskManager
         let result =
             Self::execute_single_task(&self.context, self.docker_client.clone(), &self.task).await;
 
@@ -641,22 +640,9 @@ impl TaskJob {
         docker_client: Arc<dyn DockerClient>,
         task: &Task,
     ) -> Result<(), TaskExecutionError> {
-        // Create a task manager with Docker execution capabilities
         let docker_manager = DockerManager::new(context, docker_client);
         let task_runner = TaskRunner::new(context, docker_manager);
-        let task_manager =
-            TaskManager::with_runner(context, task_runner).map_err(|e| TaskExecutionError {
-                message: e,
-                is_warmup_failure: false,
-            })?;
-
-        // Execute the task
-        let result = task_manager.execute_queued_task(task).await;
-
-        match result {
-            Ok(_) => Ok(()),
-            Err(e) => Err(e),
-        }
+        task_runner.execute_queued_task(task).await.map(|_| ())
     }
 }
 

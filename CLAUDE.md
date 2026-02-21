@@ -29,7 +29,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `docker build`: Build required docker images (supports `--proxy-only` to build only the proxy)
 - `template list`: List available task type templates
 
-**Task Management** (`src/task.rs`, `src/task_storage.rs`, `src/task_manager.rs`)
+**Task Management** (`src/task.rs`, `src/task_storage.rs`, `src/task_manager.rs`, `src/task_runner.rs`)
 - `TaskBuilder` provides consistent task creation with builder pattern
 - Repository is cloned at task creation time using git clone with optimized pack files, then overlaid with working directory state:
   - Git clone creates an optimized repository copy (1-2 pack files instead of 30+) with full history
@@ -45,7 +45,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Task status: Queued → Running → Complete/Failed (Waiting status shown in list for tasks awaiting parent completion)
 - Two execution paths:
   - **Server-scheduled**: `add` stores tasks as `Queued`, server scheduler picks them up and transitions to `Running`
-  - **Inline**: `run`/`shell` store tasks as `Running` (via `TaskManager::store_and_execute_task`) and execute immediately; the `Running` status prevents the scheduler from picking them up
+  - **Inline**: `run`/`shell` store tasks as `Running` (via `TaskRunner::store_and_execute_task`) and execute immediately; the `Running` status prevents the scheduler from picking them up
 - Branch naming: `tsk/{task-type}/{task-name}/{task-id}` (human-readable format with task type, sanitized task name, and 8-character unique identifier)
 - **Task Chaining**: Tasks can specify a parent task via `--parent <taskid>` (short: `-p`)
   - Database schema supports multiple parents (`parent_ids` stored as JSON array in TEXT column), but CLI currently accepts only one

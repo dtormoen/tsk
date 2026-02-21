@@ -5,7 +5,6 @@ use crate::docker::DockerManager;
 use crate::repo_utils::find_repository_root;
 use crate::stdin_utils::{merge_description_with_stdin, read_piped_input};
 use crate::task::TaskBuilder;
-use crate::task_manager::TaskManager;
 use crate::task_runner::TaskRunner;
 use async_trait::async_trait;
 use std::error::Error;
@@ -74,15 +73,14 @@ impl Command for ShellCommand {
         ctx.terminal_operations()
             .set_title(&format!("TSK Shell: {}", self.name));
 
-        // Execute the task using TaskManager
+        // Execute the task
         let docker_client = Arc::new(
             DefaultDockerClient::new(&ctx.tsk_config().docker.container_engine)
                 .map_err(|e| -> Box<dyn Error> { e.into() })?,
         );
         let docker_manager = DockerManager::new(ctx, docker_client);
         let task_runner = TaskRunner::new(ctx, docker_manager);
-        let task_manager = TaskManager::with_runner(ctx, task_runner)?;
-        let result = task_manager
+        let result = task_runner
             .store_and_execute_task(&task)
             .await
             .map_err(|e| e.message);
