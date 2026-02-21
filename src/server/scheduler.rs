@@ -589,7 +589,7 @@ impl TaskJob {
     ) -> Result<(), TaskExecutionError> {
         let docker_manager = DockerManager::new(context, docker_client);
         let task_runner = TaskRunner::new(context, docker_manager);
-        task_runner.execute_queued_task(task).await.map(|_| ())
+        task_runner.run_queued(task).await.map(|_| ())
     }
 }
 

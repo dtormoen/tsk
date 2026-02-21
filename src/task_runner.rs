@@ -8,12 +8,12 @@ use std::sync::Arc;
 
 /// Result of executing a task
 ///
-/// Contains information about the executed task including the branch name
-/// and task-specific results.
+/// Contains the branch name where the task's changes were committed
+/// and the success message from the agent.
 #[derive(Debug)]
 pub struct TaskExecutionResult {
     pub branch_name: String,
-    pub task_result: crate::agent::TaskResult,
+    pub message: String,
 }
 
 #[derive(Debug)]
@@ -62,25 +62,91 @@ impl TaskRunner {
         }
     }
 
-    /// Execute a task in a Docker container.
+    /// Stores and executes a task inline, for use by `run` and `shell` commands.
     ///
-    /// Performs the complete task execution lifecycle:
-    /// 1. Validates and warms up the specified agent
-    /// 2. Creates task-specific Docker images with appropriate layers
-    /// 3. Runs the container with the task instructions
-    /// 4. Commits and fetches changes back to the main repository
-    /// 5. Sends completion notifications
+    /// Unlike server-scheduled tasks (which are added to the queue as `Queued` and later picked
+    /// up by the scheduler), `run` and `shell` execute tasks directly. This method persists the
+    /// task as `Running` before execution so it appears in `tsk list` and can be used as a
+    /// parent for task chaining. The `Running` status prevents the server scheduler from
+    /// picking it up.
+    pub async fn store_and_run(
+        &self,
+        task: &Task,
+    ) -> Result<TaskExecutionResult, TaskExecutionError> {
+        let mut stored_task = task.clone();
+        stored_task.status = TaskStatus::Running;
+        stored_task.started_at = Some(chrono::Utc::now());
+        if let Err(e) = self.task_storage.add_task(stored_task).await {
+            eprintln!("Error storing task: {e}");
+        }
+        self.run_with_lifecycle(task).await
+    }
+
+    /// Execute a task from the queue with status updates.
     ///
-    /// # Arguments
+    /// Transitions the task to Running, then delegates to `run_with_lifecycle` which
+    /// handles execution and completion status updates.
+    pub async fn run_queued(
+        &self,
+        task: &Task,
+    ) -> Result<TaskExecutionResult, TaskExecutionError> {
+        if let Err(e) = self.task_storage.mark_running(&task.id).await {
+            eprintln!("Error updating task status: {e}");
+        }
+        self.run_with_lifecycle(task).await
+    }
+
+    /// Execute a task in a Docker container and update storage with the result.
     ///
-    /// * `task` - The task to execute
-    /// * `is_interactive` - Whether to run the container interactively
+    /// Callers are responsible for getting the task into storage and setting
+    /// the initial Running state before calling this method. This method handles:
+    /// - Agent validation and warmup
+    /// - Docker image management and container execution
+    /// - Repository changes and git operations
+    /// - Task completion notifications
+    /// - Updating task storage to Complete or Failed
+    async fn run_with_lifecycle(
+        &self,
+        task: &Task,
+    ) -> Result<TaskExecutionResult, TaskExecutionError> {
+        let result = self.run_in_container(task).await;
+        match &result {
+            Ok(exec_result) => {
+                self.ctx.notification_client().notify_task_complete(
+                    &task.name,
+                    true,
+                    Some(&exec_result.message),
+                );
+                if let Err(e) = self
+                    .task_storage
+                    .mark_complete(&task.id, &exec_result.branch_name)
+                    .await
+                {
+                    eprintln!("Error updating task status: {e}");
+                }
+            }
+            Err(e) => {
+                self.ctx.notification_client().notify_task_complete(
+                    &task.name,
+                    false,
+                    Some(&e.message),
+                );
+                if let Err(storage_err) =
+                    self.task_storage.mark_failed(&task.id, &e.message).await
+                {
+                    eprintln!("Error updating task status: {storage_err}");
+                }
+            }
+        }
+        result
+    }
+
+    /// Run a task in a Docker container.
     ///
-    /// # Returns
-    ///
-    /// Returns `TaskExecutionResult` on success or `TaskExecutionError` on failure.
-    /// Warmup failures are specially marked in the error for retry handling.
-    pub async fn execute_task(
+    /// Contains the core execution logic: agent setup, Docker image building,
+    /// container execution, and git operations. Does not handle storage updates
+    /// or notifications.
+    async fn run_in_container(
         &self,
         task: &Task,
     ) -> Result<TaskExecutionResult, TaskExecutionError> {
@@ -147,13 +213,7 @@ impl TaskRunner {
         {
             Ok(result) => result,
             Err(e) => {
-                let message = format!("Error running container: {e}");
-                self.ctx.notification_client().notify_task_complete(
-                    &task.name,
-                    false,
-                    Some(&message),
-                );
-                return Err(message.into());
+                return Err(format!("Error running container: {e}").into());
             }
         };
 
@@ -201,86 +261,16 @@ impl TaskRunner {
             }
         }
 
-        // Send notification about task completion
-        let success = task_result.success;
-        let message = Some(task_result.message.as_str());
-        self.ctx
-            .notification_client()
-            .notify_task_complete(&task.name, success, message);
-
-        Ok(TaskExecutionResult {
-            branch_name,
-            task_result,
-        })
-    }
-
-    /// Stores and executes a task inline, for use by `run` and `shell` commands.
-    ///
-    /// Unlike server-scheduled tasks (which are added to the queue as `Queued` and later picked
-    /// up by the scheduler), `run` and `shell` execute tasks directly. This method persists the
-    /// task as `Running` before execution so it appears in `tsk list` and can be used as a
-    /// parent for task chaining. The `Running` status prevents the server scheduler from
-    /// picking it up.
-    pub async fn store_and_execute_task(
-        &self,
-        task: &Task,
-    ) -> Result<TaskExecutionResult, TaskExecutionError> {
-        let mut stored_task = task.clone();
-        stored_task.status = TaskStatus::Running;
-        stored_task.started_at = Some(chrono::Utc::now());
-        if let Err(e) = self.task_storage.add_task(stored_task).await {
-            eprintln!("Error storing task: {e}");
-        }
-        self.execute_queued_task(task).await
-    }
-
-    /// Execute a task from the queue with status updates.
-    ///
-    /// Updates task status in storage throughout the execution lifecycle:
-    /// - Sets status to Running when execution starts
-    /// - Updates to Complete/Failed based on execution result
-    /// - Records timestamps and error messages
-    pub async fn execute_queued_task(
-        &self,
-        task: &Task,
-    ) -> Result<TaskExecutionResult, TaskExecutionError> {
-        // Update task status to running
-        if let Err(e) = self.task_storage.mark_running(&task.id).await {
-            eprintln!("Error updating task status: {e}");
-        }
-
-        // Execute the task
-        let execution_result = self.execute_task(task).await;
-
-        match execution_result {
-            Ok(result) => {
-                if result.task_result.success {
-                    if let Err(e) = self
-                        .task_storage
-                        .mark_complete(&task.id, &result.branch_name)
-                        .await
-                    {
-                        eprintln!("Error updating task status: {e}");
-                    }
-                    Ok(result)
-                } else {
-                    let message = result.task_result.message.clone();
-                    if let Err(e) = self.task_storage.mark_failed(&task.id, &message).await {
-                        eprintln!("Error updating task status: {e}");
-                    }
-                    Err(TaskExecutionError {
-                        message,
-                        is_warmup_failure: false,
-                    })
-                }
-            }
-            Err(e) => {
-                if let Err(storage_err) = self.task_storage.mark_failed(&task.id, &e.message).await
-                {
-                    eprintln!("Error updating task status: {storage_err}");
-                }
-                Err(e)
-            }
+        if task_result.success {
+            Ok(TaskExecutionResult {
+                branch_name,
+                message: task_result.message,
+            })
+        } else {
+            Err(TaskExecutionError {
+                message: task_result.message,
+                is_warmup_failure: false,
+            })
         }
     }
 }
@@ -288,12 +278,10 @@ impl TaskRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::Task;
     use crate::test_utils::git_test_utils::TestGitRepository;
-    use std::sync::Arc;
 
     #[tokio::test]
-    async fn test_execute_task_success() {
+    async fn test_store_and_run_success() {
         use crate::context::AppContext;
         use crate::test_utils::FixedResponseDockerClient;
 
@@ -352,16 +340,19 @@ mod tests {
             ..Task::test_default()
         };
 
-        let result = task_runner.execute_task(&task).await;
+        let result = task_runner.store_and_run(&task).await;
 
         assert!(result.is_ok(), "Error: {:?}", result.as_ref().err());
         let execution_result = result.unwrap();
         assert!(execution_result.branch_name.contains("test-task"));
-        assert!(execution_result.task_result.success);
+
+        // Verify task was stored and marked complete
+        let stored = ctx.task_storage().get_task("test-task-123").await.unwrap();
+        assert_eq!(stored.unwrap().status, TaskStatus::Complete);
     }
 
     #[tokio::test]
-    async fn test_execute_task_infrastructure_failure() {
+    async fn test_store_and_run_infrastructure_failure() {
         use crate::context::AppContext;
         use crate::test_utils::FixedResponseDockerClient;
 
@@ -411,7 +402,7 @@ mod tests {
             ..Task::test_default()
         };
 
-        let result = task_runner.execute_task(&task).await;
+        let result = task_runner.store_and_run(&task).await;
 
         assert!(result.is_err());
         let error = result.unwrap_err();
@@ -421,10 +412,18 @@ mod tests {
             error.message
         );
         assert!(!error.is_warmup_failure);
+
+        // Verify task was stored and marked failed
+        let stored = ctx
+            .task_storage()
+            .get_task("infra-fail-123")
+            .await
+            .unwrap();
+        assert_eq!(stored.unwrap().status, TaskStatus::Failed);
     }
 
     #[tokio::test]
-    async fn test_store_and_execute_task() {
+    async fn test_store_and_run() {
         use crate::context::AppContext;
         use crate::context::docker_client::DockerClient;
         use crate::test_utils::NoOpDockerClient;
@@ -453,7 +452,7 @@ mod tests {
         let docker_client: Arc<dyn DockerClient> = Arc::new(NoOpDockerClient);
         let docker_manager = DockerManager::new(&ctx, docker_client);
         let task_runner = TaskRunner::new(&ctx, docker_manager);
-        let _result = task_runner.store_and_execute_task(&task).await;
+        let _result = task_runner.store_and_run(&task).await;
 
         // Verify the task exists in storage after execution
         let storage = ctx.task_storage();
@@ -464,7 +463,7 @@ mod tests {
         assert_ne!(
             stored_task.status,
             TaskStatus::Queued,
-            "Task should not be Queued after store_and_execute_task"
+            "Task should not be Queued after store_and_run"
         );
         assert!(
             stored_task.started_at.is_some(),
