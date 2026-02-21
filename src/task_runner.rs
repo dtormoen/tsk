@@ -1,9 +1,9 @@
 use crate::agent::AgentProvider;
 use crate::context::AppContext;
+use crate::context::TaskStorage;
 use crate::docker::{DockerManager, image_manager::DockerImageManager};
 use crate::git::RepoManager;
 use crate::task::{Task, TaskStatus};
-use crate::task_storage::TaskStorage;
 use std::sync::Arc;
 
 /// Result of executing a task
@@ -40,7 +40,7 @@ impl From<String> for TaskExecutionError {
 /// - Repository changes and git operations
 /// - Task completion notifications
 pub struct TaskRunner {
-    task_storage: Arc<dyn TaskStorage>,
+    task_storage: Arc<TaskStorage>,
     ctx: AppContext,
     repo_manager: RepoManager,
     docker_manager: DockerManager,
@@ -86,10 +86,7 @@ impl TaskRunner {
     ///
     /// Transitions the task to Running, then delegates to `run_with_lifecycle` which
     /// handles execution and completion status updates.
-    pub async fn run_queued(
-        &self,
-        task: &Task,
-    ) -> Result<TaskExecutionResult, TaskExecutionError> {
+    pub async fn run_queued(&self, task: &Task) -> Result<TaskExecutionResult, TaskExecutionError> {
         if let Err(e) = self.task_storage.mark_running(&task.id).await {
             eprintln!("Error updating task status: {e}");
         }
@@ -131,8 +128,7 @@ impl TaskRunner {
                     false,
                     Some(&e.message),
                 );
-                if let Err(storage_err) =
-                    self.task_storage.mark_failed(&task.id, &e.message).await
+                if let Err(storage_err) = self.task_storage.mark_failed(&task.id, &e.message).await
                 {
                     eprintln!("Error updating task status: {storage_err}");
                 }
@@ -414,11 +410,7 @@ mod tests {
         assert!(!error.is_warmup_failure);
 
         // Verify task was stored and marked failed
-        let stored = ctx
-            .task_storage()
-            .get_task("infra-fail-123")
-            .await
-            .unwrap();
+        let stored = ctx.task_storage().get_task("infra-fail-123").await.unwrap();
         assert_eq!(stored.unwrap().status, TaskStatus::Failed);
     }
 

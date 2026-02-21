@@ -1,6 +1,5 @@
-use crate::context::AppContext;
+use crate::context::{AppContext, TaskStorage};
 use crate::task::{Task, TaskBuilder, TaskStatus};
-use crate::task_storage::TaskStorage;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -30,7 +29,7 @@ use crate::context::tsk_env::TskEnv;
 /// TaskManager provides an interface for creating and managing tasks including
 /// delete, clean, retry, and list operations via TaskStorage.
 pub struct TaskManager {
-    task_storage: Arc<dyn TaskStorage>,
+    task_storage: Arc<TaskStorage>,
 }
 
 impl TaskManager {

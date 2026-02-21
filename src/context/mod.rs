@@ -1,5 +1,6 @@
 pub mod docker_client;
 pub mod notifications;
+pub mod task_storage;
 pub mod terminal;
 pub mod tsk_config;
 pub mod tsk_env;
@@ -11,11 +12,12 @@ pub use tsk_config::{ContainerEngine, TskConfig, VolumeMount};
 #[cfg(test)]
 pub use tsk_config::{BindMount, DockerOptions, EnvVar, NamedVolume, ProjectConfig};
 
+pub use task_storage::TaskStorage;
+
 // Re-export TskEnv types
 pub use tsk_env::TskEnv;
 
 use crate::git_sync::GitSyncManager;
-use crate::task_storage::TaskStorage;
 use notifications::NotificationClient;
 
 use std::sync::Arc;
@@ -27,7 +29,7 @@ use tempfile::TempDir;
 pub struct AppContext {
     git_sync_manager: Arc<GitSyncManager>,
     notification_client: Arc<NotificationClient>,
-    task_storage: Arc<dyn TaskStorage>,
+    task_storage: Arc<TaskStorage>,
     terminal_operations: Arc<terminal::TerminalOperations>,
     tsk_config: Arc<TskConfig>,
     tsk_env: Arc<TskEnv>,
@@ -48,7 +50,7 @@ impl AppContext {
         Arc::clone(&self.notification_client)
     }
 
-    pub fn task_storage(&self) -> Arc<dyn TaskStorage> {
+    pub fn task_storage(&self) -> Arc<TaskStorage> {
         Arc::clone(&self.task_storage)
     }
 
@@ -143,7 +145,10 @@ impl AppContextBuilder {
                 .tsk_config
                 .unwrap_or_else(|| Arc::new(TskConfig::default()));
 
-            let task_storage = crate::task_storage::get_task_storage(tsk_env.clone());
+            let task_storage = Arc::new(
+                task_storage::TaskStorage::new(tsk_env.tasks_db())
+                    .expect("Failed to initialize task storage"),
+            );
 
             AppContext {
                 git_sync_manager: self
@@ -180,7 +185,10 @@ impl AppContextBuilder {
                 Arc::new(config)
             });
 
-            let task_storage = crate::task_storage::get_task_storage(tsk_env.clone());
+            let task_storage = Arc::new(
+                task_storage::TaskStorage::new(tsk_env.tasks_db())
+                    .expect("Failed to initialize task storage"),
+            );
 
             AppContext {
                 git_sync_manager: self

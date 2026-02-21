@@ -1,4 +1,5 @@
 use crate::context::AppContext;
+use crate::context::TaskStorage;
 use crate::context::docker_client::DockerClient;
 use crate::docker::DockerManager;
 use crate::git::RepoManager;
@@ -7,7 +8,6 @@ use crate::server::worker_pool::{AsyncJob, JobError, JobResult, WorkerPool};
 use crate::task::{Task, TaskStatus};
 use crate::task_manager::TaskManager;
 use crate::task_runner::{TaskExecutionError, TaskRunner};
-use crate::task_storage::TaskStorage;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -37,7 +37,7 @@ enum ParentStatus {
 pub struct TaskScheduler {
     context: Arc<AppContext>,
     docker_client: Arc<dyn DockerClient>,
-    storage: Arc<dyn TaskStorage>,
+    storage: Arc<TaskStorage>,
     running: Arc<Mutex<bool>>,
     warmup_failure_wait_until: Arc<Mutex<Option<Instant>>>,
     worker_pool: Option<Arc<WorkerPool<TaskJob>>>,
@@ -72,7 +72,7 @@ impl TaskScheduler {
     pub fn new(
         context: Arc<AppContext>,
         docker_client: Arc<dyn DockerClient>,
-        storage: Arc<dyn TaskStorage>,
+        storage: Arc<TaskStorage>,
         quit_when_done: bool,
         quit_signal: Arc<tokio::sync::Notify>,
     ) -> Self {
@@ -530,7 +530,7 @@ pub struct TaskJob {
     task: Task,
     context: Arc<AppContext>,
     docker_client: Arc<dyn DockerClient>,
-    storage: Arc<dyn TaskStorage>,
+    storage: Arc<TaskStorage>,
     warmup_failure_wait_until: Arc<Mutex<Option<Instant>>>,
 }
 
@@ -609,7 +609,7 @@ mod tests {
     /// Polls the storage periodically to check if the condition is met.
     /// Returns true if condition met, false if timeout reached.
     async fn wait_for_condition<F>(
-        storage: &Arc<dyn TaskStorage>,
+        storage: &Arc<TaskStorage>,
         timeout_duration: Duration,
         mut condition: F,
     ) -> bool

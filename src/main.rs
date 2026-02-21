@@ -19,12 +19,9 @@ mod task;
 mod task_builder;
 mod task_manager;
 mod task_runner;
-mod task_storage;
-mod utils;
-
-mod sqlite_task_storage;
 #[cfg(test)]
 mod test_utils;
+mod utils;
 
 use commands::{
     AddCommand, CleanCommand, Command, DeleteCommand, ListCommand, RetryCommand, RunCommand,

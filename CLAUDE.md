@@ -29,7 +29,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `docker build`: Build required docker images (supports `--proxy-only` to build only the proxy)
 - `template list`: List available task type templates
 
-**Task Management** (`src/task.rs`, `src/task_storage.rs`, `src/task_manager.rs`, `src/task_runner.rs`)
+**Task Management** (`src/task.rs`, `src/context/task_storage.rs`, `src/task_manager.rs`, `src/task_runner.rs`)
 - `TaskBuilder` provides consistent task creation with builder pattern
 - Repository is cloned at task creation time using git clone with optimized pack files, then overlaid with working directory state:
   - Git clone creates an optimized repository copy (1-2 pack files instead of 30+) with full history
@@ -37,7 +37,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - This captures all tracked files with current content, staged files, and untracked non-ignored files
   - The `.tsk` directory is copied separately for project-specific configurations
   - This ensures all tasks have a valid repository copy that exactly matches what `git status` shows
-- `TaskStorage` trait abstracts storage with `SqliteTaskStorage` implementation (`rusqlite` with bundled SQLite)
+- `TaskStorage` is a concrete SQLite-backed struct in `src/context/task_storage.rs` (`rusqlite` with bundled SQLite)
   - WAL mode and busy_timeout enabled for safe concurrent multi-process access
   - `tokio::task::spawn_blocking` bridges sync rusqlite into async
 - Automatic migration from legacy `tasks.json` to SQLite on first run (renames to `tasks.json.bak`)
@@ -137,7 +137,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Factory pattern prevents accidental operations in tests
 - `TskEnv` provides XDG-compliant directory paths and runtime environment settings (editor, terminal type)
 - `TskConfig` provides user configuration loaded from tsk.toml
-- `TaskStorage` provides centralized task persistence (single shared `Arc<dyn TaskStorage>` instance)
+- `TaskStorage` provides centralized task persistence (single shared `Arc<TaskStorage>` instance)
 
 **Agents** (`src/agent/`)
 - `Agent` trait defines the interface for AI agents that execute tasks

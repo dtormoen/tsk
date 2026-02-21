@@ -1,78 +1,518 @@
-use crate::context::tsk_env::TskEnv;
 use crate::task::Task;
-use std::path::PathBuf;
+use crate::task::TaskStatus;
+use chrono::DateTime;
+use rusqlite::Connection;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 
-/// Trait for task storage abstraction.
+fn path_to_string(path: &Path) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    path.to_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| format!("Path contains non-UTF-8 characters: {}", path.display()).into())
+}
+
+fn task_status_to_str(status: &TaskStatus) -> &'static str {
+    match status {
+        TaskStatus::Queued => "QUEUED",
+        TaskStatus::Running => "RUNNING",
+        TaskStatus::Failed => "FAILED",
+        TaskStatus::Complete => "COMPLETE",
+    }
+}
+
+fn str_to_task_status(s: &str) -> Result<TaskStatus, Box<dyn std::error::Error + Send + Sync>> {
+    match s {
+        "QUEUED" => Ok(TaskStatus::Queued),
+        "RUNNING" => Ok(TaskStatus::Running),
+        "FAILED" => Ok(TaskStatus::Failed),
+        "COMPLETE" => Ok(TaskStatus::Complete),
+        _ => Err(format!("Unknown task status: {s}").into()),
+    }
+}
+
+fn row_to_task(row: &rusqlite::Row) -> rusqlite::Result<Task> {
+    let status_str: String = row.get("status")?;
+    let created_at_str: String = row.get("created_at")?;
+    let started_at_str: Option<String> = row.get("started_at")?;
+    let completed_at_str: Option<String> = row.get("completed_at")?;
+    let repo_root_str: String = row.get("repo_root")?;
+    let copied_repo_path_str: Option<String> = row.get("copied_repo_path")?;
+    let is_interactive_int: i32 = row.get("is_interactive")?;
+    let network_isolation_int: i32 = row.get("network_isolation")?;
+    let dind_int: i32 = row.get("dind")?;
+
+    Ok(Task {
+        id: row.get("id")?,
+        repo_root: PathBuf::from(repo_root_str),
+        name: row.get("name")?,
+        task_type: row.get("task_type")?,
+        instructions_file: row.get("instructions_file")?,
+        agent: row.get("agent")?,
+        status: str_to_task_status(&status_str).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, e)
+        })?,
+        created_at: DateTime::parse_from_rfc3339(&created_at_str)
+            .map(|dt| dt.with_timezone(&chrono::Local))
+            .map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    7,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?,
+        started_at: started_at_str
+            .map(|s| DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&chrono::Utc)))
+            .transpose()
+            .map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    8,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?,
+        completed_at: completed_at_str
+            .map(|s| DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&chrono::Utc)))
+            .transpose()
+            .map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    9,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?,
+        branch_name: row.get("branch_name")?,
+        error_message: row.get("error_message")?,
+        source_commit: row.get("source_commit")?,
+        source_branch: row.get("source_branch")?,
+        stack: row.get("stack")?,
+        project: row.get("project")?,
+        copied_repo_path: copied_repo_path_str.map(PathBuf::from),
+        is_interactive: is_interactive_int != 0,
+        parent_ids: {
+            let raw: Option<String> = row.get("parent_ids")?;
+            match raw {
+                Some(s) => serde_json::from_str(&s).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        18,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
+                None => vec![],
+            }
+        },
+        network_isolation: network_isolation_int != 0,
+        dind: dind_int != 0,
+    })
+}
+
+/// Read a single task by ID from the database, returning an error if not found.
+fn read_task_by_id(
+    conn: &Connection,
+    id: &str,
+) -> Result<Task, Box<dyn std::error::Error + Send + Sync>> {
+    let mut stmt = conn.prepare("SELECT * FROM tasks WHERE id = ?1")?;
+    let task = stmt
+        .query_row(rusqlite::params![id], row_to_task)
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => {
+                Box::<dyn std::error::Error + Send + Sync>::from("Task not found")
+            }
+            other => Box::<dyn std::error::Error + Send + Sync>::from(other),
+        })?;
+    Ok(task)
+}
+
+fn insert_task(
+    conn: &Connection,
+    task: &Task,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let repo_root = path_to_string(&task.repo_root)?;
+    let copied_repo_path = task
+        .copied_repo_path
+        .as_ref()
+        .map(|p| path_to_string(p))
+        .transpose()?;
+    conn.execute(
+        "INSERT INTO tasks (id, repo_root, name, task_type, instructions_file, agent, status, created_at, started_at, completed_at, branch_name, error_message, source_commit, source_branch, stack, project, copied_repo_path, is_interactive, parent_ids, network_isolation, dind) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+        rusqlite::params![
+            task.id,
+            repo_root,
+            task.name,
+            task.task_type,
+            task.instructions_file,
+            task.agent,
+            task_status_to_str(&task.status),
+            task.created_at.to_rfc3339(),
+            task.started_at.map(|dt| dt.to_rfc3339()),
+            task.completed_at.map(|dt| dt.to_rfc3339()),
+            task.branch_name,
+            task.error_message,
+            task.source_commit,
+            task.source_branch,
+            task.stack,
+            task.project,
+            copied_repo_path,
+            task.is_interactive as i32,
+            if task.parent_ids.is_empty() { None::<String> } else { Some(serde_json::to_string(&task.parent_ids).unwrap()) },
+            task.network_isolation as i32,
+            task.dind as i32,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Attempts to migrate tasks from a legacy `tasks.json` file into the SQLite database.
+///
+/// Migration runs only when:
+/// - `tasks.json` exists in `data_dir`
+/// - `tasks.json.bak` does NOT exist (prevents re-migration)
+/// - The `tasks` table is empty
+///
+/// After successful migration, `tasks.json` is renamed to `tasks.json.bak`.
+fn migrate_from_json(conn: &Connection, data_dir: &Path) {
+    let json_path = data_dir.join("tasks.json");
+    let bak_path = data_dir.join("tasks.json.bak");
+
+    if !json_path.exists() {
+        return;
+    }
+
+    if bak_path.exists() {
+        return;
+    }
+
+    let count: i64 = match conn.query_row("SELECT COUNT(*) FROM tasks", [], |row| row.get(0)) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Warning: failed to check tasks table during migration: {e}");
+            return;
+        }
+    };
+    if count > 0 {
+        return;
+    }
+
+    let contents = match fs::read_to_string(&json_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Warning: failed to read tasks.json for migration: {e}");
+            return;
+        }
+    };
+
+    let tasks: Vec<Task> = match serde_json::from_str(&contents) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("Warning: tasks.json contains invalid data, skipping migration: {e}");
+            if let Err(rename_err) = fs::rename(&json_path, &bak_path) {
+                eprintln!("Warning: failed to rename tasks.json to tasks.json.bak: {rename_err}");
+            }
+            return;
+        }
+    };
+
+    if tasks.is_empty() {
+        eprintln!("Migrated 0 tasks from tasks.json to tasks.db");
+        if let Err(e) = fs::rename(&json_path, &bak_path) {
+            eprintln!("Warning: failed to rename tasks.json to tasks.json.bak: {e}");
+        }
+        return;
+    }
+
+    // Safe: we have exclusive access during construction and transaction() requires &mut
+    let tx = match conn.unchecked_transaction() {
+        Ok(tx) => tx,
+        Err(e) => {
+            eprintln!("Warning: failed to begin migration transaction: {e}");
+            return;
+        }
+    };
+
+    for task in &tasks {
+        if let Err(e) = insert_task(&tx, task) {
+            eprintln!("Warning: failed to migrate task {}: {e}", task.id);
+            return; // Transaction will be rolled back on drop
+        }
+    }
+
+    if let Err(e) = tx.commit() {
+        eprintln!("Warning: failed to commit migration transaction: {e}");
+        return;
+    }
+
+    if let Err(e) = fs::rename(&json_path, &bak_path) {
+        eprintln!("Warning: failed to rename tasks.json to tasks.json.bak: {e}");
+        return;
+    }
+
+    eprintln!("Migrated {} tasks from tasks.json to tasks.db", tasks.len());
+}
+
+/// SQLite-backed task storage.
+///
+/// Stores tasks in a SQLite database with WAL mode and busy_timeout for safe concurrent
+/// multi-process access.
+/// All database operations are executed via `tokio::task::spawn_blocking` to avoid blocking
+/// the async runtime.
 ///
 /// Status mutations use explicit named transition methods that perform targeted
 /// SQL updates and return the full updated row, eliminating clone-mutate-replace
 /// patterns and ensuring callers always receive the authoritative DB state.
-#[async_trait::async_trait]
-pub trait TaskStorage: Send + Sync {
-    async fn add_task(&self, task: Task) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
-    async fn get_task(
+pub struct TaskStorage {
+    conn: Arc<StdMutex<Connection>>,
+}
+
+impl TaskStorage {
+    /// Creates a new `TaskStorage`, opening or creating the database at `db_path`.
+    ///
+    /// Enables WAL journal mode and a 5-second busy timeout, then creates the `tasks` table
+    /// and indexes if they don't exist.
+    pub fn new(db_path: PathBuf) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = Connection::open(&db_path)?;
+        conn.execute_batch("PRAGMA journal_mode=WAL;")?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY,
+                repo_root TEXT NOT NULL,
+                name TEXT NOT NULL,
+                task_type TEXT NOT NULL,
+                instructions_file TEXT NOT NULL,
+                agent TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                branch_name TEXT NOT NULL,
+                error_message TEXT,
+                source_commit TEXT NOT NULL,
+                source_branch TEXT,
+                stack TEXT NOT NULL,
+                project TEXT NOT NULL,
+                copied_repo_path TEXT,
+                is_interactive INTEGER NOT NULL DEFAULT 0,
+                parent_ids TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);",
+        )?;
+
+        // Migration: add network_isolation column for existing databases
+        let _ = conn.execute_batch(
+            "ALTER TABLE tasks ADD COLUMN network_isolation INTEGER NOT NULL DEFAULT 1;",
+        );
+
+        // Migration: add dind column for existing databases
+        let _ = conn.execute_batch("ALTER TABLE tasks ADD COLUMN dind INTEGER NOT NULL DEFAULT 0;");
+
+        if let Some(data_dir) = db_path.parent() {
+            migrate_from_json(&conn, data_dir);
+        }
+
+        Ok(Self {
+            conn: Arc::new(StdMutex::new(conn)),
+        })
+    }
+
+    pub async fn add_task(
+        &self,
+        task: Task,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let conn = Arc::clone(&self.conn);
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+            insert_task(&conn, &task)
+        })
+        .await??;
+        Ok(())
+    }
+
+    pub async fn get_task(
         &self,
         id: &str,
-    ) -> Result<Option<Task>, Box<dyn std::error::Error + Send + Sync>>;
-    async fn list_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error + Send + Sync>>;
-    async fn delete_task(&self, id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    ) -> Result<Option<Task>, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = Arc::clone(&self.conn);
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+            let mut stmt = conn.prepare("SELECT * FROM tasks WHERE id = ?1")?;
+            let mut rows = stmt.query_map(rusqlite::params![id], row_to_task)?;
+            match rows.next() {
+                Some(row) => Ok(Some(row?)),
+                None => Ok(None),
+            }
+        })
+        .await?
+    }
+
+    pub async fn list_tasks(&self) -> Result<Vec<Task>, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = Arc::clone(&self.conn);
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+            let mut stmt = conn.prepare("SELECT * FROM tasks ORDER BY created_at")?;
+            let tasks = stmt
+                .query_map([], row_to_task)?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(tasks)
+        })
+        .await?
+    }
+
+    pub async fn delete_task(
+        &self,
+        id: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let conn = Arc::clone(&self.conn);
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+            let rows_affected =
+                conn.execute("DELETE FROM tasks WHERE id = ?1", rusqlite::params![id])?;
+            if rows_affected == 0 {
+                return Err("Task not found".into());
+            }
+            Ok(())
+        })
+        .await?
+    }
 
     /// Transition a task to Running status, setting `started_at` to now.
-    async fn mark_running(
+    pub async fn mark_running(
         &self,
         id: &str,
-    ) -> Result<Task, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> Result<Task, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = Arc::clone(&self.conn);
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+            let now = chrono::Utc::now().to_rfc3339();
+            let rows_affected = conn.execute(
+                "UPDATE tasks SET status = 'RUNNING', started_at = ?1 WHERE id = ?2",
+                rusqlite::params![now, id],
+            )?;
+            if rows_affected == 0 {
+                return Err("Task not found".into());
+            }
+            read_task_by_id(&conn, &id)
+        })
+        .await?
+    }
 
     /// Transition a task to Complete status, setting `completed_at` to now and `branch_name`.
-    async fn mark_complete(
+    pub async fn mark_complete(
         &self,
         id: &str,
         branch_name: &str,
-    ) -> Result<Task, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> Result<Task, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = Arc::clone(&self.conn);
+        let id = id.to_string();
+        let branch_name = branch_name.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+            let now = chrono::Utc::now().to_rfc3339();
+            let rows_affected = conn.execute(
+                "UPDATE tasks SET status = 'COMPLETE', completed_at = ?1, branch_name = ?2 WHERE id = ?3",
+                rusqlite::params![now, branch_name, id],
+            )?;
+            if rows_affected == 0 {
+                return Err("Task not found".into());
+            }
+            read_task_by_id(&conn, &id)
+        })
+        .await?
+    }
 
     /// Transition a task to Failed status, setting `completed_at` to now and `error_message`.
-    async fn mark_failed(
+    pub async fn mark_failed(
         &self,
         id: &str,
         error_message: &str,
-    ) -> Result<Task, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> Result<Task, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = Arc::clone(&self.conn);
+        let id = id.to_string();
+        let error_message = error_message.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+            let now = chrono::Utc::now().to_rfc3339();
+            let rows_affected = conn.execute(
+                "UPDATE tasks SET status = 'FAILED', completed_at = ?1, error_message = ?2 WHERE id = ?3",
+                rusqlite::params![now, error_message, id],
+            )?;
+            if rows_affected == 0 {
+                return Err("Task not found".into());
+            }
+            read_task_by_id(&conn, &id)
+        })
+        .await?
+    }
 
     /// Reset a task to Queued status, clearing `started_at`, `completed_at`, and `error_message`.
-    async fn reset_to_queued(
+    pub async fn reset_to_queued(
         &self,
         id: &str,
-    ) -> Result<Task, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> Result<Task, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = Arc::clone(&self.conn);
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+            let rows_affected = conn.execute(
+                "UPDATE tasks SET status = 'QUEUED', started_at = NULL, completed_at = NULL, error_message = NULL WHERE id = ?1",
+                rusqlite::params![id],
+            )?;
+            if rows_affected == 0 {
+                return Err("Task not found".into());
+            }
+            read_task_by_id(&conn, &id)
+        })
+        .await?
+    }
 
     /// Update a child task's repository fields after copying from its parent.
     /// Sets `copied_repo_path`, `source_commit`, and `source_branch`.
-    async fn prepare_child_task(
+    pub async fn prepare_child_task(
         &self,
         id: &str,
         copied_repo_path: PathBuf,
         source_commit: &str,
         source_branch: &str,
-    ) -> Result<Task, Box<dyn std::error::Error + Send + Sync>>;
-}
-
-/// Creates a new SQLite-backed task storage instance for the given environment.
-pub(crate) fn get_task_storage(tsk_env: Arc<TskEnv>) -> Arc<dyn TaskStorage> {
-    let db_path = tsk_env.tasks_db();
-    let storage = crate::sqlite_task_storage::SqliteTaskStorage::new(db_path)
-        .expect("Failed to initialize SQLite task storage");
-    Arc::new(storage)
+    ) -> Result<Task, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = Arc::clone(&self.conn);
+        let id = id.to_string();
+        let copied_repo_path_str = path_to_string(&copied_repo_path)?;
+        let source_commit = source_commit.to_string();
+        let source_branch = source_branch.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+            let rows_affected = conn.execute(
+                "UPDATE tasks SET copied_repo_path = ?1, source_commit = ?2, source_branch = ?3 WHERE id = ?4",
+                rusqlite::params![copied_repo_path_str, source_commit, source_branch, id],
+            )?;
+            if rows_affected == 0 {
+                return Err("Task not found".into());
+            }
+            read_task_by_id(&conn, &id)
+        })
+        .await?
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::context::AppContext;
-    use crate::sqlite_task_storage::SqliteTaskStorage;
     use crate::task::{Task, TaskStatus};
-    use std::fs;
-    use std::path::{Path, PathBuf};
 
-    async fn run_storage_crud_tests(storage: &dyn TaskStorage, data_dir: &Path) {
+    #[tokio::test]
+    async fn test_crud_operations() {
+        let ctx = AppContext::builder().build();
+        let tsk_env = ctx.tsk_env();
+        let data_dir = tsk_env.data_dir();
+
+        let db_path = data_dir.join("test_tasks.db");
+        let storage = TaskStorage::new(db_path).unwrap();
+
         let task = Task {
             id: "abcd1234".to_string(),
             repo_root: data_dir.to_path_buf(),
@@ -145,22 +585,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sqlite_task_storage() {
-        let ctx = AppContext::builder().build();
-        let tsk_env = ctx.tsk_env();
-
-        let db_path = tsk_env.data_dir().join("test_tasks.db");
-        let storage = SqliteTaskStorage::new(db_path).unwrap();
-        run_storage_crud_tests(&storage, tsk_env.data_dir()).await;
-    }
-
-    #[tokio::test]
     async fn test_sqlite_round_trip_all_fields() {
         let ctx = AppContext::builder().build();
         let tsk_env = ctx.tsk_env();
 
         let db_path = tsk_env.data_dir().join("test_round_trip.db");
-        let storage = SqliteTaskStorage::new(db_path).unwrap();
+        let storage = TaskStorage::new(db_path).unwrap();
 
         let created_at = chrono::Local::now();
         let started_at = chrono::Utc::now();
@@ -233,7 +663,7 @@ mod tests {
         let ctx = AppContext::builder().build();
         let tsk_env = ctx.tsk_env();
         let db_path = tsk_env.data_dir().join("test_mark_running.db");
-        let storage = SqliteTaskStorage::new(db_path).unwrap();
+        let storage = TaskStorage::new(db_path).unwrap();
 
         let task = Task {
             id: "run1234".to_string(),
@@ -256,7 +686,7 @@ mod tests {
         let ctx = AppContext::builder().build();
         let tsk_env = ctx.tsk_env();
         let db_path = tsk_env.data_dir().join("test_mark_complete.db");
-        let storage = SqliteTaskStorage::new(db_path).unwrap();
+        let storage = TaskStorage::new(db_path).unwrap();
 
         let task = Task {
             id: "comp1234".to_string(),
@@ -285,7 +715,7 @@ mod tests {
         let ctx = AppContext::builder().build();
         let tsk_env = ctx.tsk_env();
         let db_path = tsk_env.data_dir().join("test_mark_failed.db");
-        let storage = SqliteTaskStorage::new(db_path).unwrap();
+        let storage = TaskStorage::new(db_path).unwrap();
 
         let task = Task {
             id: "fail1234".to_string(),
@@ -313,7 +743,7 @@ mod tests {
         let ctx = AppContext::builder().build();
         let tsk_env = ctx.tsk_env();
         let db_path = tsk_env.data_dir().join("test_reset_queued.db");
-        let storage = SqliteTaskStorage::new(db_path).unwrap();
+        let storage = TaskStorage::new(db_path).unwrap();
 
         let task = Task {
             id: "reset1234".to_string(),
@@ -324,7 +754,7 @@ mod tests {
         };
         storage.add_task(task).await.unwrap();
 
-        // Move through Running → Failed, then reset
+        // Move through Running -> Failed, then reset
         storage.mark_running("reset1234").await.unwrap();
         storage
             .mark_failed("reset1234", "temporary error")
@@ -342,7 +772,7 @@ mod tests {
         let ctx = AppContext::builder().build();
         let tsk_env = ctx.tsk_env();
         let db_path = tsk_env.data_dir().join("test_prepare_child.db");
-        let storage = SqliteTaskStorage::new(db_path).unwrap();
+        let storage = TaskStorage::new(db_path).unwrap();
 
         let task = Task {
             id: "child1234".to_string(),
@@ -398,8 +828,8 @@ mod tests {
         let json = serde_json::to_string_pretty(&tasks).unwrap();
         fs::write(&json_path, &json).unwrap();
 
-        // Construct SqliteTaskStorage — migration should run automatically
-        let storage = SqliteTaskStorage::new(db_path).unwrap();
+        // Construct TaskStorage -- migration should run automatically
+        let storage = TaskStorage::new(db_path).unwrap();
 
         // Verify tasks are in SQLite
         let stored_tasks = storage.list_tasks().await.unwrap();
@@ -439,9 +869,9 @@ mod tests {
         fs::write(&json_path, &json).unwrap();
         fs::write(&bak_path, "old backup").unwrap();
 
-        let storage = SqliteTaskStorage::new(db_path).unwrap();
+        let storage = TaskStorage::new(db_path).unwrap();
 
-        // Migration should NOT have run — DB should be empty
+        // Migration should NOT have run -- DB should be empty
         let stored_tasks = storage.list_tasks().await.unwrap();
         assert_eq!(stored_tasks.len(), 0);
 
@@ -465,7 +895,7 @@ mod tests {
         let db_path = data_dir.join("migration_existing_test.db");
 
         // First, create a storage and add a task to it
-        let storage = SqliteTaskStorage::new(db_path.clone()).unwrap();
+        let storage = TaskStorage::new(db_path.clone()).unwrap();
         let existing_task = Task {
             id: "existing1234".to_string(),
             repo_root: data_dir.to_path_buf(),
@@ -489,8 +919,8 @@ mod tests {
         let json = serde_json::to_string_pretty(&vec![json_task]).unwrap();
         fs::write(&json_path, &json).unwrap();
 
-        // Re-open the storage — migration should NOT run since DB has data
-        let storage = SqliteTaskStorage::new(db_path).unwrap();
+        // Re-open the storage -- migration should NOT run since DB has data
+        let storage = TaskStorage::new(db_path).unwrap();
         let stored_tasks = storage.list_tasks().await.unwrap();
         assert_eq!(stored_tasks.len(), 1);
         assert_eq!(stored_tasks[0].id, "existing1234");
@@ -510,12 +940,12 @@ mod tests {
         let data_dir = tsk_env.data_dir().to_path_buf();
 
         let db_path = tsk_env.data_dir().join("concurrent_test.db");
-        let storage1 = Arc::new(SqliteTaskStorage::new(db_path.clone()).unwrap());
-        let storage2 = Arc::new(SqliteTaskStorage::new(db_path).unwrap());
+        let storage1 = Arc::new(TaskStorage::new(db_path.clone()).unwrap());
+        let storage2 = Arc::new(TaskStorage::new(db_path).unwrap());
 
         const TASKS_PER_WRITER: usize = 50;
 
-        let spawn_writer = |storage: Arc<SqliteTaskStorage>, dir: PathBuf, writer_id: usize| {
+        let spawn_writer = |storage: Arc<TaskStorage>, dir: PathBuf, writer_id: usize| {
             tokio::spawn(async move {
                 for i in 0..TASKS_PER_WRITER {
                     let task = Task {
@@ -553,7 +983,7 @@ mod tests {
         // Create tasks.json with invalid content
         fs::write(&json_path, "not valid json {{{").unwrap();
 
-        let storage = SqliteTaskStorage::new(db_path).unwrap();
+        let storage = TaskStorage::new(db_path).unwrap();
 
         // DB should be empty
         let stored_tasks = storage.list_tasks().await.unwrap();
