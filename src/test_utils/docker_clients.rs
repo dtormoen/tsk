@@ -12,11 +12,6 @@ pub struct NoOpDockerClient;
 
 #[async_trait]
 impl DockerClient for NoOpDockerClient {
-    #[cfg(test)]
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     async fn create_container(
         &self,
         _options: Option<CreateContainerOptions>,
@@ -122,6 +117,10 @@ impl DockerClient for NoOpDockerClient {
     ) -> Result<(), String> {
         Ok(())
     }
+
+    async fn ping(&self) -> Result<String, String> {
+        Ok("OK".to_string())
+    }
 }
 
 #[derive(Clone)]
@@ -149,11 +148,6 @@ impl Default for FixedResponseDockerClient {
 
 #[async_trait]
 impl DockerClient for FixedResponseDockerClient {
-    #[cfg(test)]
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     async fn create_container(
         &self,
         _options: Option<CreateContainerOptions>,
@@ -269,6 +263,10 @@ impl DockerClient for FixedResponseDockerClient {
     ) -> Result<(), String> {
         Ok(())
     }
+
+    async fn ping(&self) -> Result<String, String> {
+        Ok("OK".to_string())
+    }
 }
 
 type CreateContainerCall = (Option<CreateContainerOptions>, ContainerCreateBody);
@@ -333,11 +331,6 @@ impl Default for TrackedDockerClient {
 
 #[async_trait]
 impl DockerClient for TrackedDockerClient {
-    #[cfg(test)]
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     async fn create_container(
         &self,
         options: Option<CreateContainerOptions>,
@@ -542,5 +535,9 @@ impl DockerClient for TrackedDockerClient {
             tar_data,
         ));
         Ok(())
+    }
+
+    async fn ping(&self) -> Result<String, String> {
+        Ok("OK".to_string())
     }
 }

@@ -15,19 +15,15 @@ pub use tsk_config::{BindMount, DockerOptions, EnvVar, NamedVolume, ProjectConfi
 pub use tsk_env::TskEnv;
 
 use crate::git_sync::GitSyncManager;
-use docker_client::DockerClient;
 use notifications::NotificationClient;
 
 use std::sync::Arc;
 
 #[cfg(test)]
-use crate::test_utils::NoOpDockerClient;
-#[cfg(test)]
 use tempfile::TempDir;
 
 #[derive(Clone)]
 pub struct AppContext {
-    docker_client: Arc<dyn DockerClient>,
     git_sync_manager: Arc<GitSyncManager>,
     notification_client: Arc<NotificationClient>,
     terminal_operations: Arc<terminal::TerminalOperations>,
@@ -40,10 +36,6 @@ pub struct AppContext {
 impl AppContext {
     pub fn builder() -> AppContextBuilder {
         AppContextBuilder::new()
-    }
-
-    pub fn docker_client(&self) -> Arc<dyn DockerClient> {
-        Arc::clone(&self.docker_client)
     }
 
     pub fn git_sync_manager(&self) -> Arc<GitSyncManager> {
@@ -70,7 +62,6 @@ impl AppContext {
 
 pub struct AppContextBuilder {
     container_engine: Option<ContainerEngine>,
-    docker_client: Option<Arc<dyn DockerClient>>,
     git_sync_manager: Option<Arc<GitSyncManager>>,
     notification_client: Option<Arc<NotificationClient>>,
     tsk_config: Option<Arc<TskConfig>>,
@@ -87,21 +78,11 @@ impl AppContextBuilder {
     pub fn new() -> Self {
         Self {
             container_engine: None,
-            docker_client: None,
             git_sync_manager: None,
             notification_client: None,
             tsk_config: None,
             tsk_env: None,
         }
-    }
-
-    /// Configure the Docker client for this context
-    ///
-    /// Used extensively in tests throughout the codebase
-    #[allow(dead_code)] // Used in tests
-    pub fn with_docker_client(mut self, docker_client: Arc<dyn DockerClient>) -> Self {
-        self.docker_client = Some(docker_client);
-        self
     }
 
     /// Configure the TSK environment for this context
@@ -156,13 +137,7 @@ impl AppContextBuilder {
                 .tsk_config
                 .unwrap_or_else(|| Arc::new(TskConfig::default()));
 
-            let docker_client = self.docker_client.unwrap_or_else(|| {
-                // Use NoOpDockerClient by default in tests
-                Arc::new(NoOpDockerClient)
-            });
-
             AppContext {
-                docker_client,
                 git_sync_manager: self
                     .git_sync_manager
                     .unwrap_or_else(|| Arc::new(GitSyncManager::new())),
@@ -196,14 +171,7 @@ impl AppContextBuilder {
                 Arc::new(config)
             });
 
-            let docker_client = self.docker_client.unwrap_or_else(|| {
-                Arc::new(docker_client::DefaultDockerClient::new(
-                    &tsk_config.docker.container_engine,
-                ))
-            });
-
             AppContext {
-                docker_client,
                 git_sync_manager: self
                     .git_sync_manager
                     .unwrap_or_else(|| Arc::new(GitSyncManager::new())),
@@ -219,56 +187,18 @@ impl AppContextBuilder {
 }
 
 #[cfg(test)]
-impl AppContext {
-    pub fn new_with_test_docker(docker_client: Arc<dyn DockerClient>) -> Self {
-        AppContextBuilder::new()
-            .with_docker_client(docker_client)
-            .build()
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::FixedResponseDockerClient;
-    use std::sync::Arc;
 
     #[test]
     fn test_app_context_creation() {
-        let docker_client = Arc::new(FixedResponseDockerClient::default());
-        let app_context = AppContext::builder()
-            .with_docker_client(docker_client)
-            .build();
+        let app_context = AppContext::builder().build();
 
-        // Verify we can get the docker client back
-        let client = app_context.docker_client();
-        assert!(client.as_any().is::<FixedResponseDockerClient>());
-    }
-
-    #[tokio::test]
-    async fn test_app_context_docker_client_usage() {
-        let docker_client = Arc::new(FixedResponseDockerClient::default());
-        let app_context = AppContext::builder()
-            .with_docker_client(docker_client.clone())
-            .build();
-
-        // Test that we can use the docker client through the context
-        let client = app_context.docker_client();
-        let container_id = client
-            .create_container(None, bollard::models::ContainerCreateBody::default())
-            .await
-            .unwrap();
-
-        assert_eq!(container_id, "test-container-id");
-    }
-
-    #[test]
-    fn test_app_context_test_constructor() {
-        let docker_client = Arc::new(FixedResponseDockerClient::default());
-        let app_context = AppContext::new_with_test_docker(docker_client);
-
-        // Verify we can get the docker client back
-        let client = app_context.docker_client();
-        assert!(client.as_any().is::<FixedResponseDockerClient>());
+        // Verify we can access all expected fields
+        let _env = app_context.tsk_env();
+        let _config = app_context.tsk_config();
+        let _git_sync = app_context.git_sync_manager();
+        let _notification = app_context.notification_client();
+        let _terminal = app_context.terminal_operations();
     }
 }

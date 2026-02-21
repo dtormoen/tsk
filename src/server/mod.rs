@@ -3,6 +3,7 @@ pub mod scheduler;
 pub mod worker_pool;
 
 use crate::context::AppContext;
+use crate::context::docker_client::DockerClient;
 use crate::docker::proxy_manager::ProxyManager;
 use crate::task::TaskStatus;
 use crate::task_storage::get_task_storage;
@@ -15,6 +16,7 @@ use tokio::sync::Mutex;
 /// Main TSK server that handles task management
 pub struct TskServer {
     app_context: Arc<AppContext>,
+    docker_client: Arc<dyn DockerClient>,
     quit_signal: Arc<tokio::sync::Notify>,
     scheduler: Arc<Mutex<TaskScheduler>>,
     scheduler_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -28,7 +30,12 @@ pub struct TskServer {
 
 impl TskServer {
     /// Create a new TSK server instance with specified number of workers
-    pub fn with_workers(app_context: Arc<AppContext>, workers: u32, quit_when_done: bool) -> Self {
+    pub fn with_workers(
+        app_context: Arc<AppContext>,
+        docker_client: Arc<dyn DockerClient>,
+        workers: u32,
+        quit_when_done: bool,
+    ) -> Self {
         let tsk_env = app_context.tsk_env();
         let storage = get_task_storage(tsk_env.clone());
 
@@ -37,6 +44,7 @@ impl TskServer {
 
         let scheduler = TaskScheduler::new(
             app_context.clone(),
+            docker_client.clone(),
             storage.clone(),
             quit_when_done,
             quit_signal.clone(),
@@ -52,6 +60,7 @@ impl TskServer {
 
         Self {
             app_context,
+            docker_client,
             quit_signal,
             scheduler,
             scheduler_handle: Mutex::new(None),
@@ -117,10 +126,14 @@ impl TskServer {
 
         let task_ids: Vec<String> = self.submitted_tasks.lock().await.iter().cloned().collect();
 
-        let proxy_manager = ProxyManager::new(&self.app_context);
+        let proxy_manager = ProxyManager::new(
+            self.docker_client.clone(),
+            self.app_context.tsk_config(),
+            self.app_context.tsk_env(),
+        );
 
         if !task_ids.is_empty() {
-            let docker_client = self.app_context.docker_client();
+            let docker_client = &self.docker_client;
             for id in &task_ids {
                 let container_name = format!("tsk-{id}");
                 if let Err(e) = docker_client.kill_container(&container_name).await {
@@ -176,12 +189,8 @@ mod tests {
     #[tokio::test]
     async fn test_graceful_shutdown_kills_containers_and_marks_tasks_failed() {
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let ctx = Arc::new(
-            AppContext::builder()
-                .with_docker_client(mock_client.clone())
-                .build(),
-        );
-        let server = TskServer::with_workers(ctx.clone(), 1, false);
+        let ctx = Arc::new(AppContext::builder().build());
+        let server = TskServer::with_workers(ctx.clone(), mock_client.clone(), 1, false);
 
         // Add tasks to storage as Running
         let storage = get_task_storage(ctx.tsk_env());
@@ -266,12 +275,8 @@ mod tests {
     #[tokio::test]
     async fn test_graceful_shutdown_skips_completed_tasks() {
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let ctx = Arc::new(
-            AppContext::builder()
-                .with_docker_client(mock_client.clone())
-                .build(),
-        );
-        let server = TskServer::with_workers(ctx.clone(), 1, false);
+        let ctx = Arc::new(AppContext::builder().build());
+        let server = TskServer::with_workers(ctx.clone(), mock_client.clone(), 1, false);
 
         // Add a task that's already completed
         let storage = get_task_storage(ctx.tsk_env());

@@ -421,6 +421,7 @@ async fn main() {
             repo,
             no_network_isolation,
             dind,
+            docker_client_override: None,
         }),
         Commands::Shell {
             engine: _,

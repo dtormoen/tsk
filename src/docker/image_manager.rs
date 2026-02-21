@@ -11,6 +11,7 @@ use std::sync::Arc;
 use crate::assets::layered::LayeredAssetManager;
 use crate::context::AppContext;
 use crate::context::ContainerEngine;
+use crate::context::docker_client::DockerClient;
 use crate::docker::build_lock_manager::DockerBuildLockManager;
 use crate::docker::composer::{ComposedDockerfile, DockerComposer};
 use crate::docker::layers::{DockerImageConfig, DockerLayerType};
@@ -78,6 +79,7 @@ fn get_git_config_from_repo(build_root: Option<&Path>, key: &str) -> Result<Stri
 /// making it easy to test and configure.
 pub struct DockerImageManager {
     ctx: AppContext,
+    client: Arc<dyn DockerClient>,
     docker_build_lock_manager: Arc<DockerBuildLockManager>,
     template_manager: DockerTemplateManager,
     composer: DockerComposer,
@@ -88,10 +90,12 @@ impl DockerImageManager {
     ///
     /// # Arguments
     /// * `ctx` - Application context with all dependencies
+    /// * `client` - Docker client for image operations
     /// * `project_root` - Optional project root for layered assets
     /// * `docker_build_lock_manager` - Optional shared lock manager; creates a new one if `None`
     pub fn new(
         ctx: &AppContext,
+        client: Arc<dyn DockerClient>,
         project_root: Option<&std::path::Path>,
         docker_build_lock_manager: Option<Arc<DockerBuildLockManager>>,
     ) -> Self {
@@ -104,6 +108,7 @@ impl DockerImageManager {
 
         Self {
             ctx: ctx.clone(),
+            client,
             docker_build_lock_manager: docker_build_lock_manager
                 .unwrap_or_else(|| Arc::new(DockerBuildLockManager::new())),
             template_manager,
@@ -347,8 +352,7 @@ impl DockerImageManager {
             return Ok(true);
         }
 
-        self.ctx
-            .docker_client()
+        self.client
             .image_exists(tag)
             .await
             .map_err(|e| anyhow::anyhow!(e))
@@ -432,8 +436,7 @@ impl DockerImageManager {
 
         // Build the image using the DockerClient with streaming output
         let mut build_stream = self
-            .ctx
-            .docker_client()
+            .client
             .build_image(options, tar_archive)
             .await
             .map_err(|e| anyhow::anyhow!("Docker build failed: {e}"))?;
@@ -501,8 +504,9 @@ mod tests {
     use tempfile::TempDir;
 
     fn create_test_manager() -> DockerImageManager {
+        use crate::test_utils::NoOpDockerClient;
         let ctx = AppContext::builder().build();
-        DockerImageManager::new(&ctx, None, None)
+        DockerImageManager::new(&ctx, Arc::new(NoOpDockerClient), None, None)
     }
 
     #[test]
@@ -791,12 +795,23 @@ mod tests {
         // Create a shared lock manager
         let lock_manager = Arc::new(DockerBuildLockManager::new());
 
+        use crate::test_utils::NoOpDockerClient;
         // Create managers with the same lock manager passed directly
         let ctx1 = AppContext::builder().build();
-        let manager1 = DockerImageManager::new(&ctx1, None, Some(lock_manager.clone()));
+        let manager1 = DockerImageManager::new(
+            &ctx1,
+            Arc::new(NoOpDockerClient),
+            None,
+            Some(lock_manager.clone()),
+        );
 
         let ctx2 = AppContext::builder().build();
-        let manager2 = DockerImageManager::new(&ctx2, None, Some(lock_manager.clone()));
+        let manager2 = DockerImageManager::new(
+            &ctx2,
+            Arc::new(NoOpDockerClient),
+            None,
+            Some(lock_manager.clone()),
+        );
 
         // Launch two concurrent ensure_image tasks for different images
         let task1 = tokio::spawn(async move {

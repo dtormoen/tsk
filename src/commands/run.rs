@@ -1,12 +1,16 @@
 use super::Command;
 use crate::context::AppContext;
+use crate::context::docker_client::DefaultDockerClient;
+use crate::docker::DockerManager;
 use crate::repo_utils::find_repository_root;
 use crate::stdin_utils::{merge_description_with_stdin, read_piped_input};
 use crate::task::TaskBuilder;
 use crate::task_manager::TaskManager;
+use crate::task_runner::TaskRunner;
 use async_trait::async_trait;
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub struct RunCommand {
     pub name: Option<String>,
@@ -20,6 +24,8 @@ pub struct RunCommand {
     pub repo: Option<String>,
     pub no_network_isolation: bool,
     pub dind: bool,
+    /// Optional Docker client override for dependency injection (used in tests)
+    pub docker_client_override: Option<Arc<dyn crate::context::docker_client::DockerClient>>,
 }
 
 #[async_trait]
@@ -91,7 +97,17 @@ impl Command for RunCommand {
             .set_title(&format!("TSK: {}", name));
 
         // Execute the task
-        let task_manager = TaskManager::new(ctx)?;
+        let docker_client: Arc<dyn crate::context::docker_client::DockerClient> =
+            match &self.docker_client_override {
+                Some(client) => Arc::clone(client),
+                None => Arc::new(
+                    DefaultDockerClient::new(&ctx.tsk_config().docker.container_engine)
+                        .map_err(|e| -> Box<dyn Error> { e.into() })?,
+                ),
+            };
+        let docker_manager = DockerManager::new(ctx, docker_client);
+        let task_runner = TaskRunner::new(ctx, docker_manager);
+        let task_manager = TaskManager::with_runner(ctx, task_runner)?;
         let result = task_manager
             .store_and_execute_task(&task)
             .await
@@ -109,9 +125,13 @@ impl Command for RunCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::NoOpDockerClient;
+
+    fn mock_docker_client() -> Option<Arc<dyn crate::context::docker_client::DockerClient>> {
+        Some(Arc::new(NoOpDockerClient))
+    }
 
     fn create_test_context() -> AppContext {
-        // Automatically gets test defaults: NoOpDockerClient, etc.
         AppContext::builder().build()
     }
 
@@ -119,7 +139,6 @@ mod tests {
     async fn test_run_command_validation_no_input() {
         use crate::test_utils::TestGitRepository;
 
-        // Create a test git repository
         let test_repo = TestGitRepository::new().unwrap();
         test_repo.init_with_commit().unwrap();
 
@@ -135,6 +154,7 @@ mod tests {
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             no_network_isolation: false,
             dind: false,
+            docker_client_override: mock_docker_client(),
         };
 
         let ctx = create_test_context();
@@ -152,20 +172,16 @@ mod tests {
     async fn test_run_command_template_without_description() {
         use crate::test_utils::TestGitRepository;
 
-        // Create a test git repository
         let test_repo = TestGitRepository::new().unwrap();
         test_repo.init_with_commit().unwrap();
 
-        // Create template file without {{DESCRIPTION}} placeholder
         let template_content = "Say ack and exit.";
         test_repo
             .create_file(".tsk/templates/ack.md", template_content)
             .unwrap();
 
-        // Create AppContext - automatically gets test defaults
         let ctx = AppContext::builder().build();
 
-        // Create RunCommand without description (should succeed for templates without placeholder)
         let cmd = RunCommand {
             name: Some("test-ack".to_string()),
             r#type: "ack".to_string(),
@@ -178,14 +194,10 @@ mod tests {
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             no_network_isolation: false,
             dind: false,
+            docker_client_override: mock_docker_client(),
         };
 
-        // Execute should succeed for templates without {{DESCRIPTION}} placeholder
-        // The NoOpDockerClient simulates successful execution
         let result = cmd.execute(&ctx).await;
-
-        // The test verifies that templates without {{DESCRIPTION}} placeholder
-        // don't require a description to be provided
         assert!(
             result.is_ok(),
             "Should succeed for template without placeholder: {:?}",
@@ -212,6 +224,7 @@ mod tests {
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             no_network_isolation: false,
             dind: false,
+            docker_client_override: mock_docker_client(),
         };
 
         let ctx = create_test_context();
@@ -229,11 +242,9 @@ mod tests {
     async fn test_run_command_name_defaults_to_type() {
         use crate::test_utils::TestGitRepository;
 
-        // Create a test git repository
         let test_repo = TestGitRepository::new().unwrap();
         test_repo.init_with_commit().unwrap();
 
-        // Create template file without {{DESCRIPTION}} placeholder
         let template_content = "Say ack and exit.";
         test_repo
             .create_file(".tsk/templates/ack.md", template_content)
@@ -241,7 +252,6 @@ mod tests {
 
         let ctx = AppContext::builder().build();
 
-        // Create RunCommand with name: None - should default to type value
         let cmd = RunCommand {
             name: None,
             r#type: "ack".to_string(),
@@ -254,9 +264,9 @@ mod tests {
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             no_network_isolation: false,
             dind: false,
+            docker_client_override: mock_docker_client(),
         };
 
-        // Execute should succeed, using type as the name
         let result = cmd.execute(&ctx).await;
         assert!(
             result.is_ok(),
@@ -288,6 +298,7 @@ mod tests {
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             no_network_isolation: false,
             dind: false,
+            docker_client_override: mock_docker_client(),
         };
 
         let ctx = create_test_context();

@@ -1,5 +1,6 @@
 use crate::commands::Command;
 use crate::context::AppContext;
+use crate::context::docker_client::{DefaultDockerClient, DockerClient};
 use crate::server::TskServer;
 use async_trait::async_trait;
 use std::error::Error;
@@ -17,7 +18,22 @@ impl Command for ServerStartCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         println!("Starting TSK server with {} worker(s)...", self.workers);
         ctx.notification_client().set_sound_enabled(self.sound);
-        let server = TskServer::with_workers(Arc::new(ctx.clone()), self.workers, self.quit);
+        let docker_client: Arc<dyn DockerClient> = Arc::new(
+            DefaultDockerClient::new(&ctx.tsk_config().docker.container_engine)
+                .map_err(|e| -> Box<dyn Error> { e.into() })?,
+        );
+
+        // Validate Docker connectivity before committing to start
+        docker_client.ping().await.map_err(|e| -> Box<dyn Error> {
+            format!("Cannot start server: Docker/Podman daemon is not reachable: {e}").into()
+        })?;
+
+        let server = TskServer::with_workers(
+            Arc::new(ctx.clone()),
+            docker_client,
+            self.workers,
+            self.quit,
+        );
 
         // Setup signal handlers for graceful shutdown (SIGINT and SIGTERM)
         let shutdown_signal = Arc::new(tokio::sync::Notify::new());

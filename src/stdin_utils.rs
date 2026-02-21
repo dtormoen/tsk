@@ -152,6 +152,8 @@ mod tests {
     async fn test_run_command_with_piped_input() {
         use crate::commands::Command;
         use crate::commands::RunCommand;
+        use crate::test_utils::NoOpDockerClient;
+        use std::sync::Arc;
 
         // Create a test git repository
         let test_repo = TestGitRepository::new().unwrap();
@@ -179,6 +181,7 @@ mod tests {
             repo: Some(test_repo.path().to_string_lossy().to_string()),
             no_network_isolation: false,
             dind: false,
+            docker_client_override: Some(Arc::new(NoOpDockerClient)),
         };
 
         // Should succeed for templates without {{DESCRIPTION}} placeholder

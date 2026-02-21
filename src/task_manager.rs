@@ -31,12 +31,12 @@ use crate::context::tsk_env::TskEnv;
 /// TaskManager provides a unified interface for creating, executing, and managing tasks.
 /// It handles task persistence through TaskStorage and delegates execution to TaskRunner.
 pub struct TaskManager {
-    task_runner: TaskRunner,
+    task_runner: Option<TaskRunner>,
     task_storage: Arc<dyn TaskStorage>,
 }
 
 impl TaskManager {
-    /// Creates a new TaskManager with task storage initialized.
+    /// Creates a TaskManager without Docker capabilities (for clean, delete, retry, list).
     ///
     /// # Arguments
     ///
@@ -46,10 +46,21 @@ impl TaskManager {
     ///
     /// Returns a configured TaskManager or an error if initialization fails.
     pub fn new(ctx: &AppContext) -> Result<Self, String> {
-        let task_runner = TaskRunner::new(ctx);
-
         Ok(Self {
-            task_runner,
+            task_runner: None,
+            task_storage: get_task_storage(ctx.tsk_env()),
+        })
+    }
+
+    /// Creates a TaskManager with Docker execution capabilities (for run, shell, server).
+    ///
+    /// # Arguments
+    ///
+    /// * `ctx` - The application context providing dependencies
+    /// * `task_runner` - The TaskRunner for executing tasks in Docker containers
+    pub fn with_runner(ctx: &AppContext, task_runner: TaskRunner) -> Result<Self, String> {
+        Ok(Self {
+            task_runner: Some(task_runner),
             task_storage: get_task_storage(ctx.tsk_env()),
         })
     }
@@ -84,6 +95,15 @@ impl TaskManager {
         &self,
         task: &Task,
     ) -> Result<TaskExecutionResult, TaskExecutionError> {
+        let task_runner = self
+            .task_runner
+            .as_ref()
+            .ok_or_else(|| TaskExecutionError {
+                message: "TaskRunner not available - Docker client required for task execution"
+                    .to_string(),
+                is_warmup_failure: false,
+            })?;
+
         // Update task status to running
         let mut running_task = task.clone();
         running_task.status = TaskStatus::Running;
@@ -94,7 +114,7 @@ impl TaskManager {
         }
 
         // Execute the task
-        let execution_result = self.task_runner.execute_task(task).await;
+        let execution_result = task_runner.execute_task(task).await;
 
         match execution_result {
             Ok(result) => {
@@ -786,6 +806,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_store_and_execute_task() {
+        use crate::context::docker_client::DockerClient;
+        use crate::docker::DockerManager;
+        use crate::test_utils::NoOpDockerClient;
+
         let (tsk_env, test_repo, ctx) = setup_test_environment().await.unwrap();
         let repo_root = test_repo.path().to_path_buf();
 
@@ -803,7 +827,10 @@ mod tests {
             ..Task::test_default()
         };
 
-        let task_manager = TaskManager::new(&ctx).unwrap();
+        let docker_client: Arc<dyn DockerClient> = Arc::new(NoOpDockerClient);
+        let docker_manager = DockerManager::new(&ctx, docker_client);
+        let task_runner = crate::task_runner::TaskRunner::new(&ctx, docker_manager);
+        let task_manager = TaskManager::with_runner(&ctx, task_runner).unwrap();
         let _result = task_manager.store_and_execute_task(&task).await;
 
         // Verify the task exists in storage after execution

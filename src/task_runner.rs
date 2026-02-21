@@ -43,21 +43,16 @@ pub struct TaskRunner {
 }
 
 impl TaskRunner {
-    /// Creates a new TaskRunner from the application context.
-    ///
-    /// Extracts all required dependencies from the AppContext and constructs
-    /// the necessary components internally.
+    /// Creates a new TaskRunner with the given DockerManager.
     ///
     /// # Arguments
     ///
     /// * `ctx` - The application context providing all required dependencies
-    pub fn new(ctx: &AppContext) -> Self {
-        let repo_manager = RepoManager::new(ctx);
-        let docker_manager = DockerManager::new(ctx);
-
+    /// * `docker_manager` - The DockerManager for container operations
+    pub fn new(ctx: &AppContext, docker_manager: DockerManager) -> Self {
         Self {
             ctx: ctx.clone(),
-            repo_manager,
+            repo_manager: RepoManager::new(ctx),
             docker_manager,
         }
     }
@@ -112,8 +107,12 @@ impl TaskRunner {
 
         // Create a task-specific image manager with the copied repository as the project root
         // This ensures that project-specific dockerfiles are found in the copied repository
-        let task_image_manager =
-            DockerImageManager::new(&self.ctx, Some(repo_path.as_path()), None);
+        let task_image_manager = DockerImageManager::new(
+            &self.ctx,
+            self.docker_manager.client(),
+            Some(repo_path.as_path()),
+            None,
+        );
 
         // Ensure the Docker image exists - always rebuild to pick up any changes
         let docker_image_tag = task_image_manager
@@ -241,10 +240,8 @@ mod tests {
             ..Default::default()
         });
 
-        // Create AppContext with mock docker client and test directories
-        let ctx = AppContext::builder()
-            .with_docker_client(docker_client)
-            .build();
+        // Create AppContext with test directories
+        let ctx = AppContext::builder().build();
         let tsk_env = ctx.tsk_env();
 
         // Set up a mock .claude.json file in the test claude directory
@@ -255,7 +252,8 @@ mod tests {
         }
         std::fs::write(&claude_json_path, "{}").unwrap();
 
-        let task_runner = TaskRunner::new(&ctx);
+        let docker_manager = DockerManager::new(&ctx, docker_client);
+        let task_runner = TaskRunner::new(&ctx, docker_manager);
 
         // Create a task copy directory
         let task_copy_dir = tsk_env.task_dir("test-task-123");
@@ -307,9 +305,7 @@ mod tests {
             ..Default::default()
         });
 
-        let ctx = AppContext::builder()
-            .with_docker_client(docker_client)
-            .build();
+        let ctx = AppContext::builder().build();
         let tsk_env = ctx.tsk_env();
 
         let claude_json_path = tsk_env.claude_config_dir().join("..").join(".claude.json");
@@ -318,7 +314,8 @@ mod tests {
         }
         std::fs::write(&claude_json_path, "{}").unwrap();
 
-        let task_runner = TaskRunner::new(&ctx);
+        let docker_manager = DockerManager::new(&ctx, docker_client);
+        let task_runner = TaskRunner::new(&ctx, docker_manager);
         let task_copy_dir = tsk_env.task_dir("infra-fail-123");
 
         crate::file_system::copy_dir(test_repo.path(), &task_copy_dir)

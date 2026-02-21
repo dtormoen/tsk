@@ -10,12 +10,14 @@ use crate::agent::{Agent, LogProcessor};
 use crate::context::AppContext;
 use crate::context::ContainerEngine;
 use crate::context::VolumeMount;
+use crate::context::docker_client::DockerClient;
 use crate::docker::proxy_manager::ProxyManager;
 use bollard::models::{ContainerCreateBody, HostConfig};
 use bollard::query_parameters::{LogsOptions, RemoveContainerOptions};
 use futures_util::stream::StreamExt;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 const CONTAINER_WORKSPACE_BASE: &str = "/workspace";
 const CONTAINER_USER: &str = "agent";
@@ -34,20 +36,28 @@ fn container_working_dir(project: &str) -> String {
 /// - Container cleanup
 pub struct DockerManager {
     ctx: AppContext,
+    client: Arc<dyn DockerClient>,
     proxy_manager: ProxyManager,
 }
 
 impl DockerManager {
-    /// Creates a new DockerManager with the given application context.
+    /// Creates a new DockerManager with the given application context and Docker client.
     ///
     /// # Arguments
     /// * `ctx` - The application context containing all dependencies
-    pub fn new(ctx: &AppContext) -> Self {
-        let proxy_manager = ProxyManager::new(ctx);
+    /// * `client` - The Docker client for container operations
+    pub fn new(ctx: &AppContext, client: Arc<dyn DockerClient>) -> Self {
+        let proxy_manager = ProxyManager::new(client.clone(), ctx.tsk_config(), ctx.tsk_env());
         Self {
             ctx: ctx.clone(),
+            client,
             proxy_manager,
         }
+    }
+
+    /// Returns the Docker client for use by other components
+    pub fn client(&self) -> Arc<dyn DockerClient> {
+        Arc::clone(&self.client)
     }
 
     /// Returns true when TSK is running inside a TSK container with proxy
@@ -124,8 +134,7 @@ impl DockerManager {
 
     /// Remove a container with force option
     async fn remove_container(&self, container_id: &str) -> Result<(), String> {
-        self.ctx
-            .docker_client()
+        self.client
             .remove_container(
                 container_id,
                 Some(RemoveContainerOptions {
@@ -479,12 +488,7 @@ impl DockerManager {
             .name(&container_name)
             .build();
 
-        let container_id = match self
-            .ctx
-            .docker_client()
-            .create_container(Some(options), config)
-            .await
-        {
+        let container_id = match self.client.create_container(Some(options), config).await {
             Ok(id) => id,
             Err(e) => return (None, Err(e)),
         };
@@ -492,8 +496,7 @@ impl DockerManager {
         // Copy agent files into container before starting
         for (tar_data, dest_path) in agent.files_to_copy() {
             if let Err(e) = self
-                .ctx
-                .docker_client()
+                .client
                 .upload_to_container(&container_id, &dest_path, tar_data)
                 .await
             {
@@ -501,24 +504,14 @@ impl DockerManager {
             }
         }
 
-        if let Err(e) = self
-            .ctx
-            .docker_client()
-            .start_container(&container_id)
-            .await
-        {
+        if let Err(e) = self.client.start_container(&container_id).await {
             return (Some(container_id), Err(e));
         }
 
         let result = if task.is_interactive {
             println!("\nStarting interactive session...");
 
-            match self
-                .ctx
-                .docker_client()
-                .attach_container(&container_id)
-                .await
-            {
+            match self.client.attach_container(&container_id).await {
                 Ok(()) => {
                     println!("\nInteractive session ended");
                     Ok((
@@ -588,7 +581,7 @@ impl DockerManager {
         log_processor: &mut dyn LogProcessor,
     ) -> Result<(String, i64), String> {
         // Start a background task to stream logs
-        let client_clone = self.ctx.docker_client();
+        let client_clone = Arc::clone(&self.client);
         let container_id_clone = container_id.to_string();
         let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(100);
 
@@ -633,7 +626,7 @@ impl DockerManager {
         let mut line_buffer = String::new();
 
         // Get docker client to avoid temporary value issues
-        let docker_client = self.ctx.docker_client();
+        let docker_client = Arc::clone(&self.client);
 
         // Create the wait future ONCE and pin it so it persists across loop iterations.
         // This is critical - tokio::select! in a loop drops unselected futures each iteration,
@@ -730,10 +723,8 @@ mod tests {
     #[tokio::test]
     async fn test_run_task_container_success() {
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let ctx = AppContext::builder()
-            .with_docker_client(mock_client.clone())
-            .build();
-        let manager = DockerManager::new(&ctx);
+        let ctx = AppContext::builder().build();
+        let manager = DockerManager::new(&ctx, mock_client.clone());
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
@@ -800,10 +791,8 @@ mod tests {
     async fn test_run_task_container_interactive() {
         // Test interactive mode with mock client
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let ctx = AppContext::builder()
-            .with_docker_client(mock_client.clone())
-            .build();
-        let manager = DockerManager::new(&ctx);
+        let ctx = AppContext::builder().build();
+        let manager = DockerManager::new(&ctx, mock_client.clone());
 
         let task = create_test_task(true);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
@@ -856,10 +845,8 @@ mod tests {
             exit_code: 1,
             ..Default::default()
         });
-        let ctx = AppContext::builder()
-            .with_docker_client(mock_client.clone())
-            .build();
-        let manager = DockerManager::new(&ctx);
+        let ctx = AppContext::builder().build();
+        let manager = DockerManager::new(&ctx, mock_client.clone());
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
@@ -901,10 +888,8 @@ mod tests {
             ..Default::default()
         };
         let mock_client = Arc::new(mock_client);
-        let ctx = AppContext::builder()
-            .with_docker_client(mock_client.clone())
-            .build();
-        let manager = DockerManager::new(&ctx);
+        let ctx = AppContext::builder().build();
+        let manager = DockerManager::new(&ctx, mock_client.clone());
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
@@ -927,10 +912,8 @@ mod tests {
     #[tokio::test]
     async fn test_container_configuration() {
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let ctx = AppContext::builder()
-            .with_docker_client(mock_client.clone())
-            .build();
-        let manager = DockerManager::new(&ctx);
+        let ctx = AppContext::builder().build();
+        let manager = DockerManager::new(&ctx, mock_client.clone());
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
@@ -1064,10 +1047,8 @@ mod tests {
     #[tokio::test]
     async fn test_run_task_container_with_instructions_file() {
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let ctx = AppContext::builder()
-            .with_docker_client(mock_client.clone())
-            .build();
-        let manager = DockerManager::new(&ctx);
+        let ctx = AppContext::builder().build();
+        let manager = DockerManager::new(&ctx, mock_client.clone());
 
         let mut task = create_test_task(false);
         task.instructions_file = "/tmp/tsk-test/instructions.txt".to_string();
@@ -1091,10 +1072,8 @@ mod tests {
     #[tokio::test]
     async fn test_relative_path_conversion() {
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let ctx = AppContext::builder()
-            .with_docker_client(mock_client.clone())
-            .build();
-        let manager = DockerManager::new(&ctx);
+        let ctx = AppContext::builder().build();
+        let manager = DockerManager::new(&ctx, mock_client.clone());
 
         // Create a temporary directory to use as base
         let temp_dir = tempfile::TempDir::new().unwrap();
@@ -1156,11 +1135,8 @@ mod tests {
             ..Default::default()
         };
 
-        let ctx = AppContext::builder()
-            .with_docker_client(mock_client.clone())
-            .with_tsk_config(tsk_config)
-            .build();
-        let manager = DockerManager::new(&ctx);
+        let ctx = AppContext::builder().with_tsk_config(tsk_config).build();
+        let manager = DockerManager::new(&ctx, mock_client.clone());
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
@@ -1210,11 +1186,8 @@ mod tests {
             ..Default::default()
         };
 
-        let ctx = AppContext::builder()
-            .with_docker_client(mock_client.clone())
-            .with_tsk_config(tsk_config)
-            .build();
-        let manager = DockerManager::new(&ctx);
+        let ctx = AppContext::builder().with_tsk_config(tsk_config).build();
+        let manager = DockerManager::new(&ctx, mock_client.clone());
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
@@ -1264,11 +1237,8 @@ mod tests {
             ..Default::default()
         };
 
-        let ctx = AppContext::builder()
-            .with_docker_client(mock_client.clone())
-            .with_tsk_config(tsk_config)
-            .build();
-        let manager = DockerManager::new(&ctx);
+        let ctx = AppContext::builder().with_tsk_config(tsk_config).build();
+        let manager = DockerManager::new(&ctx, mock_client.clone());
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
@@ -1294,10 +1264,8 @@ mod tests {
     async fn test_no_project_volumes_when_project_not_configured() {
         // Test that binds don't include project volumes when project is not in config
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let ctx = AppContext::builder()
-            .with_docker_client(mock_client.clone())
-            .build();
-        let manager = DockerManager::new(&ctx);
+        let ctx = AppContext::builder().build();
+        let manager = DockerManager::new(&ctx, mock_client.clone());
 
         let mut task = create_test_task(false);
         task.project = "unconfigured-project".to_string();
@@ -1348,11 +1316,8 @@ mod tests {
             ..Default::default()
         };
 
-        let ctx = AppContext::builder()
-            .with_docker_client(mock_client.clone())
-            .with_tsk_config(tsk_config)
-            .build();
-        let manager = DockerManager::new(&ctx);
+        let ctx = AppContext::builder().with_tsk_config(tsk_config).build();
+        let manager = DockerManager::new(&ctx, mock_client.clone());
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
@@ -1375,10 +1340,8 @@ mod tests {
     #[tokio::test]
     async fn test_python_stack_sets_pythonpath() {
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let ctx = AppContext::builder()
-            .with_docker_client(mock_client.clone())
-            .build();
-        let manager = DockerManager::new(&ctx);
+        let ctx = AppContext::builder().build();
+        let manager = DockerManager::new(&ctx, mock_client.clone());
 
         let mut task = create_test_task(false);
         task.stack = "python".to_string();
@@ -1401,10 +1364,8 @@ mod tests {
     #[tokio::test]
     async fn test_non_python_stack_no_pythonpath() {
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let ctx = AppContext::builder()
-            .with_docker_client(mock_client.clone())
-            .build();
-        let manager = DockerManager::new(&ctx);
+        let ctx = AppContext::builder().build();
+        let manager = DockerManager::new(&ctx, mock_client.clone());
 
         let task = create_test_task(false); // stack is "default"
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
@@ -1420,10 +1381,8 @@ mod tests {
     async fn test_no_project_env_vars_when_project_not_configured() {
         // Test that env vars don't include project env vars when project is not in config
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let ctx = AppContext::builder()
-            .with_docker_client(mock_client.clone())
-            .build();
-        let manager = DockerManager::new(&ctx);
+        let ctx = AppContext::builder().build();
+        let manager = DockerManager::new(&ctx, mock_client.clone());
 
         let mut task = create_test_task(false);
         task.project = "unconfigured-project".to_string();
@@ -1446,10 +1405,8 @@ mod tests {
     #[tokio::test]
     async fn test_run_task_container_no_network_isolation() {
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let ctx = AppContext::builder()
-            .with_docker_client(mock_client.clone())
-            .build();
-        let manager = DockerManager::new(&ctx);
+        let ctx = AppContext::builder().build();
+        let manager = DockerManager::new(&ctx, mock_client.clone());
 
         let mut task = create_test_task(false);
         task.network_isolation = false;
@@ -1518,10 +1475,8 @@ mod tests {
             create_container_error: Some("out of disk space".to_string()),
             ..Default::default()
         });
-        let ctx = AppContext::builder()
-            .with_docker_client(mock_client.clone())
-            .build();
-        let manager = DockerManager::new(&ctx);
+        let ctx = AppContext::builder().build();
+        let manager = DockerManager::new(&ctx, mock_client.clone());
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
@@ -1550,10 +1505,8 @@ mod tests {
             start_container_error: Some("container runtime error".to_string()),
             ..Default::default()
         });
-        let ctx = AppContext::builder()
-            .with_docker_client(mock_client.clone())
-            .build();
-        let manager = DockerManager::new(&ctx);
+        let ctx = AppContext::builder().build();
+        let manager = DockerManager::new(&ctx, mock_client.clone());
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
@@ -1580,10 +1533,8 @@ mod tests {
     #[tokio::test]
     async fn test_dind_security_relaxations() {
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let ctx = AppContext::builder()
-            .with_docker_client(mock_client.clone())
-            .build();
-        let manager = DockerManager::new(&ctx);
+        let ctx = AppContext::builder().build();
+        let manager = DockerManager::new(&ctx, mock_client.clone());
 
         let mut task = create_test_task(false);
         task.dind = true;
@@ -1634,10 +1585,8 @@ mod tests {
     #[tokio::test]
     async fn test_non_dind_security_defaults() {
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let ctx = AppContext::builder()
-            .with_docker_client(mock_client.clone())
-            .build();
-        let manager = DockerManager::new(&ctx);
+        let ctx = AppContext::builder().build();
+        let manager = DockerManager::new(&ctx, mock_client.clone());
 
         let task = create_test_task(false); // dind defaults to false
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());

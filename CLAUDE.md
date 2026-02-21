@@ -133,6 +133,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 
 **Dependency Injection** (`src/context/`)
 - `AppContext` provides centralized resource management with builder pattern
+- Docker client is NOT part of AppContext; it is constructed at command entry points and injected into `DockerManager`/`TaskRunner` via constructors. This ensures commands that don't need Docker (add, list, clean, delete) work without a Docker daemon
 - Factory pattern prevents accidental operations in tests
 - `TskEnv` provides XDG-compliant directory paths and runtime environment settings (editor, terminal type)
 - `TskConfig` provides user configuration loaded from tsk.toml

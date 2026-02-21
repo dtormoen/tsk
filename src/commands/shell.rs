@@ -1,12 +1,16 @@
 use super::Command;
 use crate::context::AppContext;
+use crate::context::docker_client::DefaultDockerClient;
+use crate::docker::DockerManager;
 use crate::repo_utils::find_repository_root;
 use crate::stdin_utils::{merge_description_with_stdin, read_piped_input};
 use crate::task::TaskBuilder;
 use crate::task_manager::TaskManager;
+use crate::task_runner::TaskRunner;
 use async_trait::async_trait;
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Command for starting interactive shell sessions.
 ///
@@ -71,7 +75,13 @@ impl Command for ShellCommand {
             .set_title(&format!("TSK Shell: {}", self.name));
 
         // Execute the task using TaskManager
-        let task_manager = TaskManager::new(ctx)?;
+        let docker_client = Arc::new(
+            DefaultDockerClient::new(&ctx.tsk_config().docker.container_engine)
+                .map_err(|e| -> Box<dyn Error> { e.into() })?,
+        );
+        let docker_manager = DockerManager::new(ctx, docker_client);
+        let task_runner = TaskRunner::new(ctx, docker_manager);
+        let task_manager = TaskManager::with_runner(ctx, task_runner)?;
         let result = task_manager
             .store_and_execute_task(&task)
             .await

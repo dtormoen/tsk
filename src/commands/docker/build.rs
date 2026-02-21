@@ -1,9 +1,11 @@
 use crate::commands::Command;
 use crate::context::AppContext;
+use crate::context::docker_client::DefaultDockerClient;
 use crate::docker::image_manager::DockerImageManager;
 use crate::repo_utils::find_repository_root;
 use async_trait::async_trait;
 use std::error::Error;
+use std::sync::Arc;
 
 /// Command to build TSK Docker images using the templating system
 pub struct DockerBuildCommand {
@@ -24,11 +26,16 @@ pub struct DockerBuildCommand {
 #[async_trait]
 impl Command for DockerBuildCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
+        let docker_client = Arc::new(
+            DefaultDockerClient::new(&ctx.tsk_config().docker.container_engine)
+                .map_err(|e| -> Box<dyn Error> { e.into() })?,
+        );
+
         // Handle proxy-only build
         if self.proxy_only {
             println!("Building tsk/proxy image...");
             use crate::docker::proxy_manager::ProxyManager;
-            let proxy_manager = ProxyManager::new(ctx);
+            let proxy_manager = ProxyManager::new(docker_client, ctx.tsk_config(), ctx.tsk_env());
             proxy_manager.build_proxy(self.no_cache).await?;
             println!("Successfully built Docker image: tsk/proxy");
             return Ok(());
@@ -88,7 +95,8 @@ impl Command for DockerBuildCommand {
         let project_root = find_repository_root(std::path::Path::new(".")).ok();
 
         // Create image manager with AppContext
-        let image_manager = DockerImageManager::new(ctx, project_root.as_deref(), None);
+        let image_manager =
+            DockerImageManager::new(ctx, docker_client.clone(), project_root.as_deref(), None);
 
         // Build the main image (with dry_run flag)
         let image_tag = image_manager
@@ -108,7 +116,7 @@ impl Command for DockerBuildCommand {
             // Always build proxy image as it's still needed
             println!("\nBuilding tsk/proxy image...");
             use crate::docker::proxy_manager::ProxyManager;
-            let proxy_manager = ProxyManager::new(ctx);
+            let proxy_manager = ProxyManager::new(docker_client, ctx.tsk_config(), ctx.tsk_env());
             proxy_manager.build_proxy(self.no_cache).await?;
             println!("Successfully built Docker image: tsk/proxy");
 

@@ -171,20 +171,20 @@ pidns = \"host\"
 
 /// Ensure the Podman API service is available at the given socket path
 ///
-/// On macOS, panics with instructions to start the Podman machine.
+/// On macOS, returns an error with instructions to start the Podman machine.
 /// On Linux, spawns `podman system service` and waits for the socket.
-fn ensure_podman_service(socket_path: &str) {
+fn ensure_podman_service(socket_path: &str) -> Result<(), String> {
     if std::path::Path::new(socket_path).exists() {
-        return;
+        return Ok(());
     }
 
     if cfg!(target_os = "macos") {
-        panic!(
+        return Err(format!(
             "Podman socket not found at {socket_path}\n\n\
             Please start Podman machine:\n\
               podman machine start\n\n\
             Then try again."
-        );
+        ));
     }
 
     // Linux: try to start the service
@@ -212,23 +212,23 @@ fn ensure_podman_service(socket_path: &str) {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .expect("Failed to start podman system service");
+        .map_err(|e| format!("Failed to start podman system service: {e}"))?;
 
     // Wait up to 10 seconds for the socket to appear
     for _ in 0..100 {
         if std::path::Path::new(socket_path).exists() {
             // Service started successfully, leak the child handle so it outlives this process
             std::mem::forget(child);
-            return;
+            return Ok(());
         }
         // Check if the process has already exited (indicating failure)
         match child.try_wait() {
             Ok(Some(status)) => {
-                panic!(
+                return Err(format!(
                     "Podman system service exited with {status}.\n\n\
                     Please ensure Podman is installed and configured correctly.\n\
                     Try running manually: podman system service --timeout=0"
-                );
+                ));
             }
             Ok(None) => {} // Still running, continue waiting
             Err(e) => {
@@ -240,17 +240,15 @@ fn ensure_podman_service(socket_path: &str) {
 
     // Timed out waiting for socket, kill the child and report
     let _ = child.kill();
-    panic!(
+    Err(format!(
         "Podman socket did not appear at {socket_path} after 10 seconds.\n\n\
         Please ensure Podman is installed and configured correctly.\n\
         Try running manually: podman system service --timeout=0"
-    );
+    ))
 }
 
 #[async_trait]
 pub trait DockerClient: Send + Sync {
-    #[cfg(test)]
-    fn as_any(&self) -> &dyn std::any::Any;
     async fn create_container(
         &self,
         options: Option<CreateContainerOptions>,
@@ -399,21 +397,22 @@ pub trait DockerClient: Send + Sync {
         dest_path: &str,
         tar_data: Vec<u8>,
     ) -> Result<(), String>;
+
+    /// Ping the Docker/Podman daemon to verify connectivity
+    async fn ping(&self) -> Result<String, String>;
 }
 
 #[derive(Clone)]
-#[allow(dead_code)] // Used in production code when no mock is provided
 pub struct DefaultDockerClient {
     docker: Docker,
 }
 
 impl DefaultDockerClient {
-    #[allow(dead_code)] // Used in production code when no mock is provided
-    pub fn new(engine: &ContainerEngine) -> Self {
+    pub fn new(engine: &ContainerEngine) -> Result<Self, String> {
         match engine {
             ContainerEngine::Docker => match Docker::connect_with_local_defaults() {
-                Ok(docker) => Self { docker },
-                Err(e) => panic!(
+                Ok(docker) => Ok(Self { docker }),
+                Err(e) => Err(format!(
                     "Failed to connect to Docker: {e}\n\n\
                     Please ensure Docker is installed and running:\n\
                       - On macOS: Open Docker Desktop application\n\
@@ -422,34 +421,28 @@ impl DefaultDockerClient {
                     If Docker is running, check permissions:\n\
                       - On Linux: Ensure your user is in the docker group: 'sudo usermod -aG docker $USER'\n\
                         - Then log out and back in for group changes to take effect"
-                ),
+                )),
             },
             ContainerEngine::Podman => {
                 configure_podman_defaults();
                 let socket_path = detect_podman_socket();
-                ensure_podman_service(&socket_path);
+                ensure_podman_service(&socket_path)?;
                 let client_version = bollard::ClientVersion {
                     major_version: 1,
                     minor_version: 41,
                 };
                 match Docker::connect_with_unix(&socket_path, 120, &client_version) {
-                    Ok(docker) => Self { docker },
-                    Err(e) => panic!(
+                    Ok(docker) => Ok(Self { docker }),
+                    Err(e) => Err(format!(
                         "Failed to connect to Podman at {socket_path}: {e}\n\n\
                         Please ensure Podman is installed and running:\n\
                         - On macOS: Run 'podman machine start'\n\
                         - On Linux: Run 'podman system service --timeout=0 &'\n\
                         - Check Podman status with: 'podman info'"
-                    ),
+                    )),
                 }
             }
         }
-    }
-}
-
-impl Default for DefaultDockerClient {
-    fn default() -> Self {
-        Self::new(&ContainerEngine::Docker)
     }
 }
 
@@ -487,10 +480,6 @@ async fn resize_container(docker: &Docker, container_id: &str, width: u16, heigh
 
 #[async_trait]
 impl DockerClient for DefaultDockerClient {
-    #[cfg(test)]
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
     async fn create_container(
         &self,
         options: Option<CreateContainerOptions>,
@@ -911,5 +900,14 @@ impl DockerClient for DefaultDockerClient {
             .upload_to_container(id, Some(options), body)
             .await
             .map_err(|e| format!("Failed to upload to container: {e}"))
+    }
+
+    async fn ping(&self) -> Result<String, String> {
+        let version = self
+            .docker
+            .ping()
+            .await
+            .map_err(|e| format!("Docker ping failed: {e}"))?;
+        Ok(version)
     }
 }

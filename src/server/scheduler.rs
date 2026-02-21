@@ -1,10 +1,12 @@
 use crate::context::AppContext;
+use crate::context::docker_client::DockerClient;
+use crate::docker::DockerManager;
 use crate::git::RepoManager;
 use crate::git_operations;
 use crate::server::worker_pool::{AsyncJob, JobError, JobResult, WorkerPool};
 use crate::task::{Task, TaskStatus};
 use crate::task_manager::TaskManager;
-use crate::task_runner::TaskExecutionError;
+use crate::task_runner::{TaskExecutionError, TaskRunner};
 use crate::task_storage::TaskStorage;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -34,6 +36,7 @@ enum ParentStatus {
 /// - Preventing double-scheduling of tasks
 pub struct TaskScheduler {
     context: Arc<AppContext>,
+    docker_client: Arc<dyn DockerClient>,
     storage: Arc<dyn TaskStorage>,
     running: Arc<Mutex<bool>>,
     warmup_failure_wait_until: Arc<Mutex<Option<Instant>>>,
@@ -68,12 +71,14 @@ impl TaskScheduler {
     /// Create a new task scheduler
     pub fn new(
         context: Arc<AppContext>,
+        docker_client: Arc<dyn DockerClient>,
         storage: Arc<dyn TaskStorage>,
         quit_when_done: bool,
         quit_signal: Arc<tokio::sync::Notify>,
     ) -> Self {
         Self {
             context,
+            docker_client,
             storage,
             running: Arc::new(Mutex::new(false)),
             warmup_failure_wait_until: Arc::new(Mutex::new(None)),
@@ -476,6 +481,7 @@ impl TaskScheduler {
                     let job = TaskJob {
                         task: running_task,
                         context: self.context.clone(),
+                        docker_client: self.docker_client.clone(),
                         storage: self.storage.clone(),
                         warmup_failure_wait_until: self.warmup_failure_wait_until.clone(),
                     };
@@ -566,6 +572,7 @@ impl TaskScheduler {
 pub struct TaskJob {
     task: Task,
     context: Arc<AppContext>,
+    docker_client: Arc<dyn DockerClient>,
     storage: Arc<dyn TaskStorage>,
     warmup_failure_wait_until: Arc<Mutex<Option<Instant>>>,
 }
@@ -573,7 +580,8 @@ pub struct TaskJob {
 impl AsyncJob for TaskJob {
     async fn execute(self) -> Result<JobResult, JobError> {
         // Execute the task using TaskManager
-        let result = Self::execute_single_task(&self.context, &self.task).await;
+        let result =
+            Self::execute_single_task(&self.context, self.docker_client.clone(), &self.task).await;
 
         match result {
             Ok(_) => {
@@ -630,13 +638,17 @@ impl TaskJob {
     /// Execute a single task
     async fn execute_single_task(
         context: &AppContext,
+        docker_client: Arc<dyn DockerClient>,
         task: &Task,
     ) -> Result<(), TaskExecutionError> {
-        // Create a task manager with the current context
-        let task_manager = TaskManager::new(context).map_err(|e| TaskExecutionError {
-            message: e,
-            is_warmup_failure: false,
-        })?;
+        // Create a task manager with Docker execution capabilities
+        let docker_manager = DockerManager::new(context, docker_client);
+        let task_runner = TaskRunner::new(context, docker_manager);
+        let task_manager =
+            TaskManager::with_runner(context, task_runner).map_err(|e| TaskExecutionError {
+                message: e,
+                is_warmup_failure: false,
+            })?;
 
         // Execute the task
         let result = task_manager.execute_queued_task(task).await;
@@ -653,7 +665,12 @@ mod tests {
     use super::*;
     use crate::task::{Task, TaskStatus};
     use crate::task_storage::get_task_storage;
+    use crate::test_utils::NoOpDockerClient;
     use crate::test_utils::git_test_utils::TestGitRepository;
+
+    fn test_docker_client() -> Arc<dyn DockerClient> {
+        Arc::new(NoOpDockerClient)
+    }
 
     /// Wait for tasks to reach a certain state with timeout.
     ///
@@ -718,7 +735,13 @@ mod tests {
         let storage = get_task_storage(ctx.tsk_env());
 
         let quit_signal = Arc::new(tokio::sync::Notify::new());
-        let mut scheduler = TaskScheduler::new(Arc::new(ctx), storage, false, quit_signal);
+        let mut scheduler = TaskScheduler::new(
+            Arc::new(ctx),
+            test_docker_client(),
+            storage,
+            false,
+            quit_signal,
+        );
 
         // Test that scheduler starts as not running
         assert!(!*scheduler.running.lock().await);
@@ -753,7 +776,13 @@ mod tests {
         storage.add_task(task1.clone()).await.unwrap();
 
         let quit_signal = Arc::new(tokio::sync::Notify::new());
-        let mut scheduler = TaskScheduler::new(Arc::new(ctx), storage.clone(), false, quit_signal);
+        let mut scheduler = TaskScheduler::new(
+            Arc::new(ctx),
+            test_docker_client(),
+            storage.clone(),
+            false,
+            quit_signal,
+        );
 
         // Start scheduler in background with 1 worker
         let sched_handle = tokio::spawn(async move {
@@ -806,7 +835,7 @@ mod tests {
         let storage = get_task_storage(ctx.tsk_env());
 
         let quit_signal = Arc::new(tokio::sync::Notify::new());
-        let scheduler = TaskScheduler::new(ctx, storage, false, quit_signal);
+        let scheduler = TaskScheduler::new(ctx, test_docker_client(), storage, false, quit_signal);
 
         // Initially no wait period
         assert!(
@@ -842,7 +871,13 @@ mod tests {
         let ctx = AppContext::builder().build();
         let storage = get_task_storage(ctx.tsk_env());
         let quit_signal = Arc::new(tokio::sync::Notify::new());
-        let scheduler = TaskScheduler::new(Arc::new(ctx), storage, false, quit_signal);
+        let scheduler = TaskScheduler::new(
+            Arc::new(ctx),
+            test_docker_client(),
+            storage,
+            false,
+            quit_signal,
+        );
 
         // Add a task ID to submitted tasks
         scheduler
@@ -1208,7 +1243,13 @@ mod tests {
         storage.add_task(child_task.clone()).await.unwrap();
 
         let quit_signal = Arc::new(tokio::sync::Notify::new());
-        let scheduler = TaskScheduler::new(Arc::new(ctx), storage.clone(), false, quit_signal);
+        let scheduler = TaskScheduler::new(
+            Arc::new(ctx),
+            test_docker_client(),
+            storage.clone(),
+            false,
+            quit_signal,
+        );
 
         // Get all tasks
         let tasks = storage.list_tasks().await.unwrap();
