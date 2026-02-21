@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.5](https://github.com/dtormoen/tsk/compare/v0.8.4...v0.8.5) - 2026-02-21
+
+### Added
+
+- upgrade base image to Ubuntu 25.10
+- alias docker to podman in agent containers for DIND compatibility
+- add --dind flag to opt in to DIND security relaxations
+- add Podman DIND support for nested container builds
+
+### Fixed
+
+- disable SELinux and increase resource limits for Podman-in-Podman DIND
+- set BUILDAH_ISOLATION=chroot for DIND containers to fix nested Podman builds
+- preserve executable file permissions during repo copy
+
 ## [0.8.4](https://github.com/dtormoen/tsk/compare/v0.8.3...v0.8.4) - 2026-02-19
 
 ### Fixed
