@@ -24,8 +24,8 @@ pub trait TaskStorage: Send + Sync {
     async fn delete_task(&self, id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 }
 
-// Factory function for getting task storage
-pub fn get_task_storage(tsk_env: Arc<TskEnv>) -> Arc<dyn TaskStorage> {
+/// Creates a new SQLite-backed task storage instance for the given environment.
+pub(crate) fn get_task_storage(tsk_env: Arc<TskEnv>) -> Arc<dyn TaskStorage> {
     let db_path = tsk_env.tasks_db();
     let storage = crate::sqlite_task_storage::SqliteTaskStorage::new(db_path)
         .expect("Failed to initialize SQLite task storage");

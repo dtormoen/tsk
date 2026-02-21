@@ -72,7 +72,6 @@ impl Command for RetryCommand {
 mod tests {
     use super::*;
     use crate::task::TaskStatus;
-    use crate::task_storage::get_task_storage;
     use crate::test_utils::TestGitRepository;
 
     async fn setup_test_environment_with_completed_tasks(
@@ -89,7 +88,7 @@ mod tests {
         let repo_root = test_repo.path().to_path_buf();
 
         // Add tasks via storage API
-        let storage = get_task_storage(tsk_env.clone());
+        let storage = ctx.task_storage();
         for (i, task_id) in task_ids.iter().enumerate() {
             let task_dir_path = tsk_env.task_dir(task_id);
             std::fs::create_dir_all(&task_dir_path)?;
@@ -144,7 +143,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify new task was created
-        let storage = get_task_storage(ctx.tsk_env());
+        let storage = ctx.task_storage();
         let all_tasks = storage.list_tasks().await.unwrap();
 
         // Should have 2 tasks now (original + retry)
@@ -178,7 +177,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify new task was created with overridden values
-        let storage = get_task_storage(ctx.tsk_env());
+        let storage = ctx.task_storage();
         let all_tasks = storage.list_tasks().await.unwrap();
 
         assert_eq!(all_tasks.len(), 2);
@@ -211,7 +210,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify new tasks were created
-        let storage = get_task_storage(ctx.tsk_env());
+        let storage = ctx.task_storage();
         let all_tasks = storage.list_tasks().await.unwrap();
 
         // Should have 6 tasks now (3 originals + 3 retries)
@@ -258,7 +257,7 @@ mod tests {
         );
 
         // Verify existing tasks were still retried
-        let storage = get_task_storage(ctx.tsk_env());
+        let storage = ctx.task_storage();
         let all_tasks = storage.list_tasks().await.unwrap();
 
         // Should have 4 tasks (2 originals + 2 retries)
@@ -320,7 +319,7 @@ mod tests {
             copied_repo_path: Some(task_dir_path),
             ..crate::task::Task::test_default()
         };
-        let storage = get_task_storage(tsk_env);
+        let storage = ctx.task_storage();
         storage.add_task(task).await.unwrap();
 
         let cmd = RetryCommand {

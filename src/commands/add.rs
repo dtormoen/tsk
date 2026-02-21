@@ -3,7 +3,6 @@ use crate::context::AppContext;
 use crate::repo_utils::find_repository_root;
 use crate::stdin_utils::{merge_description_with_stdin, read_piped_input};
 use crate::task::TaskBuilder;
-use crate::task_storage::get_task_storage;
 use async_trait::async_trait;
 use std::error::Error;
 use std::path::{Path, PathBuf};
@@ -137,7 +136,7 @@ impl Command for AddCommand {
                 }
             };
 
-            let storage = get_task_storage(ctx.tsk_env());
+            let storage = ctx.task_storage();
             storage
                 .add_task(task.clone())
                 .await
@@ -361,7 +360,7 @@ mod tests {
         assert!(result.is_ok(), "Should create tasks for multiple agents");
 
         // Verify tasks were created
-        let storage = crate::task_storage::get_task_storage(ctx.tsk_env());
+        let storage = ctx.task_storage();
         let tasks = storage.list_tasks().await.unwrap();
         assert_eq!(tasks.len(), 2, "Should create 2 tasks");
 
@@ -435,7 +434,7 @@ mod tests {
         assert!(result.is_ok(), "Should create tasks for duplicate agents");
 
         // Verify tasks were created
-        let storage = crate::task_storage::get_task_storage(ctx.tsk_env());
+        let storage = ctx.task_storage();
         let tasks = storage.list_tasks().await.unwrap();
         assert_eq!(tasks.len(), 2, "Should create 2 tasks");
 
@@ -480,7 +479,7 @@ mod tests {
         assert!(result.is_ok(), "Command should succeed: {:?}", result.err());
 
         // Verify the created task has name defaulted to type
-        let storage = crate::task_storage::get_task_storage(ctx.tsk_env());
+        let storage = ctx.task_storage();
         let tasks = storage.list_tasks().await.unwrap();
         assert_eq!(tasks.len(), 1, "Should create 1 task");
         assert_eq!(
@@ -561,7 +560,7 @@ mod tests {
         );
 
         // Verify tasks were created
-        let storage = crate::task_storage::get_task_storage(ctx.tsk_env());
+        let storage = ctx.task_storage();
         let tasks = storage.list_tasks().await.unwrap();
         assert_eq!(tasks.len(), 2, "Should create 2 tasks");
 

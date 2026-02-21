@@ -1,6 +1,6 @@
 use crate::context::AppContext;
 use crate::task::{Task, TaskBuilder, TaskStatus};
-use crate::task_storage::{TaskStorage, get_task_storage};
+use crate::task_storage::TaskStorage;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -45,7 +45,7 @@ impl TaskManager {
     /// Returns a configured TaskManager or an error if initialization fails.
     pub fn new(ctx: &AppContext) -> Result<Self, String> {
         Ok(Self {
-            task_storage: get_task_storage(ctx.tsk_env()),
+            task_storage: ctx.task_storage(),
         })
     }
 
@@ -307,7 +307,7 @@ mod tests {
             copied_repo_path: Some(copied_repo_path),
             ..Task::test_default()
         };
-        let storage = get_task_storage(tsk_env);
+        let storage = ctx.task_storage();
         storage.add_task(task).await.unwrap();
 
         let task_manager = TaskManager::new(&ctx).unwrap();
@@ -368,7 +368,7 @@ mod tests {
         };
 
         // Add tasks via storage API
-        let storage = get_task_storage(ctx.tsk_env());
+        let storage = ctx.task_storage();
         storage.add_task(queued_task).await.unwrap();
         storage.add_task(completed_task).await.unwrap();
 
@@ -428,7 +428,7 @@ mod tests {
             .unwrap();
 
         // Add task via storage API
-        let storage = get_task_storage(ctx.tsk_env());
+        let storage = ctx.task_storage();
         storage.add_task(completed_task).await.unwrap();
 
         // Create TaskManager and retry the task
@@ -507,7 +507,7 @@ mod tests {
             copied_repo_path: Some(task_dir.join("repo")),
             ..Task::test_default()
         };
-        let storage = get_task_storage(ctx.tsk_env());
+        let storage = ctx.task_storage();
         storage.add_task(task).await.unwrap();
 
         // Create TaskManager and try to retry a queued task
@@ -549,7 +549,7 @@ mod tests {
         };
 
         // Add task via storage API
-        let storage = get_task_storage(ctx.tsk_env());
+        let storage = ctx.task_storage();
         storage.add_task(completed_task).await.unwrap();
 
         // Create TaskManager and clean tasks
@@ -631,7 +631,7 @@ mod tests {
         };
 
         // Add all tasks via storage API
-        let storage = get_task_storage(ctx.tsk_env());
+        let storage = ctx.task_storage();
         storage.add_task(parent_task).await.unwrap();
         storage.add_task(child_task).await.unwrap();
         storage.add_task(childless_task).await.unwrap();
@@ -787,7 +787,7 @@ mod tests {
             ..Task::test_default()
         };
 
-        let storage = get_task_storage(ctx.tsk_env());
+        let storage = ctx.task_storage();
         storage.add_task(old_complete).await.unwrap();
         storage.add_task(old_failed).await.unwrap();
         storage.add_task(young_complete).await.unwrap();

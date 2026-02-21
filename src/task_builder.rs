@@ -5,7 +5,6 @@ use crate::context::tsk_env::TskEnv;
 use crate::git::RepoManager;
 use crate::git_operations;
 use crate::task::Task;
-use crate::task_storage::get_task_storage;
 use crate::utils::sanitize_for_branch_name;
 use chrono::Local;
 use std::collections::HashSet;
@@ -390,7 +389,7 @@ impl TaskBuilder {
 
         // Validate parent task if specified
         if let Some(ref pid) = self.parent_id {
-            let storage = get_task_storage(ctx.tsk_env());
+            let storage = ctx.task_storage();
             let tasks = storage.list_tasks().await.map_err(|e| e.to_string())?;
 
             // Check if parent task exists
@@ -947,7 +946,7 @@ mod tests {
         // Verify no task directory was created (cleanup verification)
         // The task ID would be generated, but we can verify that no tasks exist in storage
         // This ensures we're not leaving behind partial state
-        let task_storage = crate::task_storage::get_task_storage(ctx.tsk_env());
+        let task_storage = ctx.task_storage();
         let all_tasks = task_storage.list_tasks().await.unwrap();
         assert!(
             all_tasks.is_empty(),
@@ -1250,7 +1249,7 @@ mod tests {
             .unwrap();
 
         // Add parent task to storage so validation passes
-        let storage = get_task_storage(ctx.tsk_env());
+        let storage = ctx.task_storage();
         storage.add_task(parent_task.clone()).await.unwrap();
 
         // Create child task
@@ -1314,7 +1313,7 @@ mod tests {
         let repo_path = test_repo.path().to_path_buf();
 
         let ctx = AppContext::builder().build();
-        let storage = get_task_storage(ctx.tsk_env());
+        let storage = ctx.task_storage();
 
         // Create task A
         let task_a = TaskBuilder::new()

@@ -2,7 +2,6 @@ use super::Command;
 use crate::context::AppContext;
 use crate::display::{colorize_status, format_duration, print_columns, status_color};
 use crate::task::TaskStatus;
-use crate::task_storage::get_task_storage;
 use async_trait::async_trait;
 use chrono::Utc;
 use is_terminal::IsTerminal;
@@ -13,7 +12,7 @@ pub struct ListCommand;
 #[async_trait]
 impl Command for ListCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
-        let storage = get_task_storage(ctx.tsk_env());
+        let storage = ctx.task_storage();
         let tasks = storage
             .list_tasks()
             .await
@@ -136,7 +135,6 @@ impl Command for ListCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task_storage::get_task_storage;
     use crate::test_utils::TestGitRepository;
 
     /// Helper to create test environment with tasks
@@ -154,7 +152,7 @@ mod tests {
         let repo_root = test_repo.path().to_path_buf();
 
         // Add tasks via storage API
-        let storage = get_task_storage(tsk_env.clone());
+        let storage = ctx.task_storage();
         for i in 0..task_count {
             let task_id = format!("task-{}", i + 1);
             let task_dir_path = tsk_env.task_dir(&task_id);
@@ -225,10 +223,9 @@ mod tests {
     #[tokio::test]
     async fn test_list_command_verifies_task_counts() {
         let ctx = setup_test_environment_with_tasks(8).await.unwrap();
-        let tsk_env = ctx.tsk_env();
 
         // Verify the tasks were created correctly
-        let storage = get_task_storage(tsk_env);
+        let storage = ctx.task_storage();
         let tasks = storage.list_tasks().await.unwrap();
 
         assert_eq!(tasks.len(), 8);

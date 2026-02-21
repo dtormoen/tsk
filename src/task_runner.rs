@@ -3,7 +3,7 @@ use crate::context::AppContext;
 use crate::docker::{DockerManager, image_manager::DockerImageManager};
 use crate::git::RepoManager;
 use crate::task::{Task, TaskStatus};
-use crate::task_storage::{TaskStorage, get_task_storage};
+use crate::task_storage::TaskStorage;
 use std::sync::Arc;
 
 /// Result of executing a task
@@ -55,7 +55,7 @@ impl TaskRunner {
     /// * `docker_manager` - The DockerManager for container operations
     pub fn new(ctx: &AppContext, docker_manager: DockerManager) -> Self {
         Self {
-            task_storage: get_task_storage(ctx.tsk_env()),
+            task_storage: ctx.task_storage(),
             ctx: ctx.clone(),
             repo_manager: RepoManager::new(ctx),
             docker_manager,
@@ -470,7 +470,7 @@ mod tests {
         let _result = task_runner.store_and_execute_task(&task).await;
 
         // Verify the task exists in storage after execution
-        let storage = get_task_storage(tsk_env);
+        let storage = ctx.task_storage();
         let stored = storage.get_task(&task_id).await.unwrap();
         assert!(stored.is_some(), "Task should exist in storage");
 

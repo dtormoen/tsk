@@ -6,7 +6,6 @@ use crate::context::AppContext;
 use crate::context::docker_client::DockerClient;
 use crate::docker::proxy_manager::ProxyManager;
 use crate::task::TaskStatus;
-use crate::task_storage::get_task_storage;
 use lifecycle::ServerLifecycle;
 use scheduler::TaskScheduler;
 use std::collections::HashSet;
@@ -37,7 +36,7 @@ impl TskServer {
         quit_when_done: bool,
     ) -> Self {
         let tsk_env = app_context.tsk_env();
-        let storage = get_task_storage(tsk_env.clone());
+        let storage = app_context.task_storage();
 
         // Create the quit signal for scheduler-to-server communication
         let quit_signal = Arc::new(tokio::sync::Notify::new());
@@ -151,7 +150,7 @@ impl TskServer {
             eprintln!("Warning: Scheduler did not stop within 5 seconds");
         }
 
-        let storage = get_task_storage(self.app_context.tsk_env());
+        let storage = self.app_context.task_storage();
         for task_id in &task_ids {
             if let Ok(Some(task)) = storage.get_task(task_id).await
                 && task.status == TaskStatus::Running
@@ -193,7 +192,7 @@ mod tests {
         let server = TskServer::with_workers(ctx.clone(), mock_client.clone(), 1, false);
 
         // Add tasks to storage as Running
-        let storage = get_task_storage(ctx.tsk_env());
+        let storage = ctx.task_storage();
         let task1 = Task {
             id: "task-1".to_string(),
             name: "test-task-1".to_string(),
@@ -279,7 +278,7 @@ mod tests {
         let server = TskServer::with_workers(ctx.clone(), mock_client.clone(), 1, false);
 
         // Add a task that's already completed
-        let storage = get_task_storage(ctx.tsk_env());
+        let storage = ctx.task_storage();
         let task = Task {
             id: "task-done".to_string(),
             name: "done-task".to_string(),

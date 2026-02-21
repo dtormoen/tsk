@@ -53,7 +53,6 @@ impl Command for DeleteCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task_storage::get_task_storage;
     use crate::test_utils::TestGitRepository;
 
     async fn setup_test_environment_with_tasks(
@@ -70,7 +69,7 @@ mod tests {
         let repo_root = test_repo.path().to_path_buf();
 
         // Add tasks via storage API
-        let storage = get_task_storage(tsk_env.clone());
+        let storage = ctx.task_storage();
         for (i, task_id) in task_ids.iter().enumerate() {
             let task_dir_path = tsk_env.task_dir(task_id);
             std::fs::create_dir_all(&task_dir_path)?;
@@ -121,7 +120,7 @@ mod tests {
         assert!(!task_dir.exists());
 
         // Verify task is removed from storage
-        let storage = get_task_storage(tsk_env);
+        let storage = ctx.task_storage();
         let task = storage.get_task(task_id).await.unwrap();
         assert!(task.is_none());
     }
@@ -148,7 +147,7 @@ mod tests {
         }
 
         // Verify all tasks are removed from storage
-        let storage = get_task_storage(tsk_env);
+        let storage = ctx.task_storage();
         for task_id in &task_ids {
             let task = storage.get_task(task_id).await.unwrap();
             assert!(task.is_none());

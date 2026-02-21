@@ -137,6 +137,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Factory pattern prevents accidental operations in tests
 - `TskEnv` provides XDG-compliant directory paths and runtime environment settings (editor, terminal type)
 - `TskConfig` provides user configuration loaded from tsk.toml
+- `TaskStorage` provides centralized task persistence (single shared `Arc<dyn TaskStorage>` instance)
 
 **Agents** (`src/agent/`)
 - `Agent` trait defines the interface for AI agents that execute tasks

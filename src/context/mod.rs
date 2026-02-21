@@ -15,6 +15,7 @@ pub use tsk_config::{BindMount, DockerOptions, EnvVar, NamedVolume, ProjectConfi
 pub use tsk_env::TskEnv;
 
 use crate::git_sync::GitSyncManager;
+use crate::task_storage::TaskStorage;
 use notifications::NotificationClient;
 
 use std::sync::Arc;
@@ -26,6 +27,7 @@ use tempfile::TempDir;
 pub struct AppContext {
     git_sync_manager: Arc<GitSyncManager>,
     notification_client: Arc<NotificationClient>,
+    task_storage: Arc<dyn TaskStorage>,
     terminal_operations: Arc<terminal::TerminalOperations>,
     tsk_config: Arc<TskConfig>,
     tsk_env: Arc<TskEnv>,
@@ -44,6 +46,10 @@ impl AppContext {
 
     pub fn notification_client(&self) -> Arc<NotificationClient> {
         Arc::clone(&self.notification_client)
+    }
+
+    pub fn task_storage(&self) -> Arc<dyn TaskStorage> {
+        Arc::clone(&self.task_storage)
     }
 
     pub fn terminal_operations(&self) -> Arc<terminal::TerminalOperations> {
@@ -137,6 +143,8 @@ impl AppContextBuilder {
                 .tsk_config
                 .unwrap_or_else(|| Arc::new(TskConfig::default()));
 
+            let task_storage = crate::task_storage::get_task_storage(tsk_env.clone());
+
             AppContext {
                 git_sync_manager: self
                     .git_sync_manager
@@ -144,6 +152,7 @@ impl AppContextBuilder {
                 notification_client: self
                     .notification_client
                     .unwrap_or_else(notifications::create_notification_client),
+                task_storage,
                 terminal_operations: Arc::new(terminal::TerminalOperations::new()),
                 tsk_config,
                 tsk_env,
@@ -171,6 +180,8 @@ impl AppContextBuilder {
                 Arc::new(config)
             });
 
+            let task_storage = crate::task_storage::get_task_storage(tsk_env.clone());
+
             AppContext {
                 git_sync_manager: self
                     .git_sync_manager
@@ -178,6 +189,7 @@ impl AppContextBuilder {
                 notification_client: self
                     .notification_client
                     .unwrap_or_else(notifications::create_notification_client),
+                task_storage,
                 terminal_operations: Arc::new(terminal::TerminalOperations::new()),
                 tsk_config,
                 tsk_env,
@@ -200,5 +212,6 @@ mod tests {
         let _git_sync = app_context.git_sync_manager();
         let _notification = app_context.notification_client();
         let _terminal = app_context.terminal_operations();
+        let _storage = app_context.task_storage();
     }
 }
