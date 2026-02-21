@@ -212,14 +212,19 @@ mod tests {
     #[test]
     fn test_standard_layers_with_project() {
         let app_context = AppContext::builder().build();
-        let temp_dir = TempDir::new().unwrap();
+        let project_dir = app_context
+            .tsk_env()
+            .data_dir()
+            .parent()
+            .unwrap()
+            .join("project");
 
         // Create project templates
-        let project_tsk = temp_dir.path().join(".tsk");
+        let project_tsk = project_dir.join(".tsk");
         create_templates(&project_tsk, &[("feature", "Project template")]);
 
         let manager = LayeredAssetManager::new_with_standard_layers(
-            Some(temp_dir.path()),
+            Some(&project_dir),
             &app_context.tsk_env(),
         );
 
@@ -308,26 +313,24 @@ mod tests {
         assert!(template.contains("Best Practices"));
     }
 
-    #[tokio::test]
-    async fn test_app_context_with_layered_asset_manager() {
+    #[test]
+    fn test_app_context_with_layered_asset_manager() {
         let app_context = AppContext::builder().build();
-        let temp_dir = TempDir::new().unwrap();
-        let repo_dir = temp_dir.path().join("repo");
-
-        // Initialize git repo
-        fs::create_dir_all(&repo_dir).unwrap();
-        std::process::Command::new("git")
-            .args(["init"])
-            .current_dir(&repo_dir)
-            .output()
-            .expect("Failed to init git repo");
+        let project_dir = app_context
+            .tsk_env()
+            .data_dir()
+            .parent()
+            .unwrap()
+            .join("project");
 
         // Create project-level template
-        let project_tsk = repo_dir.join(".tsk");
+        let project_tsk = project_dir.join(".tsk");
         create_templates(&project_tsk, &[("custom", "Custom project template")]);
 
-        let asset_manager =
-            LayeredAssetManager::new_with_standard_layers(Some(&repo_dir), &app_context.tsk_env());
+        let asset_manager = LayeredAssetManager::new_with_standard_layers(
+            Some(&project_dir),
+            &app_context.tsk_env(),
+        );
 
         // Verify it can access the custom template
         assert_eq!(

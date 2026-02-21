@@ -58,16 +58,13 @@ mod tests {
     use super::*;
     use std::fs;
 
-    use tempfile::TempDir;
+    use crate::test_utils::TestGitRepository;
 
     #[test]
     fn test_find_repository_root_in_git_repo() {
-        // Create a temporary directory structure
-        let temp_dir = TempDir::new().unwrap();
-        let repo_root = temp_dir.path();
-
-        // Create .git directory
-        fs::create_dir(repo_root.join(".git")).unwrap();
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init().unwrap();
+        let repo_root = test_repo.path();
 
         // Create subdirectories
         let sub_dir = repo_root.join("src").join("commands");
@@ -90,9 +87,8 @@ mod tests {
 
     #[test]
     fn test_find_repository_root_not_in_repo() {
-        // Create a temporary directory without .git
-        let temp_dir = TempDir::new().unwrap();
-        let result = find_repository_root(temp_dir.path());
+        let test_repo = TestGitRepository::new().unwrap();
+        let result = find_repository_root(test_repo.path());
 
         assert!(result.is_err());
         assert!(

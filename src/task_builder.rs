@@ -585,8 +585,6 @@ impl Default for TaskBuilder {
 mod tests {
     use super::*;
     use crate::context::AppContext;
-    use tempfile::TempDir;
-
     /// Helper to create a standard test context with real file system and git operations
     /// Returns (git_repo, AppContext)
     async fn create_test_context() -> (crate::test_utils::TestGitRepository, AppContext) {
@@ -715,8 +713,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_task_builder_validation_errors() {
-        let temp_dir = TempDir::new().unwrap();
         let ctx = AppContext::builder().build();
+        let non_git_dir = ctx.tsk_env().data_dir().to_path_buf();
 
         // Test missing repository root
         let result = TaskBuilder::new()
@@ -728,7 +726,7 @@ mod tests {
 
         // Test missing task name
         let result = TaskBuilder::new()
-            .repo_root(temp_dir.path().to_path_buf())
+            .repo_root(non_git_dir.clone())
             .build(&ctx)
             .await;
         assert!(result.is_err());
@@ -736,7 +734,7 @@ mod tests {
 
         // Test missing description for generic task
         let result = TaskBuilder::new()
-            .repo_root(temp_dir.path().to_path_buf())
+            .repo_root(non_git_dir)
             .name("test".to_string())
             .build(&ctx)
             .await;

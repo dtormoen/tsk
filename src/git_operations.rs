@@ -572,18 +572,18 @@ pub async fn get_current_branch(repo_path: &Path) -> Result<Option<String>, Stri
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use tempfile::TempDir;
+    use crate::test_utils::TestGitRepository;
 
     #[tokio::test]
     async fn test_is_git_repository() {
         // Test with a directory that is not a git repository
-        let non_git_dir = TempDir::new().unwrap();
+        let non_git_dir = TestGitRepository::new().unwrap();
         let is_repo = is_git_repository(non_git_dir.path()).await.unwrap();
         assert!(!is_repo, "Non-git directory should return false");
 
         // Test with a valid git repository
-        let git_dir = TempDir::new().unwrap();
-        git2::Repository::init(git_dir.path()).unwrap();
+        let git_dir = TestGitRepository::new().unwrap();
+        git_dir.init().unwrap();
         let is_repo = is_git_repository(git_dir.path()).await.unwrap();
         assert!(is_repo, "Git repository should return true");
 
@@ -599,18 +599,16 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_git_operations_with_real_repo() {
-        let temp_dir = TempDir::new().unwrap();
-        let repo_path = temp_dir.path();
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        let repo_path = test_repo.path();
 
-        // Initialize a real git repository
-        let repo = git2::Repository::init(repo_path).unwrap();
-
-        // Test get_status on empty repo
+        // After init_with_commit, status should be clean
         let status = get_status(repo_path).await.unwrap();
         assert_eq!(status, "");
 
         // Create a test file
-        std::fs::write(repo_path.join("test.txt"), "Hello, world!").unwrap();
+        test_repo.create_file("test.txt", "Hello, world!").unwrap();
 
         // Test get_status with untracked file
         let status = get_status(repo_path).await.unwrap();
@@ -623,13 +621,8 @@ mod integration_tests {
         let status = get_status(repo_path).await.unwrap();
         assert!(status.contains("A test.txt"));
 
-        // Configure git user for commit
-        let mut config = repo.config().unwrap();
-        config.set_str("user.name", "Test User").unwrap();
-        config.set_str("user.email", "test@example.com").unwrap();
-
         // Test commit
-        commit(repo_path, "Initial commit").await.unwrap();
+        commit(repo_path, "Add test file").await.unwrap();
 
         // Test get_status after commit
         let status = get_status(repo_path).await.unwrap();
@@ -639,18 +632,15 @@ mod integration_tests {
         create_branch(repo_path, "test-branch").await.unwrap();
 
         // Verify we're on the new branch
-        let head = repo.head().unwrap();
-        let branch_name = head.shorthand().unwrap();
-        assert_eq!(branch_name, "test-branch");
+        let branch = test_repo.current_branch().unwrap();
+        assert_eq!(branch, "test-branch");
     }
 
     #[tokio::test]
     async fn test_git_operations_remotes() {
-        let temp_dir = TempDir::new().unwrap();
-        let repo_path = temp_dir.path();
-
-        // Initialize a git repository
-        git2::Repository::init(repo_path).unwrap();
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init().unwrap();
+        let repo_path = test_repo.path();
 
         // Test add_remote
         add_remote(repo_path, "origin", "https://github.com/test/repo.git")
@@ -668,58 +658,35 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_get_current_commit() {
-        let temp_dir = TempDir::new().unwrap();
-        let repo_path = temp_dir.path();
+        let test_repo = TestGitRepository::new().unwrap();
+        let initial_sha = test_repo.init_with_commit().unwrap();
+        let repo_path = test_repo.path();
 
-        // Initialize a real git repository
-        let repo = git2::Repository::init(repo_path).unwrap();
-
-        // Configure git user for commit
-        let mut config = repo.config().unwrap();
-        config.set_str("user.name", "Test User").unwrap();
-        config.set_str("user.email", "test@example.com").unwrap();
-
-        // Create and commit a file
-        std::fs::write(repo_path.join("test.txt"), "Hello, world!").unwrap();
-        add_all(repo_path).await.unwrap();
-        commit(repo_path, "Initial commit").await.unwrap();
-
-        // Get the current commit
+        // Get the current commit via the function under test
         let commit_sha = get_current_commit(repo_path).await.unwrap();
         assert!(!commit_sha.is_empty());
-        assert_eq!(commit_sha.len(), 40); // SHA should be 40 characters
+        assert_eq!(commit_sha.len(), 40);
 
-        // Verify it's the same as what git2 reports
-        let head = repo.head().unwrap();
-        let head_commit = head.peel_to_commit().unwrap();
-        assert_eq!(commit_sha, head_commit.id().to_string());
+        // Verify it matches the SHA from init_with_commit
+        assert_eq!(commit_sha, initial_sha);
     }
 
     #[tokio::test]
     async fn test_create_branch_from_commit() {
-        let temp_dir = TempDir::new().unwrap();
-        let repo_path = temp_dir.path();
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        let repo_path = test_repo.path();
 
-        // Initialize a real git repository
-        let repo = git2::Repository::init(repo_path).unwrap();
-
-        // Configure git user for commit
-        let mut config = repo.config().unwrap();
-        config.set_str("user.name", "Test User").unwrap();
-        config.set_str("user.email", "test@example.com").unwrap();
-
-        // Create first commit
-        std::fs::write(repo_path.join("file1.txt"), "First file").unwrap();
-        add_all(repo_path).await.unwrap();
-        commit(repo_path, "First commit").await.unwrap();
-
-        // Get the first commit SHA
+        // Create first commit (beyond the initial one)
+        test_repo.create_file("file1.txt", "First file").unwrap();
+        test_repo.stage_all().unwrap();
+        test_repo.commit("First commit").unwrap();
         let first_commit_sha = get_current_commit(repo_path).await.unwrap();
 
         // Create second commit
-        std::fs::write(repo_path.join("file2.txt"), "Second file").unwrap();
-        add_all(repo_path).await.unwrap();
-        commit(repo_path, "Second commit").await.unwrap();
+        test_repo.create_file("file2.txt", "Second file").unwrap();
+        test_repo.stage_all().unwrap();
+        test_repo.commit("Second commit").unwrap();
 
         // Create a branch from the first commit
         create_branch_from_commit(repo_path, "feature-from-first", &first_commit_sha)
@@ -727,13 +694,12 @@ mod integration_tests {
             .unwrap();
 
         // Verify we're on the new branch
-        let head = repo.head().unwrap();
-        let branch_name = head.shorthand().unwrap();
-        assert_eq!(branch_name, "feature-from-first");
+        let branch = test_repo.current_branch().unwrap();
+        assert_eq!(branch, "feature-from-first");
 
         // Verify the branch is at the first commit
-        let current_commit = head.peel_to_commit().unwrap();
-        assert_eq!(current_commit.id().to_string(), first_commit_sha);
+        let current_sha = get_current_commit(repo_path).await.unwrap();
+        assert_eq!(current_sha, first_commit_sha);
 
         // Verify the second file doesn't exist in the working directory
         assert!(!repo_path.join("file2.txt").exists());
@@ -742,11 +708,9 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_get_current_commit_empty_repository() {
-        let temp_dir = TempDir::new().unwrap();
-        let repo_path = temp_dir.path();
-
-        // Initialize a git repository without any commits
-        git2::Repository::init(repo_path).unwrap();
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init().unwrap();
+        let repo_path = test_repo.path();
 
         // Attempt to get current commit from empty repository
         let result = get_current_commit(repo_path).await;
@@ -768,11 +732,9 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_create_branch_empty_repository() {
-        let temp_dir = TempDir::new().unwrap();
-        let repo_path = temp_dir.path();
-
-        // Initialize a git repository without any commits
-        git2::Repository::init(repo_path).unwrap();
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init().unwrap();
+        let repo_path = test_repo.path();
 
         // Attempt to create a branch in empty repository
         let result = create_branch(repo_path, "test-branch").await;
@@ -796,31 +758,25 @@ mod integration_tests {
     #[tokio::test]
     async fn test_clone_local() {
         // Create source repository with commits
-        let source_dir = TempDir::new().unwrap();
-        let source_path = source_dir.path();
-        let source_repo = git2::Repository::init(source_path).unwrap();
-
-        // Configure git user
-        let mut config = source_repo.config().unwrap();
-        config.set_str("user.name", "Test User").unwrap();
-        config.set_str("user.email", "test@example.com").unwrap();
+        let source_repo = TestGitRepository::new().unwrap();
+        source_repo.init_with_commit().unwrap();
 
         // Create first commit
-        std::fs::write(source_path.join("file1.txt"), "First file").unwrap();
-        add_all(source_path).await.unwrap();
-        commit(source_path, "First commit").await.unwrap();
-        let first_commit_sha = get_current_commit(source_path).await.unwrap();
+        source_repo.create_file("file1.txt", "First file").unwrap();
+        source_repo.stage_all().unwrap();
+        source_repo.commit("First commit").unwrap();
+        let first_commit_sha = get_current_commit(source_repo.path()).await.unwrap();
 
         // Create second commit
-        std::fs::write(source_path.join("file2.txt"), "Second file").unwrap();
-        add_all(source_path).await.unwrap();
-        commit(source_path, "Second commit").await.unwrap();
-        let second_commit_sha = get_current_commit(source_path).await.unwrap();
+        source_repo.create_file("file2.txt", "Second file").unwrap();
+        source_repo.stage_all().unwrap();
+        source_repo.commit("Second commit").unwrap();
+        let second_commit_sha = get_current_commit(source_repo.path()).await.unwrap();
 
         // Clone the repository
-        let dest_dir = TempDir::new().unwrap();
-        let dest_path = dest_dir.path().join("cloned_repo");
-        clone_local(source_path, &dest_path).await.unwrap();
+        let dest_repo = TestGitRepository::new().unwrap();
+        let dest_path = dest_repo.path().join("cloned_repo");
+        clone_local(source_repo.path(), &dest_path).await.unwrap();
 
         // Verify cloned repository exists and is a valid git repository
         assert!(dest_path.exists(), "Cloned repository should exist");
@@ -829,14 +785,10 @@ mod integration_tests {
             "Cloned repository should have .git directory"
         );
 
-        let cloned_repo = git2::Repository::open(&dest_path).unwrap();
-
-        // Verify the cloned repository has the same commits
-        let cloned_head = cloned_repo.head().unwrap();
-        let cloned_commit = cloned_head.peel_to_commit().unwrap();
+        // Verify the cloned repository has the same HEAD commit
+        let cloned_head_sha = get_current_commit(&dest_path).await.unwrap();
         assert_eq!(
-            cloned_commit.id().to_string(),
-            second_commit_sha,
+            cloned_head_sha, second_commit_sha,
             "Cloned repository should have the same HEAD commit"
         );
 
@@ -852,7 +804,8 @@ mod integration_tests {
 
         // Verify we can access the first commit in the cloned repository
         let first_commit_oid = git2::Oid::from_str(&first_commit_sha).unwrap();
-        let first_commit = cloned_repo.find_commit(first_commit_oid).unwrap();
+        let cloned_git_repo = git2::Repository::open(&dest_path).unwrap();
+        let first_commit = cloned_git_repo.find_commit(first_commit_oid).unwrap();
         assert_eq!(
             first_commit.id().to_string(),
             first_commit_sha,
@@ -885,26 +838,13 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_get_current_branch_on_branch() {
-        let temp_dir = TempDir::new().unwrap();
-        let repo_path = temp_dir.path();
-
-        // Initialize a real git repository
-        let repo = git2::Repository::init(repo_path).unwrap();
-
-        // Configure git user for commit
-        let mut config = repo.config().unwrap();
-        config.set_str("user.name", "Test User").unwrap();
-        config.set_str("user.email", "test@example.com").unwrap();
-
-        // Create and commit a file
-        std::fs::write(repo_path.join("test.txt"), "Hello, world!").unwrap();
-        add_all(repo_path).await.unwrap();
-        commit(repo_path, "Initial commit").await.unwrap();
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        let repo_path = test_repo.path();
 
         // Get current branch - should be main or master
         let branch = get_current_branch(repo_path).await.unwrap();
         assert!(branch.is_some());
-        // The default branch could be "main" or "master" depending on git version/config
         let branch_name = branch.unwrap();
         assert!(
             branch_name == "main" || branch_name == "master",
@@ -915,21 +855,9 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_get_current_branch_custom_branch() {
-        let temp_dir = TempDir::new().unwrap();
-        let repo_path = temp_dir.path();
-
-        // Initialize a real git repository
-        let repo = git2::Repository::init(repo_path).unwrap();
-
-        // Configure git user for commit
-        let mut config = repo.config().unwrap();
-        config.set_str("user.name", "Test User").unwrap();
-        config.set_str("user.email", "test@example.com").unwrap();
-
-        // Create and commit a file
-        std::fs::write(repo_path.join("test.txt"), "Hello, world!").unwrap();
-        add_all(repo_path).await.unwrap();
-        commit(repo_path, "Initial commit").await.unwrap();
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        let repo_path = test_repo.path();
 
         // Create and checkout a new branch
         create_branch(repo_path, "feature-branch").await.unwrap();
@@ -941,28 +869,14 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_get_current_branch_detached_head() {
-        let temp_dir = TempDir::new().unwrap();
-        let repo_path = temp_dir.path();
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        let repo_path = test_repo.path();
 
-        // Initialize a real git repository
-        let repo = git2::Repository::init(repo_path).unwrap();
-
-        // Configure git user for commit
-        let mut config = repo.config().unwrap();
-        config.set_str("user.name", "Test User").unwrap();
-        config.set_str("user.email", "test@example.com").unwrap();
-
-        // Create and commit a file
-        std::fs::write(repo_path.join("test.txt"), "Hello, world!").unwrap();
-        add_all(repo_path).await.unwrap();
-        commit(repo_path, "Initial commit").await.unwrap();
-
-        // Get the commit SHA and checkout to detach HEAD
-        let commit_sha = get_current_commit(repo_path).await.unwrap();
-
-        // Checkout to the specific commit (detached HEAD)
-        let oid = git2::Oid::from_str(&commit_sha).unwrap();
-        repo.set_head_detached(oid).unwrap();
+        // Detach HEAD at the current commit
+        test_repo
+            .run_git_command(&["checkout", "--detach"])
+            .unwrap();
 
         // Get current branch - should be None for detached HEAD
         let branch = get_current_branch(repo_path).await.unwrap();

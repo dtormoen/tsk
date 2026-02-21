@@ -106,14 +106,14 @@ async fn acquire_flock(lock_path: PathBuf) -> std::io::Result<File> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::TestGitRepository;
     use std::time::Duration;
-    use tempfile::TempDir;
     use tokio::time::sleep;
 
-    fn create_temp_repo() -> TempDir {
-        let dir = TempDir::new().unwrap();
-        std::fs::create_dir(dir.path().join(".git")).unwrap();
-        dir
+    fn create_temp_repo() -> TestGitRepository {
+        let repo = TestGitRepository::new().unwrap();
+        repo.init().unwrap();
+        repo
     }
 
     #[tokio::test]
