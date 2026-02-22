@@ -94,6 +94,15 @@ impl Command for DockerBuildCommand {
         // Get project root for Docker operations
         let project_root = find_repository_root(std::path::Path::new(".")).ok();
 
+        // Resolve config for inline layer overrides
+        let project_name = project.as_deref().unwrap_or("default");
+        let project_config = project_root
+            .as_deref()
+            .and_then(crate::context::tsk_config::load_project_config);
+        let resolved_config = ctx
+            .tsk_config()
+            .resolve_config(project_name, project_config.as_ref());
+
         // Create image manager with AppContext
         let image_manager =
             DockerImageManager::new(ctx, docker_client.clone(), project_root.as_deref(), None);
@@ -110,6 +119,7 @@ impl Command for DockerBuildCommand {
                     build_root: project_root.as_deref(),
                     build_log_path: None,
                 },
+                Some(&resolved_config),
             )
             .await?;
 

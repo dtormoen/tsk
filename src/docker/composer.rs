@@ -11,6 +11,47 @@ use crate::assets::AssetManager;
 use crate::docker::layers::DockerImageConfig;
 use crate::docker::template_engine::DockerTemplateEngine;
 
+/// Inline layer content from TOML config that overrides asset manager lookups.
+#[derive(Debug, Default)]
+pub struct InlineLayerOverrides {
+    /// Content for the stack layer position (from `stack_config[stack].setup`)
+    pub stack_setup: Option<String>,
+    /// Content for the agent layer position (from `agent_config[agent].setup`)
+    pub agent_setup: Option<String>,
+    /// Content for the project layer position (from `setup` field)
+    pub project_setup: Option<String>,
+}
+
+/// Where a Docker layer's content came from
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum LayerSource {
+    /// Layer content from TOML config (setup/stack_config/agent_config)
+    Config,
+    /// Layer content from the asset manager (filesystem or embedded)
+    AssetManager,
+    /// Layer was empty (no content from any source)
+    #[default]
+    Empty,
+}
+
+impl std::fmt::Display for LayerSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LayerSource::Config => write!(f, "config"),
+            LayerSource::AssetManager => write!(f, "asset"),
+            LayerSource::Empty => write!(f, "empty"),
+        }
+    }
+}
+
+/// Track where each layer came from for dry-run output
+#[derive(Debug, Default)]
+pub struct LayerSources {
+    pub stack: LayerSource,
+    pub agent: LayerSource,
+    pub project: LayerSource,
+}
+
 /// Composes multiple Docker layers into a complete Dockerfile
 pub struct DockerComposer {
     asset_manager: Arc<dyn AssetManager>,
@@ -22,8 +63,15 @@ impl DockerComposer {
         Self { asset_manager }
     }
 
-    /// Compose a complete Dockerfile and associated files from the given configuration
-    pub fn compose(&self, config: &DockerImageConfig) -> Result<ComposedDockerfile> {
+    /// Compose a complete Dockerfile and associated files from the given configuration.
+    ///
+    /// When `overrides` is provided, inline config content takes priority over
+    /// asset manager lookups for the corresponding layer positions.
+    pub fn compose(
+        &self,
+        config: &DockerImageConfig,
+        overrides: Option<&InlineLayerOverrides>,
+    ) -> Result<ComposedDockerfile> {
         // Get the base template
         let base_dockerfile = self
             .asset_manager
@@ -33,8 +81,8 @@ impl DockerComposer {
             .context("Failed to decode base dockerfile as UTF-8")?;
 
         // Create template engine and render the Dockerfile
-        let template_engine = DockerTemplateEngine::new(&*self.asset_manager);
-        let dockerfile_content = template_engine.render_dockerfile(
+        let template_engine = DockerTemplateEngine::new(&*self.asset_manager, overrides);
+        let (dockerfile_content, layer_sources) = template_engine.render_dockerfile(
             &base_template,
             Some(&config.stack),
             Some(&config.agent),
@@ -48,6 +96,7 @@ impl DockerComposer {
             dockerfile_content,
             build_args,
             image_tag: config.image_tag(),
+            layer_sources,
         })
     }
 
@@ -125,6 +174,8 @@ pub struct ComposedDockerfile {
     pub build_args: HashSet<String>,
     /// The Docker image tag for this composition
     pub image_tag: String,
+    /// Where each layer's content came from
+    pub layer_sources: LayerSources,
 }
 
 #[cfg(test)]
@@ -192,5 +243,79 @@ WORKDIR /workspace
 RUN echo "Hello"
 "#;
         assert!(composer.validate_dockerfile(no_user).is_err());
+    }
+
+    #[test]
+    fn test_compose_with_no_overrides() {
+        let composer = create_test_composer();
+        let config = crate::docker::layers::DockerImageConfig::new(
+            "default".to_string(),
+            "claude".to_string(),
+            "default".to_string(),
+        );
+
+        let composed = composer.compose(&config, None).unwrap();
+        assert!(composed.dockerfile_content.contains("FROM"));
+        assert!(!composed.image_tag.is_empty());
+        // Without overrides, embedded sources should be used
+        assert_eq!(composed.layer_sources.stack, LayerSource::AssetManager);
+        assert_eq!(composed.layer_sources.agent, LayerSource::AssetManager);
+    }
+
+    #[test]
+    fn test_compose_with_inline_overrides() {
+        let composer = create_test_composer();
+        let config = crate::docker::layers::DockerImageConfig::new(
+            "default".to_string(),
+            "claude".to_string(),
+            "default".to_string(),
+        );
+
+        let overrides = InlineLayerOverrides {
+            stack_setup: Some("RUN echo custom-stack".to_string()),
+            project_setup: Some("RUN echo custom-project".to_string()),
+            ..Default::default()
+        };
+
+        let composed = composer.compose(&config, Some(&overrides)).unwrap();
+        assert!(
+            composed
+                .dockerfile_content
+                .contains("RUN echo custom-stack")
+        );
+        assert!(
+            composed
+                .dockerfile_content
+                .contains("RUN echo custom-project")
+        );
+        assert_eq!(composed.layer_sources.stack, LayerSource::Config);
+        assert_eq!(composed.layer_sources.agent, LayerSource::AssetManager);
+        assert_eq!(composed.layer_sources.project, LayerSource::Config);
+    }
+
+    #[test]
+    fn test_compose_with_config_defined_new_stack() {
+        let composer = create_test_composer();
+        // Use a stack name that doesn't exist in embedded assets
+        let config = crate::docker::layers::DockerImageConfig::new(
+            "scala".to_string(),
+            "claude".to_string(),
+            "default".to_string(),
+        );
+
+        let overrides = InlineLayerOverrides {
+            stack_setup: Some("RUN apt-get install -y scala".to_string()),
+            ..Default::default()
+        };
+
+        let composed = composer.compose(&config, Some(&overrides)).unwrap();
+        assert!(
+            composed
+                .dockerfile_content
+                .contains("RUN apt-get install -y scala")
+        );
+        assert_eq!(composed.layer_sources.stack, LayerSource::Config);
+        // Agent still comes from embedded assets
+        assert_eq!(composed.layer_sources.agent, LayerSource::AssetManager);
     }
 }

@@ -11,9 +11,10 @@ use std::sync::Arc;
 use crate::assets::layered::LayeredAssetManager;
 use crate::context::AppContext;
 use crate::context::ContainerEngine;
+use crate::context::ResolvedConfig;
 use crate::context::docker_client::DockerClient;
 use crate::docker::build_lock_manager::DockerBuildLockManager;
-use crate::docker::composer::{ComposedDockerfile, DockerComposer};
+use crate::docker::composer::{ComposedDockerfile, DockerComposer, InlineLayerOverrides};
 use crate::docker::layers::{DockerImageConfig, DockerLayerType};
 use crate::docker::template_manager::DockerTemplateManager;
 
@@ -27,6 +28,24 @@ pub struct BuildOptions<'a> {
     pub build_root: Option<&'a std::path::Path>,
     /// Optional path to save build output on failure
     pub build_log_path: Option<&'a std::path::Path>,
+}
+
+/// Options for ensuring a Docker image exists.
+pub struct EnsureImageOptions<'a> {
+    /// The stack layer (e.g., "rust", "python", "default")
+    pub stack: &'a str,
+    /// The agent layer (e.g., "claude")
+    pub agent: &'a str,
+    /// Optional project layer (defaults to "default")
+    pub project: Option<&'a str>,
+    /// Optional build root directory for project-specific context
+    pub build_root: Option<&'a std::path::Path>,
+    /// Whether to force a rebuild even if the image exists
+    pub force_rebuild: bool,
+    /// Optional path to save build output on failure
+    pub build_log_path: Option<&'a std::path::Path>,
+    /// Optional resolved config for inline layer overrides
+    pub resolved_config: Option<&'a ResolvedConfig>,
 }
 
 /// Retrieves a git configuration value from a repository or global config.
@@ -133,6 +152,79 @@ impl DockerImageManager {
         DockerImageConfig::new(stack.to_string(), agent.to_string(), project.to_string())
     }
 
+    /// Extract inline layer overrides from a resolved config for a given stack and agent.
+    ///
+    /// Returns `Some` if at least one override field is set, `None` otherwise.
+    fn extract_inline_overrides(
+        resolved_config: Option<&ResolvedConfig>,
+        stack: &str,
+        agent: &str,
+    ) -> Option<InlineLayerOverrides> {
+        let config = resolved_config?;
+        let overrides = InlineLayerOverrides {
+            stack_setup: config.stack_config.get(stack).and_then(|c| c.setup.clone()),
+            agent_setup: config.agent_config.get(agent).and_then(|c| c.setup.clone()),
+            project_setup: config.setup.clone(),
+        };
+        if overrides.stack_setup.is_some()
+            || overrides.agent_setup.is_some()
+            || overrides.project_setup.is_some()
+        {
+            Some(overrides)
+        } else {
+            None
+        }
+    }
+
+    /// Warn about deprecated filesystem Docker layers if they may have been used.
+    ///
+    /// Only warns when:
+    /// 1. Dockerfile directories exist on the filesystem (`.tsk/dockerfiles/` or `~/.config/tsk/dockerfiles/`)
+    /// 2. At least one layer came from the asset manager (not all from config or empty)
+    fn warn_deprecated_filesystem_layers(
+        &self,
+        composed: &ComposedDockerfile,
+        project_root: Option<&Path>,
+    ) {
+        use crate::docker::composer::LayerSource;
+
+        // Only warn if at least one layer came from the asset manager
+        let has_asset_manager_layers = [
+            &composed.layer_sources.stack,
+            &composed.layer_sources.agent,
+            &composed.layer_sources.project,
+        ]
+        .iter()
+        .any(|s| **s == LayerSource::AssetManager);
+
+        if !has_asset_manager_layers {
+            return;
+        }
+
+        let mut deprecated_paths = Vec::new();
+
+        if let Some(root) = project_root {
+            let project_docker_dir = root.join(".tsk").join("dockerfiles");
+            if project_docker_dir.exists() && has_dockerfile_files(&project_docker_dir) {
+                deprecated_paths.push(project_docker_dir);
+            }
+        }
+
+        let user_docker_dir = self.ctx.tsk_env().config_dir().join("dockerfiles");
+        if user_docker_dir.exists() && has_dockerfile_files(&user_docker_dir) {
+            deprecated_paths.push(user_docker_dir);
+        }
+
+        for path in deprecated_paths {
+            eprintln!(
+                "Warning: Filesystem Docker layers in '{}' are deprecated. \
+                 Migrate to tsk.toml setup/stack_config/agent_config fields. \
+                 See README.md for details.",
+                path.display()
+            );
+        }
+    }
+
     /// Print dry run output for a composed Dockerfile
     fn print_dry_run_output(
         &self,
@@ -143,6 +235,10 @@ impl DockerImageManager {
     ) {
         println!("# Resolved Dockerfile for image: {}", composed.image_tag);
         println!("# Configuration: stack={stack}, agent={agent}, project={project}");
+        println!("# Layer sources:");
+        println!("#   stack/{stack}: {}", composed.layer_sources.stack);
+        println!("#   agent/{agent}: {}", composed.layer_sources.agent);
+        println!("#   project/{project}: {}", composed.layer_sources.project);
         println!();
         println!("{}", composed.dockerfile_content);
 
@@ -154,16 +250,32 @@ impl DockerImageManager {
         }
     }
 
-    /// Helper to validate layer availability
+    /// Helper to validate layer availability.
+    ///
+    /// Returns layers that are missing from both the asset manager and inline overrides.
     fn validate_layers(
         &self,
         config: &DockerImageConfig,
         project_root: Option<&std::path::Path>,
+        overrides: Option<&InlineLayerOverrides>,
     ) -> Vec<crate::docker::layers::DockerLayer> {
         config
             .get_layers()
             .into_iter()
             .filter(|layer| {
+                // A layer with an inline override is never "missing"
+                if let Some(ovr) = overrides {
+                    let has_override = match layer.layer_type {
+                        DockerLayerType::Stack => ovr.stack_setup.is_some(),
+                        DockerLayerType::Agent => ovr.agent_setup.is_some(),
+                        DockerLayerType::Project => ovr.project_setup.is_some(),
+                        _ => false,
+                    };
+                    if has_override {
+                        return false;
+                    }
+                }
+
                 self.template_manager
                     .get_layer_content(layer, project_root)
                     .is_err()
@@ -186,10 +298,11 @@ impl DockerImageManager {
         agent: &str,
         project: Option<&str>,
         project_root: Option<&std::path::Path>,
+        overrides: Option<&InlineLayerOverrides>,
     ) -> Result<(String, bool)> {
         let project = project.unwrap_or("default");
         let config = Self::create_config(stack, agent, project);
-        let missing_layers = self.validate_layers(&config, project_root);
+        let missing_layers = self.validate_layers(&config, project_root, overrides);
 
         // If only the project layer is missing and it's not "default", try fallback
         if missing_layers.len() == 1
@@ -234,7 +347,7 @@ impl DockerImageManager {
         Ok((format!("tsk/{stack}/{agent}/{project}"), false))
     }
 
-    /// Ensure a Docker image exists, rebuilding if necessary
+    /// Ensure a Docker image exists, rebuilding if necessary.
     ///
     /// This method:
     /// - Checks if the image exists in the Docker daemon
@@ -243,20 +356,21 @@ impl DockerImageManager {
     ///
     /// # Returns
     /// The Docker image tag (e.g., "tsk/rust/claude/web-api")
-    pub async fn ensure_image(
-        &self,
-        stack: &str,
-        agent: &str,
-        project: Option<&str>,
-        build_root: Option<&std::path::Path>,
-        force_rebuild: bool,
-        build_log_path: Option<&std::path::Path>,
-    ) -> Result<String> {
+    pub async fn ensure_image(&self, opts: &EnsureImageOptions<'_>) -> Result<String> {
+        let overrides =
+            Self::extract_inline_overrides(opts.resolved_config, opts.stack, opts.agent);
+
         // Get the image tag (with fallback if needed)
-        let (tag, used_fallback) = self.get_image_tag(stack, agent, project, build_root)?;
+        let (tag, used_fallback) = self.get_image_tag(
+            opts.stack,
+            opts.agent,
+            opts.project,
+            opts.build_root,
+            overrides.as_ref(),
+        )?;
 
         // Check if image exists unless force rebuild
-        if !force_rebuild && self.image_exists(&tag).await? {
+        if !opts.force_rebuild && self.image_exists(&tag).await? {
             // Image already exists
             return Ok(tag);
         }
@@ -274,19 +388,20 @@ impl DockerImageManager {
         let actual_project = if used_fallback {
             "default"
         } else {
-            project.unwrap_or("default")
+            opts.project.unwrap_or("default")
         };
 
         self.build_image(
-            stack,
-            agent,
+            opts.stack,
+            opts.agent,
             Some(actual_project),
             &BuildOptions {
                 no_cache: false,
                 dry_run: false,
-                build_root,
-                build_log_path,
+                build_root: opts.build_root,
+                build_log_path: opts.build_log_path,
             },
+            opts.resolved_config,
         )
         .await?;
 
@@ -300,6 +415,7 @@ impl DockerImageManager {
     /// * `agent` - The agent layer (e.g., "claude")
     /// * `project` - Optional project layer (defaults to "default")
     /// * `options` - Build options (cache, dry run, build root, log path)
+    /// * `resolved_config` - Optional resolved config for inline layer overrides
     ///
     /// # Returns
     /// The Docker image tag (e.g., "tsk/rust/claude/web-api")
@@ -309,6 +425,7 @@ impl DockerImageManager {
         agent: &str,
         project: Option<&str>,
         options: &BuildOptions<'_>,
+        resolved_config: Option<&ResolvedConfig>,
     ) -> Result<String> {
         let project = project.unwrap_or("default");
 
@@ -318,19 +435,25 @@ impl DockerImageManager {
             None => println!("Building Docker image without project-specific context"),
         }
 
+        // Extract inline overrides from config
+        let overrides = Self::extract_inline_overrides(resolved_config, stack, agent);
+
         // Create configuration
         let config = Self::create_config(stack, agent, project);
 
         // Compose the Dockerfile
         let composed = self
             .composer
-            .compose(&config)
+            .compose(&config, overrides.as_ref())
             .with_context(|| format!("Failed to compose Dockerfile for {}", config.image_tag()))?;
 
         // Validate the composed Dockerfile
         self.composer
             .validate_dockerfile(&composed.dockerfile_content)
             .with_context(|| "Dockerfile validation failed")?;
+
+        // Warn about deprecated filesystem layers
+        self.warn_deprecated_filesystem_layers(&composed, options.build_root);
 
         if options.dry_run {
             self.print_dry_run_output(&composed, stack, agent, project);
@@ -515,6 +638,27 @@ impl DockerImageManager {
     }
 }
 
+/// Check whether a dockerfiles directory contains `.dockerfile` files
+/// in the expected subdirectories (stack/, agent/, project/).
+fn has_dockerfile_files(dir: &Path) -> bool {
+    for subdir in &["stack", "agent", "project", "base"] {
+        let sub_path = dir.join(subdir);
+        if let Ok(entries) = std::fs::read_dir(&sub_path) {
+            for entry in entries.flatten() {
+                if entry
+                    .path()
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e == "dockerfile")
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -533,7 +677,7 @@ mod tests {
         let manager = create_test_manager();
 
         // Test with all default layers (should exist in embedded assets)
-        let result = manager.get_image_tag("default", "claude", Some("default"), None);
+        let result = manager.get_image_tag("default", "claude", Some("default"), None, None);
         assert!(result.is_ok());
 
         let (tag, used_fallback) = result.unwrap();
@@ -546,7 +690,13 @@ mod tests {
         let manager = create_test_manager();
 
         // Test with non-existent project layer (should fall back to default)
-        let result = manager.get_image_tag("default", "claude", Some("non-existent-project"), None);
+        let result = manager.get_image_tag(
+            "default",
+            "claude",
+            Some("non-existent-project"),
+            None,
+            None,
+        );
         assert!(result.is_ok());
 
         let (tag, used_fallback) = result.unwrap();
@@ -559,7 +709,8 @@ mod tests {
         let manager = create_test_manager();
 
         // Test with non-existent tech stack (should fail)
-        let result = manager.get_image_tag("non-existent-stack", "claude", Some("default"), None);
+        let result =
+            manager.get_image_tag("non-existent-stack", "claude", Some("default"), None, None);
         assert!(result.is_err());
 
         let err = result.unwrap_err();
@@ -574,7 +725,8 @@ mod tests {
         let manager = create_test_manager();
 
         // Test with non-existent agent (should fail)
-        let result = manager.get_image_tag("default", "non-existent-agent", Some("default"), None);
+        let result =
+            manager.get_image_tag("default", "non-existent-agent", Some("default"), None, None);
         assert!(result.is_err());
 
         let err = result.unwrap_err();
@@ -589,12 +741,33 @@ mod tests {
         let manager = create_test_manager();
 
         // Test with None project (should use "default")
-        let result = manager.get_image_tag("default", "claude", None, None);
+        let result = manager.get_image_tag("default", "claude", None, None, None);
         assert!(result.is_ok());
 
         let (tag, used_fallback) = result.unwrap();
         assert_eq!(tag, "tsk/default/claude/default");
         assert!(!used_fallback);
+    }
+
+    #[test]
+    fn test_get_image_tag_with_config_defined_stack() {
+        let manager = create_test_manager();
+
+        // A stack that doesn't exist in embedded assets but has an inline override
+        let overrides = InlineLayerOverrides {
+            stack_setup: Some("RUN echo custom".to_string()),
+            ..Default::default()
+        };
+        let result = manager.get_image_tag(
+            "custom-stack",
+            "claude",
+            Some("default"),
+            None,
+            Some(&overrides),
+        );
+        assert!(result.is_ok());
+        let (tag, _) = result.unwrap();
+        assert_eq!(tag, "tsk/custom-stack/claude/default");
     }
 
     #[tokio::test]
@@ -613,6 +786,7 @@ mod tests {
                     build_root: None,
                     build_log_path: None,
                 },
+                None,
             )
             .await;
 
@@ -632,6 +806,7 @@ mod tests {
                     build_root: None,
                     build_log_path: None,
                 },
+                None,
             )
             .await;
 
@@ -646,6 +821,7 @@ mod tests {
             dockerfile_content: "FROM ubuntu:24.04\nRUN echo 'test'".to_string(),
             build_args: std::collections::HashSet::new(),
             image_tag: "tsk/test/test/test".to_string(),
+            layer_sources: Default::default(),
         };
 
         let tar_data = manager.create_tar_archive(&composed, None).unwrap();
@@ -680,6 +856,7 @@ mod tests {
             dockerfile_content: "FROM ubuntu:24.04\nRUN echo 'tsk'".to_string(),
             build_args: std::collections::HashSet::new(),
             image_tag: "tsk/test/test/test".to_string(),
+            layer_sources: Default::default(),
         };
 
         let tar_data = manager
@@ -742,7 +919,7 @@ mod tests {
             "claude".to_string(),
             "default".to_string(),
         );
-        let composed = manager.composer.compose(&config).unwrap();
+        let composed = manager.composer.compose(&config, None).unwrap();
 
         // Check that TSK_AGENT_VERSION is in build args
         assert!(
@@ -775,6 +952,7 @@ mod tests {
                     build_root: None,
                     build_log_path: None,
                 },
+                None,
             )
             .await;
 
@@ -865,13 +1043,29 @@ mod tests {
         // Launch two concurrent ensure_image tasks for different images
         let task1 = tokio::spawn(async move {
             manager1
-                .ensure_image("rust", "claude", Some("project1"), None, false, None)
+                .ensure_image(&EnsureImageOptions {
+                    stack: "rust",
+                    agent: "claude",
+                    project: Some("project1"),
+                    build_root: None,
+                    force_rebuild: false,
+                    build_log_path: None,
+                    resolved_config: None,
+                })
                 .await
         });
 
         let task2 = tokio::spawn(async move {
             manager2
-                .ensure_image("python", "claude", Some("project2"), None, false, None)
+                .ensure_image(&EnsureImageOptions {
+                    stack: "python",
+                    agent: "claude",
+                    project: Some("project2"),
+                    build_root: None,
+                    force_rebuild: false,
+                    build_log_path: None,
+                    resolved_config: None,
+                })
                 .await
         });
 
@@ -932,5 +1126,132 @@ mod tests {
         assert!(result.is_err());
         // Falls through to production error message for unknown keys
         assert!(result.unwrap_err().to_string().contains("not set"));
+    }
+
+    #[test]
+    fn test_extract_inline_overrides_with_config() {
+        use crate::context::tsk_config::{AgentConfig, StackConfig};
+        use std::collections::HashMap;
+
+        let config = ResolvedConfig {
+            setup: Some("RUN echo project-setup".to_string()),
+            stack_config: HashMap::from([(
+                "rust".to_string(),
+                StackConfig {
+                    setup: Some("RUN cargo install nextest".to_string()),
+                },
+            )]),
+            agent_config: HashMap::from([(
+                "claude".to_string(),
+                AgentConfig {
+                    setup: Some("RUN npm install -g tool".to_string()),
+                },
+            )]),
+            ..Default::default()
+        };
+
+        let overrides =
+            DockerImageManager::extract_inline_overrides(Some(&config), "rust", "claude");
+        assert!(overrides.is_some());
+        let ovr = overrides.unwrap();
+        assert_eq!(
+            ovr.stack_setup,
+            Some("RUN cargo install nextest".to_string())
+        );
+        assert_eq!(ovr.agent_setup, Some("RUN npm install -g tool".to_string()));
+        assert_eq!(
+            ovr.project_setup,
+            Some("RUN echo project-setup".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_inline_overrides_no_matching_stack_or_agent() {
+        use crate::context::tsk_config::StackConfig;
+        use std::collections::HashMap;
+
+        let config = ResolvedConfig {
+            stack_config: HashMap::from([(
+                "python".to_string(),
+                StackConfig {
+                    setup: Some("RUN pip install numpy".to_string()),
+                },
+            )]),
+            ..Default::default()
+        };
+
+        // Stack and agent don't match -- only setup is None, stack_config["python"] doesn't match "rust"
+        let overrides =
+            DockerImageManager::extract_inline_overrides(Some(&config), "rust", "claude");
+        assert!(overrides.is_none());
+    }
+
+    #[test]
+    fn test_extract_inline_overrides_none_config() {
+        let overrides = DockerImageManager::extract_inline_overrides(None, "rust", "claude");
+        assert!(overrides.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_build_image_with_resolved_config() {
+        use crate::context::tsk_config::StackConfig;
+        use std::collections::HashMap;
+
+        let manager = create_test_manager();
+        let config = ResolvedConfig {
+            setup: Some("RUN echo from-config".to_string()),
+            stack_config: HashMap::from([(
+                "default".to_string(),
+                StackConfig {
+                    setup: Some("RUN echo stack-from-config".to_string()),
+                },
+            )]),
+            ..Default::default()
+        };
+
+        let result = manager
+            .build_image(
+                "default",
+                "claude",
+                Some("default"),
+                &BuildOptions {
+                    no_cache: false,
+                    dry_run: true,
+                    build_root: None,
+                    build_log_path: None,
+                },
+                Some(&config),
+            )
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "Dry run with config failed: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_has_dockerfile_files() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Empty directory
+        assert!(!has_dockerfile_files(temp_dir.path()));
+
+        // Directory with non-dockerfile files at root
+        std::fs::write(temp_dir.path().join("README.md"), "hello").unwrap();
+        assert!(!has_dockerfile_files(temp_dir.path()));
+
+        // File in unexpected subdirectory — not detected
+        let other_dir = temp_dir.path().join("other");
+        std::fs::create_dir_all(&other_dir).unwrap();
+        std::fs::write(other_dir.join("custom.dockerfile"), "FROM ubuntu").unwrap();
+        assert!(!has_dockerfile_files(temp_dir.path()));
+
+        // File in expected "stack" subdirectory — detected
+        let stack_dir = temp_dir.path().join("stack");
+        std::fs::create_dir_all(&stack_dir).unwrap();
+        std::fs::write(stack_dir.join("rust.dockerfile"), "FROM ubuntu").unwrap();
+        assert!(has_dockerfile_files(temp_dir.path()));
     }
 }

@@ -267,6 +267,8 @@ RUN cargo install cargo-nextest
 '''
 ```
 
+The `setup` field injects Dockerfile commands at the project layer position in the Docker image build. Use it for project-specific build dependencies. `stack_config.<name>.setup` and `agent_config.<name>.setup` similarly inject content at the stack and agent layer positions, and can define entirely new stacks or agents (e.g., `stack_config.scala.setup` lets you use `stack = "scala"`). Config-defined layers take priority over filesystem and embedded Docker layers.
+
 Volume mounts are particularly useful for:
 - **Build caches**: Share Go module cache (`/go/pkg/mod`) or Rust target directories to speed up builds
 - **Persistent state**: Use named volumes for build caches that persist across tasks
@@ -299,7 +301,11 @@ Each TSK sandbox container image has 4 main parts:
 - An `agent` snippet that installs an agent, e.g. `claude` or `codex`.
 - A `project` snippet that defines project specific build steps (applied last for project-specific customizations). This does nothing by default, but can be used to add extra build steps for your project.
 
-It is very difficult to make these images general purpose enough to cover all repositories. You may need some special customization. See [dockerfiles](./dockerfiles) for the built-in dockerfiles as well as the [TSK custom project layer](./.tsk/dockerfiles/project/tsk.dockerfile) to see how you can integrate custom build steps into your project by creating a `.tsk/dockerfiles/project/<yourproject>.dockerfile` or `~/.config/tsk/dockerfiles/project/<yourproject>.dockerfile` snippet.
+It is very difficult to make these images general purpose enough to cover all repositories. You may need some special customization. The recommended approach is to use `setup`, `stack_config`, and `agent_config` fields in your `tsk.toml` to inject custom Dockerfile commands (see [Configuration File](#configuration-file) above).
+
+> **Note:** Filesystem-based Docker layers (`.tsk/dockerfiles/` and `~/.config/tsk/dockerfiles/`) are deprecated. Migrate to `setup`/`stack_config`/`agent_config` fields in tsk.toml. Filesystem layers still work as a fallback but will print a deprecation warning.
+
+See [dockerfiles](./dockerfiles) for the built-in dockerfiles.
 
 You can run `tsk docker build --dry-run` to see the dockerfile that `tsk` will dynamically generate for your repository. You can also run `tsk run --type tech-stack` or `tsk run --type project-layer` to try to generate a `stack` or `project` snippet for your project, but this has not been heavily tested.
 

@@ -181,6 +181,9 @@ impl TaskRunner {
             None,
         );
 
+        // Resolve config for this task to provide inline layer overrides
+        let resolved_config = crate::docker::resolve_config_from_task(task, &self.ctx);
+
         // Ensure the Docker image exists - always rebuild to pick up any changes
         let build_log_path = self
             .ctx
@@ -189,14 +192,15 @@ impl TaskRunner {
             .join("output")
             .join("docker-build.log");
         let docker_image_tag = task_image_manager
-            .ensure_image(
-                &task.stack,
-                &task.agent,
-                Some(&task.project),
-                Some(repo_path.as_path()),
-                true,
-                Some(&build_log_path),
-            )
+            .ensure_image(&crate::docker::image_manager::EnsureImageOptions {
+                stack: &task.stack,
+                agent: &task.agent,
+                project: Some(&task.project),
+                build_root: Some(repo_path.as_path()),
+                force_rebuild: true,
+                build_log_path: Some(&build_log_path),
+                resolved_config: Some(&resolved_config),
+            })
             .await
             .map_err(|e| format!("Error ensuring Docker image: {e}"))?;
 

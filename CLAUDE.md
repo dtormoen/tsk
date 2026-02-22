@@ -223,6 +223,8 @@ For user-facing breaking changes, add `!` after the type (e.g., `feat!:`, `fix!:
 ### Docker Infrastructure
 
 - See README.md for the layered image system, custom dockerfiles, and proxy configuration
+- **Inline Docker layers**: `setup`, `stack_config[name].setup`, and `agent_config[name].setup` from `ResolvedConfig` inject Dockerfile content at the project, stack, and agent layer positions respectively. Config-defined layers take priority over filesystem and embedded assets. This allows defining entirely new stacks/agents in TOML (e.g., `stack_config.scala.setup`).
+- Filesystem Docker layers (`.tsk/dockerfiles/`, `~/.config/tsk/dockerfiles/`) are deprecated in favor of TOML config fields. They still work as a fallback but print a deprecation warning when used.
 - Git configuration resolved dynamically from the repository being built (respects per-repo author settings)
 - Automatic image rebuilding when missing during task execution
 - Agent version tracking: Docker images are rebuilt when agent versions change (via `TSK_AGENT_VERSION` ARG)
