@@ -1,7 +1,7 @@
 use crate::commands::Command;
 use crate::context::AppContext;
 use crate::context::docker_client::DefaultDockerClient;
-use crate::docker::image_manager::DockerImageManager;
+use crate::docker::image_manager::{BuildOptions, DockerImageManager};
 use crate::repo_utils::find_repository_root;
 use async_trait::async_trait;
 use std::error::Error;
@@ -36,7 +36,7 @@ impl Command for DockerBuildCommand {
             println!("Building tsk/proxy image...");
             use crate::docker::proxy_manager::ProxyManager;
             let proxy_manager = ProxyManager::new(docker_client, ctx.tsk_config(), ctx.tsk_env());
-            proxy_manager.build_proxy(self.no_cache).await?;
+            proxy_manager.build_proxy(self.no_cache, None).await?;
             println!("Successfully built Docker image: tsk/proxy");
             return Ok(());
         }
@@ -104,9 +104,12 @@ impl Command for DockerBuildCommand {
                 &stack,
                 agent,
                 project.as_deref(),
-                project_root.as_deref(),
-                self.no_cache,
-                self.dry_run,
+                &BuildOptions {
+                    no_cache: self.no_cache,
+                    dry_run: self.dry_run,
+                    build_root: project_root.as_deref(),
+                    build_log_path: None,
+                },
             )
             .await?;
 
@@ -117,7 +120,7 @@ impl Command for DockerBuildCommand {
             println!("\nBuilding tsk/proxy image...");
             use crate::docker::proxy_manager::ProxyManager;
             let proxy_manager = ProxyManager::new(docker_client, ctx.tsk_config(), ctx.tsk_env());
-            proxy_manager.build_proxy(self.no_cache).await?;
+            proxy_manager.build_proxy(self.no_cache, None).await?;
             println!("Successfully built Docker image: tsk/proxy");
 
             println!("\nAll Docker images built successfully!");

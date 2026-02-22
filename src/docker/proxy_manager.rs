@@ -74,11 +74,11 @@ impl ProxyManager {
     /// # Returns
     /// * `Ok(())` if proxy is running and healthy
     /// * `Err` if proxy cannot be started or becomes unhealthy
-    pub async fn ensure_proxy(&self) -> Result<()> {
+    pub async fn ensure_proxy(&self, build_log_path: Option<&std::path::Path>) -> Result<()> {
         // Skip build if proxy is already running - config changes will be
         // picked up when the proxy is stopped and restarted
         if !self.is_proxy_running().await? {
-            self.build_proxy(false)
+            self.build_proxy(false, build_log_path)
                 .await
                 .context("Failed to build proxy image")?;
         }
@@ -108,11 +108,16 @@ impl ProxyManager {
     ///
     /// # Arguments
     /// * `no_cache` - Whether to build without using Docker's cache
+    /// * `build_log_path` - Optional path to save build output on failure
     ///
     /// # Returns
     /// * `Ok(())` if build succeeds
     /// * `Err` if build fails
-    pub async fn build_proxy(&self, no_cache: bool) -> Result<()> {
+    pub async fn build_proxy(
+        &self,
+        no_cache: bool,
+        build_log_path: Option<&std::path::Path>,
+    ) -> Result<()> {
         println!("Building proxy image: {PROXY_IMAGE}");
 
         use crate::assets::embedded::EmbeddedAssetManager;
@@ -170,6 +175,9 @@ impl ProxyManager {
                     build_output.push_str(&line);
                 }
                 Err(e) => {
+                    if let Some(log_path) = build_log_path {
+                        super::save_build_log(log_path, &build_output);
+                    }
                     eprint!("{build_output}");
                     return Err(anyhow::anyhow!("Failed to build proxy image: {e}"));
                 }
@@ -585,7 +593,7 @@ mod tests {
         let ctx = AppContext::builder().build();
 
         let manager = ProxyManager::new(mock_client.clone(), ctx.tsk_config(), ctx.tsk_env());
-        let result = manager.ensure_proxy().await;
+        let result = manager.ensure_proxy(None).await;
 
         assert!(result.is_ok());
 
@@ -632,7 +640,7 @@ mod tests {
         let ctx = AppContext::builder().with_tsk_config(tsk_config).build();
 
         let manager = ProxyManager::new(mock_client.clone(), ctx.tsk_config(), ctx.tsk_env());
-        let result = manager.ensure_proxy().await;
+        let result = manager.ensure_proxy(None).await;
 
         assert!(result.is_ok());
 
@@ -1167,7 +1175,7 @@ mod tests {
             ctx.tsk_config(),
             ctx.tsk_env(),
         );
-        let result = manager.build_proxy(false).await;
+        let result = manager.build_proxy(false, None).await;
 
         assert!(result.is_ok());
 
@@ -1210,7 +1218,7 @@ mod tests {
         let manager = ProxyManager::new(mock_client.clone(), ctx.tsk_config(), ctx.tsk_env());
 
         // Just verify build_proxy doesn't error with default configuration
-        let result = manager.build_proxy(false).await;
+        let result = manager.build_proxy(false, None).await;
         assert!(result.is_ok());
     }
 

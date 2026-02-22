@@ -182,6 +182,12 @@ impl TaskRunner {
         );
 
         // Ensure the Docker image exists - always rebuild to pick up any changes
+        let build_log_path = self
+            .ctx
+            .tsk_env()
+            .task_dir(&task.id)
+            .join("output")
+            .join("docker-build.log");
         let docker_image_tag = task_image_manager
             .ensure_image(
                 &task.stack,
@@ -189,6 +195,7 @@ impl TaskRunner {
                 Some(&task.project),
                 Some(repo_path.as_path()),
                 true,
+                Some(&build_log_path),
             )
             .await
             .map_err(|e| format!("Error ensuring Docker image: {e}"))?;

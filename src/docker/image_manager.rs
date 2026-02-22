@@ -17,6 +17,18 @@ use crate::docker::composer::{ComposedDockerfile, DockerComposer};
 use crate::docker::layers::{DockerImageConfig, DockerLayerType};
 use crate::docker::template_manager::DockerTemplateManager;
 
+/// Options for building Docker images.
+pub struct BuildOptions<'a> {
+    /// Whether to build without using Docker's cache
+    pub no_cache: bool,
+    /// If true, only prints the composed Dockerfile without building
+    pub dry_run: bool,
+    /// Optional build root directory for project-specific context
+    pub build_root: Option<&'a std::path::Path>,
+    /// Optional path to save build output on failure
+    pub build_log_path: Option<&'a std::path::Path>,
+}
+
 /// Retrieves a git configuration value from a repository or global config.
 ///
 /// When `build_root` is `Some`, opens the repository and reads its config,
@@ -238,6 +250,7 @@ impl DockerImageManager {
         project: Option<&str>,
         build_root: Option<&std::path::Path>,
         force_rebuild: bool,
+        build_log_path: Option<&std::path::Path>,
     ) -> Result<String> {
         // Get the image tag (with fallback if needed)
         let (tag, used_fallback) = self.get_image_tag(stack, agent, project, build_root)?;
@@ -264,8 +277,18 @@ impl DockerImageManager {
             project.unwrap_or("default")
         };
 
-        self.build_image(stack, agent, Some(actual_project), build_root, false, false)
-            .await?;
+        self.build_image(
+            stack,
+            agent,
+            Some(actual_project),
+            &BuildOptions {
+                no_cache: false,
+                dry_run: false,
+                build_root,
+                build_log_path,
+            },
+        )
+        .await?;
 
         Ok(tag)
     }
@@ -276,9 +299,7 @@ impl DockerImageManager {
     /// * `stack` - The stack layer (e.g., "rust", "python", "default")
     /// * `agent` - The agent layer (e.g., "claude")
     /// * `project` - Optional project layer (defaults to "default")
-    /// * `build_root` - Optional build root directory for project-specific context
-    /// * `no_cache` - Whether to build without using Docker's cache
-    /// * `dry_run` - If true, only prints the composed Dockerfile without building
+    /// * `options` - Build options (cache, dry run, build root, log path)
     ///
     /// # Returns
     /// The Docker image tag (e.g., "tsk/rust/claude/web-api")
@@ -287,14 +308,12 @@ impl DockerImageManager {
         stack: &str,
         agent: &str,
         project: Option<&str>,
-        build_root: Option<&std::path::Path>,
-        no_cache: bool,
-        dry_run: bool,
+        options: &BuildOptions<'_>,
     ) -> Result<String> {
         let project = project.unwrap_or("default");
 
         // Log which repository context is being used
-        match build_root {
+        match options.build_root {
             Some(root) => println!("Building Docker image using build root: {}", root.display()),
             None => println!("Building Docker image without project-specific context"),
         }
@@ -313,13 +332,13 @@ impl DockerImageManager {
             .validate_dockerfile(&composed.dockerfile_content)
             .with_context(|| "Dockerfile validation failed")?;
 
-        if dry_run {
+        if options.dry_run {
             self.print_dry_run_output(&composed, stack, agent, project);
         } else {
             // Normal mode: build the image
             // Get git configuration from the repository (or global config as fallback)
-            let git_user_name = get_git_config_from_repo(build_root, "user.name")?;
-            let git_user_email = get_git_config_from_repo(build_root, "user.email")?;
+            let git_user_name = get_git_config_from_repo(options.build_root, "user.name")?;
+            let git_user_email = get_git_config_from_repo(options.build_root, "user.email")?;
 
             // Get agent version if available
             let agent_version = if let Ok(agent_instance) =
@@ -336,8 +355,7 @@ impl DockerImageManager {
                 &git_user_name,
                 &git_user_email,
                 agent_version.as_deref(),
-                no_cache,
-                build_root,
+                options,
             )
             .await?;
         }
@@ -365,12 +383,11 @@ impl DockerImageManager {
         git_user_name: &str,
         git_user_email: &str,
         agent_version: Option<&str>,
-        no_cache: bool,
-        build_root: Option<&std::path::Path>,
+        options: &BuildOptions<'_>,
     ) -> Result<()> {
         // Create tar archive from the composed content
         let tar_archive = self
-            .create_tar_archive(composed, build_root)
+            .create_tar_archive(composed, options.build_root)
             .context("Failed to create tar archive for Docker build")?;
 
         // Prepare build options
@@ -427,17 +444,17 @@ impl DockerImageManager {
         let mut options_builder = bollard::query_parameters::BuildImageOptionsBuilder::default();
         options_builder = options_builder.dockerfile("Dockerfile.tsk");
         options_builder = options_builder.t(&composed.image_tag);
-        options_builder = options_builder.nocache(no_cache);
+        options_builder = options_builder.nocache(options.no_cache);
         options_builder = options_builder.buildargs(&build_args);
         if self.ctx.tsk_config().docker.container_engine == ContainerEngine::Podman {
             options_builder = options_builder.networkmode("host");
         }
-        let options = options_builder.build();
+        let docker_options = options_builder.build();
 
         // Build the image using the DockerClient
         let mut build_stream = self
             .client
-            .build_image(options, tar_archive)
+            .build_image(docker_options, tar_archive)
             .await
             .map_err(|e| anyhow::anyhow!("Docker build failed: {e}"))?;
 
@@ -450,6 +467,9 @@ impl DockerImageManager {
                     build_output.push_str(&line);
                 }
                 Err(e) => {
+                    if let Some(log_path) = options.build_log_path {
+                        super::save_build_log(log_path, &build_output);
+                    }
                     eprint!("{build_output}");
                     return Err(anyhow::anyhow!("Docker build failed: {e}"));
                 }
@@ -583,7 +603,17 @@ mod tests {
 
         // Test build_image with dry_run=true
         let result = manager
-            .build_image("default", "claude", Some("default"), None, false, true)
+            .build_image(
+                "default",
+                "claude",
+                Some("default"),
+                &BuildOptions {
+                    no_cache: false,
+                    dry_run: true,
+                    build_root: None,
+                    build_log_path: None,
+                },
+            )
             .await;
 
         assert!(result.is_ok(), "Dry run failed: {:?}", result.err());
@@ -592,7 +622,17 @@ mod tests {
 
         // Test build_image with dry_run=false (normal mode)
         let result = manager
-            .build_image("default", "claude", Some("default"), None, false, false)
+            .build_image(
+                "default",
+                "claude",
+                Some("default"),
+                &BuildOptions {
+                    no_cache: false,
+                    dry_run: false,
+                    build_root: None,
+                    build_log_path: None,
+                },
+            )
             .await;
 
         let tag = result.unwrap();
@@ -725,7 +765,17 @@ mod tests {
 
         // Build image in dry-run mode to avoid actual Docker calls
         let result = manager
-            .build_image("default", "claude", Some("default"), None, false, true)
+            .build_image(
+                "default",
+                "claude",
+                Some("default"),
+                &BuildOptions {
+                    no_cache: false,
+                    dry_run: true,
+                    build_root: None,
+                    build_log_path: None,
+                },
+            )
             .await;
 
         assert!(result.is_ok(), "Build should succeed with agent version");
@@ -815,13 +865,13 @@ mod tests {
         // Launch two concurrent ensure_image tasks for different images
         let task1 = tokio::spawn(async move {
             manager1
-                .ensure_image("rust", "claude", Some("project1"), None, false)
+                .ensure_image("rust", "claude", Some("project1"), None, false, None)
                 .await
         });
 
         let task2 = tokio::spawn(async move {
             manager2
-                .ensure_image("python", "claude", Some("project2"), None, false)
+                .ensure_image("python", "claude", Some("project2"), None, false, None)
                 .await
         });
 

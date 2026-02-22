@@ -27,6 +27,21 @@ fn container_working_dir(project: &str) -> String {
     format!("{CONTAINER_WORKSPACE_BASE}/{project}")
 }
 
+/// Write build output to a log file on failure, printing warnings on error.
+pub(crate) fn save_build_log(log_path: &std::path::Path, build_output: &str) {
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Err(write_err) = std::fs::write(log_path, build_output) {
+        eprintln!(
+            "Warning: Failed to write build log to {}: {write_err}",
+            log_path.display()
+        );
+    } else {
+        eprintln!("Build log saved to: {}", log_path.display());
+    }
+}
+
 /// Manages Docker container execution for TSK tasks.
 ///
 /// This struct handles the lifecycle of task containers including:
@@ -424,7 +439,17 @@ impl DockerManager {
         // When nested inside a TSK container, skip proxy/network setup since the
         // outer container already provides network isolation.
         let network_name = if task.network_isolation && !self.is_nested() {
-            if let Err(e) = self.proxy_manager.ensure_proxy().await {
+            let proxy_build_log_path = self
+                .ctx
+                .tsk_env()
+                .task_dir(&task.id)
+                .join("output")
+                .join("proxy-build.log");
+            if let Err(e) = self
+                .proxy_manager
+                .ensure_proxy(Some(&proxy_build_log_path))
+                .await
+            {
                 return Err(format!(
                     "Failed to ensure proxy is running and healthy: {e}. \
                     The task should be retried later when the proxy is available. \
@@ -1626,5 +1651,18 @@ mod tests {
             !env.contains(&"BUILDAH_ISOLATION=chroot".to_string()),
             "BUILDAH_ISOLATION should not be set when dind is disabled"
         );
+    }
+
+    #[test]
+    fn test_save_build_log_writes_output() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let log_path = temp_dir.path().join("output").join("docker-build.log");
+        let build_output = "Step 1/5: FROM ubuntu\nStep 2/5: RUN apt-get update\n";
+
+        super::save_build_log(&log_path, build_output);
+
+        assert!(log_path.exists());
+        let content = std::fs::read_to_string(&log_path).unwrap();
+        assert_eq!(content, build_output);
     }
 }
