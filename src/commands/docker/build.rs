@@ -110,8 +110,7 @@ impl Command for DockerBuildCommand {
         );
 
         // Create image manager with AppContext
-        let image_manager =
-            DockerImageManager::new(ctx, docker_client.clone(), project_root.as_deref(), None);
+        let image_manager = DockerImageManager::new(ctx, docker_client.clone(), None);
 
         // Build the main image (with dry_run flag)
         let image_tag = image_manager

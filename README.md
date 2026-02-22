@@ -197,7 +197,6 @@ TSK has 3 levels of configuration in priority order:
 - Built-in configurations
 
 Each configuration directory can contain:
-- `dockerfiles`: A folder containing dockerfiles and layers that are used to create sandboxes
 - `templates`: A folder of task template markdown files which can be used via the `-t/--type` flag
 
 ### Configuration File
@@ -267,7 +266,7 @@ RUN cargo install cargo-nextest
 '''
 ```
 
-The `setup` field injects Dockerfile commands at the project layer position in the Docker image build. Use it for project-specific build dependencies. `stack_config.<name>.setup` and `agent_config.<name>.setup` similarly inject content at the stack and agent layer positions, and can define entirely new stacks or agents (e.g., `stack_config.scala.setup` lets you use `stack = "scala"`). Config-defined layers take priority over filesystem and embedded Docker layers.
+The `setup` field injects Dockerfile commands at the project layer position in the Docker image build. Use it for project-specific build dependencies. `stack_config.<name>.setup` and `agent_config.<name>.setup` similarly inject content at the stack and agent layer positions, and can define entirely new stacks or agents (e.g., `stack_config.scala.setup` lets you use `stack = "scala"`). Config-defined layers take priority over embedded Docker layers.
 
 Volume mounts are particularly useful for:
 - **Build caches**: Share Go module cache (`/go/pkg/mod`) or Rust target directories to speed up builds
@@ -302,8 +301,6 @@ Each TSK sandbox container image has 4 main parts:
 - A `project` snippet that defines project specific build steps (applied last for project-specific customizations). This does nothing by default, but can be used to add extra build steps for your project.
 
 It is very difficult to make these images general purpose enough to cover all repositories. You may need some special customization. The recommended approach is to use `setup`, `stack_config`, and `agent_config` fields in your `tsk.toml` to inject custom Dockerfile commands (see [Configuration File](#configuration-file) above).
-
-> **Note:** Filesystem-based Docker layers (`.tsk/dockerfiles/` and `~/.config/tsk/dockerfiles/`) are deprecated. Migrate to `setup`/`stack_config`/`agent_config` fields in tsk.toml. Filesystem layers still work as a fallback but will print a deprecation warning.
 
 See [dockerfiles](./dockerfiles) for the built-in dockerfiles.
 

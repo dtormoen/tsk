@@ -35,10 +35,7 @@ pub fn create_files_with_gitignore(repo: &TestGitRepository) -> Result<()> {
 
     // Create .tsk directory that should always be included
     repo.create_file(".tsk/config.json", "{\"test\": true}\n")?;
-    repo.create_file(
-        ".tsk/dockerfiles/project/test/Dockerfile",
-        "FROM ubuntu:24.04\n",
-    )?;
+    repo.create_file(".tsk/tsk.toml", "stack = \"rust\"\n")?;
 
     Ok(())
 }

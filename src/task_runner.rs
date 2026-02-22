@@ -172,14 +172,8 @@ impl TaskRunner {
         println!("Launching Docker container with {} agent...", agent.name());
         println!("\n{}", "=".repeat(60));
 
-        // Create a task-specific image manager with the copied repository as the project root
-        // This ensures that project-specific dockerfiles are found in the copied repository
-        let task_image_manager = DockerImageManager::new(
-            &self.ctx,
-            self.docker_manager.client(),
-            Some(repo_path.as_path()),
-            None,
-        );
+        let task_image_manager =
+            DockerImageManager::new(&self.ctx, self.docker_manager.client(), None);
 
         // Resolve config for this task to provide inline layer overrides
         let resolved_config = crate::docker::resolve_config_from_task(task, &self.ctx);

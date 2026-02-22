@@ -78,49 +78,51 @@ If a specific project layer doesn't exist, TSK automatically falls back to the `
 
 ### Project-Level Customization
 
-Create custom Dockerfiles in your repository under `.tsk/dockerfiles/`:
+Customize Docker images via your project's `.tsk/tsk.toml`:
 
-```
-.tsk/
-└── dockerfiles/
-    └── project/
-        └── {project-name}.dockerfile
-```
-
-Example for a Rust project (`.tsk/dockerfiles/project/my-rust-app.dockerfile`):
-
-```dockerfile
-# Pre-build dependencies for faster subsequent builds
+```toml
+# Project-specific build steps (injected at the project layer position)
+setup = '''
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && echo "fn main() {}" > src/main.rs
 RUN cargo build --release
 RUN rm -rf src
+'''
 ```
 
-Example for a Node.js project (`.tsk/dockerfiles/project/my-node-app.dockerfile`):
+Example for a Node.js project:
 
-```dockerfile
-# Install dependencies
+```toml
+setup = '''
 COPY package.json package-lock.json ./
 RUN npm ci
+'''
 ```
 
 ### User-Level Customization
 
-Add personal preferences in `~/.config/tsk/dockerfiles/`:
+Add personal preferences in `~/.config/tsk/tsk.toml`:
 
-```
-~/.config/tsk/
-└── dockerfiles/
-    ├── base/
-    │   └── default.dockerfile
-    ├── stack/
-    │   ├── python.dockerfile
-    │   └── rust.dockerfile
-    ├── agent/
-    │   └── claude.dockerfile
-    └── project/
-        └── my-project.dockerfile
+```toml
+# Default settings applied to all projects
+[defaults]
+setup = '''
+RUN apt-get update && apt-get install -y postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+'''
+
+# Override or define stack layers
+[defaults.stack_config.python]
+setup = '''
+RUN uv pip install --system ipython
+'''
+
+# Per-project overrides
+[project.my-project]
+setup = '''
+COPY requirements.txt ./
+RUN uv pip install --system -r requirements.txt
+'''
 ```
 
 User-level customizations are useful for:
@@ -129,14 +131,16 @@ User-level customizations are useful for:
 - Additional development utilities
 - Alternative package sources or mirrors
 
-### Asset Priority
+### Configuration Priority
 
-TSK checks for Docker assets in this order:
-1. **Project level**: `.tsk/dockerfiles/` in the repository
-2. **User level**: `~/.config/tsk/dockerfiles/`
-3. **Embedded**: Built into the TSK binary
+TSK resolves Docker layer configuration in this order:
+1. **CLI flags**: Command-line arguments take highest priority
+2. **User project overrides**: `[project.<name>]` in `~/.config/tsk/tsk.toml`
+3. **Project config**: `.tsk/tsk.toml` in the repository
+4. **User defaults**: `[defaults]` in `~/.config/tsk/tsk.toml`
+5. **Embedded**: Built into the TSK binary
 
-The first matching asset is used.
+Config-defined layers (`setup`, `stack_config`, `agent_config`) take priority over embedded assets.
 
 ## Building Docker Images
 
@@ -247,14 +251,17 @@ git config --global user.email "your@email.com"
 #### 2. Missing Docker Layer
 **Error**: "Stack layer 'xyz' not found"
 
-**Solution**: Check available layers:
+**Solution**: Check available layers and configuration:
 ```bash
-# List all available Docker templates
-ls ~/.config/tsk/dockerfiles/stack/
-ls .tsk/dockerfiles/stack/
+# Preview the composed Dockerfile to see what layers are resolved
+tsk docker build --dry-run
 
-# Or check embedded stacks (built into TSK)
-# Available: rust, python, node, go, java, lua, default
+# Embedded stacks (built into TSK): rust, python, node, go, java, lua, default
+# You can define custom stacks via stack_config in tsk.toml:
+# [defaults.stack_config.xyz]
+# setup = '''
+# RUN apt-get update && apt-get install -y ...
+# '''
 ```
 
 #### 3. Build Failures
@@ -298,60 +305,59 @@ docker logs tsk-proxy-{fingerprint}
 
 ### Caching Python Dependencies
 
-`.tsk/dockerfiles/project/my-python-app.dockerfile`:
-```dockerfile
+In `.tsk/tsk.toml`:
+```toml
+setup = '''
 # Install Python dependencies using uv (recommended)
 COPY requirements.txt ./
 RUN uv pip install --system -r requirements.txt
+'''
+```
 
-# Alternative: Using pip
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
-
+Alternative patterns:
+```toml
+setup = '''
 # For projects using Poetry
 COPY pyproject.toml poetry.lock ./
 RUN poetry install --no-dev
+'''
 ```
 
 ### Pre-compiling Java Dependencies
 
-`.tsk/dockerfiles/project/my-java-app.dockerfile`:
-```dockerfile
+In `.tsk/tsk.toml`:
+```toml
+setup = '''
 # For Maven projects
 COPY pom.xml ./
 RUN mvn dependency:go-offline
-
-# For Gradle projects
-COPY build.gradle ./
-RUN gradle dependencies
+'''
 ```
 
 ### Installing Additional Tools
 
-User-level customization in `~/.config/tsk/dockerfiles/stack/python.dockerfile`:
-```dockerfile
-# Override embedded Python stack to add additional tools
-# Note: This replaces the entire embedded stack, so you may want to copy
-# the embedded stack first and then add your customizations
-
-# Using uv (recommended)
+In `~/.config/tsk/tsk.toml`, add tools to a stack layer:
+```toml
+[defaults.stack_config.python]
+setup = '''
+# Add tools on top of the embedded Python stack
 RUN uv pip install --system ipython
-
-# Or using pip
-RUN pip install ipython
 
 # System packages
 RUN apt-get update && apt-get install -y postgresql-client \
     && rm -rf /var/lib/apt/lists/*
+'''
 ```
 
 ### Custom Environment Variables
 
-Project-specific environment in `.tsk/dockerfiles/project/my-app.dockerfile`:
-```dockerfile
-ENV DATABASE_URL=postgresql://localhost/myapp_dev
-ENV REDIS_URL=redis://localhost:6379
-ENV NODE_ENV=development
+In `.tsk/tsk.toml` or `~/.config/tsk/tsk.toml`:
+```toml
+env = [
+    { name = "DATABASE_URL", value = "postgresql://localhost/myapp_dev" },
+    { name = "REDIS_URL", value = "redis://localhost:6379" },
+    { name = "NODE_ENV", value = "development" },
+]
 ```
 
 ## Best Practices
@@ -368,9 +374,9 @@ ENV NODE_ENV=development
 
 4. **Version Lock Dependencies**: Use lock files (`Cargo.lock`, `package-lock.json`, etc.) for reproducible builds.
 
-5. **Test Locally**: Use `tsk shell` to test your custom Dockerfiles interactively before running tasks.
+5. **Test Locally**: Use `tsk shell` to test your custom layers interactively before running tasks.
 
-6. **Document Custom Layers**: Add comments in your Dockerfiles explaining why customizations are needed.
+6. **Document Custom Layers**: Add comments in your `setup` fields explaining why customizations are needed.
 
 ## Troubleshooting Checklist
 

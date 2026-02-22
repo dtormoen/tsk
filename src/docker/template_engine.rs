@@ -2,20 +2,20 @@ use anyhow::{Context, Result};
 use handlebars::Handlebars;
 use std::collections::HashMap;
 
-use crate::assets::AssetManager;
+use crate::assets::embedded::EmbeddedAssetManager;
 use crate::docker::composer::{InlineLayerOverrides, LayerSource, LayerSources};
 
 /// Template engine for rendering Dockerfiles using Handlebars templates
 pub struct DockerTemplateEngine<'a> {
     handlebars: Handlebars<'a>,
-    asset_manager: &'a dyn AssetManager,
+    asset_manager: &'a EmbeddedAssetManager,
     overrides: Option<&'a InlineLayerOverrides>,
 }
 
 impl<'a> DockerTemplateEngine<'a> {
     /// Creates a new Docker template engine
     pub fn new(
-        asset_manager: &'a dyn AssetManager,
+        asset_manager: &'a EmbeddedAssetManager,
         overrides: Option<&'a InlineLayerOverrides>,
     ) -> Self {
         Self {
@@ -294,54 +294,17 @@ CMD ["/bin/bash"]"#;
 
     #[test]
     fn test_no_html_escaping_in_layers() {
-        // Create a mock asset manager that returns content with special characters
-        use std::collections::HashMap;
+        let asset_manager = EmbeddedAssetManager::new();
 
-        struct MockAssetManager {
-            assets: HashMap<String, Vec<u8>>,
-        }
+        // Use inline overrides to inject content with special characters
+        let special_content = r#"RUN curl --proto '=https' --tlsv1.2 -sSf https://example.com | sh && \
+    echo "PATH=/usr/local/bin:$PATH" >> ~/.bashrc"#;
 
-        impl AssetManager for MockAssetManager {
-            fn get_template(&self, _template_type: &str) -> anyhow::Result<String> {
-                Err(anyhow::anyhow!("Templates not supported in mock"))
-            }
-
-            fn get_dockerfile(&self, path: &str) -> anyhow::Result<Vec<u8>> {
-                self.assets
-                    .get(path)
-                    .cloned()
-                    .ok_or_else(|| anyhow::anyhow!("Asset not found: {}", path))
-            }
-
-            fn get_dockerfile_file(
-                &self,
-                _dockerfile_name: &str,
-                _file_path: &str,
-            ) -> anyhow::Result<Vec<u8>> {
-                Err(anyhow::anyhow!("Dockerfile files not supported in mock"))
-            }
-
-            fn list_templates(&self) -> Vec<String> {
-                vec![]
-            }
-
-            fn list_dockerfiles(&self) -> Vec<String> {
-                self.assets.keys().cloned().collect()
-            }
-        }
-
-        let mut assets = HashMap::new();
-        // Add a stack layer with special characters that would be escaped in HTML
-        assets.insert(
-            "stack/test".to_string(),
-            r#"RUN curl --proto '=https' --tlsv1.2 -sSf https://example.com | sh && \
-    echo "PATH=/usr/local/bin:$PATH" >> ~/.bashrc"#
-                .as_bytes()
-                .to_vec(),
-        );
-
-        let asset_manager = MockAssetManager { assets };
-        let engine = DockerTemplateEngine::new(&asset_manager, None);
+        let overrides = InlineLayerOverrides {
+            stack_setup: Some(special_content.to_string()),
+            ..Default::default()
+        };
+        let engine = DockerTemplateEngine::new(&asset_manager, Some(&overrides));
 
         let base_template = r#"FROM ubuntu:24.04
 # Stack layer

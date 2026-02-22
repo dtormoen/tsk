@@ -4,7 +4,7 @@
 //! to the filesystem, particularly for Docker builds that require
 //! dockerfile directories to be available on disk.
 
-use super::AssetManager;
+use super::embedded::EmbeddedAssetManager;
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::PathBuf;
@@ -24,7 +24,7 @@ use std::path::PathBuf;
 ///
 /// The path to the temporary directory containing the extracted dockerfile files
 pub fn extract_dockerfile_to_temp(
-    asset_manager: &dyn AssetManager,
+    asset_manager: &EmbeddedAssetManager,
     dockerfile_name: &str,
 ) -> Result<PathBuf> {
     // Create a temporary directory

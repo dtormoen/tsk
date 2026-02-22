@@ -5,9 +5,8 @@
 
 use anyhow::{Context, Result};
 use std::collections::HashSet;
-use std::sync::Arc;
 
-use crate::assets::AssetManager;
+use crate::assets::embedded::EmbeddedAssetManager;
 use crate::docker::layers::DockerImageConfig;
 use crate::docker::template_engine::DockerTemplateEngine;
 
@@ -54,12 +53,12 @@ pub struct LayerSources {
 
 /// Composes multiple Docker layers into a complete Dockerfile
 pub struct DockerComposer {
-    asset_manager: Arc<dyn AssetManager>,
+    asset_manager: EmbeddedAssetManager,
 }
 
 impl DockerComposer {
     /// Creates a new DockerComposer
-    pub fn new(asset_manager: Arc<dyn AssetManager>) -> Self {
+    pub fn new(asset_manager: EmbeddedAssetManager) -> Self {
         Self { asset_manager }
     }
 
@@ -81,7 +80,7 @@ impl DockerComposer {
             .context("Failed to decode base dockerfile as UTF-8")?;
 
         // Create template engine and render the Dockerfile
-        let template_engine = DockerTemplateEngine::new(&*self.asset_manager, overrides);
+        let template_engine = DockerTemplateEngine::new(&self.asset_manager, overrides);
         let (dockerfile_content, layer_sources) = template_engine.render_dockerfile(
             &base_template,
             Some(&config.stack),
@@ -182,10 +181,9 @@ pub struct ComposedDockerfile {
 mod tests {
     use super::*;
     use crate::assets::embedded::EmbeddedAssetManager;
-    use std::sync::Arc;
 
     fn create_test_composer() -> DockerComposer {
-        DockerComposer::new(Arc::new(EmbeddedAssetManager::new()))
+        DockerComposer::new(EmbeddedAssetManager)
     }
 
     #[test]

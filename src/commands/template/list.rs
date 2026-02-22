@@ -1,4 +1,5 @@
-use crate::assets::{AssetManager, layered::LayeredAssetManager};
+use crate::assets::frontmatter::parse_frontmatter;
+use crate::assets::{find_template, list_all_templates};
 use crate::commands::Command;
 use crate::context::AppContext;
 use crate::display::print_columns;
@@ -14,12 +15,8 @@ impl Command for TemplateListCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         let project_root = find_repository_root(Path::new(".")).ok();
 
-        // Create asset manager on-demand
-        let asset_manager =
-            LayeredAssetManager::new_with_standard_layers(project_root.as_deref(), &ctx.tsk_env());
-
         // List all available templates
-        let templates = asset_manager.list_templates();
+        let templates = list_all_templates(project_root.as_deref(), &ctx.tsk_env());
 
         if templates.is_empty() {
             println!("No templates available");
@@ -30,10 +27,9 @@ impl Command for TemplateListCommand {
         let mut rows = Vec::new();
         for template in &templates {
             let source = determine_template_source(template, project_root.as_deref(), ctx)?;
-            let description = asset_manager
-                .get_template_metadata(template)
+            let description = find_template(template, project_root.as_deref(), &ctx.tsk_env())
                 .ok()
-                .and_then(|meta| meta.description)
+                .and_then(|content| parse_frontmatter(&content).description)
                 .unwrap_or_default();
             rows.push(vec![template.to_string(), source, description]);
         }

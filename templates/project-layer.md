@@ -4,7 +4,7 @@ description: Create a project-specific tsk Docker layer
 
 # Create Project-Specific Docker Layer
 
-You need to create a project-specific Docker layer (Dockerfile) that will be used by TSK to speed up builds and manage dependencies for this repository.
+You need to create a project-specific Docker layer that will be used by TSK to speed up builds and manage dependencies for this repository.
 
 ## Context
 
@@ -18,7 +18,7 @@ The repository will be mounted at `/workspace/{project_name}` in the container, 
 
 ## Requirements for the Project Layer
 
-Your Dockerfile should:
+Your project layer setup should:
 
 1. **Assume the tech stack is already installed**: Don't reinstall language runtimes or package managers
 2. **Install project-specific dependencies**: Based on dependency files in the repository (e.g., `Cargo.toml`, `requirements.txt`, `package.json`)
@@ -33,15 +33,16 @@ Your Dockerfile should:
    - What dependencies need to be installed
    - What build tools or pre-compilation would be beneficial
 
-2. Create a Dockerfile at `.tsk/dockerfiles/project/{project-name}.dockerfile` where `{project-name}` is the directory this repository is in (lowercase, with dots, underscores, and hyphens allowed as valid Docker name characters).
+2. Define the project layer using the `setup` field in `.tsk/tsk.toml`. This file lives in the repository root and is checked into version control.
 
-3. The Dockerfile should follow this general pattern:
-   ```dockerfile
+3. The setup field should follow this general pattern in `.tsk/tsk.toml`:
+   ```toml
    # Project-specific layer for {project-name}
-
+   setup = '''
    # Copy dependency files only (for caching)
    # Install dependencies
    # Optional: Pre-compile or pre-build steps
+   '''
    ```
 
 4. Important notes:

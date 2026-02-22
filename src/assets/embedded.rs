@@ -4,10 +4,7 @@
 //! and templates directly into the TSK binary at compile time.
 
 use anyhow::{Result, anyhow};
-use async_trait::async_trait;
 use rust_embed::RustEmbed;
-
-use super::AssetManager;
 
 #[derive(RustEmbed)]
 #[folder = "templates/"]
@@ -35,9 +32,9 @@ impl Default for EmbeddedAssetManager {
     }
 }
 
-#[async_trait]
-impl AssetManager for EmbeddedAssetManager {
-    fn get_template(&self, template_type: &str) -> Result<String> {
+impl EmbeddedAssetManager {
+    /// Get a template by type (e.g., "feat", "fix", "doc")
+    pub fn get_template(&self, template_type: &str) -> Result<String> {
         let filename = format!("templates/{template_type}.md");
 
         Templates::get(&filename)
@@ -48,7 +45,8 @@ impl AssetManager for EmbeddedAssetManager {
             })
     }
 
-    fn get_dockerfile(&self, dockerfile_name: &str) -> Result<Vec<u8>> {
+    /// Get a dockerfile as raw bytes
+    pub fn get_dockerfile(&self, dockerfile_name: &str) -> Result<Vec<u8>> {
         // Try new structure first
         // Map old paths to new structure
         let new_path = match dockerfile_name {
@@ -79,7 +77,8 @@ impl AssetManager for EmbeddedAssetManager {
             .map(|file| file.data.to_vec())
     }
 
-    fn get_dockerfile_file(&self, dockerfile_name: &str, file_path: &str) -> Result<Vec<u8>> {
+    /// Get a specific file from a dockerfile directory
+    pub fn get_dockerfile_file(&self, dockerfile_name: &str, file_path: &str) -> Result<Vec<u8>> {
         let path = format!("dockerfiles/{dockerfile_name}/{file_path}");
 
         Dockerfiles::get(&path)
@@ -89,7 +88,8 @@ impl AssetManager for EmbeddedAssetManager {
             .map(|file| file.data.to_vec())
     }
 
-    fn list_templates(&self) -> Vec<String> {
+    /// List all available templates
+    pub fn list_templates(&self) -> Vec<String> {
         Templates::iter()
             .filter_map(|path| {
                 if path.starts_with("templates/") && path.ends_with(".md") {
@@ -103,7 +103,8 @@ impl AssetManager for EmbeddedAssetManager {
             .collect()
     }
 
-    fn list_dockerfiles(&self) -> Vec<String> {
+    /// List all available dockerfiles
+    pub fn list_dockerfiles(&self) -> Vec<String> {
         use std::collections::HashSet;
 
         let mut dockerfiles = HashSet::new();

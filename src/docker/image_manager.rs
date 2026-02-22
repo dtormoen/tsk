@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::assets::layered::LayeredAssetManager;
+use crate::assets::embedded::EmbeddedAssetManager;
 use crate::context::AppContext;
 use crate::context::ContainerEngine;
 use crate::context::ResolvedConfig;
@@ -122,20 +122,15 @@ impl DockerImageManager {
     /// # Arguments
     /// * `ctx` - Application context with all dependencies
     /// * `client` - Docker client for image operations
-    /// * `project_root` - Optional project root for layered assets
     /// * `docker_build_lock_manager` - Optional shared lock manager; creates a new one if `None`
     pub fn new(
         ctx: &AppContext,
         client: Arc<dyn DockerClient>,
-        project_root: Option<&std::path::Path>,
         docker_build_lock_manager: Option<Arc<DockerBuildLockManager>>,
     ) -> Self {
-        let asset_manager = Arc::new(LayeredAssetManager::new_with_standard_layers(
-            project_root,
-            &ctx.tsk_env(),
-        ));
-        let template_manager = DockerTemplateManager::new(asset_manager.clone(), ctx.tsk_env());
-        let composer = DockerComposer::new(asset_manager);
+        let asset_manager = EmbeddedAssetManager;
+        let template_manager = DockerTemplateManager::new(asset_manager);
+        let composer = DockerComposer::new(EmbeddedAssetManager);
 
         Self {
             ctx: ctx.clone(),
@@ -176,55 +171,6 @@ impl DockerImageManager {
         }
     }
 
-    /// Warn about deprecated filesystem Docker layers if they may have been used.
-    ///
-    /// Only warns when:
-    /// 1. Dockerfile directories exist on the filesystem (`.tsk/dockerfiles/` or `~/.config/tsk/dockerfiles/`)
-    /// 2. At least one layer came from the asset manager (not all from config or empty)
-    fn warn_deprecated_filesystem_layers(
-        &self,
-        composed: &ComposedDockerfile,
-        project_root: Option<&Path>,
-    ) {
-        use crate::docker::composer::LayerSource;
-
-        // Only warn if at least one layer came from the asset manager
-        let has_asset_manager_layers = [
-            &composed.layer_sources.stack,
-            &composed.layer_sources.agent,
-            &composed.layer_sources.project,
-        ]
-        .iter()
-        .any(|s| **s == LayerSource::AssetManager);
-
-        if !has_asset_manager_layers {
-            return;
-        }
-
-        let mut deprecated_paths = Vec::new();
-
-        if let Some(root) = project_root {
-            let project_docker_dir = root.join(".tsk").join("dockerfiles");
-            if project_docker_dir.exists() && has_dockerfile_files(&project_docker_dir) {
-                deprecated_paths.push(project_docker_dir);
-            }
-        }
-
-        let user_docker_dir = self.ctx.tsk_env().config_dir().join("dockerfiles");
-        if user_docker_dir.exists() && has_dockerfile_files(&user_docker_dir) {
-            deprecated_paths.push(user_docker_dir);
-        }
-
-        for path in deprecated_paths {
-            eprintln!(
-                "Warning: Filesystem Docker layers in '{}' are deprecated. \
-                 Migrate to tsk.toml setup/stack_config/agent_config fields. \
-                 See README.md for details.",
-                path.display()
-            );
-        }
-    }
-
     /// Print dry run output for a composed Dockerfile
     fn print_dry_run_output(
         &self,
@@ -256,7 +202,6 @@ impl DockerImageManager {
     fn validate_layers(
         &self,
         config: &DockerImageConfig,
-        project_root: Option<&std::path::Path>,
         overrides: Option<&InlineLayerOverrides>,
     ) -> Vec<crate::docker::layers::DockerLayer> {
         config
@@ -276,9 +221,7 @@ impl DockerImageManager {
                     }
                 }
 
-                self.template_manager
-                    .get_layer_content(layer, project_root)
-                    .is_err()
+                self.template_manager.get_layer_content(layer).is_err()
             })
             .collect()
     }
@@ -297,12 +240,11 @@ impl DockerImageManager {
         stack: &str,
         agent: &str,
         project: Option<&str>,
-        project_root: Option<&std::path::Path>,
         overrides: Option<&InlineLayerOverrides>,
     ) -> Result<(String, bool)> {
         let project = project.unwrap_or("default");
         let config = Self::create_config(stack, agent, project);
-        let missing_layers = self.validate_layers(&config, project_root, overrides);
+        let missing_layers = self.validate_layers(&config, overrides);
 
         // If only the project layer is missing and it's not "default", try fallback
         if missing_layers.len() == 1
@@ -325,14 +267,14 @@ impl DockerImageManager {
                     return Err(anyhow::anyhow!(
                         "Stack '{stack}' not found. Available stacks: {:?}",
                         self.template_manager
-                            .list_available_layers(DockerLayerType::Stack, project_root)
+                            .list_available_layers(DockerLayerType::Stack)
                     ));
                 }
                 DockerLayerType::Agent => {
                     return Err(anyhow::anyhow!(
                         "Agent '{agent}' not found. Available agents: {:?}",
                         self.template_manager
-                            .list_available_layers(DockerLayerType::Agent, project_root)
+                            .list_available_layers(DockerLayerType::Agent)
                     ));
                 }
                 DockerLayerType::Project => {
@@ -361,13 +303,8 @@ impl DockerImageManager {
             Self::extract_inline_overrides(opts.resolved_config, opts.stack, opts.agent);
 
         // Get the image tag (with fallback if needed)
-        let (tag, used_fallback) = self.get_image_tag(
-            opts.stack,
-            opts.agent,
-            opts.project,
-            opts.build_root,
-            overrides.as_ref(),
-        )?;
+        let (tag, used_fallback) =
+            self.get_image_tag(opts.stack, opts.agent, opts.project, overrides.as_ref())?;
 
         // Check if image exists unless force rebuild
         if !opts.force_rebuild && self.image_exists(&tag).await? {
@@ -451,9 +388,6 @@ impl DockerImageManager {
         self.composer
             .validate_dockerfile(&composed.dockerfile_content)
             .with_context(|| "Dockerfile validation failed")?;
-
-        // Warn about deprecated filesystem layers
-        self.warn_deprecated_filesystem_layers(&composed, options.build_root);
 
         if options.dry_run {
             self.print_dry_run_output(&composed, stack, agent, project);
@@ -638,27 +572,6 @@ impl DockerImageManager {
     }
 }
 
-/// Check whether a dockerfiles directory contains `.dockerfile` files
-/// in the expected subdirectories (stack/, agent/, project/).
-fn has_dockerfile_files(dir: &Path) -> bool {
-    for subdir in &["stack", "agent", "project", "base"] {
-        let sub_path = dir.join(subdir);
-        if let Ok(entries) = std::fs::read_dir(&sub_path) {
-            for entry in entries.flatten() {
-                if entry
-                    .path()
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .is_some_and(|e| e == "dockerfile")
-                {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -669,7 +582,7 @@ mod tests {
     fn create_test_manager() -> DockerImageManager {
         use crate::test_utils::NoOpDockerClient;
         let ctx = AppContext::builder().build();
-        DockerImageManager::new(&ctx, Arc::new(NoOpDockerClient), None, None)
+        DockerImageManager::new(&ctx, Arc::new(NoOpDockerClient), None)
     }
 
     #[test]
@@ -677,7 +590,7 @@ mod tests {
         let manager = create_test_manager();
 
         // Test with all default layers (should exist in embedded assets)
-        let result = manager.get_image_tag("default", "claude", Some("default"), None, None);
+        let result = manager.get_image_tag("default", "claude", Some("default"), None);
         assert!(result.is_ok());
 
         let (tag, used_fallback) = result.unwrap();
@@ -690,13 +603,7 @@ mod tests {
         let manager = create_test_manager();
 
         // Test with non-existent project layer (should fall back to default)
-        let result = manager.get_image_tag(
-            "default",
-            "claude",
-            Some("non-existent-project"),
-            None,
-            None,
-        );
+        let result = manager.get_image_tag("default", "claude", Some("non-existent-project"), None);
         assert!(result.is_ok());
 
         let (tag, used_fallback) = result.unwrap();
@@ -709,8 +616,7 @@ mod tests {
         let manager = create_test_manager();
 
         // Test with non-existent tech stack (should fail)
-        let result =
-            manager.get_image_tag("non-existent-stack", "claude", Some("default"), None, None);
+        let result = manager.get_image_tag("non-existent-stack", "claude", Some("default"), None);
         assert!(result.is_err());
 
         let err = result.unwrap_err();
@@ -725,8 +631,7 @@ mod tests {
         let manager = create_test_manager();
 
         // Test with non-existent agent (should fail)
-        let result =
-            manager.get_image_tag("default", "non-existent-agent", Some("default"), None, None);
+        let result = manager.get_image_tag("default", "non-existent-agent", Some("default"), None);
         assert!(result.is_err());
 
         let err = result.unwrap_err();
@@ -741,7 +646,7 @@ mod tests {
         let manager = create_test_manager();
 
         // Test with None project (should use "default")
-        let result = manager.get_image_tag("default", "claude", None, None, None);
+        let result = manager.get_image_tag("default", "claude", None, None);
         assert!(result.is_ok());
 
         let (tag, used_fallback) = result.unwrap();
@@ -758,13 +663,8 @@ mod tests {
             stack_setup: Some("RUN echo custom".to_string()),
             ..Default::default()
         };
-        let result = manager.get_image_tag(
-            "custom-stack",
-            "claude",
-            Some("default"),
-            None,
-            Some(&overrides),
-        );
+        let result =
+            manager.get_image_tag("custom-stack", "claude", Some("default"), Some(&overrides));
         assert!(result.is_ok());
         let (tag, _) = result.unwrap();
         assert_eq!(tag, "tsk/custom-stack/claude/default");
@@ -1028,7 +928,6 @@ mod tests {
         let manager1 = DockerImageManager::new(
             &ctx1,
             Arc::new(NoOpDockerClient),
-            None,
             Some(lock_manager.clone()),
         );
 
@@ -1036,7 +935,6 @@ mod tests {
         let manager2 = DockerImageManager::new(
             &ctx2,
             Arc::new(NoOpDockerClient),
-            None,
             Some(lock_manager.clone()),
         );
 
@@ -1229,29 +1127,5 @@ mod tests {
             "Dry run with config failed: {:?}",
             result.err()
         );
-    }
-
-    #[test]
-    fn test_has_dockerfile_files() {
-        let temp_dir = TempDir::new().unwrap();
-
-        // Empty directory
-        assert!(!has_dockerfile_files(temp_dir.path()));
-
-        // Directory with non-dockerfile files at root
-        std::fs::write(temp_dir.path().join("README.md"), "hello").unwrap();
-        assert!(!has_dockerfile_files(temp_dir.path()));
-
-        // File in unexpected subdirectory — not detected
-        let other_dir = temp_dir.path().join("other");
-        std::fs::create_dir_all(&other_dir).unwrap();
-        std::fs::write(other_dir.join("custom.dockerfile"), "FROM ubuntu").unwrap();
-        assert!(!has_dockerfile_files(temp_dir.path()));
-
-        // File in expected "stack" subdirectory — detected
-        let stack_dir = temp_dir.path().join("stack");
-        std::fs::create_dir_all(&stack_dir).unwrap();
-        std::fs::write(stack_dir.join("rust.dockerfile"), "FROM ubuntu").unwrap();
-        assert!(has_dockerfile_files(temp_dir.path()));
     }
 }

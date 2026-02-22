@@ -1540,9 +1540,7 @@ mod tests {
             ".tsk directory should always be copied"
         );
         assert!(
-            copied_path
-                .join(".tsk/dockerfiles/project/test/Dockerfile")
-                .exists(),
+            copied_path.join(".tsk/tsk.toml").exists(),
             ".tsk directory should always be copied"
         );
     }
@@ -1728,10 +1726,7 @@ mod tests {
             )
             .unwrap();
         test_repo
-            .create_file(
-                ".tsk/dockerfiles/project/myproject/Dockerfile",
-                "FROM ubuntu:24.04\nRUN echo test",
-            )
+            .create_file(".tsk/tsk.toml", "stack = \"rust\"\n")
             .unwrap();
 
         // Add .tsk to .gitignore to test it's still copied
@@ -1767,10 +1762,8 @@ mod tests {
             ".tsk/templates should be copied"
         );
         assert!(
-            copied_path
-                .join(".tsk/dockerfiles/project/myproject/Dockerfile")
-                .exists(),
-            ".tsk/dockerfiles should be copied"
+            copied_path.join(".tsk/tsk.toml").exists(),
+            ".tsk/tsk.toml should be copied"
         );
     }
 

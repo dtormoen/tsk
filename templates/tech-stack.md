@@ -4,7 +4,7 @@ description: Create a tech-stack tsk Docker layer
 
 # Create Tech-Stack Docker Layer
 
-You need to create a technology stack Docker layer (Dockerfile) that will be used by TSK to provide language-specific toolchains and development tools.
+You need to create a technology stack Docker layer that will be used by TSK to provide language-specific toolchains and development tools.
 
 ## Context
 
@@ -18,7 +18,7 @@ The stack layer installs the core language runtime, package managers, and common
 
 ## Requirements for the Stack Layer
 
-Your Dockerfile should:
+Your stack layer setup should:
 
 1. **Build on the base layer**: Assume Ubuntu 24.04 with basic tools installed
 2. **Run as the agent user**: The base layer sets up an `agent` user (created by renaming the default ubuntu user)
@@ -35,16 +35,21 @@ Your Dockerfile should:
    - What development tools are commonly used
    - What environment variables need to be set
 
-2. Create a Dockerfile using the correct location and naming:
-   - **For embedded stacks** (built into TSK): `dockerfiles/stack/{stack-name}.dockerfile`
-   - **For user-level customization**: `~/.config/tsk/dockerfiles/stack/{stack-name}.dockerfile`
-   - **For project-level override**: `.tsk/dockerfiles/stack/{stack-name}.dockerfile`
+2. Define the stack layer in `tsk.toml` using `stack_config`:
+   - **For user-level customization**: Add `[defaults.stack_config.{stack-name}]` in `~/.config/tsk/tsk.toml`
+   - **For project-level override**: Add `[stack_config.{stack-name}]` in `.tsk/tsk.toml`
 
-   Where `{stack-name}` is one of: `rust`, `python`, `node`, `go`, `java`, `lua`, `default`, etc.
+   Where `{stack-name}` is one of: `rust`, `python`, `node`, `go`, `java`, `lua`, `default`, or any custom name.
 
-   Note: Use `stack` (not `tech-stack`) and `.dockerfile` extension (not `Dockerfile`).
+   Example in `.tsk/tsk.toml`:
+   ```toml
+   [stack_config.scala]
+   setup = '''
+   # Scala tech stack layer content goes here
+   '''
+   ```
 
-3. The Dockerfile should follow this general pattern:
+3. The setup content should follow this general pattern (Dockerfile syntax):
    ```dockerfile
    # {Language} tech stack layer
 

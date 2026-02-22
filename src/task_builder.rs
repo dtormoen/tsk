@@ -1,5 +1,5 @@
 use crate::assets::frontmatter::strip_frontmatter;
-use crate::assets::{AssetManager, layered::LayeredAssetManager};
+use crate::assets::{find_template, list_all_templates};
 use crate::context::AppContext;
 use crate::context::tsk_config;
 use crate::context::tsk_env::TskEnv;
@@ -190,10 +190,7 @@ impl TaskBuilder {
 
         // Check if template requires description
         let template_needs_description = if task_type != "generic" {
-            // Create asset manager for template validation
-            let asset_manager =
-                LayeredAssetManager::new_with_standard_layers(Some(&repo_root), &ctx.tsk_env());
-            match asset_manager.get_template(&task_type) {
+            match find_template(&task_type, Some(&repo_root), &ctx.tsk_env()) {
                 Ok(template_content) => {
                     strip_frontmatter(&template_content).contains("{{DESCRIPTION}}")
                 }
@@ -251,10 +248,7 @@ impl TaskBuilder {
 
         // Validate task type
         if task_type != "generic" {
-            // Create asset manager for template validation
-            let asset_manager =
-                LayeredAssetManager::new_with_standard_layers(Some(&repo_root), &ctx.tsk_env());
-            let available_templates = asset_manager.list_templates();
+            let available_templates = list_all_templates(Some(&repo_root), &ctx.tsk_env());
             if !available_templates.contains(&task_type.to_string()) {
                 return Err(format!(
                     "No template found for task type '{}'. Available templates: {}",
@@ -512,12 +506,7 @@ impl TaskBuilder {
         } else if let Some(ref desc) = self.description {
             // Check if a template exists for this task type
             let content = if task_type != "generic" {
-                // Create asset manager for template retrieval
-                let asset_manager = LayeredAssetManager::new_with_standard_layers(
-                    self.repo_root.as_deref(),
-                    &ctx.tsk_env(),
-                );
-                match asset_manager.get_template(task_type) {
+                match find_template(task_type, self.repo_root.as_deref(), &ctx.tsk_env()) {
                     Ok(template_content) => {
                         strip_frontmatter(&template_content).replace("{{DESCRIPTION}}", desc)
                     }
@@ -534,12 +523,7 @@ impl TaskBuilder {
         } else {
             // No description provided - use template as-is or create empty file
             let initial_content = if task_type != "generic" {
-                // Create asset manager for template retrieval
-                let asset_manager = LayeredAssetManager::new_with_standard_layers(
-                    self.repo_root.as_deref(),
-                    &ctx.tsk_env(),
-                );
-                match asset_manager.get_template(task_type) {
+                match find_template(task_type, self.repo_root.as_deref(), &ctx.tsk_env()) {
                     Ok(template_content) => {
                         let body = strip_frontmatter(&template_content);
                         // If template has description placeholder and we're in edit mode, add TODO
