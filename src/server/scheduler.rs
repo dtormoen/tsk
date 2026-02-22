@@ -158,12 +158,16 @@ impl TaskScheduler {
 
         // Persist the updated fields and return the authoritative DB row.
         // source_branch is set to the parent's branch name for git-town integration.
+        // Copy resolved_config from the parent so execution uses the original
+        // config snapshot (prevents agents from modifying .tsk/tsk.toml to
+        // loosen security for children).
         self.storage
             .prepare_child_task(
                 &task.id,
                 copied_repo_path,
                 &source_commit,
                 &parent_task.branch_name,
+                parent_task.resolved_config.as_deref(),
             )
             .await
             .map_err(|e| format!("Failed to update prepared task in storage: {e}"))

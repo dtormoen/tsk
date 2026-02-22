@@ -105,6 +105,7 @@ fn row_to_task(row: &rusqlite::Row) -> rusqlite::Result<Task> {
         },
         network_isolation: network_isolation_int != 0,
         dind: dind_int != 0,
+        resolved_config: row.get("resolved_config")?,
     })
 }
 
@@ -136,7 +137,7 @@ fn insert_task(
         .map(|p| path_to_string(p))
         .transpose()?;
     conn.execute(
-        "INSERT INTO tasks (id, repo_root, name, task_type, instructions_file, agent, status, created_at, started_at, completed_at, branch_name, error_message, source_commit, source_branch, stack, project, copied_repo_path, is_interactive, parent_ids, network_isolation, dind) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+        "INSERT INTO tasks (id, repo_root, name, task_type, instructions_file, agent, status, created_at, started_at, completed_at, branch_name, error_message, source_commit, source_branch, stack, project, copied_repo_path, is_interactive, parent_ids, network_isolation, dind, resolved_config) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
         rusqlite::params![
             task.id,
             repo_root,
@@ -159,6 +160,7 @@ fn insert_task(
             if task.parent_ids.is_empty() { None::<String> } else { Some(serde_json::to_string(&task.parent_ids).unwrap()) },
             task.network_isolation as i32,
             task.dind as i32,
+            task.resolved_config,
         ],
     )?;
     Ok(())
@@ -306,6 +308,9 @@ impl TaskStorage {
 
         // Migration: add dind column for existing databases
         let _ = conn.execute_batch("ALTER TABLE tasks ADD COLUMN dind INTEGER NOT NULL DEFAULT 0;");
+
+        // Migration: add resolved_config column for config snapshotting
+        let _ = conn.execute_batch("ALTER TABLE tasks ADD COLUMN resolved_config TEXT;");
 
         if let Some(data_dir) = db_path.parent() {
             migrate_from_json(&conn, data_dir);
@@ -470,24 +475,27 @@ impl TaskStorage {
     }
 
     /// Update a child task's repository fields after copying from its parent.
-    /// Sets `copied_repo_path`, `source_commit`, and `source_branch`.
+    /// Sets `copied_repo_path`, `source_commit`, `source_branch`, and copies
+    /// `resolved_config` from the parent task to preserve the original config snapshot.
     pub async fn prepare_child_task(
         &self,
         id: &str,
         copied_repo_path: PathBuf,
         source_commit: &str,
         source_branch: &str,
+        parent_resolved_config: Option<&str>,
     ) -> Result<Task, Box<dyn std::error::Error + Send + Sync>> {
         let conn = Arc::clone(&self.conn);
         let id = id.to_string();
         let copied_repo_path_str = path_to_string(&copied_repo_path)?;
         let source_commit = source_commit.to_string();
         let source_branch = source_branch.to_string();
+        let parent_resolved_config = parent_resolved_config.map(|s| s.to_string());
         tokio::task::spawn_blocking(move || {
             let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
             let rows_affected = conn.execute(
-                "UPDATE tasks SET copied_repo_path = ?1, source_commit = ?2, source_branch = ?3 WHERE id = ?4",
-                rusqlite::params![copied_repo_path_str, source_commit, source_branch, id],
+                "UPDATE tasks SET copied_repo_path = ?1, source_commit = ?2, source_branch = ?3, resolved_config = COALESCE(?4, resolved_config) WHERE id = ?5",
+                rusqlite::params![copied_repo_path_str, source_commit, source_branch, parent_resolved_config, id],
             )?;
             if rows_affected == 0 {
                 return Err("Task not found".into());
@@ -791,6 +799,7 @@ mod tests {
                 repo_path.clone(),
                 "new_commit_sha",
                 "tsk/feat/parent-branch/parent1234",
+                None,
             )
             .await
             .unwrap();
@@ -995,5 +1004,88 @@ mod tests {
 
         // Clean up
         let _ = fs::remove_file(&bak_path);
+    }
+
+    #[tokio::test]
+    async fn test_resolved_config_round_trip() {
+        let ctx = AppContext::builder().build();
+        let tsk_env = ctx.tsk_env();
+        let db_path = tsk_env.data_dir().join("test_resolved_config.db");
+        let storage = TaskStorage::new(db_path).unwrap();
+
+        let config_json = r#"{"agent":"codex","stack":"rust","dind":true,"memory_limit_gb":24.0,"cpu_limit":16,"git_town":false,"host_services":[5432],"setup":null,"stack_config":{},"agent_config":{},"volumes":[],"env":[]}"#;
+
+        let task = Task {
+            id: "config1234".to_string(),
+            repo_root: tsk_env.data_dir().to_path_buf(),
+            branch_name: "tsk/feat/config-test/config1234".to_string(),
+            copied_repo_path: Some(tsk_env.data_dir().to_path_buf()),
+            resolved_config: Some(config_json.to_string()),
+            ..Task::test_default()
+        };
+        storage.add_task(task).await.unwrap();
+
+        let retrieved = storage.get_task("config1234").await.unwrap().unwrap();
+        assert_eq!(retrieved.resolved_config, Some(config_json.to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_resolved_config_null_backward_compat() {
+        let ctx = AppContext::builder().build();
+        let tsk_env = ctx.tsk_env();
+        let db_path = tsk_env.data_dir().join("test_null_config.db");
+        let storage = TaskStorage::new(db_path).unwrap();
+
+        let task = Task {
+            id: "null1234".to_string(),
+            repo_root: tsk_env.data_dir().to_path_buf(),
+            branch_name: "tsk/feat/null-test/null1234".to_string(),
+            copied_repo_path: Some(tsk_env.data_dir().to_path_buf()),
+            resolved_config: None,
+            ..Task::test_default()
+        };
+        storage.add_task(task).await.unwrap();
+
+        let retrieved = storage.get_task("null1234").await.unwrap().unwrap();
+        assert!(retrieved.resolved_config.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_prepare_child_task_copies_resolved_config() {
+        let ctx = AppContext::builder().build();
+        let tsk_env = ctx.tsk_env();
+        let db_path = tsk_env.data_dir().join("test_child_config.db");
+        let storage = TaskStorage::new(db_path).unwrap();
+
+        let parent_config = r#"{"agent":"claude","stack":"rust","dind":false,"memory_limit_gb":12.0,"cpu_limit":8,"git_town":false,"host_services":[],"setup":null,"stack_config":{},"agent_config":{},"volumes":[],"env":[]}"#;
+
+        // Child task starts with no resolved_config
+        let child = Task {
+            id: "child5678".to_string(),
+            repo_root: tsk_env.data_dir().to_path_buf(),
+            branch_name: "tsk/feat/child/child5678".to_string(),
+            parent_ids: vec!["parent5678".to_string()],
+            resolved_config: None,
+            ..Task::test_default()
+        };
+        storage.add_task(child).await.unwrap();
+
+        let repo_path = tsk_env.data_dir().join("child-repo");
+        let updated = storage
+            .prepare_child_task(
+                "child5678",
+                repo_path,
+                "new_commit",
+                "tsk/feat/parent/parent5678",
+                Some(parent_config),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            updated.resolved_config,
+            Some(parent_config.to_string()),
+            "Child should inherit parent's resolved_config"
+        );
     }
 }

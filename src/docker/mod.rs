@@ -28,6 +28,31 @@ fn container_working_dir(project: &str) -> String {
     format!("{CONTAINER_WORKSPACE_BASE}/{project}")
 }
 
+/// Resolve config for a task, preferring the DB snapshot over live resolution.
+///
+/// If the task has a `resolved_config` snapshot (set at creation time), deserialize it.
+/// Otherwise, fall back to live resolution from config files (for pre-migration tasks).
+pub(crate) fn resolve_config_from_task(
+    task: &crate::task::Task,
+    ctx: &AppContext,
+) -> crate::context::ResolvedConfig {
+    if let Some(ref json) = task.resolved_config {
+        match serde_json::from_str(json) {
+            Ok(config) => return config,
+            Err(e) => {
+                eprintln!(
+                    "Warning: Failed to deserialize resolved_config for task {}: {e}. Falling back to live resolution.",
+                    task.id
+                );
+            }
+        }
+    }
+    // Fallback: live resolution (for tasks created before config snapshotting)
+    let project_config = tsk_config::load_project_config(&task.repo_root);
+    ctx.tsk_config()
+        .resolve_config(&task.project, project_config.as_ref())
+}
+
 /// Write build output to a log file on failure, printing warnings on error.
 pub(crate) fn save_build_log(log_path: &std::path::Path, build_output: &str) {
     if let Some(parent) = log_path.parent() {
@@ -261,11 +286,7 @@ impl DockerManager {
         agent: &dyn Agent,
         network_name: Option<&str>,
     ) -> ContainerCreateBody {
-        let project_config = tsk_config::load_project_config(&task.repo_root);
-        let resolved = self
-            .ctx
-            .tsk_config()
-            .resolve_config(&task.project, project_config.as_ref());
+        let resolved = resolve_config_from_task(task, &self.ctx);
         let binds = self.build_bind_volumes(task, agent, &resolved);
         let instructions_file_path = PathBuf::from(&task.instructions_file);
         let working_dir = container_working_dir(&task.project);

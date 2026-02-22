@@ -42,6 +42,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - `tokio::task::spawn_blocking` bridges sync rusqlite into async
 - Automatic migration from legacy `tasks.json` to SQLite on first run (renames to `tasks.json.bak`)
 - Centralized SQLite persistence in XDG data directory (`$XDG_DATA_HOME/tsk/tasks.db`)
+- **Config snapshotting**: At task creation, the fully-resolved `ResolvedConfig` is serialized to JSON and stored in the `resolved_config` column. At execution time, `docker::resolve_config_from_task()` deserializes the snapshot instead of re-resolving from config files. Falls back to live resolution if `resolved_config` is NULL (pre-migration tasks). Chained tasks inherit the parent's snapshot.
 - Task status: Queued → Running → Complete/Failed (Waiting status shown in list for tasks awaiting parent completion)
 - Two execution paths:
   - **Server-scheduled**: `add` stores tasks as `Queued`, server scheduler picks them up and transitions to `Running`

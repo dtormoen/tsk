@@ -110,6 +110,11 @@ pub struct Task {
     /// Whether Docker-in-Docker support is enabled (relaxes container security)
     #[serde(default)]
     pub dind: bool,
+    /// Serialized JSON of the fully-resolved ResolvedConfig at task creation time.
+    /// Used at execution time instead of re-resolving from config files.
+    /// None for tasks created before this feature (falls back to live resolution).
+    #[serde(default)]
+    pub resolved_config: Option<String>,
 }
 
 impl Task {
@@ -133,6 +138,7 @@ impl Task {
         parent_ids: Vec<String>,
         network_isolation: bool,
         dind: bool,
+        resolved_config: Option<String>,
     ) -> Self {
         Self {
             id,
@@ -156,6 +162,7 @@ impl Task {
             parent_ids,
             network_isolation,
             dind,
+            resolved_config,
         }
     }
 }
@@ -193,6 +200,7 @@ impl Task {
             parent_ids: vec![],
             network_isolation: true,
             dind: false,
+            resolved_config: None,
         }
     }
 }

@@ -1,7 +1,6 @@
 use crate::agent::AgentProvider;
 use crate::context::AppContext;
 use crate::context::TaskStorage;
-use crate::context::tsk_config;
 use crate::docker::{DockerManager, image_manager::DockerImageManager};
 use crate::git::RepoManager;
 use crate::task::{Task, TaskStatus};
@@ -250,13 +249,7 @@ impl TaskRunner {
                 &task.repo_root,
                 &task.source_commit,
                 task.source_branch.as_deref(),
-                {
-                    let project_config = tsk_config::load_project_config(&task.repo_root);
-                    self.ctx
-                        .tsk_config()
-                        .resolve_config(&task.project, project_config.as_ref())
-                        .git_town
-                },
+                crate::docker::resolve_config_from_task(task, &self.ctx).git_town,
             )
             .await
         {

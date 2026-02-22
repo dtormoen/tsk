@@ -190,7 +190,7 @@ impl Default for ContainerEngine {
 ///
 /// All fields are optional so they can be layered during resolution.
 /// Lists combine across layers; scalars take the highest-priority `Some` value.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SharedConfig {
     /// Default agent (e.g., "claude", "codex")
@@ -244,7 +244,7 @@ pub struct AgentConfig {
 ///
 /// Produced by [`TskConfig::resolve_config`] after layering `[defaults]`
 /// and `[project.<name>]` sections over built-in defaults.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResolvedConfig {
     /// Agent to use (default: "claude")
     pub agent: String,
@@ -1414,5 +1414,71 @@ setup = "RUN pip install numpy"
         };
         let result = config.all_host_services_env();
         assert_eq!(result, "3000,5432,6379");
+    }
+
+    #[test]
+    fn test_resolved_config_json_round_trip() {
+        let config = ResolvedConfig {
+            agent: "codex".to_string(),
+            stack: "rust".to_string(),
+            dind: true,
+            memory_limit_gb: 24.0,
+            cpu_limit: 16,
+            git_town: true,
+            host_services: vec![5432, 6379],
+            setup: Some("RUN apt-get install -y cmake".to_string()),
+            stack_config: HashMap::from([(
+                "rust".to_string(),
+                StackConfig {
+                    setup: Some("RUN cargo install nextest".to_string()),
+                },
+            )]),
+            agent_config: HashMap::from([(
+                "codex".to_string(),
+                AgentConfig {
+                    setup: Some("RUN pip install tool".to_string()),
+                },
+            )]),
+            volumes: vec![
+                VolumeMount::Bind(BindMount {
+                    host: "/host/path".to_string(),
+                    container: "/container/path".to_string(),
+                    readonly: true,
+                }),
+                VolumeMount::Named(NamedVolume {
+                    name: "cache".to_string(),
+                    container: "/cache".to_string(),
+                    readonly: false,
+                }),
+            ],
+            env: vec![EnvVar {
+                name: "DB_URL".to_string(),
+                value: "postgres://localhost/db".to_string(),
+            }],
+        };
+
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: ResolvedConfig = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.agent, "codex");
+        assert_eq!(deserialized.stack, "rust");
+        assert!(deserialized.dind);
+        assert_eq!(deserialized.memory_limit_gb, 24.0);
+        assert_eq!(deserialized.cpu_limit, 16);
+        assert!(deserialized.git_town);
+        assert_eq!(deserialized.host_services, vec![5432, 6379]);
+        assert_eq!(
+            deserialized.setup,
+            Some("RUN apt-get install -y cmake".to_string())
+        );
+        assert_eq!(deserialized.stack_config.len(), 1);
+        assert_eq!(
+            deserialized.stack_config["rust"].setup,
+            Some("RUN cargo install nextest".to_string())
+        );
+        assert_eq!(deserialized.agent_config.len(), 1);
+        assert_eq!(deserialized.volumes.len(), 2);
+        assert_eq!(deserialized.env.len(), 1);
+        assert_eq!(deserialized.env[0].name, "DB_URL");
     }
 }

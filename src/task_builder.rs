@@ -467,6 +467,12 @@ impl TaskBuilder {
         // For child tasks, source_branch is set to None - it will be set from parent task later
         let effective_source_branch = if has_parent { None } else { source_branch };
 
+        // Serialize the resolved config for snapshotting in the database.
+        // This captures the full config at task creation time so execution
+        // doesn't need to rediscover project files.
+        let resolved_config_json = serde_json::to_string(&resolved)
+            .map_err(|e| format!("Failed to serialize resolved config: {e}"))?;
+
         // Create and return the task
         let task = Task::new(
             id,
@@ -486,6 +492,7 @@ impl TaskBuilder {
             self.parent_id.into_iter().collect::<Vec<String>>(),
             self.network_isolation,
             dind,
+            Some(resolved_config_json),
         );
 
         Ok(task)
@@ -1357,5 +1364,71 @@ mod tests {
 
         // The chain A <- B <- C is valid (C has parent B which has parent A)
         // This proves the parent chain traversal works correctly
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_populates_resolved_config() {
+        use crate::context::ResolvedConfig;
+
+        let task = create_basic_task("config-test", "Test config snapshotting").await;
+
+        assert!(
+            task.resolved_config.is_some(),
+            "Task should have resolved_config set at creation"
+        );
+
+        // Verify the JSON is valid and deserializable
+        let config: ResolvedConfig =
+            serde_json::from_str(task.resolved_config.as_ref().unwrap()).unwrap();
+        assert_eq!(config.agent, "claude", "Default agent should be claude");
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_resolved_config_reflects_project_config() {
+        use crate::context::{ResolvedConfig, SharedConfig, TskConfig};
+        use crate::test_utils::TestGitRepository;
+        use std::collections::HashMap;
+
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        let repo_path = test_repo.path().to_path_buf();
+        let project_name = "test-project".to_string();
+
+        let mut project_configs = HashMap::new();
+        project_configs.insert(
+            project_name.clone(),
+            SharedConfig {
+                memory_limit_gb: Some(32.0),
+                host_services: vec![5432],
+                ..Default::default()
+            },
+        );
+        let tsk_config = TskConfig {
+            project: project_configs,
+            ..Default::default()
+        };
+
+        let ctx = AppContext::builder().with_tsk_config(tsk_config).build();
+
+        let task = TaskBuilder::new()
+            .repo_root(repo_path)
+            .name("config-merge-test".to_string())
+            .description(Some("Test".to_string()))
+            .project(Some(project_name))
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        let config: ResolvedConfig =
+            serde_json::from_str(task.resolved_config.as_ref().unwrap()).unwrap();
+        assert_eq!(
+            config.memory_limit_gb, 32.0,
+            "Project config memory should be in snapshot"
+        );
+        assert_eq!(
+            config.host_services,
+            vec![5432],
+            "Project config host_services should be in snapshot"
+        );
     }
 }
