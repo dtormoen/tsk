@@ -108,6 +108,43 @@ impl NotificationClient {
     #[cfg(test)]
     pub fn notify_task_complete(&self, _task_name: &str, _success: bool, _message: Option<&str>) {}
 
+    /// Show a general notification with a title and message
+    #[cfg(not(test))]
+    pub fn notify(&self, title: &str, message: &str) {
+        #[cfg(target_os = "macos")]
+        {
+            self.show_macos_notification(
+                title,
+                message,
+                self.sound_enabled.load(Ordering::Relaxed),
+            );
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            let timeout_seconds = self.timeout_seconds;
+            let sound_enabled = self.sound_enabled.load(Ordering::Relaxed);
+
+            let mut notification = Notification::new();
+            notification.summary(title);
+            notification.body(message);
+            notification.timeout(Timeout::Milliseconds(timeout_seconds * 1000));
+
+            if sound_enabled {
+                notification.hint(Hint::SoundName("dialog-warning".into()));
+            }
+
+            if let Err(e) = notification.show() {
+                eprintln!("TSK: {} - {}", title, message.replace('\n', " "));
+                eprintln!("(Desktop notification failed: {e})");
+            }
+        }
+    }
+
+    /// Show a general notification (no-op in test builds)
+    #[cfg(test)]
+    pub fn notify(&self, _title: &str, _message: &str) {}
+
     /// Enable or disable sound notifications
     pub fn set_sound_enabled(&self, enabled: bool) {
         self.sound_enabled.store(enabled, Ordering::Relaxed);

@@ -97,6 +97,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Polls for completed jobs from the worker pool
   - Schedules queued tasks when workers are available
   - Updates terminal title with active/total worker counts by querying the pool
+  - Proactive Claude OAuth token check: before scheduling Claude tasks, reads `~/.claude/.credentials.json` and skips scheduling if the token expires within 5 minutes. Re-checks every 1 minute. Sends a desktop notification (once per expiry episode) prompting the user to run `claude /login`
   - Automatic retry for agent warmup failures with 1-hour wait period
   - Tasks that fail during warmup are reset to queued status and retried after wait
   - Parent-aware scheduling: tasks with incomplete parents are skipped

@@ -4,11 +4,80 @@ use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 pub mod claude_log_processor;
 pub use claude_log_processor::ClaudeLogProcessor;
 
+/// Minimum remaining token lifetime before we consider it expired (5 minutes).
+const TOKEN_EXPIRY_BUFFER: Duration = Duration::from_millis(300_000);
+
 const NOT_LOGGED_IN_ERROR: &str = "Claude CLI is not logged in. Please run 'claude login' first.";
+
+/// Result of checking the Claude OAuth token's validity.
+#[derive(Debug)]
+pub enum OAuthTokenStatus {
+    /// Token is valid and won't expire within the buffer window.
+    Valid,
+    /// Token is expired or will expire within the buffer window.
+    ExpiredOrExpiring,
+}
+
+/// Checks Claude's OAuth token expiration from the credentials file.
+///
+/// Reads `~/.claude/.credentials.json` and inspects `claudeAiOauth.expiresAt`
+/// (a Unix timestamp in milliseconds). Returns the token status indicating
+/// whether the token is valid or expired/expiring.
+///
+/// # Errors
+///
+/// Returns an error string if the credentials file is missing, unreadable,
+/// or does not contain the expected JSON structure.
+pub fn check_oauth_token_validity() -> Result<OAuthTokenStatus, String> {
+    let home =
+        std::env::var("HOME").map_err(|_| "HOME environment variable not set".to_string())?;
+    let credentials_path = PathBuf::from(home)
+        .join(".claude")
+        .join(".credentials.json");
+
+    check_oauth_token_validity_at(&credentials_path)
+}
+
+/// Checks OAuth token validity from a specific credentials file path.
+///
+/// This is the implementation behind [`check_oauth_token_validity`], separated
+/// to allow testing with arbitrary file paths.
+fn check_oauth_token_validity_at(credentials_path: &Path) -> Result<OAuthTokenStatus, String> {
+    let contents = std::fs::read_to_string(credentials_path).map_err(|e| {
+        format!(
+            "Failed to read credentials file at {}: {}",
+            credentials_path.display(),
+            e
+        )
+    })?;
+
+    let json: serde_json::Value =
+        serde_json::from_str(&contents).map_err(|e| format!("Failed to parse credentials: {e}"))?;
+
+    let expires_at_ms = json
+        .get("claudeAiOauth")
+        .and_then(|oauth| oauth.get("expiresAt"))
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| "Credentials file missing claudeAiOauth.expiresAt field".to_string())?;
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("System time error: {e}"))?
+        .as_millis() as i64;
+
+    let remaining_ms = expires_at_ms - now_ms;
+
+    if remaining_ms <= TOKEN_EXPIRY_BUFFER.as_millis() as i64 {
+        Ok(OAuthTokenStatus::ExpiredOrExpiring)
+    } else {
+        Ok(OAuthTokenStatus::Valid)
+    }
+}
 
 /// Claude AI agent implementation
 pub struct ClaudeAgent {
@@ -521,5 +590,115 @@ mod tests {
         // Test files_to_copy returns empty when file doesn't exist
         let files = agent.files_to_copy();
         assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_oauth_token_valid() {
+        let dir = tempfile::tempdir().unwrap();
+        let creds_path = dir.path().join(".credentials.json");
+
+        // Token expires 1 hour from now
+        let expires_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64
+            + 3_600_000;
+
+        let json = format!(
+            r#"{{"claudeAiOauth":{{"accessToken":"tok","refreshToken":"ref","expiresAt":{}}}}}"#,
+            expires_at
+        );
+        std::fs::write(&creds_path, json).unwrap();
+
+        let result = check_oauth_token_validity_at(&creds_path).unwrap();
+        assert!(
+            matches!(result, OAuthTokenStatus::Valid),
+            "Expected Valid, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_oauth_token_expiring_within_buffer() {
+        let dir = tempfile::tempdir().unwrap();
+        let creds_path = dir.path().join(".credentials.json");
+
+        // Token expires 2 minutes from now (within the 5-minute buffer)
+        let expires_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64
+            + 120_000;
+
+        let json = format!(
+            r#"{{"claudeAiOauth":{{"accessToken":"tok","refreshToken":"ref","expiresAt":{}}}}}"#,
+            expires_at
+        );
+        std::fs::write(&creds_path, json).unwrap();
+
+        let result = check_oauth_token_validity_at(&creds_path).unwrap();
+        assert!(
+            matches!(result, OAuthTokenStatus::ExpiredOrExpiring),
+            "Expected ExpiredOrExpiring, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_oauth_token_already_expired() {
+        let dir = tempfile::tempdir().unwrap();
+        let creds_path = dir.path().join(".credentials.json");
+
+        // Token expired 1 hour ago
+        let expires_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64
+            - 3_600_000;
+
+        let json = format!(
+            r#"{{"claudeAiOauth":{{"accessToken":"tok","refreshToken":"ref","expiresAt":{}}}}}"#,
+            expires_at
+        );
+        std::fs::write(&creds_path, json).unwrap();
+
+        let result = check_oauth_token_validity_at(&creds_path).unwrap();
+        assert!(
+            matches!(result, OAuthTokenStatus::ExpiredOrExpiring),
+            "Expected ExpiredOrExpiring, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_oauth_token_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let creds_path = dir.path().join("nonexistent.json");
+
+        let result = check_oauth_token_validity_at(&creds_path);
+        assert!(result.is_err(), "Expected error for missing file");
+    }
+
+    #[test]
+    fn test_oauth_token_malformed_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let creds_path = dir.path().join(".credentials.json");
+        std::fs::write(&creds_path, "not valid json").unwrap();
+
+        let result = check_oauth_token_validity_at(&creds_path);
+        assert!(result.is_err(), "Expected error for malformed JSON");
+    }
+
+    #[test]
+    fn test_oauth_token_missing_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let creds_path = dir.path().join(".credentials.json");
+        std::fs::write(&creds_path, r#"{"claudeAiOauth":{"accessToken":"tok"}}"#).unwrap();
+
+        let result = check_oauth_token_validity_at(&creds_path);
+        assert!(
+            result.is_err(),
+            "Expected error for missing expiresAt field"
+        );
     }
 }

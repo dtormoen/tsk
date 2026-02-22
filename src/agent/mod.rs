@@ -12,6 +12,7 @@ mod task_result;
 pub use self::log_processor::LogProcessor;
 pub use self::task_result::TaskResult;
 pub use claude::ClaudeAgent;
+pub use claude::{OAuthTokenStatus, check_oauth_token_validity};
 pub use codex::CodexAgent;
 pub use integ::IntegAgent;
 pub use no_op::NoOpAgent;

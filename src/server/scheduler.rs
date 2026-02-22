@@ -1,3 +1,4 @@
+use crate::agent::{OAuthTokenStatus, check_oauth_token_validity};
 use crate::context::AppContext;
 use crate::context::TaskStorage;
 use crate::context::docker_client::DockerClient;
@@ -26,12 +27,16 @@ enum ParentStatus {
     NotFound(String),
 }
 
+/// Retry interval for checking OAuth token validity when the token is expired.
+const OAUTH_RETRY_INTERVAL: Duration = Duration::from_secs(60);
+
 /// Task scheduler that manages task lifecycle and scheduling decisions
 ///
 /// The scheduler is responsible for:
 /// - Selecting tasks from storage for execution
 /// - Managing task status transitions
 /// - Handling warmup failure wait periods
+/// - Proactively checking Claude OAuth token expiration before scheduling
 /// - Delegating actual execution to the worker pool
 /// - Preventing double-scheduling of tasks
 pub struct TaskScheduler {
@@ -46,6 +51,10 @@ pub struct TaskScheduler {
     quit_signal: Arc<tokio::sync::Notify>,
     quit_when_done: bool,
     last_auto_clean: Instant,
+    /// When set, indicates OAuth token is expired and we should wait before retrying
+    oauth_wait_until: Option<Instant>,
+    /// Whether the "please login" notification has been shown for the current OAuth expiry
+    oauth_notification_shown: bool,
 }
 
 impl TaskScheduler {
@@ -87,6 +96,8 @@ impl TaskScheduler {
             quit_signal,
             quit_when_done,
             last_auto_clean: Instant::now() - Duration::from_secs(3600),
+            oauth_wait_until: None,
+            oauth_notification_shown: false,
         }
     }
 
@@ -212,6 +223,55 @@ impl TaskScheduler {
         }
     }
 
+    /// Checks whether the Claude OAuth token is valid for scheduling.
+    ///
+    /// If the task uses the Claude agent, reads the OAuth credentials and
+    /// verifies the token won't expire within 5 minutes. When the token is
+    /// expired or expiring, shows a notification (once per expiry episode)
+    /// and sets a 1-minute retry wait. Non-Claude tasks are always allowed.
+    ///
+    /// Returns `true` if the task can proceed, `false` if it should be skipped.
+    fn check_oauth_for_task(&mut self, task: &Task) -> bool {
+        if task.agent != "claude" {
+            return true;
+        }
+
+        // If we're in an OAuth wait period, skip scheduling
+        if let Some(wait_until) = self.oauth_wait_until {
+            if Instant::now() < wait_until {
+                return false;
+            }
+            // Wait period has elapsed, clear it and re-check the token
+            self.oauth_wait_until = None;
+        }
+
+        match check_oauth_token_validity() {
+            Ok(OAuthTokenStatus::Valid) => true,
+            Ok(OAuthTokenStatus::ExpiredOrExpiring) => {
+                if !self.oauth_notification_shown {
+                    println!(
+                        "Claude OAuth token is expired or expiring soon. \
+                         Please run `claude /login` to refresh your token."
+                    );
+                    self.context.notification_client().notify(
+                        "TSK: Claude Token Expired",
+                        "Claude OAuth token is expired or expiring soon. \
+                         Run `claude /login` to refresh.",
+                    );
+                    self.oauth_notification_shown = true;
+                }
+                self.oauth_wait_until = Some(Instant::now() + OAUTH_RETRY_INTERVAL);
+                false
+            }
+            Err(e) => {
+                // If we can't read the credentials file, allow scheduling to proceed.
+                // The agent's own warmup/validate will handle actual auth errors.
+                eprintln!("Warning: Could not check OAuth token: {e}");
+                true
+            }
+        }
+    }
+
     /// Start the scheduler and begin processing tasks
     pub async fn start(
         &mut self,
@@ -311,6 +371,8 @@ impl TaskScheduler {
 
                             if result.success {
                                 println!("Task completed successfully: {}", result.job_id);
+                                // Re-enable OAuth expiry notifications after a successful task
+                                self.oauth_notification_shown = false;
                             } else if let Some(msg) = &result.message {
                                 eprintln!("Task failed: {} - {}", result.job_id, msg);
                                 // Handle cascading failures for child tasks
@@ -349,9 +411,12 @@ impl TaskScheduler {
             }
 
             // Try to schedule a new task if workers are available
-            if let Some(pool) = &self.worker_pool
-                && pool.available_workers() > 0
-            {
+            let has_available_workers = self
+                .worker_pool
+                .as_ref()
+                .is_some_and(|p| p.available_workers() > 0);
+
+            if has_available_workers {
                 // Look for a queued task that isn't already submitted and has a ready parent
                 let tasks = self.storage.list_tasks().await?;
 
@@ -394,6 +459,12 @@ impl TaskScheduler {
                     .cloned();
 
                 if let Some(mut task) = queued_task {
+                    // Proactively check OAuth token validity for Claude tasks
+                    if !self.check_oauth_for_task(&task) {
+                        // Token is expired/expiring; task stays queued
+                        continue;
+                    }
+
                     // Check if this is a child task that needs repo preparation
                     if !task.parent_ids.is_empty() && task.copied_repo_path.is_none() {
                         // Find the parent task
@@ -449,6 +520,8 @@ impl TaskScheduler {
                         warmup_failure_wait_until: self.warmup_failure_wait_until.clone(),
                     };
 
+                    // pool is guaranteed to exist since has_available_workers was true
+                    let pool = self.worker_pool.as_ref().unwrap();
                     match pool.try_submit(job).await {
                         Ok(Some(_handle)) => {
                             // Job submitted successfully
@@ -493,8 +566,9 @@ impl TaskScheduler {
                 };
 
                 let in_warmup_wait = self.warmup_failure_wait_until.lock().await.is_some();
+                let in_oauth_wait = self.oauth_wait_until.is_some();
 
-                if queued_count == 0 && active_workers == 0 && !in_warmup_wait {
+                if queued_count == 0 && active_workers == 0 && !in_warmup_wait && !in_oauth_wait {
                     println!("Queue is empty and no workers active. Shutting down...");
                     self.quit_signal.notify_one();
                     self.stop().await;
