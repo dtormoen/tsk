@@ -171,7 +171,7 @@ Create, manage, and monitor tasks assigned to AI agents.
 - `tsk list` - View task status and branches
 - `tsk clean` - Clean up completed tasks
 - `tsk delete <task-id>...` - Delete one or more tasks
-- `tsk retry <task-id>...` - Retry one or more tasks
+- `tsk retry <task-id>...` - Retry one or more tasks (prompts to retry child tasks; use `--no-children` to skip)
 
 ### Server Commands
 

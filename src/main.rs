@@ -246,6 +246,10 @@ enum Commands {
         /// Enable Docker-in-Docker support (relaxes container security for nested builds)
         #[arg(long)]
         dind: bool,
+
+        /// Skip retrying child tasks (don't prompt)
+        #[arg(long)]
+        no_children: bool,
     },
     /// Docker operations - build and manage TSK Docker images
     Docker(DockerArgs),
@@ -466,6 +470,7 @@ async fn main() {
             project,
             parent_id,
             dind,
+            no_children,
         } => Box::new(RetryCommand {
             task_ids,
             edit,
@@ -475,6 +480,7 @@ async fn main() {
             project,
             parent_id,
             dind: if dind { Some(true) } else { None },
+            no_children,
         }),
         Commands::Server(server_args) => match server_args.command {
             ServerCommands::Start {

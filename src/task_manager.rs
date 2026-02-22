@@ -237,6 +237,38 @@ impl TaskManager {
 
         Ok(new_task.id)
     }
+
+    /// Find all descendant tasks of a given task, in BFS order (children first, then grandchildren).
+    pub async fn find_descendant_tasks(&self, task_id: &str) -> Result<Vec<Task>, String> {
+        let all_tasks = self
+            .task_storage
+            .list_tasks()
+            .await
+            .map_err(|e| format!("Error listing tasks: {e}"))?;
+
+        let mut descendants = Vec::new();
+        let mut current_parents = vec![task_id.to_string()];
+        let mut visited = HashSet::new();
+
+        while !current_parents.is_empty() {
+            let mut next_parents = Vec::new();
+            for task in &all_tasks {
+                if !visited.contains(&task.id)
+                    && task
+                        .parent_ids
+                        .iter()
+                        .any(|pid| current_parents.contains(pid))
+                {
+                    visited.insert(task.id.clone());
+                    descendants.push(task.clone());
+                    next_parents.push(task.id.clone());
+                }
+            }
+            current_parents = next_parents;
+        }
+
+        Ok(descendants)
+    }
 }
 
 #[cfg(test)]
@@ -827,5 +859,88 @@ mod tests {
         assert!(remaining_ids.contains(&young_complete_id));
         assert!(remaining_ids.contains(&queued_id));
         assert!(remaining_ids.contains(&old_parent_id));
+    }
+
+    #[tokio::test]
+    async fn test_find_descendant_tasks() {
+        let (config, test_repo, ctx) = setup_test_environment().await.unwrap();
+        let repo_root = test_repo.path().to_path_buf();
+
+        // Create a chain: parent (complete) -> child (failed) -> grandchild (failed)
+        let parent_id = "parent-001";
+        let child_id = "child-002";
+        let grandchild_id = "grandchild-003";
+
+        setup_task_directory(&config, parent_id, "Parent instructions")
+            .await
+            .unwrap();
+        setup_task_directory(&config, child_id, "Child instructions")
+            .await
+            .unwrap();
+        setup_task_directory(&config, grandchild_id, "Grandchild instructions")
+            .await
+            .unwrap();
+
+        let storage = ctx.task_storage();
+
+        storage
+            .add_task(Task {
+                id: parent_id.to_string(),
+                repo_root: repo_root.clone(),
+                name: "parent-task".to_string(),
+                branch_name: format!("tsk/{parent_id}"),
+                status: TaskStatus::Complete,
+                ..Task::test_default()
+            })
+            .await
+            .unwrap();
+
+        storage
+            .add_task(Task {
+                id: child_id.to_string(),
+                repo_root: repo_root.clone(),
+                name: "child-task".to_string(),
+                branch_name: format!("tsk/{child_id}"),
+                status: TaskStatus::Failed,
+                parent_ids: vec![parent_id.to_string()],
+                ..Task::test_default()
+            })
+            .await
+            .unwrap();
+
+        storage
+            .add_task(Task {
+                id: grandchild_id.to_string(),
+                repo_root: repo_root.clone(),
+                name: "grandchild-task".to_string(),
+                branch_name: format!("tsk/{grandchild_id}"),
+                status: TaskStatus::Failed,
+                parent_ids: vec![child_id.to_string()],
+                ..Task::test_default()
+            })
+            .await
+            .unwrap();
+
+        let task_manager = TaskManager::new(&ctx).unwrap();
+
+        // Find descendants of parent - should return child then grandchild (BFS order)
+        let descendants = task_manager.find_descendant_tasks(parent_id).await.unwrap();
+        assert_eq!(descendants.len(), 2);
+        assert_eq!(descendants[0].id, child_id);
+        assert_eq!(descendants[1].id, grandchild_id);
+
+        // Find descendants of grandchild - should return empty
+        let descendants = task_manager
+            .find_descendant_tasks(grandchild_id)
+            .await
+            .unwrap();
+        assert!(descendants.is_empty());
+
+        // Find descendants of non-existent task - should return empty
+        let descendants = task_manager
+            .find_descendant_tasks("non-existent")
+            .await
+            .unwrap();
+        assert!(descendants.is_empty());
     }
 }
