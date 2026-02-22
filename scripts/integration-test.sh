@@ -269,10 +269,22 @@ run_nested_test() {
     # alone can exceed 10 GB during concurrent java + rust image builds,
     # triggering OOM kills. 30 GB provides sufficient headroom.
     mkdir -p "$iso_dir/config/tsk"
-    cat > "$iso_dir/config/tsk/tsk.toml" << 'EOF'
+    cat > "$iso_dir/config/tsk/tsk.toml" << EOF
 [docker]
 memory_limit_gb = 30.0
+
+[project.tsk]
+volumes = [
+    { name = "integ-podman-storage-${engine}", container = "/home/agent/.local/share/containers/storage" },
+]
 EOF
+
+    # Ensure the named volume exists with correct ownership for the agent user
+    # (UID 1000). Docker creates named volumes as root:root by default, but
+    # Podman inside the container runs as agent and needs write access.
+    local volume_name="tsk-integ-podman-storage-${engine}"
+    "$engine" volume create "$volume_name" > /dev/null 2>&1 || true
+    "$engine" run --rm -v "${volume_name}:/storage" alpine chown 1000:1000 /storage
 
     echo -e "  Running: ${YELLOW}nested-${engine}${NC}"
 

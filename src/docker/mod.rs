@@ -353,6 +353,13 @@ impl DockerManager {
             cap_drop.push("NET_RAW".to_string());
         }
 
+        // Check if a user-configured volume already covers Podman's storage path
+        // before `binds` is moved into the container config.
+        let podman_storage = "/home/agent/.local/share/containers/storage";
+        let has_storage_volume = binds
+            .iter()
+            .any(|b| b.split(':').nth(1) == Some(podman_storage));
+
         ContainerCreateBody {
             image: Some(image.to_string()),
             // No entrypoint needed anymore - just run as agent user directly
@@ -389,10 +396,18 @@ impl DockerManager {
                 // 4.33.0+). This breaks all `podman build` and `podman run` inside
                 // TSK containers. Native overlay on tmpfs avoids the broken code
                 // path entirely. Remove this once docker/for-mac#7413 is fixed.
-                tmpfs: Some(HashMap::from([(
-                    "/home/agent/.local/share/containers/storage".to_string(),
-                    "size=40G".to_string(),
-                )])),
+                //
+                // Skip the tmpfs when a user-configured volume already targets this
+                // path (e.g. a named volume for caching DIND image layers across runs).
+                // The named volume provides the same native overlay benefit.
+                tmpfs: if has_storage_volume {
+                    None
+                } else {
+                    Some(HashMap::from([(
+                        podman_storage.to_string(),
+                        "size=40G".to_string(),
+                    )]))
+                },
                 // In nested containers, keep the host UID mapping so bind-mounted
                 // files retain correct ownership (rootless Podman remaps UIDs otherwise).
                 userns_mode: if self.is_nested() {
