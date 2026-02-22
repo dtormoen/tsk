@@ -49,8 +49,11 @@ pub(crate) fn resolve_config_from_task(
     }
     // Fallback: live resolution (for tasks created before config snapshotting)
     let project_config = tsk_config::load_project_config(&task.repo_root);
-    ctx.tsk_config()
-        .resolve_config(&task.project, project_config.as_ref())
+    ctx.tsk_config().resolve_config(
+        &task.project,
+        project_config.as_ref(),
+        Some(&task.repo_root),
+    )
 }
 
 /// Write build output to a log file on failure, printing warnings on error.
@@ -88,7 +91,11 @@ impl DockerManager {
     /// * `ctx` - The application context containing all dependencies
     /// * `client` - The Docker client for container operations
     pub fn new(ctx: &AppContext, client: Arc<dyn DockerClient>) -> Self {
-        let proxy_manager = ProxyManager::new(client.clone(), ctx.tsk_config(), ctx.tsk_env());
+        let proxy_manager = ProxyManager::new(
+            client.clone(),
+            ctx.tsk_env(),
+            ctx.tsk_config().container_engine.clone(),
+        );
         Self {
             ctx: ctx.clone(),
             client,
@@ -128,8 +135,15 @@ impl DockerManager {
             })
     }
 
-    /// Build proxy environment variables for nested containers.
-    fn build_proxy_env_vars(&self, resolved: &crate::context::ResolvedConfig) -> Vec<String> {
+    /// Build proxy environment variables for the container.
+    ///
+    /// When nested inside a TSK container, forwards env vars from the outer container.
+    /// Otherwise, sets proxy env vars using the proxy config's container name and URL.
+    fn build_proxy_env_vars(
+        &self,
+        resolved: &crate::context::ResolvedConfig,
+        proxy_config: &crate::context::ResolvedProxyConfig,
+    ) -> Vec<String> {
         if self.is_nested() {
             // Forward proxy env vars from the outer container's environment.
             // The outer TSK container already has network isolation via Docker.
@@ -149,16 +163,15 @@ impl DockerManager {
             return env;
         }
 
-        let proxy_url = self.proxy_manager.proxy_url();
+        let proxy_url = proxy_config.proxy_url();
+        let proxy_container_name = proxy_config.proxy_container_name();
         let mut env = vec![
             format!("HTTP_PROXY={proxy_url}"),
             format!("HTTPS_PROXY={proxy_url}"),
             format!("http_proxy={proxy_url}"),
             format!("https_proxy={proxy_url}"),
-            // Include tsk-proxy so HTTP clients bypass Squid when connecting
-            // to socat forwarders for host services
-            "NO_PROXY=localhost,127.0.0.1,tsk-proxy".to_string(),
-            "no_proxy=localhost,127.0.0.1,tsk-proxy".to_string(),
+            format!("NO_PROXY=localhost,127.0.0.1,{proxy_container_name}"),
+            format!("no_proxy=localhost,127.0.0.1,{proxy_container_name}"),
         ];
 
         // Add host service environment variables if configured
@@ -167,7 +180,7 @@ impl DockerManager {
                 "TSK_HOST_SERVICES={}",
                 resolved.host_services_env()
             ));
-            env.push("TSK_HOST_SERVICES_HOST=tsk-proxy".to_string());
+            env.push(format!("TSK_HOST_SERVICES_HOST={proxy_container_name}"));
         }
 
         env
@@ -268,31 +281,31 @@ impl DockerManager {
 
     /// Create a container configuration for both interactive and non-interactive modes.
     ///
-    /// This function builds a unified container configuration that can be used for
-    /// both interactive (TTY-attached) and non-interactive (log-streaming) containers.
-    ///
     /// # Arguments
     /// * `image` - The Docker image to use
     /// * `task` - The task containing all necessary configuration
     /// * `agent` - The agent to get volumes and environment variables from
     /// * `network_name` - The Docker network name for the container to join
-    ///
-    /// # Returns
-    /// A `ContainerCreateBody` configured with appropriate settings for the mode
+    /// * `proxy_config` - The proxy configuration for env var setup
     fn create_container_config(
         &self,
         image: &str,
         task: &crate::task::Task,
         agent: &dyn Agent,
         network_name: Option<&str>,
+        proxy_config: Option<&crate::context::ResolvedProxyConfig>,
     ) -> ContainerCreateBody {
         let resolved = resolve_config_from_task(task, &self.ctx);
         let binds = self.build_bind_volumes(task, agent, &resolved);
         let instructions_file_path = PathBuf::from(&task.instructions_file);
         let working_dir = container_working_dir(&task.project);
 
-        let mut env_vars = if network_name.is_some() || self.is_nested() {
-            self.build_proxy_env_vars(&resolved)
+        let mut env_vars = if let Some(pc) = proxy_config {
+            self.build_proxy_env_vars(&resolved, pc)
+        } else if self.is_nested() {
+            // Nested mode: use a default proxy config to forward env vars
+            let default_pc = crate::context::ResolvedProxyConfig::default();
+            self.build_proxy_env_vars(&resolved, &default_pc)
         } else {
             Vec::new()
         };
@@ -480,24 +493,30 @@ impl DockerManager {
         // --- Setup: conditionally create network and connect proxy ---
         // When nested inside a TSK container, skip proxy/network setup since the
         // outer container already provides network isolation.
-        let network_name = if task.network_isolation && !self.is_nested() {
+        let resolved = resolve_config_from_task(task, &self.ctx);
+        let proxy_config = resolved.proxy_config();
+
+        let (network_name, proxy_container_name) = if task.network_isolation && !self.is_nested() {
             let proxy_build_log_path = self
                 .ctx
                 .tsk_env()
                 .task_dir(&task.id)
                 .join("output")
                 .join("proxy-build.log");
-            if let Err(e) = self
+            let pcn = match self
                 .proxy_manager
-                .ensure_proxy(Some(&proxy_build_log_path))
+                .ensure_proxy(&proxy_config, Some(&proxy_build_log_path))
                 .await
             {
-                return Err(format!(
-                    "Failed to ensure proxy is running and healthy: {e}. \
-                    The task should be retried later when the proxy is available. \
-                    Check the status in Docker."
-                ));
-            }
+                Ok(name) => name,
+                Err(e) => {
+                    return Err(format!(
+                        "Failed to ensure proxy is running and healthy: {e}. \
+                        The task should be retried later when the proxy is available. \
+                        Check the status in Docker."
+                    ));
+                }
+            };
 
             let name = self
                 .proxy_manager
@@ -505,30 +524,39 @@ impl DockerManager {
                 .await
                 .map_err(|e| format!("Failed to create agent network: {e}"))?;
 
-            if let Err(e) = self.proxy_manager.connect_proxy_to_network(&name).await {
-                self.proxy_manager.cleanup_agent_network(&name).await;
+            if let Err(e) = self
+                .proxy_manager
+                .connect_proxy_to_network(&pcn, &name)
+                .await
+            {
+                self.proxy_manager.cleanup_agent_network(&pcn, &name).await;
                 return Err(format!("Failed to connect proxy to agent network: {e}"));
             }
-            Some(name)
+            (Some(name), Some(pcn))
         } else {
-            None
+            (None, None)
         };
 
         // --- Execute: run the container, capturing its ID for cleanup ---
+        let use_proxy = network_name.is_some();
         let (container_id, result) = self
-            .run_container_inner(docker_image_tag, task, agent, network_name.as_deref())
+            .run_container_inner(
+                docker_image_tag,
+                task,
+                agent,
+                network_name.as_deref(),
+                if use_proxy { Some(&proxy_config) } else { None },
+            )
             .await;
 
         // --- Cleanup: always runs regardless of success/failure ---
         if let Some(ref id) = container_id {
             let _ = self.remove_container(id).await;
         }
-        if let Some(ref name) = network_name {
-            self.proxy_manager.cleanup_agent_network(name).await;
+        if let (Some(name), Some(pcn)) = (&network_name, &proxy_container_name) {
+            self.proxy_manager.cleanup_agent_network(pcn, name).await;
         }
-        if network_name.is_some()
-            && let Err(e) = self.proxy_manager.maybe_stop_proxy().await
-        {
+        if use_proxy && let Err(e) = self.proxy_manager.maybe_stop_proxy(&proxy_config).await {
             eprintln!("Warning: Failed to check/stop idle proxy: {e}");
         }
 
@@ -545,11 +573,13 @@ impl DockerManager {
         task: &crate::task::Task,
         agent: &dyn Agent,
         network_name: Option<&str>,
+        proxy_config: Option<&crate::context::ResolvedProxyConfig>,
     ) -> (
         Option<String>,
         Result<(String, crate::agent::TaskResult), String>,
     ) {
-        let config = self.create_container_config(docker_image_tag, task, agent, network_name);
+        let config =
+            self.create_container_config(docker_image_tag, task, agent, network_name, proxy_config);
         let container_name = self.build_container_name(task);
         let options = bollard::query_parameters::CreateContainerOptionsBuilder::default()
             .name(&container_name)
@@ -767,9 +797,15 @@ fn process_complete_lines(line_buffer: &mut String, log_processor: &mut dyn LogP
 mod tests {
     use super::*;
     use crate::context::AppContext;
+    use crate::context::ResolvedProxyConfig;
     use crate::task::{Task, TaskStatus};
     use crate::test_utils::TrackedDockerClient;
     use std::sync::Arc;
+
+    /// Returns the proxy container name for the default proxy config (no host_services, no squid_conf).
+    fn default_proxy_container_name() -> String {
+        ResolvedProxyConfig::default().proxy_container_name()
+    }
 
     fn create_test_task(is_interactive: bool) -> Task {
         let repo_path = PathBuf::from("/tmp/test-repo");
@@ -818,10 +854,11 @@ mod tests {
         // Check that user is set
         assert_eq!(task_container_config.user, Some("agent".to_string()));
 
-        // Check proxy environment variables
+        // Check proxy environment variables (uses fingerprinted proxy container name)
+        let pcn = default_proxy_container_name();
         let env = task_container_config.env.as_ref().unwrap();
-        assert!(env.contains(&"HTTP_PROXY=http://tsk-proxy:3128".to_string()));
-        assert!(env.contains(&"HTTPS_PROXY=http://tsk-proxy:3128".to_string()));
+        assert!(env.contains(&format!("HTTP_PROXY=http://{pcn}:3128")));
+        assert!(env.contains(&format!("HTTPS_PROXY=http://{pcn}:3128")));
 
         // Check TSK environment variables
         assert!(env.contains(&"TSK_CONTAINER=1".to_string()));
@@ -830,7 +867,7 @@ mod tests {
 
         let start_calls = mock_client.start_container_calls.lock().unwrap();
         assert_eq!(start_calls.len(), 2); // One for proxy, one for task container
-        assert_eq!(start_calls[0], "tsk-proxy");
+        assert_eq!(start_calls[0], pcn);
         assert_eq!(start_calls[1], "test-container-id-1");
 
         let wait_calls = mock_client.wait_container_calls.lock().unwrap();
@@ -990,11 +1027,9 @@ mod tests {
         assert_eq!(create_calls.len(), 2); // One for proxy, one for task container
 
         // Check proxy container config (proxy manager creates this)
+        let pcn = default_proxy_container_name();
         let (proxy_options, _proxy_config) = &create_calls[0];
-        assert_eq!(
-            proxy_options.as_ref().unwrap().name,
-            Some("tsk-proxy".to_string())
-        );
+        assert_eq!(proxy_options.as_ref().unwrap().name, Some(pcn.clone()));
 
         // Check task container config
         let (options, config) = &create_calls[1];
@@ -1053,12 +1088,12 @@ mod tests {
         assert!(binds[2].contains(":/instructions:ro"));
         assert!(binds[3].contains(":/output"));
 
-        // Check proxy environment variables
+        // Check proxy environment variables (uses fingerprinted proxy container name)
         let env = config.env.as_ref().unwrap();
-        assert!(env.contains(&"HTTP_PROXY=http://tsk-proxy:3128".to_string()));
-        assert!(env.contains(&"HTTPS_PROXY=http://tsk-proxy:3128".to_string()));
-        assert!(env.contains(&"NO_PROXY=localhost,127.0.0.1,tsk-proxy".to_string()));
-        assert!(env.contains(&"no_proxy=localhost,127.0.0.1,tsk-proxy".to_string()));
+        assert!(env.contains(&format!("HTTP_PROXY=http://{pcn}:3128")));
+        assert!(env.contains(&format!("HTTPS_PROXY=http://{pcn}:3128")));
+        assert!(env.contains(&format!("NO_PROXY=localhost,127.0.0.1,{pcn}")));
+        assert!(env.contains(&format!("no_proxy=localhost,127.0.0.1,{pcn}")));
 
         // Non-DIND task: security_opt should be None, cap_drop should include SETUID/SETGID
         assert!(
@@ -1087,10 +1122,7 @@ mod tests {
         assert_eq!(connect_calls.len(), 1);
         assert_eq!(
             connect_calls[0],
-            (
-                "tsk-proxy".to_string(),
-                "tsk-agent-test-task-id".to_string()
-            )
+            (pcn.clone(), "tsk-agent-test-task-id".to_string())
         );
         drop(connect_calls);
 
@@ -1099,10 +1131,7 @@ mod tests {
         assert_eq!(disconnect_calls.len(), 1);
         assert_eq!(
             disconnect_calls[0],
-            (
-                "tsk-proxy".to_string(),
-                "tsk-agent-test-task-id".to_string()
-            )
+            (pcn, "tsk-agent-test-task-id".to_string())
         );
         drop(disconnect_calls);
 

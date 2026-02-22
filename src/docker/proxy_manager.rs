@@ -2,9 +2,13 @@
 //!
 //! This module provides centralized management for the TSK proxy infrastructure,
 //! handling proxy container lifecycle, health checks, and network configuration.
+//!
+//! Proxy containers are fingerprinted by their configuration (host_services and
+//! squid_conf content). Tasks with identical proxy configurations share a proxy
+//! container, while tasks with different configurations get separate instances.
 
 use crate::context::ContainerEngine;
-use crate::context::TskConfig;
+use crate::context::ResolvedProxyConfig;
 use crate::context::docker_client::DockerClient;
 use crate::context::tsk_env::TskEnv;
 use anyhow::{Context, Result};
@@ -14,105 +18,95 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-/// Network name for proxy's external access
-const TSK_EXTERNAL_NETWORK: &str = "tsk-external";
 /// Network name prefix for agent isolated networks
 const TSK_AGENT_NETWORK_PREFIX: &str = "tsk-agent-";
-/// Container name for the proxy
-const PROXY_CONTAINER_NAME: &str = "tsk-proxy";
 /// Docker image name for the proxy
 const PROXY_IMAGE: &str = "tsk/proxy";
 /// Proxy port
 const PROXY_PORT: &str = "3128/tcp";
 
-/// Manages the TSK proxy container lifecycle
+/// Manages TSK proxy container lifecycle with per-configuration instances.
 ///
-/// This struct provides a high-level interface for managing the proxy container
-/// that provides controlled network access for TSK task containers. It handles
-/// proxy image building, container creation, health monitoring, and cleanup.
-///
-/// The proxy manager supports custom Squid configuration by checking for a
-/// `squid.conf` file in the TSK config directory. If found, it will use that
-/// configuration instead of the default embedded one.
+/// Each unique proxy configuration (host_services + squid_conf) gets its own
+/// proxy container identified by a fingerprint. Tasks with identical proxy
+/// configurations share the same proxy container.
 pub struct ProxyManager {
     docker_client: Arc<dyn DockerClient>,
-    tsk_config: Arc<TskConfig>,
     tsk_env: Arc<TskEnv>,
+    container_engine: ContainerEngine,
 }
 
 impl ProxyManager {
-    /// Creates a new ProxyManager with the given Docker client and configuration
+    /// Creates a new ProxyManager with the given Docker client and environment.
     ///
-    /// # Arguments
-    /// * `client` - Docker client for container operations
-    /// * `tsk_config` - TSK configuration
-    /// * `tsk_env` - TSK environment paths
+    /// Proxy configuration is provided per-call via `ResolvedProxyConfig` rather
+    /// than stored on the manager, enabling multiple proxy instances.
     pub fn new(
         client: Arc<dyn DockerClient>,
-        tsk_config: Arc<TskConfig>,
         tsk_env: Arc<TskEnv>,
+        container_engine: ContainerEngine,
     ) -> Self {
         Self {
             docker_client: client,
-            tsk_config,
             tsk_env,
+            container_engine,
         }
     }
 
-    /// Ensures the proxy is running and healthy
+    /// Ensures the proxy for the given configuration is running and healthy.
     ///
     /// This method:
-    /// 1. Checks if proxy is already running (skips build if so)
+    /// 1. Checks if the proxy for this config is already running (skips build if so)
     /// 2. Builds the proxy image if needed
-    /// 3. Ensures the network exists
+    /// 3. Ensures the external network exists
     /// 4. Starts the proxy container if not running
     /// 5. Waits for the proxy to become healthy
     ///
-    /// Config changes are picked up when the proxy is stopped (manually or
-    /// automatically when no agents are connected) and then restarted.
-    ///
     /// # Returns
-    /// * `Ok(())` if proxy is running and healthy
+    /// * `Ok(container_name)` - the proxy container name on success
     /// * `Err` if proxy cannot be started or becomes unhealthy
-    pub async fn ensure_proxy(&self, build_log_path: Option<&std::path::Path>) -> Result<()> {
+    pub async fn ensure_proxy(
+        &self,
+        proxy_config: &ResolvedProxyConfig,
+        build_log_path: Option<&std::path::Path>,
+    ) -> Result<String> {
+        let container_name = proxy_config.proxy_container_name();
+
         // Skip build if proxy is already running - config changes will be
         // picked up when the proxy is stopped and restarted
-        if !self.is_proxy_running().await? {
+        if !self.is_proxy_running(&container_name).await? {
             self.build_proxy(false, build_log_path)
                 .await
                 .context("Failed to build proxy image")?;
         }
 
-        // Ensure network exists
-        self.ensure_network()
+        // Ensure external network exists
+        let network_name = proxy_config.external_network_name();
+        self.ensure_network(&network_name)
             .await
             .context("Failed to ensure network exists")?;
 
         // Check if proxy container exists and is running
-        self.ensure_proxy_container()
+        self.ensure_proxy_container(proxy_config)
             .await
             .context("Failed to ensure proxy container is running")?;
 
         // Wait for proxy to be healthy
-        self.wait_for_proxy_health()
+        self.wait_for_proxy_health(&container_name)
             .await
             .context("Failed to wait for proxy health")?;
 
-        Ok(())
+        Ok(container_name)
     }
 
-    /// Builds the proxy Docker image
+    /// Builds the generic proxy Docker image.
     ///
-    /// This method will check for a custom squid.conf file in the TSK config directory.
-    /// If found, it will use that configuration instead of the default embedded one.
+    /// The image is always built without custom squid.conf baked in. Per-configuration
+    /// squid.conf is mounted at container start time via bind mount.
     ///
     /// # Arguments
     /// * `no_cache` - Whether to build without using Docker's cache
     /// * `build_log_path` - Optional path to save build output on failure
-    ///
-    /// # Returns
-    /// * `Ok(())` if build succeeds
-    /// * `Err` if build fails
     pub async fn build_proxy(
         &self,
         no_cache: bool,
@@ -123,23 +117,19 @@ impl ProxyManager {
         use crate::assets::embedded::EmbeddedAssetManager;
         use crate::assets::utils::extract_dockerfile_to_temp;
 
+        // Warn about deprecated legacy squid.conf file
+        let legacy_squid_conf = self.tsk_env.config_dir().join("squid.conf");
+        if legacy_squid_conf.exists() {
+            eprintln!(
+                "Warning: {} is deprecated. Use squid_conf or squid_conf_path in tsk.toml instead.",
+                legacy_squid_conf.display()
+            );
+        }
+
         // Extract dockerfile to temporary directory
         let asset_manager = EmbeddedAssetManager;
         let dockerfile_dir = extract_dockerfile_to_temp(&asset_manager, "tsk-proxy")
             .context("Failed to extract proxy Dockerfile")?;
-
-        // Check for custom squid.conf in config directory
-        let custom_squid_conf_path = self.tsk_env.config_dir().join("squid.conf");
-        if custom_squid_conf_path.exists() {
-            println!(
-                "Using custom squid.conf from {}",
-                custom_squid_conf_path.display()
-            );
-            // Copy the custom squid.conf to the build directory, replacing the default one
-            let dest_squid_conf = dockerfile_dir.join("squid.conf");
-            std::fs::copy(&custom_squid_conf_path, &dest_squid_conf)
-                .context("Failed to copy custom squid.conf")?;
-        }
 
         // Create tar archive from the proxy dockerfile directory
         let tar_archive = self
@@ -154,7 +144,7 @@ impl ProxyManager {
         options_builder = options_builder.dockerfile("Dockerfile");
         options_builder = options_builder.t(PROXY_IMAGE);
         options_builder = options_builder.nocache(no_cache);
-        if self.tsk_config.container_engine == ContainerEngine::Podman {
+        if self.container_engine == ContainerEngine::Podman {
             options_builder = options_builder.networkmode("host");
         }
         let options = options_builder.build();
@@ -187,18 +177,14 @@ impl ProxyManager {
         Ok(())
     }
 
-    /// Stops and removes the proxy container
-    ///
-    /// # Returns
-    /// * `Ok(())` if proxy is stopped or was not running
-    /// * `Err` if proxy cannot be stopped
-    pub async fn stop_proxy(&self) -> Result<()> {
-        println!("Stopping TSK proxy container...");
+    /// Stops and removes the specified proxy container.
+    pub async fn stop_proxy(&self, container_name: &str) -> Result<()> {
+        println!("Stopping TSK proxy container {container_name}...");
 
         match self
             .docker_client
             .remove_container(
-                PROXY_CONTAINER_NAME,
+                container_name,
                 Some(RemoveContainerOptions {
                     force: true,
                     ..Default::default()
@@ -207,29 +193,22 @@ impl ProxyManager {
             .await
         {
             Ok(_) => {
-                println!("Proxy container stopped successfully");
+                println!("Proxy container {container_name} stopped successfully");
                 Ok(())
             }
             Err(e) if e.to_lowercase().contains("no such container") => {
-                println!("Proxy container was not running");
+                println!("Proxy container {container_name} was not running");
                 Ok(())
             }
-            Err(e) => Err(anyhow::anyhow!("Failed to stop proxy container: {e}")),
+            Err(e) => Err(anyhow::anyhow!(
+                "Failed to stop proxy container {container_name}: {e}"
+            )),
         }
     }
 
-    /// Checks if the proxy container is currently running
-    ///
-    /// # Returns
-    /// * `Ok(true)` if proxy container is running
-    /// * `Ok(false)` if proxy container is not running or doesn't exist
-    /// * `Err` if unable to inspect the container
-    pub async fn is_proxy_running(&self) -> Result<bool> {
-        match self
-            .docker_client
-            .inspect_container(PROXY_CONTAINER_NAME)
-            .await
-        {
+    /// Checks if the specified proxy container is currently running.
+    pub async fn is_proxy_running(&self, container_name: &str) -> Result<bool> {
+        match self.docker_client.inspect_container(container_name).await {
             Ok(json_data) => {
                 let data: serde_json::Value = serde_json::from_str(&json_data)
                     .map_err(|e| anyhow::anyhow!("Failed to parse container info: {e}"))?;
@@ -244,26 +223,13 @@ impl ProxyManager {
         }
     }
 
-    /// Counts the number of agent networks the proxy is connected to
+    /// Counts the number of agent networks the specified proxy is connected to.
     ///
-    /// With per-container network isolation, each agent has its own isolated network.
-    /// This method counts networks matching the `tsk-agent-*` pattern by counting
-    /// networks the proxy is connected to (excluding the external network).
-    ///
-    /// Note: This uses a heuristic approach since Docker's API doesn't directly
-    /// support counting networks by prefix. We inspect the proxy container and
-    /// count its network connections.
-    ///
-    /// # Returns
-    /// * `Ok(count)` - Number of agent networks the proxy is connected to
-    /// * `Err` if unable to inspect the proxy container
-    pub async fn count_connected_agents(&self) -> Result<usize> {
+    /// Inspects the proxy container and counts networks matching the
+    /// `tsk-agent-*` pattern (excluding the external network).
+    pub async fn count_connected_agents(&self, container_name: &str) -> Result<usize> {
         // Inspect the proxy container to get its network connections
-        match self
-            .docker_client
-            .inspect_container(PROXY_CONTAINER_NAME)
-            .await
-        {
+        match self.docker_client.inspect_container(container_name).await {
             Ok(json_data) => {
                 let data: serde_json::Value = serde_json::from_str(&json_data)
                     .map_err(|e| anyhow::anyhow!("Failed to parse container info: {e}"))?;
@@ -288,66 +254,87 @@ impl ProxyManager {
         }
     }
 
-    /// Conditionally stops the proxy if no agents are connected
-    ///
-    /// This method checks if any agent containers are using the proxy network.
-    /// If no agents are connected, it stops the proxy to ensure a fresh rebuild
-    /// on next use.
+    /// Conditionally stops the proxy for the given config if no agents are connected.
     ///
     /// # Returns
     /// * `Ok(true)` if proxy was stopped
     /// * `Ok(false)` if proxy is still in use or was not running
-    /// * `Err` if unable to check status or stop proxy
-    pub async fn maybe_stop_proxy(&self) -> Result<bool> {
+    pub async fn maybe_stop_proxy(&self, proxy_config: &ResolvedProxyConfig) -> Result<bool> {
+        let container_name = proxy_config.proxy_container_name();
+
         // Check if proxy is even running
-        if !self.is_proxy_running().await? {
+        if !self.is_proxy_running(&container_name).await? {
             return Ok(false);
         }
 
         // Count connected agents
-        let agent_count = self.count_connected_agents().await?;
+        let agent_count = self.count_connected_agents(&container_name).await?;
 
         if agent_count == 0 {
-            self.stop_proxy().await?;
+            self.stop_proxy(&container_name).await?;
             Ok(true)
         } else {
             Ok(false)
         }
     }
 
-    /// Ensures the TSK external network exists for proxy internet access
-    async fn ensure_network(&self) -> Result<()> {
+    /// Ensures the specified external network exists for proxy internet access.
+    async fn ensure_network(&self, network_name: &str) -> Result<()> {
         if !self
             .docker_client
-            .network_exists(TSK_EXTERNAL_NETWORK)
+            .network_exists(network_name)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to check if network exists: {e}"))?
         {
             self.docker_client
-                .create_network(TSK_EXTERNAL_NETWORK)
+                .create_network(network_name)
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to create network: {e}"))?;
         }
         Ok(())
     }
 
-    /// Ensures the proxy container is running
-    async fn ensure_proxy_container(&self) -> Result<()> {
-        // Create proxy container configuration
-        let proxy_config = ContainerCreateBody {
+    /// Ensures the proxy container for the given config is running.
+    ///
+    /// Uses the fingerprinted container and network names from the proxy config.
+    /// When `proxy_config.squid_conf` is set, writes the content to a host file
+    /// and bind-mounts it into the container.
+    async fn ensure_proxy_container(&self, proxy_config: &ResolvedProxyConfig) -> Result<()> {
+        let container_name = proxy_config.proxy_container_name();
+        let network_name = proxy_config.external_network_name();
+        let host_services_env = format!("TSK_HOST_SERVICES={}", proxy_config.host_services_env());
+
+        // Prepare optional squid.conf bind mount
+        let binds = if let Some(ref squid_conf_content) = proxy_config.squid_conf {
+            let fingerprint = proxy_config.fingerprint();
+            let proxy_conf_dir = self.tsk_env.proxy_config_dir(&fingerprint);
+            std::fs::create_dir_all(&proxy_conf_dir)
+                .context("Failed to create proxy config directory")?;
+
+            let squid_conf_path = proxy_conf_dir.join("squid.conf");
+            std::fs::write(&squid_conf_path, squid_conf_content)
+                .context("Failed to write squid.conf")?;
+
+            Some(vec![format!(
+                "{}:/etc/squid/squid.conf:ro",
+                squid_conf_path.display()
+            )])
+        } else {
+            None
+        };
+
+        let container_config = ContainerCreateBody {
             image: Some(PROXY_IMAGE.to_string()),
             exposed_ports: Some(vec![PROXY_PORT.to_string()]),
-            env: Some(vec![format!(
-                "TSK_HOST_SERVICES={}",
-                self.tsk_config.all_host_services_env()
-            )]),
+            env: Some(vec![host_services_env]),
             host_config: Some(HostConfig {
-                network_mode: Some(TSK_EXTERNAL_NETWORK.to_string()),
+                network_mode: Some(network_name),
                 extra_hosts: Some(vec!["host.docker.internal:host-gateway".to_string()]),
                 restart_policy: Some(bollard::models::RestartPolicy {
                     name: Some(bollard::models::RestartPolicyNameEnum::UNLESS_STOPPED),
                     maximum_retry_count: None,
                 }),
+                binds,
                 // Security hardening options
                 readonly_rootfs: Some(true),
                 cap_drop: Some(vec!["ALL".to_string()]),
@@ -369,31 +356,26 @@ impl ProxyManager {
         };
 
         let create_options = bollard::query_parameters::CreateContainerOptionsBuilder::default()
-            .name(PROXY_CONTAINER_NAME)
+            .name(&container_name)
             .build();
 
         // Try to create the container (this will fail if it already exists)
         match self
             .docker_client
-            .create_container(Some(create_options), proxy_config)
+            .create_container(Some(create_options), container_config)
             .await
         {
             Ok(_) => {
                 // New container created, start it
                 self.docker_client
-                    .start_container(PROXY_CONTAINER_NAME)
+                    .start_container(&container_name)
                     .await
                     .map_err(|e| anyhow::anyhow!("Failed to start proxy container: {e}"))?;
             }
             Err(e) => {
                 // Container might already exist, try to start it
                 if e.to_lowercase().contains("already in use") {
-                    // Try to start existing container
-                    match self
-                        .docker_client
-                        .start_container(PROXY_CONTAINER_NAME)
-                        .await
-                    {
+                    match self.docker_client.start_container(&container_name).await {
                         Ok(_) => (),
                         Err(e) if e.to_lowercase().contains("already started") => (),
                         Err(e) => {
@@ -409,17 +391,13 @@ impl ProxyManager {
         Ok(())
     }
 
-    /// Waits for the proxy container to become healthy
-    async fn wait_for_proxy_health(&self) -> Result<()> {
+    /// Waits for the specified proxy container to become healthy.
+    async fn wait_for_proxy_health(&self, container_name: &str) -> Result<()> {
         const MAX_RETRIES: u32 = 30; // 30 retries with 1 second delay = 30 seconds max wait
         const RETRY_DELAY_MS: u64 = 1000;
 
         for attempt in 1..=MAX_RETRIES {
-            match self
-                .docker_client
-                .inspect_container(PROXY_CONTAINER_NAME)
-                .await
-            {
+            match self.docker_client.inspect_container(container_name).await {
                 Ok(json_data) => {
                     // Parse the JSON to check health status
                     if let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_data) {
@@ -504,22 +482,10 @@ impl ProxyManager {
         Ok(tar_data)
     }
 
-    /// Gets the proxy URL for environment configuration
-    pub fn proxy_url(&self) -> String {
-        format!(
-            "http://{}:{}",
-            PROXY_CONTAINER_NAME,
-            PROXY_PORT.trim_end_matches("/tcp")
-        )
-    }
-
-    /// Creates an internal network for a specific agent container
+    /// Creates an internal network for a specific agent container.
     ///
     /// The network is created with the `internal` flag, meaning it has no
     /// external route to the internet. The agent can only reach the proxy.
-    ///
-    /// # Arguments
-    /// * `task_id` - The task identifier used in the network name
     ///
     /// # Returns
     /// The network name on success
@@ -534,33 +500,30 @@ impl ProxyManager {
         Ok(network_name)
     }
 
-    /// Connects the proxy container to an agent's isolated network
+    /// Connects the specified proxy container to an agent's isolated network.
     ///
     /// This must be called BEFORE starting the agent container so the agent
-    /// can reach the proxy. The proxy remains connected to all active agent
-    /// networks simultaneously.
-    ///
-    /// # Arguments
-    /// * `network_name` - The agent network name (from create_agent_network)
-    pub async fn connect_proxy_to_network(&self, network_name: &str) -> Result<()> {
+    /// can reach the proxy.
+    pub async fn connect_proxy_to_network(
+        &self,
+        proxy_container_name: &str,
+        network_name: &str,
+    ) -> Result<()> {
         self.docker_client
-            .connect_container_to_network(PROXY_CONTAINER_NAME, network_name)
+            .connect_container_to_network(proxy_container_name, network_name)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to connect proxy to network: {e}"))
     }
 
-    /// Cleans up an agent's network after task completion
+    /// Cleans up an agent's network after task completion.
     ///
     /// Disconnects the proxy from the network and removes it.
     /// Logs warnings on failure but does not return errors (cleanup is best-effort).
-    ///
-    /// # Arguments
-    /// * `network_name` - The agent network name to clean up
-    pub async fn cleanup_agent_network(&self, network_name: &str) {
+    pub async fn cleanup_agent_network(&self, proxy_container_name: &str, network_name: &str) {
         // Disconnect proxy from network
         if let Err(e) = self
             .docker_client
-            .disconnect_container_from_network(PROXY_CONTAINER_NAME, network_name)
+            .disconnect_container_from_network(proxy_container_name, network_name)
             .await
         {
             eprintln!("Warning: Failed to disconnect proxy from network {network_name}: {e}");
@@ -587,20 +550,26 @@ mod tests {
     use crate::context::AppContext;
     use crate::test_utils::TrackedDockerClient;
 
+    fn default_proxy_config() -> ResolvedProxyConfig {
+        ResolvedProxyConfig {
+            host_services: vec![],
+            squid_conf: None,
+        }
+    }
+
     #[tokio::test]
     async fn test_ensure_proxy_success() {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
 
-        let manager = ProxyManager::new(mock_client.clone(), ctx.tsk_config(), ctx.tsk_env());
-        let result = manager.ensure_proxy(None).await;
+        let manager =
+            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let proxy_config = default_proxy_config();
+        let result = manager.ensure_proxy(&proxy_config, None).await;
 
         assert!(result.is_ok());
-
-        // Verify the expected calls were made
-        // The mock client's network_exists field determines if the network exists
-        // We can verify create_container was called for the proxy
-        assert!(mock_client.network_exists);
+        let container_name = result.unwrap();
+        assert_eq!(container_name, proxy_config.proxy_container_name());
 
         let create_calls = mock_client.create_container_calls.lock().unwrap();
         assert_eq!(create_calls.len(), 1);
@@ -608,7 +577,7 @@ mod tests {
         let (options, config) = &create_calls[0];
         assert_eq!(
             options.as_ref().unwrap().name,
-            Some(PROXY_CONTAINER_NAME.to_string())
+            Some(proxy_config.proxy_container_name())
         );
 
         // Verify extra_hosts is set for host.docker.internal access
@@ -622,33 +591,28 @@ mod tests {
 
         let start_calls = mock_client.start_container_calls.lock().unwrap();
         assert_eq!(start_calls.len(), 1);
-        assert_eq!(start_calls[0], PROXY_CONTAINER_NAME);
+        assert_eq!(start_calls[0], proxy_config.proxy_container_name());
     }
 
     #[tokio::test]
     async fn test_ensure_proxy_with_host_services() {
-        use crate::context::tsk_config::SharedConfig;
-
         let mock_client = Arc::new(TrackedDockerClient::default());
-        let tsk_config = TskConfig {
-            defaults: SharedConfig {
-                host_services: vec![5432, 6379],
-                ..Default::default()
-            },
-            ..Default::default()
+        let ctx = AppContext::builder().build();
+
+        let manager =
+            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let proxy_config = ResolvedProxyConfig {
+            host_services: vec![5432, 6379],
+            squid_conf: None,
         };
-
-        let ctx = AppContext::builder().with_tsk_config(tsk_config).build();
-
-        let manager = ProxyManager::new(mock_client.clone(), ctx.tsk_config(), ctx.tsk_env());
-        let result = manager.ensure_proxy(None).await;
+        let result = manager.ensure_proxy(&proxy_config, None).await;
 
         assert!(result.is_ok());
 
         let create_calls = mock_client.create_container_calls.lock().unwrap();
         let (_, config) = &create_calls[0];
 
-        // Verify env includes configured host services
+        // Verify env includes configured host services (sorted)
         let env = config.env.as_ref().unwrap();
         assert!(env.contains(&"TSK_HOST_SERVICES=5432,6379".to_string()));
     }
@@ -658,21 +622,22 @@ mod tests {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
 
-        let manager = ProxyManager::new(mock_client.clone(), ctx.tsk_config(), ctx.tsk_env());
-        let result = manager.stop_proxy().await;
+        let manager =
+            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let proxy_config = default_proxy_config();
+        let container_name = proxy_config.proxy_container_name();
+        let result = manager.stop_proxy(&container_name).await;
 
         assert!(result.is_ok());
 
         let remove_calls = mock_client.remove_container_calls.lock().unwrap();
         assert_eq!(remove_calls.len(), 1);
-        assert_eq!(remove_calls[0].0, PROXY_CONTAINER_NAME);
+        assert_eq!(remove_calls[0].0, container_name);
         assert!(remove_calls[0].1.as_ref().unwrap().force);
     }
 
     #[tokio::test]
     async fn test_stop_proxy_container_not_found() {
-        // Test that stop_proxy succeeds even when container doesn't exist
-        // We'll create a custom DockerClient implementation for this test
         use crate::context::docker_client::DockerClient;
         use async_trait::async_trait;
         use bollard::models::ContainerCreateBody;
@@ -688,7 +653,7 @@ mod tests {
                 _id: &str,
                 _options: Option<RemoveContainerOptions>,
             ) -> Result<(), String> {
-                Err("No such container: tsk-proxy".to_string())
+                Err("No such container: tsk-proxy-abcd1234".to_string())
             }
 
             async fn create_container(
@@ -802,8 +767,11 @@ mod tests {
         let mock_client: Arc<dyn DockerClient> = Arc::new(NoContainerDockerClient);
         let ctx = AppContext::builder().build();
 
-        let manager = ProxyManager::new(mock_client, ctx.tsk_config(), ctx.tsk_env());
-        let result = manager.stop_proxy().await;
+        let manager = ProxyManager::new(mock_client, ctx.tsk_env(), ContainerEngine::Docker);
+        let proxy_config = default_proxy_config();
+        let result = manager
+            .stop_proxy(&proxy_config.proxy_container_name())
+            .await;
 
         // Should succeed even if container doesn't exist
         assert!(result.is_ok());
@@ -828,8 +796,9 @@ mod tests {
 
         let ctx = AppContext::builder().build();
 
-        let manager = ProxyManager::new(mock_client.clone(), ctx.tsk_config(), ctx.tsk_env());
-        let result = manager.wait_for_proxy_health().await;
+        let manager =
+            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let result = manager.wait_for_proxy_health("tsk-proxy-test").await;
 
         assert!(result.is_ok());
     }
@@ -853,8 +822,9 @@ mod tests {
 
         let ctx = AppContext::builder().build();
 
-        let manager = ProxyManager::new(mock_client.clone(), ctx.tsk_config(), ctx.tsk_env());
-        let result = manager.wait_for_proxy_health().await;
+        let manager =
+            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let result = manager.wait_for_proxy_health("tsk-proxy-test").await;
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("unhealthy"));
@@ -864,7 +834,6 @@ mod tests {
     async fn test_wait_for_proxy_health_no_health_check() {
         use serde_json::json;
 
-        // Test backward compatibility when no health check is configured
         let mock_client = Arc::new(TrackedDockerClient {
             inspect_container_response: json!({
                 "State": {
@@ -877,10 +846,10 @@ mod tests {
 
         let ctx = AppContext::builder().build();
 
-        let manager = ProxyManager::new(mock_client.clone(), ctx.tsk_config(), ctx.tsk_env());
-        let result = manager.wait_for_proxy_health().await;
+        let manager =
+            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let result = manager.wait_for_proxy_health("tsk-proxy-test").await;
 
-        // Should succeed for backward compatibility
         assert!(result.is_ok());
     }
 
@@ -900,21 +869,12 @@ mod tests {
 
         let ctx = AppContext::builder().build();
 
-        let manager = ProxyManager::new(mock_client.clone(), ctx.tsk_config(), ctx.tsk_env());
-        let result = manager.wait_for_proxy_health().await;
+        let manager =
+            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let result = manager.wait_for_proxy_health("tsk-proxy-test").await;
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not running"));
-    }
-
-    #[test]
-    fn test_proxy_url() {
-        use crate::test_utils::NoOpDockerClient;
-        let ctx = AppContext::builder().build();
-        let manager =
-            ProxyManager::new(Arc::new(NoOpDockerClient), ctx.tsk_config(), ctx.tsk_env());
-
-        assert_eq!(manager.proxy_url(), "http://tsk-proxy:3128");
     }
 
     #[test]
@@ -934,7 +894,8 @@ mod tests {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
 
-        let manager = ProxyManager::new(mock_client.clone(), ctx.tsk_config(), ctx.tsk_env());
+        let manager =
+            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
         let result = manager.create_agent_network("test-task-123").await;
 
         assert!(result.is_ok());
@@ -953,7 +914,8 @@ mod tests {
         });
         let ctx = AppContext::builder().build();
 
-        let manager = ProxyManager::new(mock_client.clone(), ctx.tsk_config(), ctx.tsk_env());
+        let manager =
+            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
         let result = manager.create_agent_network("test-task-123").await;
 
         assert!(result.is_err());
@@ -970,17 +932,19 @@ mod tests {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
 
-        let manager = ProxyManager::new(mock_client.clone(), ctx.tsk_config(), ctx.tsk_env());
-        let result = manager.connect_proxy_to_network("tsk-agent-test-123").await;
+        let manager =
+            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let proxy_config = default_proxy_config();
+        let container_name = proxy_config.proxy_container_name();
+        let result = manager
+            .connect_proxy_to_network(&container_name, "tsk-agent-test-123")
+            .await;
 
         assert!(result.is_ok());
 
         let calls = mock_client.connect_network_calls.lock().unwrap();
         assert_eq!(calls.len(), 1);
-        assert_eq!(
-            calls[0],
-            ("tsk-proxy".to_string(), "tsk-agent-test-123".to_string())
-        );
+        assert_eq!(calls[0], (container_name, "tsk-agent-test-123".to_string()));
     }
 
     #[tokio::test]
@@ -988,14 +952,19 @@ mod tests {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
 
-        let manager = ProxyManager::new(mock_client.clone(), ctx.tsk_config(), ctx.tsk_env());
-        manager.cleanup_agent_network("tsk-agent-test-123").await;
+        let manager =
+            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let proxy_config = default_proxy_config();
+        let container_name = proxy_config.proxy_container_name();
+        manager
+            .cleanup_agent_network(&container_name, "tsk-agent-test-123")
+            .await;
 
         let disconnect_calls = mock_client.disconnect_network_calls.lock().unwrap();
         assert_eq!(disconnect_calls.len(), 1);
         assert_eq!(
             disconnect_calls[0],
-            ("tsk-proxy".to_string(), "tsk-agent-test-123".to_string())
+            (container_name, "tsk-agent-test-123".to_string())
         );
 
         let remove_calls = mock_client.remove_network_calls.lock().unwrap();
@@ -1011,11 +980,13 @@ mod tests {
         });
         let ctx = AppContext::builder().build();
 
-        let manager = ProxyManager::new(mock_client.clone(), ctx.tsk_config(), ctx.tsk_env());
-        // This should not panic or return an error - cleanup is best-effort
-        manager.cleanup_agent_network("tsk-agent-test-123").await;
+        let manager =
+            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let proxy_config = default_proxy_config();
+        manager
+            .cleanup_agent_network(&proxy_config.proxy_container_name(), "tsk-agent-test-123")
+            .await;
 
-        // Verify both operations were attempted
         let disconnect_calls = mock_client.disconnect_network_calls.lock().unwrap();
         assert_eq!(disconnect_calls.len(), 1);
 
@@ -1024,201 +995,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_build_proxy_with_custom_squid_conf() {
-        // Create a mock docker client that captures the build tar archive
-        use crate::context::docker_client::DockerClient;
-        use async_trait::async_trait;
-        use bollard::models::ContainerCreateBody;
-        use bollard::query_parameters::*;
-        use futures_util::Stream;
-        use std::sync::Mutex;
-
-        struct CaptureDockerClient {
-            tar_archive: Mutex<Option<Vec<u8>>>,
-        }
-
-        #[async_trait]
-        impl DockerClient for CaptureDockerClient {
-            async fn build_image(
-                &self,
-                _options: BuildImageOptions,
-                tar_archive: Vec<u8>,
-            ) -> Result<Box<dyn Stream<Item = Result<String, String>> + Send + Unpin>, String>
-            {
-                *self.tar_archive.lock().unwrap() = Some(tar_archive);
-                use futures_util::stream;
-                let stream = stream::once(async { Ok("Building...".to_string()) });
-                Ok(Box::new(Box::pin(stream)))
-            }
-
-            async fn image_exists(&self, _tag: &str) -> Result<bool, String> {
-                Ok(false) // Force rebuild
-            }
-
-            async fn remove_container(
-                &self,
-                _id: &str,
-                _options: Option<RemoveContainerOptions>,
-            ) -> Result<(), String> {
-                Ok(())
-            }
-
-            async fn create_container(
-                &self,
-                _options: Option<CreateContainerOptions>,
-                _config: ContainerCreateBody,
-            ) -> Result<String, String> {
-                Ok("test-id".to_string())
-            }
-
-            async fn start_container(&self, _id: &str) -> Result<(), String> {
-                Ok(())
-            }
-
-            async fn wait_container(&self, _id: &str) -> Result<i64, String> {
-                Ok(0)
-            }
-
-            async fn kill_container(&self, _id: &str) -> Result<(), String> {
-                Ok(())
-            }
-
-            async fn logs(
-                &self,
-                _id: &str,
-                _options: Option<LogsOptions>,
-            ) -> Result<String, String> {
-                Ok("".to_string())
-            }
-
-            async fn logs_stream(
-                &self,
-                _id: &str,
-                _options: Option<LogsOptions>,
-            ) -> Result<Box<dyn Stream<Item = Result<String, String>> + Send + Unpin>, String>
-            {
-                use futures_util::stream;
-                let stream = stream::once(async { Ok("".to_string()) });
-                Ok(Box::new(Box::pin(stream)))
-            }
-
-            async fn create_network(&self, _name: &str) -> Result<String, String> {
-                Ok("network-id".to_string())
-            }
-
-            async fn network_exists(&self, _name: &str) -> Result<bool, String> {
-                Ok(true)
-            }
-
-            async fn inspect_container(&self, _id: &str) -> Result<String, String> {
-                Ok(r#"{"State": {"Health": {"Status": "healthy"}}}"#.to_string())
-            }
-
-            async fn attach_container(&self, _id: &str) -> Result<(), String> {
-                Ok(())
-            }
-
-            async fn upload_to_container(
-                &self,
-                _id: &str,
-                _dest_path: &str,
-                _tar_data: Vec<u8>,
-            ) -> Result<(), String> {
-                Ok(())
-            }
-
-            async fn create_internal_network(&self, _name: &str) -> Result<String, String> {
-                Ok("internal-network-id".to_string())
-            }
-
-            async fn connect_container_to_network(
-                &self,
-                _container: &str,
-                _network: &str,
-            ) -> Result<(), String> {
-                Ok(())
-            }
-
-            async fn disconnect_container_from_network(
-                &self,
-                _container: &str,
-                _network: &str,
-            ) -> Result<(), String> {
-                Ok(())
-            }
-
-            async fn remove_network(&self, _name: &str) -> Result<(), String> {
-                Ok(())
-            }
-
-            async fn ping(&self) -> Result<String, String> {
-                Ok("OK".to_string())
-            }
-        }
-
-        let docker_client = Arc::new(CaptureDockerClient {
-            tar_archive: Mutex::new(None),
-        });
-
-        // Create AppContext with test-safe temporary directories
-        let ctx = AppContext::builder().build();
-
-        // Create a custom squid.conf file in the config directory
-        let custom_squid_conf = ctx.tsk_env().config_dir().join("squid.conf");
-        std::fs::write(
-            &custom_squid_conf,
-            "# Custom squid configuration\nhttp_port 3128\n",
-        )
-        .unwrap();
-
-        let manager = ProxyManager::new(
-            docker_client.clone() as Arc<dyn DockerClient>,
-            ctx.tsk_config(),
-            ctx.tsk_env(),
-        );
-        let result = manager.build_proxy(false, None).await;
-
-        assert!(result.is_ok());
-
-        // Verify that the tar archive was created and contains the custom squid.conf
-        let tar_data = docker_client.tar_archive.lock().unwrap();
-        assert!(tar_data.is_some());
-
-        // Extract and verify the tar archive contains our custom squid.conf
-        use tar::Archive;
-        let tar_bytes = tar_data.as_ref().unwrap();
-        let mut archive = Archive::new(&tar_bytes[..]);
-
-        let mut found_custom_squid = false;
-        for entry in archive.entries().unwrap() {
-            let mut entry = entry.unwrap();
-            let path = entry.path().unwrap();
-            if path.to_str().unwrap().ends_with("squid.conf") {
-                let mut content = String::new();
-                use std::io::Read;
-                entry.read_to_string(&mut content).unwrap();
-                if content.contains("# Custom squid configuration") {
-                    found_custom_squid = true;
-                    break;
-                }
-            }
-        }
-
-        assert!(
-            found_custom_squid,
-            "Custom squid.conf should be in the tar archive"
-        );
-    }
-
-    #[tokio::test]
     async fn test_build_proxy_without_custom_squid_conf() {
-        // Test that default squid.conf is used when no custom one exists
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
 
-        let manager = ProxyManager::new(mock_client.clone(), ctx.tsk_config(), ctx.tsk_env());
+        let manager =
+            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
 
-        // Just verify build_proxy doesn't error with default configuration
         let result = manager.build_proxy(false, None).await;
         assert!(result.is_ok());
     }
@@ -1239,8 +1022,8 @@ mod tests {
 
         let ctx = AppContext::builder().build();
 
-        let manager = ProxyManager::new(mock_client, ctx.tsk_config(), ctx.tsk_env());
-        let result = manager.is_proxy_running().await;
+        let manager = ProxyManager::new(mock_client, ctx.tsk_env(), ContainerEngine::Docker);
+        let result = manager.is_proxy_running("tsk-proxy-test").await;
 
         assert!(result.is_ok());
         assert!(result.unwrap());
@@ -1262,8 +1045,8 @@ mod tests {
 
         let ctx = AppContext::builder().build();
 
-        let manager = ProxyManager::new(mock_client, ctx.tsk_config(), ctx.tsk_env());
-        let result = manager.is_proxy_running().await;
+        let manager = ProxyManager::new(mock_client, ctx.tsk_env(), ContainerEngine::Docker);
+        let result = manager.is_proxy_running("tsk-proxy-test").await;
 
         assert!(result.is_ok());
         assert!(!result.unwrap());
@@ -1273,7 +1056,6 @@ mod tests {
     async fn test_count_connected_agents() {
         use serde_json::json;
 
-        // Mock response showing proxy connected to 3 agent networks
         let mock_client = Arc::new(TrackedDockerClient {
             inspect_container_response: json!({
                 "NetworkSettings": {
@@ -1291,11 +1073,10 @@ mod tests {
 
         let ctx = AppContext::builder().build();
 
-        let manager = ProxyManager::new(mock_client, ctx.tsk_config(), ctx.tsk_env());
-        let result = manager.count_connected_agents().await;
+        let manager = ProxyManager::new(mock_client, ctx.tsk_env(), ContainerEngine::Docker);
+        let result = manager.count_connected_agents("tsk-proxy-test").await;
 
         assert!(result.is_ok());
-        // Should count 3 agent networks (excluding tsk-external)
         assert_eq!(result.unwrap(), 3);
     }
 
@@ -1303,7 +1084,6 @@ mod tests {
     async fn test_maybe_stop_proxy_no_agents() {
         use serde_json::json;
 
-        // Proxy running with only external network (no agent networks)
         let mock_client = Arc::new(TrackedDockerClient {
             inspect_container_response: json!({
                 "State": {
@@ -1321,23 +1101,23 @@ mod tests {
 
         let ctx = AppContext::builder().build();
 
-        let manager = ProxyManager::new(mock_client.clone(), ctx.tsk_config(), ctx.tsk_env());
-        let result = manager.maybe_stop_proxy().await;
+        let manager =
+            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let proxy_config = default_proxy_config();
+        let result = manager.maybe_stop_proxy(&proxy_config).await;
 
         assert!(result.is_ok());
         assert!(result.unwrap()); // Should have stopped
 
-        // Verify remove_container was called
         let remove_calls = mock_client.remove_container_calls.lock().unwrap();
         assert_eq!(remove_calls.len(), 1);
-        assert_eq!(remove_calls[0].0, "tsk-proxy");
+        assert_eq!(remove_calls[0].0, proxy_config.proxy_container_name());
     }
 
     #[tokio::test]
     async fn test_maybe_stop_proxy_with_agents() {
         use serde_json::json;
 
-        // Proxy running with agent networks connected
         let mock_client = Arc::new(TrackedDockerClient {
             inspect_container_response: json!({
                 "State": {
@@ -1357,14 +1137,50 @@ mod tests {
 
         let ctx = AppContext::builder().build();
 
-        let manager = ProxyManager::new(mock_client.clone(), ctx.tsk_config(), ctx.tsk_env());
-        let result = manager.maybe_stop_proxy().await;
+        let manager =
+            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let proxy_config = default_proxy_config();
+        let result = manager.maybe_stop_proxy(&proxy_config).await;
 
         assert!(result.is_ok());
         assert!(!result.unwrap()); // Should NOT have stopped
 
-        // Verify remove_container was NOT called
         let remove_calls = mock_client.remove_container_calls.lock().unwrap();
         assert_eq!(remove_calls.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_ensure_proxy_with_squid_conf_mount() {
+        let mock_client = Arc::new(TrackedDockerClient::default());
+        let ctx = AppContext::builder().build();
+
+        let manager =
+            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let proxy_config = ResolvedProxyConfig {
+            host_services: vec![],
+            squid_conf: Some("http_port 3128\nacl custom src all".to_string()),
+        };
+        let result = manager.ensure_proxy(&proxy_config, None).await;
+
+        assert!(result.is_ok());
+
+        let create_calls = mock_client.create_container_calls.lock().unwrap();
+        let (_, config) = &create_calls[0];
+
+        // Verify bind mount includes squid.conf
+        let host_config = config.host_config.as_ref().unwrap();
+        let binds = host_config.binds.as_ref().unwrap();
+        assert_eq!(binds.len(), 1);
+        assert!(binds[0].ends_with("squid.conf:/etc/squid/squid.conf:ro"));
+
+        // Verify the squid.conf file was written to disk
+        let fingerprint = proxy_config.fingerprint();
+        let squid_path = ctx
+            .tsk_env()
+            .proxy_config_dir(&fingerprint)
+            .join("squid.conf");
+        assert!(squid_path.exists());
+        let content = std::fs::read_to_string(&squid_path).unwrap();
+        assert_eq!(content, "http_port 3128\nacl custom src all");
     }
 }

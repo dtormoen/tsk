@@ -7,7 +7,9 @@ pub mod tsk_env;
 
 // Re-export TskConfig types from tsk_config module
 // Types used in production code
-pub use tsk_config::{ContainerEngine, ResolvedConfig, TskConfig, VolumeMount};
+pub use tsk_config::{
+    ContainerEngine, ResolvedConfig, ResolvedProxyConfig, TskConfig, VolumeMount,
+};
 // Types only used in tests
 #[cfg(test)]
 pub use tsk_config::{BindMount, EnvVar, NamedVolume, SharedConfig};

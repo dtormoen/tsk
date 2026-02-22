@@ -45,10 +45,14 @@ impl TskConfig {
     /// 2. `[defaults]` section
     /// 3. Project-level `.tsk/tsk.toml` (if provided)
     /// 4. `[project.<name>]` section (if present)
+    ///
+    /// After layer merging, resolves `squid_conf_path` to content if `squid_conf` was
+    /// not set by any layer's inline `squid_conf` field.
     pub fn resolve_config(
         &self,
         project_name: &str,
         project_config: Option<&SharedConfig>,
+        project_root: Option<&Path>,
     ) -> ResolvedConfig {
         let mut resolved = ResolvedConfig::default();
 
@@ -65,7 +69,70 @@ impl TskConfig {
             self.apply_shared_config(&mut resolved, user_project_config);
         }
 
+        // Resolve squid_conf_path to content if squid_conf was not set by any layer
+        if resolved.squid_conf.is_none() {
+            resolved.squid_conf =
+                self.resolve_squid_conf_path(project_name, project_config, project_root);
+        }
+
         resolved
+    }
+
+    /// Resolves squid_conf_path to file content, checking config layers in priority order.
+    /// Within each layer, squid_conf (already merged as scalar) takes priority over squid_conf_path.
+    fn resolve_squid_conf_path(
+        &self,
+        project_name: &str,
+        project_config: Option<&SharedConfig>,
+        project_root: Option<&Path>,
+    ) -> Option<String> {
+        // Priority order: user [project.<name>] > project .tsk/tsk.toml > user [defaults]
+
+        // User project-specific config
+        if let Some(config) = self.project.get(project_name)
+            && let Some(ref path_str) = config.squid_conf_path
+        {
+            let path = expand_tilde(path_str);
+            match std::fs::read_to_string(&path) {
+                Ok(content) => return Some(content),
+                Err(e) => eprintln!(
+                    "Warning: Failed to read squid_conf_path '{}': {e}",
+                    path.display()
+                ),
+            }
+        }
+
+        // Project-level .tsk/tsk.toml config
+        if let Some(config) = project_config
+            && let Some(ref path_str) = config.squid_conf_path
+        {
+            let path = if let Some(root) = project_root {
+                root.join(path_str)
+            } else {
+                PathBuf::from(path_str)
+            };
+            match std::fs::read_to_string(&path) {
+                Ok(content) => return Some(content),
+                Err(e) => eprintln!(
+                    "Warning: Failed to read squid_conf_path '{}': {e}",
+                    path.display()
+                ),
+            }
+        }
+
+        // User defaults
+        if let Some(ref path_str) = self.defaults.squid_conf_path {
+            let path = expand_tilde(path_str);
+            match std::fs::read_to_string(&path) {
+                Ok(content) => return Some(content),
+                Err(e) => eprintln!(
+                    "Warning: Failed to read squid_conf_path '{}': {e}",
+                    path.display()
+                ),
+            }
+        }
+
+        None
     }
 
     /// Apply a SharedConfig layer onto a ResolvedConfig with proper merge semantics.
@@ -94,6 +161,9 @@ impl TskConfig {
         }
         if let Some(ref setup) = config.setup {
             resolved.setup = Some(setup.clone());
+        }
+        if let Some(ref squid_conf) = config.squid_conf {
+            resolved.squid_conf = Some(squid_conf.clone());
         }
 
         // host_services: combine, deduplicate
@@ -138,33 +208,6 @@ impl TskConfig {
                 .agent_config
                 .insert(name.clone(), agent_cfg.clone());
         }
-    }
-
-    /// Returns all unique host service ports across defaults and all projects,
-    /// formatted as a comma-separated string for environment variables.
-    ///
-    /// The proxy container is shared across all tasks, so it needs the union
-    /// of all configured host_services. Ports are sorted for deterministic output.
-    pub fn all_host_services_env(&self) -> String {
-        let mut ports: Vec<u16> = Vec::new();
-        for &port in &self.defaults.host_services {
-            if !ports.contains(&port) {
-                ports.push(port);
-            }
-        }
-        for project in self.project.values() {
-            for &port in &project.host_services {
-                if !ports.contains(&port) {
-                    ports.push(port);
-                }
-            }
-        }
-        ports.sort();
-        ports
-            .iter()
-            .map(|p| p.to_string())
-            .collect::<Vec<_>>()
-            .join(",")
     }
 }
 
@@ -222,6 +265,10 @@ pub struct SharedConfig {
     /// Environment variables for containers
     #[serde(default)]
     pub env: Vec<EnvVar>,
+    /// Inline Squid proxy configuration content (takes priority over squid_conf_path)
+    pub squid_conf: Option<String>,
+    /// Path to a Squid proxy configuration file
+    pub squid_conf_path: Option<String>,
 }
 
 /// Per-stack configuration (e.g., custom Dockerfile setup commands)
@@ -270,6 +317,8 @@ pub struct ResolvedConfig {
     pub volumes: Vec<VolumeMount>,
     /// Environment variables for containers
     pub env: Vec<EnvVar>,
+    /// Resolved Squid proxy configuration content
+    pub squid_conf: Option<String>,
 }
 
 impl Default for ResolvedConfig {
@@ -287,6 +336,7 @@ impl Default for ResolvedConfig {
             agent_config: HashMap::new(),
             volumes: Vec::new(),
             env: Vec::new(),
+            squid_conf: None,
         }
     }
 }
@@ -324,6 +374,73 @@ impl ResolvedConfig {
     /// Returns true if any host service ports are configured
     pub fn has_host_services(&self) -> bool {
         !self.host_services.is_empty()
+    }
+
+    /// Extract proxy-specific configuration for fingerprinting and proxy management
+    pub fn proxy_config(&self) -> ResolvedProxyConfig {
+        ResolvedProxyConfig {
+            host_services: self.host_services.clone(),
+            squid_conf: self.squid_conf.clone(),
+        }
+    }
+}
+
+/// Proxy-specific configuration extracted from ResolvedConfig.
+/// Used to determine proxy container identity via fingerprinting.
+#[derive(Debug, Clone, Default)]
+pub struct ResolvedProxyConfig {
+    pub host_services: Vec<u16>,
+    pub squid_conf: Option<String>,
+}
+
+impl ResolvedProxyConfig {
+    /// Compute a short fingerprint (first 8 hex chars of SHA256) from the proxy config.
+    /// Tasks with identical fingerprints share the same proxy container.
+    pub fn fingerprint(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+
+        // Hash sorted host_services
+        let mut ports = self.host_services.clone();
+        ports.sort();
+        for port in &ports {
+            hasher.update(port.to_string().as_bytes());
+            hasher.update(b",");
+        }
+
+        // Hash squid_conf content if present
+        if let Some(ref conf) = self.squid_conf {
+            hasher.update(conf.as_bytes());
+        }
+
+        let result = hasher.finalize();
+        format!("{:x}", result).chars().take(8).collect()
+    }
+
+    /// Container name for this proxy configuration
+    pub fn proxy_container_name(&self) -> String {
+        format!("tsk-proxy-{}", self.fingerprint())
+    }
+
+    /// External network name for this proxy configuration
+    pub fn external_network_name(&self) -> String {
+        format!("tsk-external-{}", self.fingerprint())
+    }
+
+    /// Host services as comma-separated string for environment variables
+    pub fn host_services_env(&self) -> String {
+        let mut ports = self.host_services.clone();
+        ports.sort();
+        ports
+            .iter()
+            .map(|p| p.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    /// Proxy URL for HTTP_PROXY environment variable
+    pub fn proxy_url(&self) -> String {
+        format!("http://{}:3128", self.proxy_container_name())
     }
 }
 
@@ -410,20 +527,28 @@ pub struct NamedVolume {
 impl BindMount {
     /// Expand ~ in host path to actual home directory
     pub fn expanded_host_path(&self) -> Result<PathBuf, TskEnvError> {
-        if self.host.starts_with("~/") {
-            let home = env::var("HOME")
-                .or_else(|_| env::var("USERPROFILE"))
-                .map_err(|_| TskEnvError::NoHomeDirectory)?;
-            Ok(PathBuf::from(home).join(&self.host[2..]))
-        } else if self.host == "~" {
-            let home = env::var("HOME")
-                .or_else(|_| env::var("USERPROFILE"))
-                .map_err(|_| TskEnvError::NoHomeDirectory)?;
-            Ok(PathBuf::from(home))
-        } else {
-            Ok(PathBuf::from(&self.host))
+        let expanded = expand_tilde(&self.host);
+        // If the path started with ~ but expand_tilde couldn't resolve HOME,
+        // the path is returned unchanged — detect this as an error.
+        if self.host.starts_with('~') && expanded.as_os_str() == self.host.as_str() {
+            return Err(TskEnvError::NoHomeDirectory);
         }
+        Ok(expanded)
     }
+}
+
+/// Expand leading `~` or `~/` in a path string to the user's home directory.
+fn expand_tilde(path: &str) -> PathBuf {
+    if path == "~" {
+        if let Ok(home) = env::var("HOME").or_else(|_| env::var("USERPROFILE")) {
+            return PathBuf::from(home);
+        }
+    } else if let Some(rest) = path.strip_prefix("~/")
+        && let Ok(home) = env::var("HOME").or_else(|_| env::var("USERPROFILE"))
+    {
+        return PathBuf::from(home).join(rest);
+    }
+    PathBuf::from(path)
 }
 
 /// Load TskConfig from a configuration directory
@@ -637,7 +762,7 @@ env = [
             ..Default::default()
         };
 
-        let resolved = config.resolve_config("my-project", None);
+        let resolved = config.resolve_config("my-project", None, None);
 
         // Project overrides defaults
         assert_eq!(resolved.agent, "claude");
@@ -653,7 +778,7 @@ env = [
         assert!(resolved.git_town);
 
         // Non-existent project only gets defaults
-        let resolved_other = config.resolve_config("other-project", None);
+        let resolved_other = config.resolve_config("other-project", None, None);
         assert_eq!(resolved_other.agent, "codex");
         assert_eq!(resolved_other.stack, "default");
         assert_eq!(resolved_other.memory_limit_gb, 16.0);
@@ -677,7 +802,7 @@ env = [
             ..Default::default()
         };
 
-        let resolved = config.resolve_config("my-project", None);
+        let resolved = config.resolve_config("my-project", None, None);
 
         // Combined and deduplicated
         assert_eq!(resolved.host_services, vec![5432, 6379, 3000]);
@@ -724,7 +849,7 @@ env = [
             ..Default::default()
         };
 
-        let resolved = config.resolve_config("my-project", None);
+        let resolved = config.resolve_config("my-project", None, None);
 
         // /data from defaults remains, /cache replaced by project's named volume, /logs added
         assert_eq!(resolved.volumes.len(), 3);
@@ -791,7 +916,7 @@ env = [
             ..Default::default()
         };
 
-        let resolved = config.resolve_config("my-project", None);
+        let resolved = config.resolve_config("my-project", None, None);
 
         assert_eq!(resolved.env.len(), 3);
         assert_eq!(resolved.env[0].name, "DATABASE_URL");
@@ -845,7 +970,7 @@ env = [
             ..Default::default()
         };
 
-        let resolved = config.resolve_config("my-project", None);
+        let resolved = config.resolve_config("my-project", None, None);
 
         assert_eq!(resolved.stack_config.len(), 3);
         assert_eq!(
@@ -897,7 +1022,7 @@ env = [
             ..Default::default()
         };
 
-        let resolved = config.resolve_config("my-project", None);
+        let resolved = config.resolve_config("my-project", None, None);
 
         assert_eq!(resolved.agent_config.len(), 2);
         assert_eq!(
@@ -953,7 +1078,7 @@ enabled = true
         let temp_dir = tempfile::TempDir::new().unwrap();
         let config = load_config(temp_dir.path());
 
-        let resolved = config.resolve_config("any-project", None);
+        let resolved = config.resolve_config("any-project", None, None);
         assert_eq!(resolved.agent, "claude");
         assert_eq!(resolved.stack, "default");
         assert_eq!(resolved.memory_limit_gb, 12.0);
@@ -1299,7 +1424,7 @@ setup = "RUN pip install numpy"
             ..Default::default()
         };
 
-        let resolved = config.resolve_config("my-project", Some(&project_config));
+        let resolved = config.resolve_config("my-project", Some(&project_config), None);
 
         // user [project] overrides project config
         assert_eq!(resolved.agent, "claude");
@@ -1358,7 +1483,7 @@ setup = "RUN pip install numpy"
             ..Default::default()
         };
 
-        let resolved = config.resolve_config("my-project", Some(&project_config));
+        let resolved = config.resolve_config("my-project", Some(&project_config), None);
 
         // project config overrides defaults for agent and memory
         assert_eq!(resolved.agent, "codex");
@@ -1366,54 +1491,6 @@ setup = "RUN pip install numpy"
         assert_eq!(resolved.memory_limit_gb, 20.0);
         // defaults still apply for unset fields
         assert_eq!(resolved.cpu_limit, 4);
-    }
-
-    #[test]
-    fn test_all_host_services_env() {
-        // Empty config
-        let config = TskConfig::default();
-        assert_eq!(config.all_host_services_env(), "");
-
-        // Services only in defaults
-        let config = TskConfig {
-            defaults: SharedConfig {
-                host_services: vec![5432, 6379],
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        assert_eq!(config.all_host_services_env(), "5432,6379");
-
-        // Services only in project
-        let config = TskConfig {
-            project: HashMap::from([(
-                "my-project".to_string(),
-                SharedConfig {
-                    host_services: vec![3000],
-                    ..Default::default()
-                },
-            )]),
-            ..Default::default()
-        };
-        assert_eq!(config.all_host_services_env(), "3000");
-
-        // Services in both defaults and project, with dedup
-        let config = TskConfig {
-            defaults: SharedConfig {
-                host_services: vec![5432, 6379],
-                ..Default::default()
-            },
-            project: HashMap::from([(
-                "project-a".to_string(),
-                SharedConfig {
-                    host_services: vec![6379, 3000],
-                    ..Default::default()
-                },
-            )]),
-            ..Default::default()
-        };
-        let result = config.all_host_services_env();
-        assert_eq!(result, "3000,5432,6379");
     }
 
     #[test]
@@ -1455,6 +1532,7 @@ setup = "RUN pip install numpy"
                 name: "DB_URL".to_string(),
                 value: "postgres://localhost/db".to_string(),
             }],
+            squid_conf: Some("http_port 3128".to_string()),
         };
 
         let json = serde_json::to_string(&config).unwrap();
@@ -1480,5 +1558,225 @@ setup = "RUN pip install numpy"
         assert_eq!(deserialized.volumes.len(), 2);
         assert_eq!(deserialized.env.len(), 1);
         assert_eq!(deserialized.env[0].name, "DB_URL");
+        assert_eq!(deserialized.squid_conf, Some("http_port 3128".to_string()));
+    }
+
+    #[test]
+    fn test_proxy_config_fingerprint_consistent() {
+        let proxy = ResolvedProxyConfig {
+            host_services: vec![5432, 6379],
+            squid_conf: Some("http_port 3128".to_string()),
+        };
+        let fp1 = proxy.fingerprint();
+        let fp2 = proxy.fingerprint();
+        assert_eq!(fp1, fp2);
+        assert_eq!(fp1.len(), 8);
+        assert!(fp1.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_proxy_config_fingerprint_differs_by_host_services() {
+        let a = ResolvedProxyConfig {
+            host_services: vec![5432],
+            squid_conf: None,
+        };
+        let b = ResolvedProxyConfig {
+            host_services: vec![6379],
+            squid_conf: None,
+        };
+        assert_ne!(a.fingerprint(), b.fingerprint());
+    }
+
+    #[test]
+    fn test_proxy_config_fingerprint_differs_by_squid_conf() {
+        let a = ResolvedProxyConfig {
+            host_services: vec![],
+            squid_conf: Some("conf-a".to_string()),
+        };
+        let b = ResolvedProxyConfig {
+            host_services: vec![],
+            squid_conf: Some("conf-b".to_string()),
+        };
+        assert_ne!(a.fingerprint(), b.fingerprint());
+    }
+
+    #[test]
+    fn test_proxy_config_fingerprint_identical() {
+        let a = ResolvedProxyConfig {
+            host_services: vec![6379, 5432],
+            squid_conf: Some("http_port 3128".to_string()),
+        };
+        let b = ResolvedProxyConfig {
+            host_services: vec![5432, 6379],
+            squid_conf: Some("http_port 3128".to_string()),
+        };
+        // Ports are sorted before hashing, so order should not matter
+        assert_eq!(a.fingerprint(), b.fingerprint());
+    }
+
+    #[test]
+    fn test_proxy_config_container_and_network_names() {
+        let proxy = ResolvedProxyConfig {
+            host_services: vec![5432],
+            squid_conf: None,
+        };
+        let fp = proxy.fingerprint();
+        assert_eq!(proxy.proxy_container_name(), format!("tsk-proxy-{fp}"));
+        assert_eq!(proxy.external_network_name(), format!("tsk-external-{fp}"));
+        assert_eq!(proxy.proxy_url(), format!("http://tsk-proxy-{fp}:3128"));
+    }
+
+    #[test]
+    fn test_proxy_config_host_services_env() {
+        let proxy = ResolvedProxyConfig {
+            host_services: vec![6379, 5432, 3000],
+            squid_conf: None,
+        };
+        // host_services_env sorts the ports
+        assert_eq!(proxy.host_services_env(), "3000,5432,6379");
+
+        let empty = ResolvedProxyConfig {
+            host_services: vec![],
+            squid_conf: None,
+        };
+        assert_eq!(empty.host_services_env(), "");
+    }
+
+    #[test]
+    fn test_squid_conf_inline_resolution() {
+        let config = TskConfig {
+            defaults: SharedConfig {
+                squid_conf: Some("default-squid-conf".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let resolved = config.resolve_config("my-project", None, None);
+        assert_eq!(resolved.squid_conf, Some("default-squid-conf".to_string()));
+    }
+
+    #[test]
+    fn test_squid_conf_path_resolution() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let squid_file = temp_dir.path().join("custom-squid.conf");
+        std::fs::write(&squid_file, "http_port 3128\nacl custom src all").unwrap();
+
+        let config = TskConfig {
+            defaults: SharedConfig {
+                squid_conf_path: Some(squid_file.to_string_lossy().to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let resolved = config.resolve_config("my-project", None, None);
+        assert_eq!(
+            resolved.squid_conf,
+            Some("http_port 3128\nacl custom src all".to_string())
+        );
+    }
+
+    #[test]
+    fn test_squid_conf_project_path_resolution() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let project_root = temp_dir.path();
+        let squid_file = project_root.join("proxy.conf");
+        std::fs::write(&squid_file, "project-squid-content").unwrap();
+
+        let project_config = SharedConfig {
+            squid_conf_path: Some("proxy.conf".to_string()),
+            ..Default::default()
+        };
+
+        let config = TskConfig::default();
+        let resolved =
+            config.resolve_config("my-project", Some(&project_config), Some(project_root));
+        assert_eq!(
+            resolved.squid_conf,
+            Some("project-squid-content".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolved_config_default_squid_conf() {
+        let resolved = ResolvedConfig::default();
+        assert!(resolved.squid_conf.is_none());
+    }
+
+    #[test]
+    fn test_resolved_config_proxy_config() {
+        let resolved = ResolvedConfig {
+            host_services: vec![5432, 6379],
+            squid_conf: Some("custom-conf".to_string()),
+            ..Default::default()
+        };
+        let proxy = resolved.proxy_config();
+        assert_eq!(proxy.host_services, vec![5432, 6379]);
+        assert_eq!(proxy.squid_conf, Some("custom-conf".to_string()));
+    }
+
+    #[test]
+    fn test_squid_conf_project_overrides_defaults() {
+        let config = TskConfig {
+            defaults: SharedConfig {
+                squid_conf: Some("default-conf".to_string()),
+                ..Default::default()
+            },
+            project: HashMap::from([(
+                "my-project".to_string(),
+                SharedConfig {
+                    squid_conf: Some("project-conf".to_string()),
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+        let resolved = config.resolve_config("my-project", None, None);
+        assert_eq!(resolved.squid_conf, Some("project-conf".to_string()));
+    }
+
+    #[test]
+    fn test_squid_conf_inline_wins_over_path_same_layer() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let squid_file = temp_dir.path().join("squid.conf");
+        std::fs::write(&squid_file, "file-content").unwrap();
+
+        let config = TskConfig {
+            defaults: SharedConfig {
+                squid_conf: Some("inline-content".to_string()),
+                squid_conf_path: Some(squid_file.to_str().unwrap().to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let resolved = config.resolve_config("test", None, None);
+        // Inline squid_conf should win over squid_conf_path
+        assert_eq!(resolved.squid_conf, Some("inline-content".to_string()));
+    }
+
+    #[test]
+    fn test_squid_conf_path_project_overrides_defaults_path() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let default_file = temp_dir.path().join("default-squid.conf");
+        let project_file = temp_dir.path().join("project-squid.conf");
+        std::fs::write(&default_file, "default-content").unwrap();
+        std::fs::write(&project_file, "project-content").unwrap();
+
+        let config = TskConfig {
+            defaults: SharedConfig {
+                squid_conf_path: Some(default_file.to_str().unwrap().to_string()),
+                ..Default::default()
+            },
+            project: HashMap::from([(
+                "my-project".to_string(),
+                SharedConfig {
+                    squid_conf_path: Some(project_file.to_str().unwrap().to_string()),
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+        let resolved = config.resolve_config("my-project", None, None);
+        // User project squid_conf_path should win over defaults squid_conf_path
+        assert_eq!(resolved.squid_conf, Some("project-content".to_string()));
     }
 }

@@ -199,7 +199,7 @@ TSK implements multiple security layers:
 ### Network Isolation
 - Each agent runs in a dedicated internal Docker network (`tsk-agent-{task-id}`)
 - Internal networks have no external gateway - agents cannot route to the internet directly
-- The `tsk-proxy` container bridges agent networks to the outside world
+- The `tsk-proxy-{fingerprint}` container bridges agent networks to the outside world (per-config proxy instances)
 - Proxy build is skipped if proxy is already running (config changes picked up when proxy stops and restarts)
 - Proxy automatically stops when no agent containers are connected
 - Squid proxy enforces a domain allowlist for AI APIs and package registries
@@ -289,8 +289,8 @@ docker images | grep tsk
 # Inspect running containers
 docker ps --filter "label=tsk"
 
-# View proxy logs
-docker logs tsk-proxy
+# View proxy logs (replace {fingerprint} with actual value from docker ps)
+docker logs tsk-proxy-{fingerprint}
 
 ```
 

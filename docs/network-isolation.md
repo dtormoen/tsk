@@ -11,7 +11,7 @@ graph TB
         PKG[Package Registries<br/>pypi.org, crates.io<br/>npmjs.org, etc.]
     end
 
-    PROXY[tsk-proxy<br/>Squid + iptables + socat]
+    PROXY[tsk-proxy-*<br/>Squid + iptables + socat]
 
     AGENT1[Agent Container<br/>tsk-abc123]
     AGENT2[Agent Container<br/>tsk-def456]
@@ -41,10 +41,10 @@ Each agent container runs in its own Docker network created with the `internal: 
 - **Lifecycle**: Created when task starts, destroyed when task completes
 - **Isolation**: Each agent is on a separate network, agents cannot communicate with each other
 
-### Proxy Container (tsk-proxy)
+### Proxy Container (tsk-proxy-{fingerprint})
 
-The proxy container is the sole gateway between agent networks and the outside world. It connects to:
-1. The `tsk-external` network (has internet access)
+The proxy container is the sole gateway between agent networks and the outside world. Each unique proxy configuration (host_services + squid.conf) gets its own proxy container identified by a fingerprint. A proxy connects to:
+1. The `tsk-external-{fingerprint}` network (has internet access)
 2. Each active agent's isolated network (joined on-demand)
 
 The proxy runs:
@@ -60,7 +60,7 @@ sequenceDiagram
     participant Proxy
     participant Internet
 
-    Note over Agent: HTTP_PROXY=http://tsk-proxy:3128
+    Note over Agent: HTTP_PROXY=http://tsk-proxy-{fp}:3128
 
     Agent->>Proxy: CONNECT api.anthropic.com:443
     Proxy->>Proxy: Check domain allowlist
@@ -107,7 +107,7 @@ The proxy can forward TCP connections to services running on the host machine. C
 host_services = [5432, 6379, 3000]  # PostgreSQL, Redis, dev server
 ```
 
-Agents connect to `tsk-proxy:<port>` and traffic is forwarded to `host.docker.internal:<port>`.
+Agents connect to `$TSK_HOST_SERVICES_HOST:<port>` and traffic is forwarded to `host.docker.internal:<port>`.
 
 ### Agent Container Hardening
 

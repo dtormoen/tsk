@@ -123,6 +123,11 @@ impl TskEnv {
         self.data_dir.join("tasks").join(task_id)
     }
 
+    /// Get the directory for per-proxy configuration files (e.g., squid.conf)
+    pub fn proxy_config_dir(&self, fingerprint: &str) -> PathBuf {
+        self.data_dir.join("proxy-configs").join(fingerprint)
+    }
+
     /// Get the server PID file path
     pub fn pid_file(&self) -> PathBuf {
         self.runtime_dir.join("tsk.pid")

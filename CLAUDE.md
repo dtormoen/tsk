@@ -61,10 +61,12 @@ TSK implements a command pattern with dependency injection for testability. The 
 - **Container engine**: Supports Docker (default) and Podman via `--container-engine` flag on container-related subcommands (`run`, `shell`, `retry`, `server start`, `docker build`) or top-level `container_engine` in tsk.toml. Podman uses host network mode for builds and case-insensitive error matching.
 - `DockerImageManager`: Centralized Docker image management with intelligent layering
 - `ProxyManager`: Dedicated proxy lifecycle management with automatic cleanup and network isolation
+  - Per-configuration proxy instances: tasks with different proxy configs (host_services, squid_conf) get separate proxy containers named `tsk-proxy-{fingerprint}`
+  - Fingerprint derived from sorted host_services + squid.conf content (SHA256, first 8 hex chars)
+  - Custom squid.conf mounted at runtime via bind mount (not baked into image)
   - Skips proxy build if proxy is already running (faster startup)
-  - Config changes picked up when proxy stops and restarts
-  - Automatically stops proxy when no agents are connected and no tasks are queued
-  - Uses Docker network inspection to count connected agent containers
+  - Automatically stops proxy when no agents are connected
+  - Uses Docker network inspection to count connected agent containers per proxy
 - `DockerManager`: Container execution with unified support for interactive and non-interactive modes
 - Security-first containers with dropped capabilities
 - **Docker-in-Docker (DIND) support**: Opt-in via `--dind` flag or config (`dind = true` in `[defaults]` or `[project.<name>]`). When enabled, applies a custom seccomp profile allowing nested container operations, disables AppArmor confinement, and keeps SETUID/SETGID capabilities for rootless Podman user-namespace setup. When disabled (default), security_opt is left at Docker/Podman defaults and SETUID/SETGID are dropped. Resolution order: CLI flag > `[project.<name>]` > `[defaults]` > default (false).
@@ -79,7 +81,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 
 **Storage** (`src/context/`)
 - `TskEnv`: Manages directory paths (data_dir, runtime_dir, config_dir) and runtime environment settings (editor, terminal type). TSK-specific env vars (`TSK_DATA_HOME`, `TSK_RUNTIME_DIR`, `TSK_CONFIG_HOME`) take precedence over XDG vars, enabling isolated testing without affecting other XDG-aware software
-- `TskConfig`: User configuration loaded from tsk.toml. Uses shared config shape with `[defaults]` and `[project.<name>]` sections. `TskConfig::resolve_config(project_name, project_config)` returns a `ResolvedConfig` with all layers merged: `user [project.<name>] > project .tsk/tsk.toml > user [defaults] > built-in`. Project-level config is loaded from `.tsk/tsk.toml` via `load_project_config()`.
+- `TskConfig`: User configuration loaded from tsk.toml. Uses shared config shape with `[defaults]` and `[project.<name>]` sections. `TskConfig::resolve_config(project_name, project_config, project_root)` returns a `ResolvedConfig` with all layers merged: `user [project.<name>] > project .tsk/tsk.toml > user [defaults] > built-in`. Project-level config is loaded from `.tsk/tsk.toml` via `load_project_config()`. `ResolvedConfig::proxy_config()` extracts a `ResolvedProxyConfig` with host_services and squid_conf for proxy fingerprinting.
 - Centralized task storage across all repositories
 - Runtime directory for PID file
 

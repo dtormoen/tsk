@@ -245,8 +245,8 @@ volumes = [
 ]
 env = [
     # Environment variables passed to the container
-    { name = "DATABASE_URL", value = "postgres://tsk-proxy:5432/mydb" },
-    { name = "REDIS_URL", value = "redis://tsk-proxy:6379" },
+    { name = "DB_PORT", value = "5432" },
+    { name = "REDIS_PORT", value = "6379" },
 ]
 ```
 
@@ -274,11 +274,11 @@ Volume mounts are particularly useful for:
 - **Persistent state**: Use named volumes for build caches that persist across tasks
 - **Read-only artifacts**: Mount debugging artifacts, config files, or other resources without risk of modification
 
-Environment variables (`env`) let you pass configuration to task containers, such as database URLs or API keys. Use `tsk-proxy:<port>` to connect to host services forwarded through the proxy.
+Environment variables (`env`) let you pass configuration to task containers, such as database URLs or API keys. To connect to host services forwarded through the proxy, use the `TSK_HOST_SERVICES_HOST` environment variable (set automatically by TSK) as the hostname.
 
 The container engine can also be set per-command with the `--container-engine` flag (available on `run`, `shell`, `retry`, `server start`, and `docker build`).
 
-Host services (`host_services`) expose host services to task containers. Agents connect to `tsk-proxy:<port>` to reach services running on your host machine (e.g., local databases or dev servers).
+Host services (`host_services`) expose host services to task containers. Agents connect to `$TSK_HOST_SERVICES_HOST:<port>` to reach services running on your host machine (e.g., local databases or dev servers). The `TSK_HOST_SERVICES_HOST` environment variable is automatically set by TSK to the correct proxy container hostname.
 
 When `git_town` is enabled, TSK integrates with [git-town](https://www.git-town.com/) by setting the parent branch metadata on task branches, allowing git-town commands like `git town sync` to work correctly with TSK-created branches.
 
@@ -321,7 +321,31 @@ To create good templates, I would recommend thinking about repetitive tasks that
 
 ### Custom Proxy Configuration
 
-TSK uses Squid as a forward proxy to control network access from task containers. If you want to customize the proxy configuration e.g. to allow access to a specific service or allow a URL for downloading specific dependencies of your project, you can create a `squid.conf` file in the user level configuration directory, usually `~/.config/tsk`. Look at the default [TSK squid.conf](./dockerfiles/tsk-proxy/squid.conf) as an example.
+TSK uses Squid as a forward proxy to control network access from task containers. You can customize the proxy configuration to allow access to specific services or URLs needed by your project.
+
+**Inline configuration** in tsk.toml (recommended):
+```toml
+[defaults]
+squid_conf = '''
+http_port 3128
+acl allowed_domains dstdomain .example.com .myapi.dev
+http_access allow allowed_domains
+http_access deny all
+'''
+```
+
+**File-based configuration** (path reference):
+```toml
+[defaults]
+squid_conf_path = "~/.config/tsk/squid.conf"
+
+# Or in project-level .tsk/tsk.toml (path relative to project root):
+# squid_conf_path = ".tsk/squid.conf"
+```
+
+Inline `squid_conf` takes priority over `squid_conf_path`. See the default [TSK squid.conf](./dockerfiles/tsk-proxy/squid.conf) as a starting point.
+
+**Per-configuration proxy instances:** Tasks with different proxy configurations (different `host_services` or `squid_conf`) automatically get separate proxy containers. Tasks with identical proxy config share the same proxy. Proxy containers are named `tsk-proxy-{fingerprint}` where the fingerprint is derived from the proxy configuration.
 
 ## TSK Data Directory
 

@@ -35,7 +35,11 @@ impl Command for DockerBuildCommand {
         if self.proxy_only {
             println!("Building tsk/proxy image...");
             use crate::docker::proxy_manager::ProxyManager;
-            let proxy_manager = ProxyManager::new(docker_client, ctx.tsk_config(), ctx.tsk_env());
+            let proxy_manager = ProxyManager::new(
+                docker_client,
+                ctx.tsk_env(),
+                ctx.tsk_config().container_engine.clone(),
+            );
             proxy_manager.build_proxy(self.no_cache, None).await?;
             println!("Successfully built Docker image: tsk/proxy");
             return Ok(());
@@ -99,9 +103,11 @@ impl Command for DockerBuildCommand {
         let project_config = project_root
             .as_deref()
             .and_then(crate::context::tsk_config::load_project_config);
-        let resolved_config = ctx
-            .tsk_config()
-            .resolve_config(project_name, project_config.as_ref());
+        let resolved_config = ctx.tsk_config().resolve_config(
+            project_name,
+            project_config.as_ref(),
+            project_root.as_deref(),
+        );
 
         // Create image manager with AppContext
         let image_manager =
@@ -129,7 +135,11 @@ impl Command for DockerBuildCommand {
             // Always build proxy image as it's still needed
             println!("\nBuilding tsk/proxy image...");
             use crate::docker::proxy_manager::ProxyManager;
-            let proxy_manager = ProxyManager::new(docker_client, ctx.tsk_config(), ctx.tsk_env());
+            let proxy_manager = ProxyManager::new(
+                docker_client,
+                ctx.tsk_env(),
+                ctx.tsk_config().container_engine.clone(),
+            );
             proxy_manager.build_proxy(self.no_cache, None).await?;
             println!("Successfully built Docker image: tsk/proxy");
 

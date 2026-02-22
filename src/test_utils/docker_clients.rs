@@ -337,9 +337,11 @@ impl DockerClient for TrackedDockerClient {
         config: ContainerCreateBody,
     ) -> Result<String, String> {
         let call_count = self.create_container_calls.lock().unwrap().len();
-        let is_proxy = options
-            .as_ref()
-            .is_some_and(|opt| opt.name == Some("tsk-proxy".to_string()));
+        let is_proxy = options.as_ref().is_some_and(|opt| {
+            opt.name
+                .as_ref()
+                .is_some_and(|n| n.starts_with("tsk-proxy"))
+        });
 
         // Determine the result before moving config
         let result = if is_proxy {
@@ -370,8 +372,8 @@ impl DockerClient for TrackedDockerClient {
             .lock()
             .unwrap()
             .push(id.to_string());
-        // Only fail for non-proxy containers (proxy uses the name "tsk-proxy")
-        if id != "tsk-proxy"
+        // Only fail for non-proxy containers (proxy uses names starting with "tsk-proxy")
+        if !id.starts_with("tsk-proxy")
             && let Some(ref error) = self.start_container_error
         {
             return Err(error.clone());

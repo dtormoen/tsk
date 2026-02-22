@@ -127,8 +127,8 @@ impl TskServer {
 
         let proxy_manager = ProxyManager::new(
             self.docker_client.clone(),
-            self.app_context.tsk_config(),
             self.app_context.tsk_env(),
+            self.app_context.tsk_config().container_engine.clone(),
         );
 
         if !task_ids.is_empty() {
@@ -151,16 +151,22 @@ impl TskServer {
         }
 
         let storage = self.app_context.task_storage();
+        let mut stopped_fingerprints = std::collections::HashSet::new();
         for task_id in &task_ids {
-            if let Ok(Some(task)) = storage.get_task(task_id).await
-                && task.status == TaskStatus::Running
-            {
-                let _ = storage.mark_failed(task_id, "Server shutdown").await;
+            if let Ok(Some(task)) = storage.get_task(task_id).await {
+                if task.status == TaskStatus::Running {
+                    let _ = storage.mark_failed(task_id, "Server shutdown").await;
+                }
+                // Collect unique proxy configs and stop idle proxies
+                let resolved = crate::docker::resolve_config_from_task(&task, &self.app_context);
+                let proxy_config = resolved.proxy_config();
+                let fp = proxy_config.fingerprint();
+                if stopped_fingerprints.insert(fp)
+                    && let Err(e) = proxy_manager.maybe_stop_proxy(&proxy_config).await
+                {
+                    eprintln!("Warning: Failed to stop proxy during shutdown: {e}");
+                }
             }
-        }
-
-        if let Err(e) = proxy_manager.maybe_stop_proxy().await {
-            eprintln!("Warning: Failed to stop proxy during shutdown: {e}");
         }
 
         if let Err(e) = self.lifecycle.cleanup() {

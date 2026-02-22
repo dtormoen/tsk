@@ -235,7 +235,8 @@ impl TaskBuilder {
         // Resolve configuration for this project (layers defaults + project file + project config)
         let tsk_config = ctx.tsk_config();
         let project_config = tsk_config::load_project_config(&repo_root);
-        let resolved = tsk_config.resolve_config(&project, project_config.as_ref());
+        let resolved =
+            tsk_config.resolve_config(&project, project_config.as_ref(), Some(&repo_root));
 
         // Get agent: CLI flag > resolved config (project > defaults > built-in)
         let agent = self.agent.clone().unwrap_or(resolved.agent.clone());
