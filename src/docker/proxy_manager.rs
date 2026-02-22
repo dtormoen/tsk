@@ -154,7 +154,7 @@ impl ProxyManager {
         options_builder = options_builder.dockerfile("Dockerfile");
         options_builder = options_builder.t(PROXY_IMAGE);
         options_builder = options_builder.nocache(no_cache);
-        if self.tsk_config.docker.container_engine == ContainerEngine::Podman {
+        if self.tsk_config.container_engine == ContainerEngine::Podman {
             options_builder = options_builder.networkmode("host");
         }
         let options = options_builder.build();
@@ -339,7 +339,7 @@ impl ProxyManager {
             exposed_ports: Some(vec![PROXY_PORT.to_string()]),
             env: Some(vec![format!(
                 "TSK_HOST_SERVICES={}",
-                self.tsk_config.proxy.host_services_env()
+                self.tsk_config.all_host_services_env()
             )]),
             host_config: Some(HostConfig {
                 network_mode: Some(TSK_EXTERNAL_NETWORK.to_string()),
@@ -627,12 +627,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_ensure_proxy_with_host_services() {
-        use crate::context::tsk_config::ProxyConfig;
+        use crate::context::tsk_config::SharedConfig;
 
         let mock_client = Arc::new(TrackedDockerClient::default());
         let tsk_config = TskConfig {
-            proxy: ProxyConfig {
+            defaults: SharedConfig {
                 host_services: vec![5432, 6379],
+                ..Default::default()
             },
             ..Default::default()
         };

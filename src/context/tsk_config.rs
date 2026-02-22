@@ -2,9 +2,10 @@
 //!
 //! This module contains configuration types that are loaded from the user's
 //! configuration file (`~/.config/tsk/tsk.toml`). These options allow users
-//! to customize Docker container resources and project-specific settings.
+//! to customize container resources, project-specific settings, and shared
+//! configuration that can be layered via `[defaults]` and `[project.<name>]`.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
 use std::path::Path;
@@ -14,83 +15,273 @@ use super::tsk_env::TskEnvError;
 
 /// User configuration loaded from tsk.toml
 ///
-/// This struct contains user-configurable options for TSK, including
-/// Docker container resource limits and project-specific settings.
+/// Contains user-configurable options for TSK, including container engine
+/// selection, server settings, shared defaults, and project-specific overrides.
+///
+/// Configuration is resolved via [`TskConfig::resolve_config`] which layers
+/// `[defaults]` and `[project.<name>]` sections with proper merge semantics.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct TskConfig {
-    /// Docker container resource configuration
-    pub docker: DockerOptions,
-    /// Git-town integration configuration
+    /// Container engine to use (top-level setting)
     #[serde(default)]
-    pub git_town: GitTownConfig,
-    /// Proxy configuration for host service access
-    #[serde(default)]
-    pub proxy: ProxyConfig,
+    pub container_engine: ContainerEngine,
     /// Server daemon configuration
     #[serde(default)]
     pub server: ServerConfig,
+    /// Shared default configuration applied to all projects
+    #[serde(default)]
+    pub defaults: SharedConfig,
     /// Project-specific configurations keyed by project name
     #[serde(default)]
-    pub project: HashMap<String, ProjectConfig>,
+    pub project: HashMap<String, SharedConfig>,
 }
 
 impl TskConfig {
-    /// Get project-specific configuration by project name
+    /// Resolve configuration for a specific project by layering defaults and project overrides.
     ///
-    /// Returns `None` if no configuration exists for the given project.
-    pub fn get_project_config(&self, project_name: &str) -> Option<&ProjectConfig> {
-        self.project.get(project_name)
+    /// Resolution order (later layers override earlier):
+    /// 1. Built-in defaults
+    /// 2. `[defaults]` section
+    /// 3. `[project.<name>]` section (if present)
+    pub fn resolve_config(&self, project_name: &str) -> ResolvedConfig {
+        let mut resolved = ResolvedConfig::default();
+
+        // Apply defaults layer
+        self.apply_shared_config(&mut resolved, &self.defaults);
+
+        // Apply project layer (higher priority)
+        if let Some(project_config) = self.project.get(project_name) {
+            self.apply_shared_config(&mut resolved, project_config);
+        }
+
+        resolved
     }
 
-    /// Returns true if any host service ports are configured for proxy forwarding
-    pub fn has_host_services(&self) -> bool {
-        !self.proxy.host_services.is_empty()
+    /// Apply a SharedConfig layer onto a ResolvedConfig with proper merge semantics.
+    ///
+    /// - Scalars: override if `Some`
+    /// - Lists (`host_services`, `volumes`, `env`): combine with dedup/conflict resolution
+    /// - Maps (`stack_config`, `agent_config`): combine keys, same key replaces entire value
+    fn apply_shared_config(&self, resolved: &mut ResolvedConfig, config: &SharedConfig) {
+        if let Some(ref agent) = config.agent {
+            resolved.agent = agent.clone();
+        }
+        if let Some(ref stack) = config.stack {
+            resolved.stack = stack.clone();
+        }
+        if let Some(dind) = config.dind {
+            resolved.dind = dind;
+        }
+        if let Some(memory) = config.memory_limit_gb {
+            resolved.memory_limit_gb = memory;
+        }
+        if let Some(cpu) = config.cpu_limit {
+            resolved.cpu_limit = cpu;
+        }
+        if let Some(git_town) = config.git_town {
+            resolved.git_town = git_town;
+        }
+        if let Some(ref setup) = config.setup {
+            resolved.setup = Some(setup.clone());
+        }
+
+        // host_services: combine, deduplicate
+        for &port in &config.host_services {
+            if !resolved.host_services.contains(&port) {
+                resolved.host_services.push(port);
+            }
+        }
+
+        // volumes: combine, higher-priority wins on container path conflict
+        for volume in &config.volumes {
+            let container_path = match volume {
+                VolumeMount::Bind(b) => &b.container,
+                VolumeMount::Named(n) => &n.container,
+            };
+            resolved.volumes.retain(|v| {
+                let existing_path = match v {
+                    VolumeMount::Bind(b) => &b.container,
+                    VolumeMount::Named(n) => &n.container,
+                };
+                existing_path != container_path
+            });
+            resolved.volumes.push(volume.clone());
+        }
+
+        // env: combine, higher-priority wins on name conflict
+        for env_var in &config.env {
+            resolved.env.retain(|e| e.name != env_var.name);
+            resolved.env.push(env_var.clone());
+        }
+
+        // stack_config: combine names, higher-priority replaces entire struct per name
+        for (name, stack_cfg) in &config.stack_config {
+            resolved
+                .stack_config
+                .insert(name.clone(), stack_cfg.clone());
+        }
+
+        // agent_config: combine names, higher-priority replaces entire struct per name
+        for (name, agent_cfg) in &config.agent_config {
+            resolved
+                .agent_config
+                .insert(name.clone(), agent_cfg.clone());
+        }
+    }
+
+    /// Returns all unique host service ports across defaults and all projects,
+    /// formatted as a comma-separated string for environment variables.
+    ///
+    /// The proxy container is shared across all tasks, so it needs the union
+    /// of all configured host_services. Ports are sorted for deterministic output.
+    pub fn all_host_services_env(&self) -> String {
+        let mut ports: Vec<u16> = Vec::new();
+        for &port in &self.defaults.host_services {
+            if !ports.contains(&port) {
+                ports.push(port);
+            }
+        }
+        for project in self.project.values() {
+            for &port in &project.host_services {
+                if !ports.contains(&port) {
+                    ports.push(port);
+                }
+            }
+        }
+        ports.sort();
+        ports
+            .iter()
+            .map(|p| p.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
     }
 }
 
 /// Container engine to use for running containers
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, clap::ValueEnum)]
+#[derive(Debug, Clone, Deserialize, PartialEq, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum ContainerEngine {
-    #[default]
     Docker,
     Podman,
 }
 
-/// Docker container resource configuration
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-pub struct DockerOptions {
-    /// Container engine to use (default: docker)
-    #[serde(default)]
-    pub container_engine: ContainerEngine,
-    /// Container memory limit in gigabytes (default: 12.0)
-    pub memory_limit_gb: f64,
-    /// Number of CPUs available to container (default: 8)
-    pub cpu_limit: u32,
-    /// Enable Docker-in-Docker support by default (default: false)
-    #[serde(default)]
-    pub dind: bool,
-}
-
-impl Default for DockerOptions {
+impl Default for ContainerEngine {
     fn default() -> Self {
-        let container_engine = if std::env::var("TSK_CONTAINER").is_ok() {
+        if std::env::var("TSK_CONTAINER").is_ok() {
             ContainerEngine::Podman
         } else {
-            ContainerEngine::default()
-        };
-        Self {
-            container_engine,
-            memory_limit_gb: 12.0, // 12GB
-            cpu_limit: 8,          // 8 CPUs
-            dind: false,
+            ContainerEngine::Docker
         }
     }
 }
 
-impl DockerOptions {
+/// Shared configuration shape used by both `[defaults]` and `[project.<name>]` sections.
+///
+/// All fields are optional so they can be layered during resolution.
+/// Lists combine across layers; scalars take the highest-priority `Some` value.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct SharedConfig {
+    /// Default agent (e.g., "claude", "codex")
+    pub agent: Option<String>,
+    /// Default stack (e.g., "go", "rust", "python")
+    pub stack: Option<String>,
+    /// Enable Docker-in-Docker support
+    pub dind: Option<bool>,
+    /// Container memory limit in gigabytes
+    pub memory_limit_gb: Option<f64>,
+    /// Number of CPUs available to container
+    pub cpu_limit: Option<u32>,
+    /// Enable git-town parent branch tracking
+    pub git_town: Option<bool>,
+    /// Host service ports to forward from proxy to host
+    #[serde(default)]
+    pub host_services: Vec<u16>,
+    /// Custom setup commands for the container
+    pub setup: Option<String>,
+    /// Per-stack configuration overrides
+    #[serde(default)]
+    pub stack_config: HashMap<String, StackConfig>,
+    /// Per-agent configuration overrides
+    #[serde(default)]
+    pub agent_config: HashMap<String, AgentConfig>,
+    /// Volume mounts for containers
+    #[serde(default)]
+    pub volumes: Vec<VolumeMount>,
+    /// Environment variables for containers
+    #[serde(default)]
+    pub env: Vec<EnvVar>,
+}
+
+/// Per-stack configuration (e.g., custom Dockerfile setup commands)
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct StackConfig {
+    /// Custom setup commands for this stack layer
+    pub setup: Option<String>,
+}
+
+/// Per-agent configuration (e.g., custom Dockerfile setup commands)
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct AgentConfig {
+    /// Custom setup commands for this agent layer
+    pub setup: Option<String>,
+}
+
+/// Fully resolved configuration with no optional scalars.
+///
+/// Produced by [`TskConfig::resolve_config`] after layering `[defaults]`
+/// and `[project.<name>]` sections over built-in defaults.
+#[derive(Debug, Clone, Serialize)]
+pub struct ResolvedConfig {
+    /// Agent to use (default: "claude")
+    pub agent: String,
+    /// Stack to use (default: "default")
+    pub stack: String,
+    /// Docker-in-Docker support (default: false)
+    pub dind: bool,
+    /// Container memory limit in gigabytes (default: 12.0)
+    pub memory_limit_gb: f64,
+    /// Number of CPUs available to container (default: 8)
+    pub cpu_limit: u32,
+    /// Git-town parent branch tracking (default: false)
+    pub git_town: bool,
+    /// Host service ports to forward from proxy
+    pub host_services: Vec<u16>,
+    /// Custom setup commands
+    pub setup: Option<String>,
+    /// Per-stack configuration overrides
+    pub stack_config: HashMap<String, StackConfig>,
+    /// Per-agent configuration overrides
+    pub agent_config: HashMap<String, AgentConfig>,
+    /// Volume mounts for containers
+    pub volumes: Vec<VolumeMount>,
+    /// Environment variables for containers
+    pub env: Vec<EnvVar>,
+}
+
+impl Default for ResolvedConfig {
+    fn default() -> Self {
+        Self {
+            agent: "claude".to_string(),
+            stack: "default".to_string(),
+            dind: false,
+            memory_limit_gb: 12.0,
+            cpu_limit: 8,
+            git_town: false,
+            host_services: Vec::new(),
+            setup: None,
+            stack_config: HashMap::new(),
+            agent_config: HashMap::new(),
+            volumes: Vec::new(),
+            env: Vec::new(),
+        }
+    }
+}
+
+impl ResolvedConfig {
     /// Convert memory limit from gigabytes to bytes for Docker/Bollard API
     pub fn memory_limit_bytes(&self) -> i64 {
         (self.memory_limit_gb * 1024.0 * 1024.0 * 1024.0) as i64
@@ -104,33 +295,10 @@ impl DockerOptions {
     pub fn cpu_quota_microseconds(&self) -> i64 {
         self.cpu_limit as i64 * 100_000
     }
-}
 
-/// Git-town integration configuration
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
-pub struct GitTownConfig {
-    /// Enable git-town parent branch tracking
+    /// Returns host_services as a comma-separated string for environment variables.
     ///
-    /// When enabled, TSK will set the git-town parent branch configuration
-    /// for task branches, using the branch that was checked out when the
-    /// task was created as the parent.
-    pub enabled: bool,
-}
-
-/// Proxy configuration for network isolation and host service access
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
-pub struct ProxyConfig {
-    /// Host service ports to forward from proxy to host.docker.internal
-    /// Agents connect to tsk-proxy:<port> to access these services
-    #[serde(default)]
-    pub host_services: Vec<u16>,
-}
-
-impl ProxyConfig {
-    /// Returns host_services as a comma-separated string for environment variables
-    /// Returns empty string if no services are configured
+    /// Returns empty string if no services are configured.
     pub fn host_services_env(&self) -> String {
         if self.host_services.is_empty() {
             String::new()
@@ -141,6 +309,11 @@ impl ProxyConfig {
                 .collect::<Vec<_>>()
                 .join(",")
         }
+    }
+
+    /// Returns true if any host service ports are configured
+    pub fn has_host_services(&self) -> bool {
+        !self.host_services.is_empty()
     }
 }
 
@@ -177,27 +350,8 @@ impl ServerConfig {
     }
 }
 
-/// Project-specific configuration section
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
-pub struct ProjectConfig {
-    /// Default agent for this project (e.g., "claude", "codex")
-    pub agent: Option<String>,
-    /// Default stack for this project (e.g., "go", "rust", "python")
-    pub stack: Option<String>,
-    /// Enable Docker-in-Docker support for this project
-    #[serde(default)]
-    pub dind: Option<bool>,
-    /// Volume mounts for Docker containers
-    #[serde(default)]
-    pub volumes: Vec<VolumeMount>,
-    /// Environment variables for Docker containers
-    #[serde(default)]
-    pub env: Vec<EnvVar>,
-}
-
 /// Environment variable configuration
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EnvVar {
     /// Environment variable name
     pub name: String,
@@ -210,7 +364,7 @@ pub struct EnvVar {
 /// Supports two types of mounts:
 /// 1. Bind mounts: Map a host path to a container path
 /// 2. Named volumes: Use a Docker-managed named volume
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum VolumeMount {
     /// Bind mount from host filesystem
@@ -220,7 +374,7 @@ pub enum VolumeMount {
 }
 
 /// Bind mount configuration
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BindMount {
     /// Host path (supports ~ expansion)
     pub host: String,
@@ -232,7 +386,7 @@ pub struct BindMount {
 }
 
 /// Named volume configuration (Docker-managed)
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NamedVolume {
     /// Docker volume name (will be prefixed with "tsk-" to avoid conflicts)
     pub name: String,
@@ -266,16 +420,42 @@ impl BindMount {
 ///
 /// Attempts to load and parse `tsk.toml` from the given config directory.
 /// Returns default configuration if the file doesn't exist or can't be parsed.
+/// Detects old configuration format and prints migration guidance.
 pub fn load_config(config_dir: &Path) -> TskConfig {
     let config_file = config_dir.join("tsk.toml");
     if config_file.exists() {
         match std::fs::read_to_string(&config_file) {
-            Ok(content) => match toml::from_str(&content) {
-                Ok(config) => return config,
-                Err(e) => {
-                    eprintln!("Warning: Failed to parse {}: {}", config_file.display(), e);
+            Ok(content) => {
+                // Check for old config format
+                if let Ok(value) = content.parse::<toml::Value>() {
+                    let old_sections: Vec<&str> = ["docker", "proxy", "git_town"]
+                        .iter()
+                        .filter(|key| value.get(key).is_some())
+                        .copied()
+                        .collect();
+                    if !old_sections.is_empty() {
+                        eprintln!(
+                            "Error: Your tsk.toml uses the old configuration format.\n\
+                             Found deprecated sections: {}\n\n\
+                             The configuration format has changed. Please migrate your config:\n\
+                             - [docker] settings → top-level `container_engine` and [defaults] section\n\
+                             - [proxy] host_services → [defaults] host_services\n\
+                             - [git_town] enabled → [defaults] git_town\n\
+                             - [project.<name>] fields remain the same but now support all shared config fields\n\n\
+                             See the README for the new configuration format.",
+                            old_sections.join(", ")
+                        );
+                        return TskConfig::default();
+                    }
                 }
-            },
+
+                match toml::from_str(&content) {
+                    Ok(config) => return config,
+                    Err(e) => {
+                        eprintln!("Warning: Failed to parse {}: {}", config_file.display(), e);
+                    }
+                }
+            }
             Err(e) => {
                 eprintln!("Warning: Failed to read {}: {}", config_file.display(), e);
             }
@@ -290,54 +470,419 @@ mod tests {
     use std::io::Write;
 
     #[test]
-    fn test_docker_options_default() {
-        let options = DockerOptions::default();
-        assert_eq!(options.memory_limit_gb, 12.0);
-        assert_eq!(options.cpu_limit, 8);
+    fn test_resolved_config_default() {
+        let resolved = ResolvedConfig::default();
+        assert_eq!(resolved.agent, "claude");
+        assert_eq!(resolved.stack, "default");
+        assert!(!resolved.dind);
+        assert_eq!(resolved.memory_limit_gb, 12.0);
+        assert_eq!(resolved.cpu_limit, 8);
+        assert!(!resolved.git_town);
+        assert!(resolved.host_services.is_empty());
+        assert!(resolved.setup.is_none());
+        assert!(resolved.stack_config.is_empty());
+        assert!(resolved.agent_config.is_empty());
+        assert!(resolved.volumes.is_empty());
+        assert!(resolved.env.is_empty());
     }
 
     #[test]
-    fn test_docker_options_conversion_methods() {
-        let options = DockerOptions::default();
+    fn test_resolved_config_conversion_methods() {
+        let resolved = ResolvedConfig::default();
         // 12 GB = 12 * 1024 * 1024 * 1024 bytes
-        assert_eq!(options.memory_limit_bytes(), 12 * 1024 * 1024 * 1024);
+        assert_eq!(resolved.memory_limit_bytes(), 12 * 1024 * 1024 * 1024);
         // 8 CPUs = 8 * 100,000 microseconds
-        assert_eq!(options.cpu_quota_microseconds(), 800_000);
+        assert_eq!(resolved.cpu_quota_microseconds(), 800_000);
 
         // Test with custom values
-        let custom_options = DockerOptions {
+        let custom = ResolvedConfig {
             memory_limit_gb: 5.5,
             cpu_limit: 4,
+            host_services: vec![5432, 6379, 3000],
             ..Default::default()
         };
-        // 5.5 GB in bytes
         assert_eq!(
-            custom_options.memory_limit_bytes(),
+            custom.memory_limit_bytes(),
             (5.5 * 1024.0 * 1024.0 * 1024.0) as i64
         );
-        // 4 CPUs = 400,000 microseconds
-        assert_eq!(custom_options.cpu_quota_microseconds(), 400_000);
+        assert_eq!(custom.cpu_quota_microseconds(), 400_000);
+        assert_eq!(custom.host_services_env(), "5432,6379,3000");
+        assert!(custom.has_host_services());
+
+        // Empty host services
+        assert_eq!(resolved.host_services_env(), "");
+        assert!(!resolved.has_host_services());
     }
 
     #[test]
     fn test_tsk_config_default() {
         let config = TskConfig::default();
-        assert_eq!(config.docker.memory_limit_gb, 12.0);
-        assert_eq!(config.docker.cpu_limit, 8);
         assert!(config.project.is_empty());
+        assert!(config.defaults.agent.is_none());
+        assert!(config.defaults.stack.is_none());
+        assert!(config.defaults.host_services.is_empty());
+        assert!(config.server.auto_clean_enabled);
+        assert_eq!(config.server.auto_clean_age_days, 7.0);
     }
 
     #[test]
-    fn test_tsk_config_default_has_empty_project_map() {
-        let config = TskConfig::default();
-        assert!(config.project.is_empty());
-    }
-
-    #[test]
-    fn test_config_from_toml_file() {
+    fn test_config_from_new_toml_format() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let config_dir = temp_dir.path();
 
+        let toml_content = r#"
+container_engine = "podman"
+
+[server]
+auto_clean_enabled = false
+auto_clean_age_days = 14.0
+
+[defaults]
+memory_limit_gb = 16.0
+cpu_limit = 4
+host_services = [6379]
+git_town = true
+
+[project.my-project]
+agent = "codex"
+stack = "rust"
+memory_limit_gb = 24.0
+cpu_limit = 16
+dind = true
+volumes = [
+    { host = "~/debug-logs", container = "/debug", readonly = true }
+]
+env = [
+    { name = "RUST_LOG", value = "debug" }
+]
+"#;
+        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+
+        let config = load_config(config_dir);
+
+        assert_eq!(config.container_engine, ContainerEngine::Podman);
+        assert!(!config.server.auto_clean_enabled);
+        assert_eq!(config.server.auto_clean_age_days, 14.0);
+
+        // Check defaults
+        assert_eq!(config.defaults.memory_limit_gb, Some(16.0));
+        assert_eq!(config.defaults.cpu_limit, Some(4));
+        assert_eq!(config.defaults.host_services, vec![6379]);
+        assert_eq!(config.defaults.git_town, Some(true));
+
+        // Check project
+        let project = config.project.get("my-project").unwrap();
+        assert_eq!(project.agent, Some("codex".to_string()));
+        assert_eq!(project.stack, Some("rust".to_string()));
+        assert_eq!(project.memory_limit_gb, Some(24.0));
+        assert_eq!(project.cpu_limit, Some(16));
+        assert_eq!(project.dind, Some(true));
+        assert_eq!(project.volumes.len(), 1);
+        assert_eq!(project.env.len(), 1);
+    }
+
+    #[test]
+    fn test_resolve_config_merging_scalars() {
+        let config = TskConfig {
+            defaults: SharedConfig {
+                agent: Some("codex".to_string()),
+                memory_limit_gb: Some(16.0),
+                git_town: Some(true),
+                ..Default::default()
+            },
+            project: HashMap::from([(
+                "my-project".to_string(),
+                SharedConfig {
+                    agent: Some("claude".to_string()),
+                    stack: Some("rust".to_string()),
+                    cpu_limit: Some(16),
+                    dind: Some(true),
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+
+        let resolved = config.resolve_config("my-project");
+
+        // Project overrides defaults
+        assert_eq!(resolved.agent, "claude");
+        // Project sets stack
+        assert_eq!(resolved.stack, "rust");
+        // Defaults sets memory (project doesn't override)
+        assert_eq!(resolved.memory_limit_gb, 16.0);
+        // Project sets cpu_limit
+        assert_eq!(resolved.cpu_limit, 16);
+        // Project sets dind
+        assert!(resolved.dind);
+        // Defaults sets git_town
+        assert!(resolved.git_town);
+
+        // Non-existent project only gets defaults
+        let resolved_other = config.resolve_config("other-project");
+        assert_eq!(resolved_other.agent, "codex");
+        assert_eq!(resolved_other.stack, "default");
+        assert_eq!(resolved_other.memory_limit_gb, 16.0);
+        assert_eq!(resolved_other.cpu_limit, 8); // built-in default
+    }
+
+    #[test]
+    fn test_resolve_config_merging_host_services() {
+        let config = TskConfig {
+            defaults: SharedConfig {
+                host_services: vec![5432, 6379],
+                ..Default::default()
+            },
+            project: HashMap::from([(
+                "my-project".to_string(),
+                SharedConfig {
+                    host_services: vec![6379, 3000],
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+
+        let resolved = config.resolve_config("my-project");
+
+        // Combined and deduplicated
+        assert_eq!(resolved.host_services, vec![5432, 6379, 3000]);
+    }
+
+    #[test]
+    fn test_resolve_config_merging_volumes() {
+        let config = TskConfig {
+            defaults: SharedConfig {
+                volumes: vec![
+                    VolumeMount::Bind(BindMount {
+                        host: "/host/cache".to_string(),
+                        container: "/cache".to_string(),
+                        readonly: false,
+                    }),
+                    VolumeMount::Named(NamedVolume {
+                        name: "data".to_string(),
+                        container: "/data".to_string(),
+                        readonly: false,
+                    }),
+                ],
+                ..Default::default()
+            },
+            project: HashMap::from([(
+                "my-project".to_string(),
+                SharedConfig {
+                    volumes: vec![
+                        // Override /cache with a named volume (different type, same container path)
+                        VolumeMount::Named(NamedVolume {
+                            name: "project-cache".to_string(),
+                            container: "/cache".to_string(),
+                            readonly: true,
+                        }),
+                        // New volume
+                        VolumeMount::Bind(BindMount {
+                            host: "/host/logs".to_string(),
+                            container: "/logs".to_string(),
+                            readonly: true,
+                        }),
+                    ],
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+
+        let resolved = config.resolve_config("my-project");
+
+        // /data from defaults remains, /cache replaced by project's named volume, /logs added
+        assert_eq!(resolved.volumes.len(), 3);
+
+        match &resolved.volumes[0] {
+            VolumeMount::Named(n) => {
+                assert_eq!(n.name, "data");
+                assert_eq!(n.container, "/data");
+            }
+            _ => panic!("Expected Named volume for /data"),
+        }
+
+        match &resolved.volumes[1] {
+            VolumeMount::Named(n) => {
+                assert_eq!(n.name, "project-cache");
+                assert_eq!(n.container, "/cache");
+                assert!(n.readonly);
+            }
+            _ => panic!("Expected Named volume for /cache"),
+        }
+
+        match &resolved.volumes[2] {
+            VolumeMount::Bind(b) => {
+                assert_eq!(b.host, "/host/logs");
+                assert_eq!(b.container, "/logs");
+                assert!(b.readonly);
+            }
+            _ => panic!("Expected Bind mount for /logs"),
+        }
+    }
+
+    #[test]
+    fn test_resolve_config_merging_env() {
+        let config = TskConfig {
+            defaults: SharedConfig {
+                env: vec![
+                    EnvVar {
+                        name: "DATABASE_URL".to_string(),
+                        value: "postgres://localhost/db".to_string(),
+                    },
+                    EnvVar {
+                        name: "DEBUG".to_string(),
+                        value: "false".to_string(),
+                    },
+                ],
+                ..Default::default()
+            },
+            project: HashMap::from([(
+                "my-project".to_string(),
+                SharedConfig {
+                    env: vec![
+                        EnvVar {
+                            name: "DEBUG".to_string(),
+                            value: "true".to_string(),
+                        },
+                        EnvVar {
+                            name: "RUST_LOG".to_string(),
+                            value: "info".to_string(),
+                        },
+                    ],
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+
+        let resolved = config.resolve_config("my-project");
+
+        assert_eq!(resolved.env.len(), 3);
+        assert_eq!(resolved.env[0].name, "DATABASE_URL");
+        assert_eq!(resolved.env[0].value, "postgres://localhost/db");
+        assert_eq!(resolved.env[1].name, "DEBUG");
+        assert_eq!(resolved.env[1].value, "true");
+        assert_eq!(resolved.env[2].name, "RUST_LOG");
+        assert_eq!(resolved.env[2].value, "info");
+    }
+
+    #[test]
+    fn test_resolve_config_merging_stack_config() {
+        let config = TskConfig {
+            defaults: SharedConfig {
+                stack_config: HashMap::from([
+                    (
+                        "rust".to_string(),
+                        StackConfig {
+                            setup: Some("RUN apt-get install -y cmake".to_string()),
+                        },
+                    ),
+                    (
+                        "go".to_string(),
+                        StackConfig {
+                            setup: Some("RUN go install tool".to_string()),
+                        },
+                    ),
+                ]),
+                ..Default::default()
+            },
+            project: HashMap::from([(
+                "my-project".to_string(),
+                SharedConfig {
+                    stack_config: HashMap::from([
+                        (
+                            "rust".to_string(),
+                            StackConfig {
+                                setup: Some("RUN cargo install custom-tool".to_string()),
+                            },
+                        ),
+                        (
+                            "java".to_string(),
+                            StackConfig {
+                                setup: Some("RUN apt-get install -y openjdk-17-jdk".to_string()),
+                            },
+                        ),
+                    ]),
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+
+        let resolved = config.resolve_config("my-project");
+
+        assert_eq!(resolved.stack_config.len(), 3);
+        assert_eq!(
+            resolved.stack_config["rust"].setup,
+            Some("RUN cargo install custom-tool".to_string())
+        );
+        assert_eq!(
+            resolved.stack_config["go"].setup,
+            Some("RUN go install tool".to_string())
+        );
+        assert_eq!(
+            resolved.stack_config["java"].setup,
+            Some("RUN apt-get install -y openjdk-17-jdk".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_config_merging_agent_config() {
+        let config = TskConfig {
+            defaults: SharedConfig {
+                agent_config: HashMap::from([(
+                    "claude".to_string(),
+                    AgentConfig {
+                        setup: Some("RUN npm install -g tool".to_string()),
+                    },
+                )]),
+                ..Default::default()
+            },
+            project: HashMap::from([(
+                "my-project".to_string(),
+                SharedConfig {
+                    agent_config: HashMap::from([
+                        (
+                            "claude".to_string(),
+                            AgentConfig {
+                                setup: Some("RUN pip install custom".to_string()),
+                            },
+                        ),
+                        (
+                            "codex".to_string(),
+                            AgentConfig {
+                                setup: Some("RUN npm install -g codex-tool".to_string()),
+                            },
+                        ),
+                    ]),
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+
+        let resolved = config.resolve_config("my-project");
+
+        assert_eq!(resolved.agent_config.len(), 2);
+        assert_eq!(
+            resolved.agent_config["claude"].setup,
+            Some("RUN pip install custom".to_string())
+        );
+        assert_eq!(
+            resolved.agent_config["codex"].setup,
+            Some("RUN npm install -g codex-tool".to_string())
+        );
+    }
+
+    #[test]
+    fn test_old_format_detection() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_dir = temp_dir.path();
+
+        // Config with old [docker] section
         let toml_content = r#"
 [docker]
 memory_limit_gb = 8.0
@@ -347,163 +892,45 @@ cpu_limit = 4
         file.write_all(toml_content.as_bytes()).unwrap();
 
         let config = load_config(config_dir);
+        // Should return defaults since old format is detected
+        assert!(config.defaults.memory_limit_gb.is_none());
+        assert!(config.defaults.cpu_limit.is_none());
 
-        assert_eq!(config.docker.memory_limit_gb, 8.0);
-        assert_eq!(config.docker.cpu_limit, 4);
-        // Verify conversion methods work correctly
-        assert_eq!(config.docker.memory_limit_bytes(), 8 * 1024 * 1024 * 1024);
-        assert_eq!(config.docker.cpu_quota_microseconds(), 400_000);
-    }
-
-    #[test]
-    fn test_config_partial_toml() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let config_dir = temp_dir.path();
-
-        // Only specify memory_limit_gb, cpu_limit should use default
+        // Test with [proxy]
         let toml_content = r#"
-[docker]
-memory_limit_gb = 4.0
+[proxy]
+host_services = [5432]
 "#;
-        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
-        file.write_all(toml_content.as_bytes()).unwrap();
-
+        std::fs::write(config_dir.join("tsk.toml"), toml_content).unwrap();
         let config = load_config(config_dir);
+        assert!(config.defaults.host_services.is_empty());
 
-        assert_eq!(config.docker.memory_limit_gb, 4.0);
-        assert_eq!(config.docker.cpu_limit, 8); // Default 8 CPUs
+        // Test with [git_town]
+        let toml_content = r#"
+[git_town]
+enabled = true
+"#;
+        std::fs::write(config_dir.join("tsk.toml"), toml_content).unwrap();
+        let config = load_config(config_dir);
+        assert!(config.defaults.git_town.is_none());
     }
 
     #[test]
     fn test_config_missing_toml_uses_defaults() {
         let temp_dir = tempfile::TempDir::new().unwrap();
-
         let config = load_config(temp_dir.path());
 
-        // Should use defaults when no config file exists
-        assert_eq!(config.docker.memory_limit_gb, 12.0);
-        assert_eq!(config.docker.cpu_limit, 8);
-    }
-
-    #[test]
-    fn test_config_invalid_toml_type_uses_defaults() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let config_dir = temp_dir.path();
-
-        // Invalid type: string instead of f64
-        let toml_content = r#"
-[docker]
-memory_limit_gb = "not-a-number"
-"#;
-        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
-        file.write_all(toml_content.as_bytes()).unwrap();
-
-        let config = load_config(config_dir);
-
-        // Should use defaults when TOML contains invalid types
-        assert_eq!(config.docker.memory_limit_gb, 12.0);
-        assert_eq!(config.docker.cpu_limit, 8);
-    }
-
-    #[test]
-    fn test_project_config_from_toml() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let config_dir = temp_dir.path();
-
-        let toml_content = r#"
-[docker]
-memory_limit_gb = 8.0
-
-[project.my-go-project]
-agent = "claude"
-stack = "go"
-volumes = [
-    { host = "~/.cache/go-build", container = "/home/agent/.cache/go-build" },
-    { host = "/tmp/shared", container = "/shared", readonly = true }
-]
-
-[project.my-rust-project]
-stack = "rust"
-"#;
-        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
-        file.write_all(toml_content.as_bytes()).unwrap();
-
-        let config = load_config(config_dir);
-
-        // Check project config exists and has correct values
-        let go_config = config.get_project_config("my-go-project");
-        assert!(go_config.is_some());
-        let go_config = go_config.unwrap();
-        assert_eq!(go_config.agent, Some("claude".to_string()));
-        assert_eq!(go_config.stack, Some("go".to_string()));
-        assert_eq!(go_config.volumes.len(), 2);
-
-        // Check rust project has only stack set
-        let rust_config = config.get_project_config("my-rust-project");
-        assert!(rust_config.is_some());
-        let rust_config = rust_config.unwrap();
-        assert_eq!(rust_config.agent, None);
-        assert_eq!(rust_config.stack, Some("rust".to_string()));
-        assert!(rust_config.volumes.is_empty());
-
-        // Non-existent project returns None
-        assert!(config.get_project_config("non-existent").is_none());
-    }
-
-    #[test]
-    fn test_project_env_vars_from_toml() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let config_dir = temp_dir.path();
-
-        let toml_content = r#"
-[project.my-app]
-agent = "claude"
-stack = "go"
-env = [
-    { name = "DATABASE_URL", value = "postgres://tsk-proxy:5432/mydb" },
-    { name = "REDIS_URL", value = "redis://tsk-proxy:6379" },
-    { name = "DEBUG", value = "true" },
-]
-"#;
-        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
-        file.write_all(toml_content.as_bytes()).unwrap();
-
-        let config = load_config(config_dir);
-
-        let app_config = config.get_project_config("my-app");
-        assert!(app_config.is_some());
-        let app_config = app_config.unwrap();
-
-        assert_eq!(app_config.env.len(), 3);
-        assert_eq!(app_config.env[0].name, "DATABASE_URL");
-        assert_eq!(app_config.env[0].value, "postgres://tsk-proxy:5432/mydb");
-        assert_eq!(app_config.env[1].name, "REDIS_URL");
-        assert_eq!(app_config.env[1].value, "redis://tsk-proxy:6379");
-        assert_eq!(app_config.env[2].name, "DEBUG");
-        assert_eq!(app_config.env[2].value, "true");
-    }
-
-    #[test]
-    fn test_project_config_empty_env_by_default() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let config_dir = temp_dir.path();
-
-        let toml_content = r#"
-[project.my-app]
-agent = "claude"
-"#;
-        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
-        file.write_all(toml_content.as_bytes()).unwrap();
-
-        let config = load_config(config_dir);
-
-        let app_config = config.get_project_config("my-app").unwrap();
-        assert!(app_config.env.is_empty());
+        let resolved = config.resolve_config("any-project");
+        assert_eq!(resolved.agent, "claude");
+        assert_eq!(resolved.stack, "default");
+        assert_eq!(resolved.memory_limit_gb, 12.0);
+        assert_eq!(resolved.cpu_limit, 8);
+        assert!(!resolved.dind);
+        assert!(!resolved.git_town);
     }
 
     #[test]
     fn test_bind_mount_path_expansion() {
-        // Test with ~ expansion
         let bind_mount = BindMount {
             host: "~/.cache/go-build".to_string(),
             container: "/home/agent/.cache/go-build".to_string(),
@@ -514,7 +941,6 @@ agent = "claude"
         assert!(!expanded.to_string_lossy().starts_with("~"));
         assert!(expanded.to_string_lossy().ends_with(".cache/go-build"));
 
-        // Test with just ~
         let bind_mount_home = BindMount {
             host: "~".to_string(),
             container: "/home/agent".to_string(),
@@ -525,7 +951,6 @@ agent = "claude"
         assert!(!expanded_home.to_string_lossy().starts_with("~"));
         assert!(!expanded_home.to_string_lossy().is_empty());
 
-        // Test with absolute path (no expansion)
         let bind_mount_abs = BindMount {
             host: "/tmp/shared".to_string(),
             container: "/shared".to_string(),
@@ -554,10 +979,9 @@ volumes = [
 
         let config = load_config(config_dir);
 
-        let go_config = config.get_project_config("my-go-project").unwrap();
+        let go_config = config.project.get("my-go-project").unwrap();
         assert_eq!(go_config.volumes.len(), 2);
 
-        // Check first named volume
         match &go_config.volumes[0] {
             VolumeMount::Named(named) => {
                 assert_eq!(named.name, "go-mod-cache");
@@ -567,7 +991,6 @@ volumes = [
             VolumeMount::Bind(_) => panic!("Expected Named volume"),
         }
 
-        // Check second named volume with readonly
         match &go_config.volumes[1] {
             VolumeMount::Named(named) => {
                 assert_eq!(named.name, "go-build-cache");
@@ -595,10 +1018,9 @@ volumes = [
 
         let config = load_config(config_dir);
 
-        let project_config = config.get_project_config("mixed-project").unwrap();
+        let project_config = config.project.get("mixed-project").unwrap();
         assert_eq!(project_config.volumes.len(), 2);
 
-        // First should be bind mount
         match &project_config.volumes[0] {
             VolumeMount::Bind(bind) => {
                 assert_eq!(bind.host, "~/.cache/shared");
@@ -607,7 +1029,6 @@ volumes = [
             VolumeMount::Named(_) => panic!("Expected Bind mount"),
         }
 
-        // Second should be named volume
         match &project_config.volumes[1] {
             VolumeMount::Named(named) => {
                 assert_eq!(named.name, "data-volume");
@@ -615,110 +1036,6 @@ volumes = [
             }
             VolumeMount::Bind(_) => panic!("Expected Named volume"),
         }
-    }
-
-    #[test]
-    fn test_git_town_config_default() {
-        let config = GitTownConfig::default();
-        assert!(!config.enabled);
-    }
-
-    #[test]
-    fn test_tsk_config_default_has_disabled_git_town() {
-        let config = TskConfig::default();
-        assert!(!config.git_town.enabled);
-    }
-
-    #[test]
-    fn test_git_town_config_enabled_from_toml() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let config_dir = temp_dir.path();
-
-        let toml_content = r#"
-[git_town]
-enabled = true
-"#;
-        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
-        file.write_all(toml_content.as_bytes()).unwrap();
-
-        let config = load_config(config_dir);
-        assert!(config.git_town.enabled);
-    }
-
-    #[test]
-    fn test_git_town_config_disabled_from_toml() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let config_dir = temp_dir.path();
-
-        let toml_content = r#"
-[git_town]
-enabled = false
-"#;
-        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
-        file.write_all(toml_content.as_bytes()).unwrap();
-
-        let config = load_config(config_dir);
-        assert!(!config.git_town.enabled);
-    }
-
-    #[test]
-    fn test_git_town_config_missing_uses_default() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let config_dir = temp_dir.path();
-
-        // Config with other sections but no git_town
-        let toml_content = r#"
-[docker]
-memory_limit_gb = 8.0
-"#;
-        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
-        file.write_all(toml_content.as_bytes()).unwrap();
-
-        let config = load_config(config_dir);
-        // Should use default (disabled)
-        assert!(!config.git_town.enabled);
-    }
-
-    #[test]
-    fn test_proxy_config_default() {
-        let config = ProxyConfig::default();
-        assert!(config.host_services.is_empty());
-        assert_eq!(config.host_services_env(), "");
-    }
-
-    #[test]
-    fn test_proxy_config_host_services_env() {
-        let config = ProxyConfig {
-            host_services: vec![5432, 6379, 3000],
-        };
-        assert_eq!(config.host_services_env(), "5432,6379,3000");
-    }
-
-    #[test]
-    fn test_proxy_config_from_toml() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let config_dir = temp_dir.path();
-
-        let toml_content = r#"
-[proxy]
-host_services = [5432, 6379, 3000]
-
-[docker]
-memory_limit_gb = 8.0
-"#;
-        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
-        file.write_all(toml_content.as_bytes()).unwrap();
-
-        let config = load_config(config_dir);
-
-        assert_eq!(config.proxy.host_services, vec![5432, 6379, 3000]);
-        assert_eq!(config.proxy.host_services_env(), "5432,6379,3000");
-    }
-
-    #[test]
-    fn test_tsk_config_default_has_empty_proxy() {
-        let config = TskConfig::default();
-        assert!(config.proxy.host_services.is_empty());
     }
 
     #[test]
@@ -771,90 +1088,129 @@ auto_clean_age_days = 14.0
     }
 
     #[test]
-    fn test_server_config_missing_uses_default() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let config_dir = temp_dir.path();
-
-        let toml_content = r#"
-[docker]
-memory_limit_gb = 8.0
-"#;
-        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
-        file.write_all(toml_content.as_bytes()).unwrap();
-
-        let config = load_config(config_dir);
-        assert!(config.server.auto_clean_enabled);
-        assert_eq!(config.server.auto_clean_age_days, 7.0);
-    }
-
-    #[test]
-    fn test_tsk_config_default_has_server_defaults() {
-        let config = TskConfig::default();
-        assert!(config.server.auto_clean_enabled);
-        assert_eq!(config.server.auto_clean_age_days, 7.0);
-    }
-
-    #[test]
-    fn test_container_engine_podman_from_toml() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let config_dir = temp_dir.path();
-
-        let toml_content = r#"
-[docker]
-container_engine = "podman"
-memory_limit_gb = 8.0
-"#;
-        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
-        file.write_all(toml_content.as_bytes()).unwrap();
-
-        let config = load_config(config_dir);
-
-        assert_eq!(config.docker.container_engine, ContainerEngine::Podman);
-        assert_eq!(config.docker.memory_limit_gb, 8.0);
-    }
-
-    #[test]
-    fn test_dind_config_parsing() {
-        use std::io::Write;
-
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let config_dir = temp_dir.path();
-
-        let toml_content = r#"
-[docker]
-dind = true
-
-[project.my-project]
-dind = false
-
-[project.other-project]
-agent = "codex"
-"#;
-        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
-        file.write_all(toml_content.as_bytes()).unwrap();
-
-        let config = load_config(config_dir);
-
-        assert!(config.docker.dind, "docker.dind should be true");
-        assert_eq!(
-            config.project.get("my-project").unwrap().dind,
-            Some(false),
-            "project.my-project.dind should be Some(false)"
-        );
-        assert_eq!(
-            config.project.get("other-project").unwrap().dind,
-            None,
-            "project.other-project.dind should be None when not specified"
-        );
-    }
-
-    #[test]
     fn test_container_engine_default_depends_on_environment() {
         let config = TskConfig::default();
         if std::env::var("TSK_CONTAINER").is_ok() {
-            assert_eq!(config.docker.container_engine, ContainerEngine::Podman);
+            assert_eq!(config.container_engine, ContainerEngine::Podman);
         } else {
-            assert_eq!(config.docker.container_engine, ContainerEngine::Docker);
+            assert_eq!(config.container_engine, ContainerEngine::Docker);
         }
+    }
+
+    #[test]
+    fn test_stack_config_parsing() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_dir = temp_dir.path();
+
+        let toml_content = r#"
+[defaults.stack_config.scala]
+setup = "RUN apt-get install -y scala"
+
+[defaults.stack_config.rust]
+setup = "RUN apt-get install -y cmake"
+
+[project.my-project.stack_config.java]
+setup = "RUN apt-get install -y openjdk-17-jdk"
+"#;
+        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+
+        let config = load_config(config_dir);
+
+        assert_eq!(config.defaults.stack_config.len(), 2);
+        assert_eq!(
+            config.defaults.stack_config["scala"].setup,
+            Some("RUN apt-get install -y scala".to_string())
+        );
+        assert_eq!(
+            config.defaults.stack_config["rust"].setup,
+            Some("RUN apt-get install -y cmake".to_string())
+        );
+
+        let project = config.project.get("my-project").unwrap();
+        assert_eq!(project.stack_config.len(), 1);
+        assert_eq!(
+            project.stack_config["java"].setup,
+            Some("RUN apt-get install -y openjdk-17-jdk".to_string())
+        );
+    }
+
+    #[test]
+    fn test_agent_config_parsing() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_dir = temp_dir.path();
+
+        let toml_content = r#"
+[defaults.agent_config.claude]
+setup = "RUN npm install -g tool"
+
+[project.my-project.agent_config.my-agent]
+setup = "RUN pip install custom-tool"
+"#;
+        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+
+        let config = load_config(config_dir);
+
+        assert_eq!(config.defaults.agent_config.len(), 1);
+        assert_eq!(
+            config.defaults.agent_config["claude"].setup,
+            Some("RUN npm install -g tool".to_string())
+        );
+
+        let project = config.project.get("my-project").unwrap();
+        assert_eq!(project.agent_config.len(), 1);
+        assert_eq!(
+            project.agent_config["my-agent"].setup,
+            Some("RUN pip install custom-tool".to_string())
+        );
+    }
+
+    #[test]
+    fn test_all_host_services_env() {
+        // Empty config
+        let config = TskConfig::default();
+        assert_eq!(config.all_host_services_env(), "");
+
+        // Services only in defaults
+        let config = TskConfig {
+            defaults: SharedConfig {
+                host_services: vec![5432, 6379],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(config.all_host_services_env(), "5432,6379");
+
+        // Services only in project
+        let config = TskConfig {
+            project: HashMap::from([(
+                "my-project".to_string(),
+                SharedConfig {
+                    host_services: vec![3000],
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+        assert_eq!(config.all_host_services_env(), "3000");
+
+        // Services in both defaults and project, with dedup
+        let config = TskConfig {
+            defaults: SharedConfig {
+                host_services: vec![5432, 6379],
+                ..Default::default()
+            },
+            project: HashMap::from([(
+                "project-a".to_string(),
+                SharedConfig {
+                    host_services: vec![6379, 3000],
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+        let result = config.all_host_services_env();
+        assert_eq!(result, "3000,5432,6379");
     }
 }

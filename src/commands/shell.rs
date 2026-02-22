@@ -46,7 +46,7 @@ impl Command for ShellCommand {
 
         // Execute the task
         let docker_client = Arc::new(
-            DefaultDockerClient::new(&ctx.tsk_config().docker.container_engine)
+            DefaultDockerClient::new(&ctx.tsk_config().container_engine)
                 .map_err(|e| -> Box<dyn Error> { e.into() })?,
         );
         let docker_manager = DockerManager::new(ctx, docker_client);

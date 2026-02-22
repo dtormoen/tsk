@@ -57,7 +57,7 @@ impl Command for RunCommand {
             match &self.docker_client_override {
                 Some(client) => Arc::clone(client),
                 None => Arc::new(
-                    DefaultDockerClient::new(&ctx.tsk_config().docker.container_engine)
+                    DefaultDockerClient::new(&ctx.tsk_config().container_engine)
                         .map_err(|e| -> Box<dyn Error> { e.into() })?,
                 ),
             };

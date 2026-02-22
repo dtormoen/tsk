@@ -202,37 +202,32 @@ Each configuration directory can contain:
 
 ### Configuration File
 
-TSK can be configured via `~/.config/tsk/tsk.toml`. All settings are optional.
+TSK can be configured via `~/.config/tsk/tsk.toml`. All settings are optional. The configuration uses a shared shape between `[defaults]` (applied to all projects) and `[project.<name>]` (per-project overrides).
 
 ```toml
-# Container engine and resource limits
-[docker]
+# Container engine (top-level setting)
 container_engine = "docker"  # "docker" (default) or "podman"
-memory_limit_gb = 12.0       # Container memory limit (default: 12.0)
-cpu_limit = 8                # Number of CPUs (default: 8)
-dind = false                 # Enable Docker-in-Docker support (default: false)
-
-# Proxy configuration
-[proxy]
-# Forward ports from containers to host services (agents connect to tsk-proxy:<port>)
-# Default: [] (no port forwarding)
-host_services = [5432, 6379]  # e.g., PostgreSQL, Redis
-
-# Git-town integration (https://git-town.com/)
-# When enabled, task branches automatically record their parent branch
-[git_town]
-enabled = true  # default: false
 
 # Server daemon configuration
 [server]
 auto_clean_enabled = true   # Automatically clean old tasks (default: true)
 auto_clean_age_days = 7.0   # Minimum age in days before cleanup (default: 7.0)
 
-# Project-specific configuration (matches directory name)
+# Default settings for all projects
+[defaults]
+memory_limit_gb = 12.0       # Container memory limit (default: 12.0)
+cpu_limit = 8                # Number of CPUs (default: 8)
+dind = false                 # Enable Docker-in-Docker support (default: false)
+git_town = false             # Enable git-town parent branch tracking (default: false)
+host_services = [5432, 6379] # Forward ports from containers to host services
+
+# Project-specific overrides (matches directory name)
 [project.my-project]
 agent = "claude"        # Default agent (claude or codex)
 stack = "go"            # Default stack for auto-detection override
-dind = false            # Enable Docker-in-Docker for this project (default: false)
+dind = false            # Enable Docker-in-Docker for this project
+memory_limit_gb = 24.0  # Override memory limit for this project
+cpu_limit = 16          # Override CPU limit for this project
 volumes = [
     # Bind mount: Share host directories with containers (supports ~ expansion)
     { host = "~/.cache/go-mod", container = "/go/pkg/mod" },
@@ -257,11 +252,13 @@ Environment variables (`env`) let you pass configuration to task containers, suc
 
 The container engine can also be set per-command with the `--container-engine` flag (available on `run`, `shell`, `retry`, `server start`, and `docker build`).
 
-The `[proxy]` section lets you expose host services to task containers. Agents connect to `tsk-proxy:<port>` to reach services running on your host machine (e.g., local databases or dev servers).
+Host services (`host_services`) expose host services to task containers. Agents connect to `tsk-proxy:<port>` to reach services running on your host machine (e.g., local databases or dev servers).
 
-The `[git_town]` section enables integration with [git-town](https://www.git-town.com/), a tool for branch-based workflow automation. When enabled, TSK sets the parent branch metadata on task branches, allowing git-town commands like `git town sync` to work correctly with TSK-created branches.
+When `git_town` is enabled, TSK integrates with [git-town](https://www.git-town.com/) by setting the parent branch metadata on task branches, allowing git-town commands like `git town sync` to work correctly with TSK-created branches.
 
-Configuration priority: CLI flags > project config > auto-detection > defaults
+Configuration priority: CLI flags > `[project.<name>]` > `[defaults]` > auto-detection > built-in defaults
+
+Settings in `[defaults]` and `[project.<name>]` share the same shape. Scalars use first-set in priority order. Lists (`volumes`, `env`, `host_services`) combine across layers, with higher-priority winning on conflicts (same container path, same env var name, same port).
 
 ### Customizing the TSK Sandbox Environment
 

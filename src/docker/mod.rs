@@ -103,7 +103,7 @@ impl DockerManager {
     }
 
     /// Build proxy environment variables for nested containers.
-    fn build_proxy_env_vars(&self) -> Vec<String> {
+    fn build_proxy_env_vars(&self, resolved: &crate::context::ResolvedConfig) -> Vec<String> {
         if self.is_nested() {
             // Forward proxy env vars from the outer container's environment.
             // The outer TSK container already has network isolation via Docker.
@@ -136,10 +136,10 @@ impl DockerManager {
         ];
 
         // Add host service environment variables if configured
-        if self.ctx.tsk_config().has_host_services() {
+        if resolved.has_host_services() {
             env.push(format!(
                 "TSK_HOST_SERVICES={}",
-                self.ctx.tsk_config().proxy.host_services_env()
+                resolved.host_services_env()
             ));
             env.push("TSK_HOST_SERVICES_HOST=tsk-proxy".to_string());
         }
@@ -162,7 +162,12 @@ impl DockerManager {
     }
 
     /// Build bind volumes for container
-    fn build_bind_volumes(&self, task: &crate::task::Task, agent: &dyn Agent) -> Vec<String> {
+    fn build_bind_volumes(
+        &self,
+        task: &crate::task::Task,
+        agent: &dyn Agent,
+        resolved: &crate::context::ResolvedConfig,
+    ) -> Vec<String> {
         let repo_path = task
             .copied_repo_path
             .as_ref()
@@ -198,29 +203,27 @@ impl DockerManager {
             binds.push(format!("{}:/output", output_dir.to_string_lossy()));
         }
 
-        // Add project-specific volume mounts from config
-        if let Some(project_config) = self.ctx.tsk_config().get_project_config(&task.project) {
-            for volume in &project_config.volumes {
-                match volume {
-                    VolumeMount::Bind(bind) => {
-                        if let Ok(host_path) = bind.expanded_host_path() {
-                            let bind_str = if bind.readonly {
-                                format!("{}:{}:ro", host_path.display(), bind.container)
-                            } else {
-                                format!("{}:{}", host_path.display(), bind.container)
-                            };
-                            binds.push(bind_str);
-                        }
-                    }
-                    VolumeMount::Named(named) => {
-                        let volume_name = format!("tsk-{}", named.name);
-                        let bind_str = if named.readonly {
-                            format!("{volume_name}:{}:ro", named.container)
+        // Add volume mounts from resolved config (already merged from defaults + project)
+        for volume in &resolved.volumes {
+            match volume {
+                VolumeMount::Bind(bind) => {
+                    if let Ok(host_path) = bind.expanded_host_path() {
+                        let bind_str = if bind.readonly {
+                            format!("{}:{}:ro", host_path.display(), bind.container)
                         } else {
-                            format!("{volume_name}:{}", named.container)
+                            format!("{}:{}", host_path.display(), bind.container)
                         };
                         binds.push(bind_str);
                     }
+                }
+                VolumeMount::Named(named) => {
+                    let volume_name = format!("tsk-{}", named.name);
+                    let bind_str = if named.readonly {
+                        format!("{volume_name}:{}:ro", named.container)
+                    } else {
+                        format!("{volume_name}:{}", named.container)
+                    };
+                    binds.push(bind_str);
                 }
             }
         }
@@ -257,12 +260,13 @@ impl DockerManager {
         agent: &dyn Agent,
         network_name: Option<&str>,
     ) -> ContainerCreateBody {
-        let binds = self.build_bind_volumes(task, agent);
+        let resolved = self.ctx.tsk_config().resolve_config(&task.project);
+        let binds = self.build_bind_volumes(task, agent, &resolved);
         let instructions_file_path = PathBuf::from(&task.instructions_file);
         let working_dir = container_working_dir(&task.project);
 
         let mut env_vars = if network_name.is_some() || self.is_nested() {
-            self.build_proxy_env_vars()
+            self.build_proxy_env_vars(&resolved)
         } else {
             Vec::new()
         };
@@ -276,11 +280,9 @@ impl DockerManager {
             env_vars.push(format!("{key}={value}"));
         }
 
-        // Add project-specific environment variables from config
-        if let Some(project_config) = self.ctx.tsk_config().get_project_config(&task.project) {
-            for env_var in &project_config.env {
-                env_vars.push(format!("{}={}", env_var.name, env_var.value));
-            }
+        // Add environment variables from resolved config (already merged from defaults + project)
+        for env_var in &resolved.env {
+            env_vars.push(format!("{}={}", env_var.name, env_var.value));
         }
 
         // Use chroot isolation for Podman/Buildah builds inside DIND containers.
@@ -308,12 +310,11 @@ impl DockerManager {
             Some(agent_command)
         };
 
-        // Load Docker resource limits from user configuration
-        let docker_config = &self.ctx.tsk_config().docker;
+        let container_engine = &self.ctx.tsk_config().container_engine;
 
         // DIND security relaxations (seccomp profile, AppArmor, SETUID/SETGID) are opt-in
         let security_opt = if task.dind {
-            let mut security_opts = if docker_config.container_engine == ContainerEngine::Podman {
+            let mut security_opts = if *container_engine == ContainerEngine::Podman {
                 let seccomp_path = self.ctx.tsk_env().config_dir().join("seccomp_dind.json");
                 if std::fs::write(&seccomp_path, SECCOMP_DIND_PROFILE).is_ok() {
                     vec![format!("seccomp={}", seccomp_path.display())]
@@ -329,7 +330,7 @@ impl DockerManager {
             // container_t context blocks fchown with EACCES, which crun treats
             // as fatal (unlike EPERM which crun ignores). Not needed for
             // Docker-in-Podman since Docker does not apply SELinux container_t.
-            if docker_config.container_engine == ContainerEngine::Podman {
+            if *container_engine == ContainerEngine::Podman {
                 security_opts.push("label=disable".to_string());
             }
             Some(security_opts)
@@ -380,12 +381,12 @@ impl DockerManager {
                 memory: if self.is_nested() {
                     None
                 } else {
-                    Some(docker_config.memory_limit_bytes())
+                    Some(resolved.memory_limit_bytes())
                 },
                 cpu_quota: if self.is_nested() {
                     None
                 } else {
-                    Some(docker_config.cpu_quota_microseconds())
+                    Some(resolved.cpu_quota_microseconds())
                 },
                 cap_drop: Some(cap_drop),
                 security_opt,
@@ -1008,14 +1009,14 @@ mod tests {
         );
         // Agent containers should NOT have extra_hosts (no direct host access)
         assert!(host_config.extra_hosts.is_none());
-        let default_options = crate::context::DockerOptions::default();
+        let default_resolved = crate::context::ResolvedConfig::default();
         assert_eq!(
             host_config.memory,
-            Some(default_options.memory_limit_bytes())
+            Some(default_resolved.memory_limit_bytes())
         );
         assert_eq!(
             host_config.cpu_quota,
-            Some(default_options.cpu_quota_microseconds())
+            Some(default_resolved.cpu_quota_microseconds())
         );
 
         let binds = host_config.binds.as_ref().unwrap();
@@ -1149,7 +1150,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_project_volume_mounts_bind() {
-        use crate::context::{BindMount, ProjectConfig, TskConfig, VolumeMount};
+        use crate::context::{BindMount, SharedConfig, TskConfig, VolumeMount};
         use std::collections::HashMap;
 
         let mock_client = Arc::new(TrackedDockerClient::default());
@@ -1158,16 +1159,13 @@ mod tests {
         let mut project_configs = HashMap::new();
         project_configs.insert(
             "default".to_string(),
-            ProjectConfig {
-                agent: None,
-                stack: None,
-                dind: None,
+            SharedConfig {
                 volumes: vec![VolumeMount::Bind(BindMount {
                     host: "/host/cache".to_string(),
                     container: "/container/cache".to_string(),
                     readonly: false,
                 })],
-                env: vec![],
+                ..Default::default()
             },
         );
         let tsk_config = TskConfig {
@@ -1200,7 +1198,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_project_volume_mounts_named() {
-        use crate::context::{NamedVolume, ProjectConfig, TskConfig, VolumeMount};
+        use crate::context::{NamedVolume, SharedConfig, TskConfig, VolumeMount};
         use std::collections::HashMap;
 
         let mock_client = Arc::new(TrackedDockerClient::default());
@@ -1209,16 +1207,13 @@ mod tests {
         let mut project_configs = HashMap::new();
         project_configs.insert(
             "default".to_string(),
-            ProjectConfig {
-                agent: None,
-                stack: None,
-                dind: None,
+            SharedConfig {
                 volumes: vec![VolumeMount::Named(NamedVolume {
                     name: "build-cache".to_string(),
                     container: "/container/cache".to_string(),
                     readonly: false,
                 })],
-                env: vec![],
+                ..Default::default()
             },
         );
         let tsk_config = TskConfig {
@@ -1251,7 +1246,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_project_volume_mounts_readonly() {
-        use crate::context::{BindMount, ProjectConfig, TskConfig, VolumeMount};
+        use crate::context::{BindMount, SharedConfig, TskConfig, VolumeMount};
         use std::collections::HashMap;
 
         let mock_client = Arc::new(TrackedDockerClient::default());
@@ -1260,16 +1255,13 @@ mod tests {
         let mut project_configs = HashMap::new();
         project_configs.insert(
             "default".to_string(),
-            ProjectConfig {
-                agent: None,
-                stack: None,
-                dind: None,
+            SharedConfig {
                 volumes: vec![VolumeMount::Bind(BindMount {
                     host: "/etc/ssl/certs".to_string(),
                     container: "/etc/ssl/certs".to_string(),
                     readonly: true,
                 })],
-                env: vec![],
+                ..Default::default()
             },
         );
         let tsk_config = TskConfig {
@@ -1325,7 +1317,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_project_env_vars() {
-        use crate::context::{EnvVar, ProjectConfig, TskConfig};
+        use crate::context::{EnvVar, SharedConfig, TskConfig};
         use std::collections::HashMap;
 
         let mock_client = Arc::new(TrackedDockerClient::default());
@@ -1334,11 +1326,7 @@ mod tests {
         let mut project_configs = HashMap::new();
         project_configs.insert(
             "default".to_string(),
-            ProjectConfig {
-                agent: None,
-                stack: None,
-                dind: None,
-                volumes: vec![],
+            SharedConfig {
                 env: vec![
                     EnvVar {
                         name: "DATABASE_URL".to_string(),
@@ -1349,6 +1337,7 @@ mod tests {
                         value: "true".to_string(),
                     },
                 ],
+                ..Default::default()
             },
         );
         let tsk_config = TskConfig {

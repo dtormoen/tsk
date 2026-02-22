@@ -249,7 +249,7 @@ impl TaskRunner {
                 &task.repo_root,
                 &task.source_commit,
                 task.source_branch.as_deref(),
-                self.ctx.tsk_config().git_town.enabled,
+                self.ctx.tsk_config().resolve_config(&task.project).git_town,
             )
             .await
         {

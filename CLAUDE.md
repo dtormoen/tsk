@@ -57,7 +57,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - If parent task fails, all child tasks are marked as Failed (cascading failure)
 
 **Docker Integration** (`src/docker/`)
-- **Container engine**: Supports Docker (default) and Podman via `--container-engine` flag on container-related subcommands (`run`, `shell`, `retry`, `server start`, `docker build`) or `container_engine` in `[docker]` config. Podman uses host network mode for builds and case-insensitive error matching.
+- **Container engine**: Supports Docker (default) and Podman via `--container-engine` flag on container-related subcommands (`run`, `shell`, `retry`, `server start`, `docker build`) or top-level `container_engine` in tsk.toml. Podman uses host network mode for builds and case-insensitive error matching.
 - `DockerImageManager`: Centralized Docker image management with intelligent layering
 - `ProxyManager`: Dedicated proxy lifecycle management with automatic cleanup and network isolation
   - Skips proxy build if proxy is already running (faster startup)
@@ -66,10 +66,10 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Uses Docker network inspection to count connected agent containers
 - `DockerManager`: Container execution with unified support for interactive and non-interactive modes
 - Security-first containers with dropped capabilities
-- **Docker-in-Docker (DIND) support**: Opt-in via `--dind` flag or config (`dind = true` in `[docker]` or `[project.<name>]`). When enabled, applies a custom seccomp profile allowing nested container operations, disables AppArmor confinement, and keeps SETUID/SETGID capabilities for rootless Podman user-namespace setup. When disabled (default), security_opt is left at Docker/Podman defaults and SETUID/SETGID are dropped. Resolution order: CLI flag > project config > `[docker]` config > default (false).
+- **Docker-in-Docker (DIND) support**: Opt-in via `--dind` flag or config (`dind = true` in `[defaults]` or `[project.<name>]`). When enabled, applies a custom seccomp profile allowing nested container operations, disables AppArmor confinement, and keeps SETUID/SETGID capabilities for rootless Podman user-namespace setup. When disabled (default), security_opt is left at Docker/Podman defaults and SETUID/SETGID are dropped. Resolution order: CLI flag > `[project.<name>]` > `[defaults]` > default (false).
 - **Per-container network isolation**: Each agent runs in an isolated internal network that can only communicate with the proxy (see [Network Isolation Guide](docs/network-isolation.md)). Can be disabled per-task with `--no-network-isolation`
 - Proxy-based URL filtering (Squid) for API-only access with domain allowlist
-- Host service access via TCP port forwarding through the proxy container (configured in `[proxy]` section of tsk.toml)
+- Host service access via TCP port forwarding through the proxy container (configured via `host_services` in `[defaults]` or `[project.<name>]`)
 - **Container environment variables**: All task containers receive `TSK_CONTAINER=1` and `TSK_TASK_ID=<task-id>` for in-container detection. When `TSK_CONTAINER=1` is set, TSK auto-defaults to Podman and skips proxy/network isolation (handled by outer container).
 - **Directory override environment variables**: `TSK_DATA_HOME`, `TSK_RUNTIME_DIR`, and `TSK_CONFIG_HOME` override the corresponding XDG base directories for TSK only (without affecting other XDG-aware software). Resolution priority: builder override > TSK env var > XDG env var > default fallback.
 - Volume mounting for repository copies and agent config
@@ -78,13 +78,16 @@ TSK implements a command pattern with dependency injection for testability. The 
 
 **Storage** (`src/context/`)
 - `TskEnv`: Manages directory paths (data_dir, runtime_dir, config_dir) and runtime environment settings (editor, terminal type). TSK-specific env vars (`TSK_DATA_HOME`, `TSK_RUNTIME_DIR`, `TSK_CONFIG_HOME`) take precedence over XDG vars, enabling isolated testing without affecting other XDG-aware software
-- `TskConfig`: User configuration loaded from tsk.toml (docker limits, project-specific settings)
+- `TskConfig`: User configuration loaded from tsk.toml. Uses shared config shape with `[defaults]` and `[project.<name>]` sections. `TskConfig::resolve_config(project_name)` returns a `ResolvedConfig` with all layers merged (project > defaults > built-in).
 - Centralized task storage across all repositories
 - Runtime directory for PID file
 
 **Configuration File** (`$XDG_CONFIG_HOME/tsk/tsk.toml`)
 - Loaded at startup and accessible via `AppContext::tsk_config()`
 - Missing file or invalid TOML uses defaults (fail-open with warnings)
+- Old format (`[docker]`, `[proxy]`, `[git_town]` sections) is detected and prints migration error
+- Uses shared config shape: `[defaults]` for all projects, `[project.<name>]` for per-project overrides
+- `TskConfig::resolve_config(project_name)` merges layers: `[project] > [defaults] > built-in`
 - See README.md for full configuration reference and examples
 
 **Server Mode** (`src/server/`)
@@ -126,7 +129,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Only repositories (base and submodules) with actual changes get branches created
   - Graceful fallback: if submodule setup fails, contents are treated as regular files
 - **Git-Town Integration**: Optional parent branch tracking for git-town users
-  - Enable with `git_town.enabled = true` in tsk.toml
+  - Enable with `git_town = true` in `[defaults]` or `[project.<name>]` in tsk.toml
   - When enabled, task branches automatically record their parent branch
   - Parent is the branch checked out when the task was created
   - Uses git config: `git-town-branch.<branch>.parent`

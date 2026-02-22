@@ -7,10 +7,10 @@ pub mod tsk_env;
 
 // Re-export TskConfig types from tsk_config module
 // Types used in production code
-pub use tsk_config::{ContainerEngine, TskConfig, VolumeMount};
+pub use tsk_config::{ContainerEngine, ResolvedConfig, TskConfig, VolumeMount};
 // Types only used in tests
 #[cfg(test)]
-pub use tsk_config::{BindMount, DockerOptions, EnvVar, NamedVolume, ProjectConfig};
+pub use tsk_config::{BindMount, EnvVar, NamedVolume, SharedConfig};
 
 pub use task_storage::TaskStorage;
 
@@ -202,7 +202,7 @@ impl AppContextBuilder {
                 let mut config = tsk_config::load_config(tsk_env.config_dir());
                 // CLI override for container engine
                 if let Some(engine) = self.container_engine {
-                    config.docker.container_engine = engine;
+                    config.container_engine = engine;
                 }
                 Arc::new(config)
             });

@@ -231,16 +231,12 @@ impl TaskBuilder {
             },
         };
 
-        // Look up project configuration for defaults
+        // Resolve configuration for this project (layers defaults + project config)
         let tsk_config = ctx.tsk_config();
-        let project_config = tsk_config.get_project_config(&project);
+        let resolved = tsk_config.resolve_config(&project);
 
-        // Get agent: CLI flag > project config > default
-        let agent = self.agent.clone().unwrap_or_else(|| {
-            project_config
-                .and_then(|pc| pc.agent.clone())
-                .unwrap_or_else(|| crate::agent::AgentProvider::default_agent().to_string())
-        });
+        // Get agent: CLI flag > resolved config (project > defaults > built-in)
+        let agent = self.agent.clone().unwrap_or(resolved.agent.clone());
 
         // Validate agent
         if !crate::agent::AgentProvider::is_valid_agent(&agent) {
@@ -357,16 +353,22 @@ impl TaskBuilder {
             .ok()
             .flatten();
 
-        // Resolve stack: CLI flag > project config > auto-detect > default
+        // Resolve stack: CLI flag > config (project > defaults) > auto-detect > built-in default
         let stack = match self.stack {
             Some(ts) => {
                 println!("Using stack: {ts}");
                 ts
             }
             None => {
-                // Check project config first
-                if let Some(config_stack) = project_config.and_then(|pc| pc.stack.clone()) {
-                    println!("Using stack from project config: {config_stack}");
+                // Check if any config layer explicitly sets a stack
+                let config_stack = tsk_config
+                    .project
+                    .get(&project)
+                    .and_then(|p| p.stack.clone())
+                    .or_else(|| tsk_config.defaults.stack.clone());
+
+                if let Some(config_stack) = config_stack {
+                    println!("Using stack from config: {config_stack}");
                     config_stack
                 } else {
                     // Auto-detect stack
@@ -384,12 +386,8 @@ impl TaskBuilder {
             }
         };
 
-        // Resolve dind: CLI flag > project config > docker config > default
-        let dind = self.dind.unwrap_or_else(|| {
-            project_config
-                .and_then(|pc| pc.dind)
-                .unwrap_or(tsk_config.docker.dind)
-        });
+        // Resolve dind: CLI flag > resolved config (project > defaults > built-in)
+        let dind = self.dind.unwrap_or(resolved.dind);
 
         // Generate human-readable branch name with format: tsk/{task-type}/{task-name}/{task-id}
         let sanitized_task_type = sanitize_for_branch_name(&task_type);
@@ -964,7 +962,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cli_flags_override_project_config() {
-        use crate::context::{ProjectConfig, TskConfig};
+        use crate::context::{SharedConfig, TskConfig};
         use crate::test_utils::TestGitRepository;
         use std::collections::HashMap;
 
@@ -979,12 +977,10 @@ mod tests {
         let mut project_configs = HashMap::new();
         project_configs.insert(
             project_name.clone(),
-            ProjectConfig {
+            SharedConfig {
                 agent: Some("no-op".to_string()),
                 stack: Some("python".to_string()),
-                dind: None,
-                volumes: vec![],
-                env: vec![],
+                ..Default::default()
             },
         );
         let tsk_config = TskConfig {
@@ -1018,7 +1014,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_project_config_overrides_auto_detect() {
-        use crate::context::{ProjectConfig, TskConfig};
+        use crate::context::{SharedConfig, TskConfig};
         use crate::test_utils::TestGitRepository;
         use std::collections::HashMap;
 
@@ -1038,12 +1034,10 @@ mod tests {
         let mut project_configs = HashMap::new();
         project_configs.insert(
             project_name.clone(),
-            ProjectConfig {
+            SharedConfig {
                 agent: Some("no-op".to_string()),
                 stack: Some("python".to_string()),
-                dind: None,
-                volumes: vec![],
-                env: vec![],
+                ..Default::default()
             },
         );
         let tsk_config = TskConfig {
@@ -1071,7 +1065,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_partial_project_config_uses_defaults_for_missing() {
-        use crate::context::{ProjectConfig, TskConfig};
+        use crate::context::{SharedConfig, TskConfig};
         use crate::test_utils::TestGitRepository;
         use std::collections::HashMap;
 
@@ -1091,12 +1085,9 @@ mod tests {
         let mut project_configs = HashMap::new();
         project_configs.insert(
             project_name.clone(),
-            ProjectConfig {
+            SharedConfig {
                 agent: Some("no-op".to_string()),
-                stack: None, // Not specified, should auto-detect
-                dind: None,
-                volumes: vec![],
-                env: vec![],
+                ..Default::default()
             },
         );
         let tsk_config = TskConfig {
@@ -1153,7 +1144,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_dind_config_resolution_chain() {
-        use crate::context::{DockerOptions, ProjectConfig, TskConfig};
+        use crate::context::{SharedConfig, TskConfig};
         use crate::test_utils::TestGitRepository;
         use std::collections::HashMap;
 
@@ -1162,10 +1153,10 @@ mod tests {
         let repo_path = test_repo.path().to_path_buf();
         let project_name = "test-project".to_string();
 
-        // Case 1: docker.dind = true, no project config, no CLI flag -> true
+        // Case 1: defaults.dind = true, no project config, no CLI flag -> true
         let tsk_config = TskConfig {
-            docker: DockerOptions {
-                dind: true,
+            defaults: SharedConfig {
+                dind: Some(true),
                 ..Default::default()
             },
             ..Default::default()
@@ -1178,20 +1169,20 @@ mod tests {
             .build(&ctx)
             .await
             .unwrap();
-        assert!(task.dind, "docker.dind = true should propagate");
+        assert!(task.dind, "defaults.dind = true should propagate");
 
-        // Case 2: docker.dind = true, project.dind = Some(false) -> false (project overrides)
+        // Case 2: defaults.dind = true, project.dind = Some(false) -> false (project overrides)
         let mut project_configs = HashMap::new();
         project_configs.insert(
             project_name.clone(),
-            ProjectConfig {
+            SharedConfig {
                 dind: Some(false),
                 ..Default::default()
             },
         );
         let tsk_config = TskConfig {
-            docker: DockerOptions {
-                dind: true,
+            defaults: SharedConfig {
+                dind: Some(true),
                 ..Default::default()
             },
             project: project_configs,
@@ -1208,14 +1199,14 @@ mod tests {
             .unwrap();
         assert!(
             !task.dind,
-            "project.dind = false should override docker.dind = true"
+            "project.dind = false should override defaults.dind = true"
         );
 
         // Case 3: project.dind = Some(false), CLI --dind -> true (CLI overrides)
         let mut project_configs = HashMap::new();
         project_configs.insert(
             project_name.clone(),
-            ProjectConfig {
+            SharedConfig {
                 dind: Some(false),
                 ..Default::default()
             },

@@ -27,7 +27,7 @@ pub struct DockerBuildCommand {
 impl Command for DockerBuildCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
         let docker_client = Arc::new(
-            DefaultDockerClient::new(&ctx.tsk_config().docker.container_engine)
+            DefaultDockerClient::new(&ctx.tsk_config().container_engine)
                 .map_err(|e| -> Box<dyn Error> { e.into() })?,
         );
 

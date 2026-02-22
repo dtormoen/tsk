@@ -103,7 +103,7 @@ Custom proxy configuration can be placed at `~/.config/tsk/squid.conf`.
 The proxy can forward TCP connections to services running on the host machine. Configure in `tsk.toml`:
 
 ```toml
-[proxy]
+[defaults]
 host_services = [5432, 6379, 3000]  # PostgreSQL, Redis, dev server
 ```
 

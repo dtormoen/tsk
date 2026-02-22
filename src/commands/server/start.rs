@@ -19,7 +19,7 @@ impl Command for ServerStartCommand {
         println!("Starting TSK server with {} worker(s)...", self.workers);
         ctx.notification_client().set_sound_enabled(self.sound);
         let docker_client: Arc<dyn DockerClient> = Arc::new(
-            DefaultDockerClient::new(&ctx.tsk_config().docker.container_engine)
+            DefaultDockerClient::new(&ctx.tsk_config().container_engine)
                 .map_err(|e| -> Box<dyn Error> { e.into() })?,
         );
 

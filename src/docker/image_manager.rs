@@ -409,7 +409,7 @@ impl DockerImageManager {
             build_args.insert("TSK_AGENT_VERSION".to_string(), version.to_string());
         }
 
-        if self.ctx.tsk_config().docker.container_engine == ContainerEngine::Podman {
+        if self.ctx.tsk_config().container_engine == ContainerEngine::Podman {
             if std::env::var("TSK_CONTAINER").is_ok() {
                 // Inside a TSK container, forward proxy env vars so Podman builds
                 // route through the Squid proxy (Bollard API doesn't inherit env vars).
@@ -446,7 +446,7 @@ impl DockerImageManager {
         options_builder = options_builder.t(&composed.image_tag);
         options_builder = options_builder.nocache(options.no_cache);
         options_builder = options_builder.buildargs(&build_args);
-        if self.ctx.tsk_config().docker.container_engine == ContainerEngine::Podman {
+        if self.ctx.tsk_config().container_engine == ContainerEngine::Podman {
             options_builder = options_builder.networkmode("host");
         }
         let docker_options = options_builder.build();
