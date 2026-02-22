@@ -1,6 +1,7 @@
 use crate::assets::frontmatter::strip_frontmatter;
 use crate::assets::{AssetManager, layered::LayeredAssetManager};
 use crate::context::AppContext;
+use crate::context::tsk_config;
 use crate::context::tsk_env::TskEnv;
 use crate::git::RepoManager;
 use crate::git_operations;
@@ -231,9 +232,10 @@ impl TaskBuilder {
             },
         };
 
-        // Resolve configuration for this project (layers defaults + project config)
+        // Resolve configuration for this project (layers defaults + project file + project config)
         let tsk_config = ctx.tsk_config();
-        let resolved = tsk_config.resolve_config(&project);
+        let project_config = tsk_config::load_project_config(&repo_root);
+        let resolved = tsk_config.resolve_config(&project, project_config.as_ref());
 
         // Get agent: CLI flag > resolved config (project > defaults > built-in)
         let agent = self.agent.clone().unwrap_or(resolved.agent.clone());
@@ -361,10 +363,12 @@ impl TaskBuilder {
             }
             None => {
                 // Check if any config layer explicitly sets a stack
+                // Priority: user [project.<name>] > project .tsk/tsk.toml > user [defaults]
                 let config_stack = tsk_config
                     .project
                     .get(&project)
                     .and_then(|p| p.stack.clone())
+                    .or_else(|| project_config.as_ref().and_then(|pc| pc.stack.clone()))
                     .or_else(|| tsk_config.defaults.stack.clone());
 
                 if let Some(config_stack) = config_stack {

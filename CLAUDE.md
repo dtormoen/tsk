@@ -78,16 +78,17 @@ TSK implements a command pattern with dependency injection for testability. The 
 
 **Storage** (`src/context/`)
 - `TskEnv`: Manages directory paths (data_dir, runtime_dir, config_dir) and runtime environment settings (editor, terminal type). TSK-specific env vars (`TSK_DATA_HOME`, `TSK_RUNTIME_DIR`, `TSK_CONFIG_HOME`) take precedence over XDG vars, enabling isolated testing without affecting other XDG-aware software
-- `TskConfig`: User configuration loaded from tsk.toml. Uses shared config shape with `[defaults]` and `[project.<name>]` sections. `TskConfig::resolve_config(project_name)` returns a `ResolvedConfig` with all layers merged (project > defaults > built-in).
+- `TskConfig`: User configuration loaded from tsk.toml. Uses shared config shape with `[defaults]` and `[project.<name>]` sections. `TskConfig::resolve_config(project_name, project_config)` returns a `ResolvedConfig` with all layers merged: `user [project.<name>] > project .tsk/tsk.toml > user [defaults] > built-in`. Project-level config is loaded from `.tsk/tsk.toml` via `load_project_config()`.
 - Centralized task storage across all repositories
 - Runtime directory for PID file
 
-**Configuration File** (`$XDG_CONFIG_HOME/tsk/tsk.toml`)
-- Loaded at startup and accessible via `AppContext::tsk_config()`
+**Configuration File** (`$XDG_CONFIG_HOME/tsk/tsk.toml` and `.tsk/tsk.toml`)
+- User config loaded at startup from `~/.config/tsk/tsk.toml`, accessible via `AppContext::tsk_config()`
+- Project config loaded from `.tsk/tsk.toml` in the project root at task creation/execution time via `tsk_config::load_project_config()`
 - Missing file or invalid TOML uses defaults (fail-open with warnings)
 - Old format (`[docker]`, `[proxy]`, `[git_town]` sections) is detected and prints migration error
-- Uses shared config shape: `[defaults]` for all projects, `[project.<name>]` for per-project overrides
-- `TskConfig::resolve_config(project_name)` merges layers: `[project] > [defaults] > built-in`
+- Uses shared config shape: `[defaults]` for all projects, `[project.<name>]` for per-project overrides, `.tsk/tsk.toml` for project-level defaults
+- `TskConfig::resolve_config(project_name, project_config)` merges layers: `user [project.<name>] > project .tsk/tsk.toml > user [defaults] > built-in`
 - See README.md for full configuration reference and examples
 
 **Server Mode** (`src/server/`)

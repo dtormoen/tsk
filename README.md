@@ -202,13 +202,20 @@ Each configuration directory can contain:
 
 ### Configuration File
 
-TSK can be configured via `~/.config/tsk/tsk.toml`. All settings are optional. The configuration uses a shared shape between `[defaults]` (applied to all projects) and `[project.<name>]` (per-project overrides).
+TSK can be configured at two levels:
+
+1. **User-level**: `~/.config/tsk/tsk.toml` — global settings, defaults, and per-project overrides
+2. **Project-level**: `.tsk/tsk.toml` in your project root — shared project defaults (checked into version control)
+
+Both levels use the same shared config shape. The project-level config only contains shared settings (no `container_engine`, `[server]`, or `[project.<name>]` sections).
+
+**User-level config** (`~/.config/tsk/tsk.toml`):
 
 ```toml
-# Container engine (top-level setting)
+# Container engine (top-level setting, user-only)
 container_engine = "docker"  # "docker" (default) or "podman"
 
-# Server daemon configuration
+# Server daemon configuration (user-only)
 [server]
 auto_clean_enabled = true   # Automatically clean old tasks (default: true)
 auto_clean_age_days = 7.0   # Minimum age in days before cleanup (default: 7.0)
@@ -243,6 +250,23 @@ env = [
 ]
 ```
 
+**Project-level config** (`.tsk/tsk.toml` in project root):
+
+```toml
+# Project defaults shared via version control
+stack = "rust"
+memory_limit_gb = 16.0
+host_services = [5432]
+setup = '''
+RUN apt-get update && apt-get install -y cmake
+'''
+
+[stack_config.rust]
+setup = '''
+RUN cargo install cargo-nextest
+'''
+```
+
 Volume mounts are particularly useful for:
 - **Build caches**: Share Go module cache (`/go/pkg/mod`) or Rust target directories to speed up builds
 - **Persistent state**: Use named volumes for build caches that persist across tasks
@@ -256,9 +280,9 @@ Host services (`host_services`) expose host services to task containers. Agents 
 
 When `git_town` is enabled, TSK integrates with [git-town](https://www.git-town.com/) by setting the parent branch metadata on task branches, allowing git-town commands like `git town sync` to work correctly with TSK-created branches.
 
-Configuration priority: CLI flags > `[project.<name>]` > `[defaults]` > auto-detection > built-in defaults
+Configuration priority: CLI flags > user `[project.<name>]` > project `.tsk/tsk.toml` > user `[defaults]` > auto-detection > built-in defaults
 
-Settings in `[defaults]` and `[project.<name>]` share the same shape. Scalars use first-set in priority order. Lists (`volumes`, `env`, `host_services`) combine across layers, with higher-priority winning on conflicts (same container path, same env var name, same port).
+Settings in `[defaults]`, `[project.<name>]`, and `.tsk/tsk.toml` share the same shape. Scalars use first-set in priority order. Lists (`volumes`, `env`, `host_services`) combine across layers, with higher-priority winning on conflicts (same container path, same env var name, same port). `stack_config`/`agent_config` maps combine all names; for the same name, higher-priority replaces the entire config.
 
 ### Customizing the TSK Sandbox Environment
 

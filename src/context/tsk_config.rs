@@ -43,16 +43,26 @@ impl TskConfig {
     /// Resolution order (later layers override earlier):
     /// 1. Built-in defaults
     /// 2. `[defaults]` section
-    /// 3. `[project.<name>]` section (if present)
-    pub fn resolve_config(&self, project_name: &str) -> ResolvedConfig {
+    /// 3. Project-level `.tsk/tsk.toml` (if provided)
+    /// 4. `[project.<name>]` section (if present)
+    pub fn resolve_config(
+        &self,
+        project_name: &str,
+        project_config: Option<&SharedConfig>,
+    ) -> ResolvedConfig {
         let mut resolved = ResolvedConfig::default();
 
         // Apply defaults layer
         self.apply_shared_config(&mut resolved, &self.defaults);
 
-        // Apply project layer (higher priority)
-        if let Some(project_config) = self.project.get(project_name) {
-            self.apply_shared_config(&mut resolved, project_config);
+        // Apply project-level .tsk/tsk.toml layer (if provided)
+        if let Some(config) = project_config {
+            self.apply_shared_config(&mut resolved, config);
+        }
+
+        // Apply user [project.<name>] layer (highest priority)
+        if let Some(user_project_config) = self.project.get(project_name) {
+            self.apply_shared_config(&mut resolved, user_project_config);
         }
 
         resolved
@@ -464,6 +474,29 @@ pub fn load_config(config_dir: &Path) -> TskConfig {
     TskConfig::default()
 }
 
+/// Load project-level configuration from `.tsk/tsk.toml` in the project root.
+///
+/// Returns `None` if the file doesn't exist or can't be parsed (fail-open with warning).
+/// The returned [`SharedConfig`] is intended to be passed to [`TskConfig::resolve_config`]
+/// as the project config layer.
+pub fn load_project_config(project_root: &Path) -> Option<SharedConfig> {
+    let config_file = project_root.join(".tsk").join("tsk.toml");
+    if config_file.exists() {
+        match std::fs::read_to_string(&config_file) {
+            Ok(content) => match toml::from_str(&content) {
+                Ok(config) => return Some(config),
+                Err(e) => {
+                    eprintln!("Warning: Failed to parse {}: {}", config_file.display(), e);
+                }
+            },
+            Err(e) => {
+                eprintln!("Warning: Failed to read {}: {}", config_file.display(), e);
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -604,7 +637,7 @@ env = [
             ..Default::default()
         };
 
-        let resolved = config.resolve_config("my-project");
+        let resolved = config.resolve_config("my-project", None);
 
         // Project overrides defaults
         assert_eq!(resolved.agent, "claude");
@@ -620,7 +653,7 @@ env = [
         assert!(resolved.git_town);
 
         // Non-existent project only gets defaults
-        let resolved_other = config.resolve_config("other-project");
+        let resolved_other = config.resolve_config("other-project", None);
         assert_eq!(resolved_other.agent, "codex");
         assert_eq!(resolved_other.stack, "default");
         assert_eq!(resolved_other.memory_limit_gb, 16.0);
@@ -644,7 +677,7 @@ env = [
             ..Default::default()
         };
 
-        let resolved = config.resolve_config("my-project");
+        let resolved = config.resolve_config("my-project", None);
 
         // Combined and deduplicated
         assert_eq!(resolved.host_services, vec![5432, 6379, 3000]);
@@ -691,7 +724,7 @@ env = [
             ..Default::default()
         };
 
-        let resolved = config.resolve_config("my-project");
+        let resolved = config.resolve_config("my-project", None);
 
         // /data from defaults remains, /cache replaced by project's named volume, /logs added
         assert_eq!(resolved.volumes.len(), 3);
@@ -758,7 +791,7 @@ env = [
             ..Default::default()
         };
 
-        let resolved = config.resolve_config("my-project");
+        let resolved = config.resolve_config("my-project", None);
 
         assert_eq!(resolved.env.len(), 3);
         assert_eq!(resolved.env[0].name, "DATABASE_URL");
@@ -812,7 +845,7 @@ env = [
             ..Default::default()
         };
 
-        let resolved = config.resolve_config("my-project");
+        let resolved = config.resolve_config("my-project", None);
 
         assert_eq!(resolved.stack_config.len(), 3);
         assert_eq!(
@@ -864,7 +897,7 @@ env = [
             ..Default::default()
         };
 
-        let resolved = config.resolve_config("my-project");
+        let resolved = config.resolve_config("my-project", None);
 
         assert_eq!(resolved.agent_config.len(), 2);
         assert_eq!(
@@ -920,7 +953,7 @@ enabled = true
         let temp_dir = tempfile::TempDir::new().unwrap();
         let config = load_config(temp_dir.path());
 
-        let resolved = config.resolve_config("any-project");
+        let resolved = config.resolve_config("any-project", None);
         assert_eq!(resolved.agent, "claude");
         assert_eq!(resolved.stack, "default");
         assert_eq!(resolved.memory_limit_gb, 12.0);
@@ -1164,6 +1197,175 @@ setup = "RUN pip install custom-tool"
             project.agent_config["my-agent"].setup,
             Some("RUN pip install custom-tool".to_string())
         );
+    }
+
+    #[test]
+    fn test_load_project_config() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let project_root = temp_dir.path();
+
+        std::fs::create_dir_all(project_root.join(".tsk")).unwrap();
+        let toml_content = r#"
+agent = "codex"
+stack = "python"
+memory_limit_gb = 20.0
+host_services = [8080]
+setup = "RUN pip install custom-tool"
+
+[stack_config.python]
+setup = "RUN pip install numpy"
+"#;
+        std::fs::write(project_root.join(".tsk/tsk.toml"), toml_content).unwrap();
+
+        let config = load_project_config(project_root).unwrap();
+        assert_eq!(config.agent, Some("codex".to_string()));
+        assert_eq!(config.stack, Some("python".to_string()));
+        assert_eq!(config.memory_limit_gb, Some(20.0));
+        assert_eq!(config.host_services, vec![8080]);
+        assert_eq!(
+            config.setup,
+            Some("RUN pip install custom-tool".to_string())
+        );
+        assert_eq!(
+            config.stack_config["python"].setup,
+            Some("RUN pip install numpy".to_string())
+        );
+    }
+
+    #[test]
+    fn test_load_project_config_missing() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        assert!(load_project_config(temp_dir.path()).is_none());
+    }
+
+    #[test]
+    fn test_resolve_config_with_project_config_priority() {
+        // Test the full 4-layer chain:
+        // built-in < defaults < project .tsk/tsk.toml < user [project.<name>]
+        let project_config = SharedConfig {
+            agent: Some("codex".to_string()),
+            memory_limit_gb: Some(20.0),
+            cpu_limit: Some(12),
+            host_services: vec![8080],
+            env: vec![EnvVar {
+                name: "PROJECT_VAR".to_string(),
+                value: "from-project-file".to_string(),
+            }],
+            stack_config: HashMap::from([(
+                "python".to_string(),
+                StackConfig {
+                    setup: Some("RUN pip install project-dep".to_string()),
+                },
+            )]),
+            ..Default::default()
+        };
+
+        let config = TskConfig {
+            defaults: SharedConfig {
+                memory_limit_gb: Some(16.0),
+                git_town: Some(true),
+                host_services: vec![5432],
+                env: vec![
+                    EnvVar {
+                        name: "DEFAULT_VAR".to_string(),
+                        value: "from-defaults".to_string(),
+                    },
+                    EnvVar {
+                        name: "PROJECT_VAR".to_string(),
+                        value: "from-defaults".to_string(),
+                    },
+                ],
+                ..Default::default()
+            },
+            project: HashMap::from([(
+                "my-project".to_string(),
+                SharedConfig {
+                    agent: Some("claude".to_string()),
+                    cpu_limit: Some(16),
+                    host_services: vec![6379],
+                    env: vec![EnvVar {
+                        name: "USER_VAR".to_string(),
+                        value: "from-user-project".to_string(),
+                    }],
+                    stack_config: HashMap::from([(
+                        "python".to_string(),
+                        StackConfig {
+                            setup: Some("RUN pip install user-dep".to_string()),
+                        },
+                    )]),
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+
+        let resolved = config.resolve_config("my-project", Some(&project_config));
+
+        // user [project] overrides project config
+        assert_eq!(resolved.agent, "claude");
+        // project config overrides defaults
+        assert_eq!(resolved.memory_limit_gb, 20.0);
+        // user [project] overrides project config
+        assert_eq!(resolved.cpu_limit, 16);
+        // defaults (no override from project or user project)
+        assert!(resolved.git_town);
+        // host_services combined from all layers, deduplicated
+        assert!(resolved.host_services.contains(&5432));
+        assert!(resolved.host_services.contains(&8080));
+        assert!(resolved.host_services.contains(&6379));
+        // env: project config overrides PROJECT_VAR from defaults
+        assert!(
+            resolved
+                .env
+                .iter()
+                .any(|e| e.name == "DEFAULT_VAR" && e.value == "from-defaults")
+        );
+        assert!(
+            resolved
+                .env
+                .iter()
+                .any(|e| e.name == "PROJECT_VAR" && e.value == "from-project-file")
+        );
+        assert!(
+            resolved
+                .env
+                .iter()
+                .any(|e| e.name == "USER_VAR" && e.value == "from-user-project")
+        );
+        // stack_config: user [project] replaces python setup
+        assert_eq!(
+            resolved.stack_config["python"].setup,
+            Some("RUN pip install user-dep".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_config_project_config_without_user_project() {
+        // When there's no user [project.<name>] section, project config should still work
+        let project_config = SharedConfig {
+            agent: Some("codex".to_string()),
+            stack: Some("python".to_string()),
+            memory_limit_gb: Some(20.0),
+            ..Default::default()
+        };
+
+        let config = TskConfig {
+            defaults: SharedConfig {
+                memory_limit_gb: Some(16.0),
+                cpu_limit: Some(4),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let resolved = config.resolve_config("my-project", Some(&project_config));
+
+        // project config overrides defaults for agent and memory
+        assert_eq!(resolved.agent, "codex");
+        assert_eq!(resolved.stack, "python");
+        assert_eq!(resolved.memory_limit_gb, 20.0);
+        // defaults still apply for unset fields
+        assert_eq!(resolved.cpu_limit, 4);
     }
 
     #[test]

@@ -11,6 +11,7 @@ use crate::context::AppContext;
 use crate::context::ContainerEngine;
 use crate::context::VolumeMount;
 use crate::context::docker_client::DockerClient;
+use crate::context::tsk_config;
 use crate::docker::proxy_manager::ProxyManager;
 use bollard::models::{ContainerCreateBody, HostConfig};
 use bollard::query_parameters::{LogsOptions, RemoveContainerOptions};
@@ -260,7 +261,11 @@ impl DockerManager {
         agent: &dyn Agent,
         network_name: Option<&str>,
     ) -> ContainerCreateBody {
-        let resolved = self.ctx.tsk_config().resolve_config(&task.project);
+        let project_config = tsk_config::load_project_config(&task.repo_root);
+        let resolved = self
+            .ctx
+            .tsk_config()
+            .resolve_config(&task.project, project_config.as_ref());
         let binds = self.build_bind_volumes(task, agent, &resolved);
         let instructions_file_path = PathBuf::from(&task.instructions_file);
         let working_dir = container_working_dir(&task.project);
