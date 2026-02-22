@@ -434,24 +434,23 @@ impl DockerImageManager {
         }
         let options = options_builder.build();
 
-        // Build the image using the DockerClient with streaming output
+        // Build the image using the DockerClient
         let mut build_stream = self
             .client
             .build_image(options, tar_archive)
             .await
             .map_err(|e| anyhow::anyhow!("Docker build failed: {e}"))?;
 
-        // Stream build output for real-time visibility
+        // Capture build output (only displayed on failure to reduce noise)
         use futures_util::StreamExt;
+        let mut build_output = String::new();
         while let Some(result) = build_stream.next().await {
             match result {
                 Ok(line) => {
-                    print!("{line}");
-                    // Ensure output is flushed immediately
-                    use std::io::Write;
-                    std::io::stdout().flush().unwrap_or(());
+                    build_output.push_str(&line);
                 }
                 Err(e) => {
+                    eprint!("{build_output}");
                     return Err(anyhow::anyhow!("Docker build failed: {e}"));
                 }
             }
