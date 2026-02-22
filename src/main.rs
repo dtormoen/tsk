@@ -250,6 +250,10 @@ enum Commands {
         /// Skip retrying child tasks (don't prompt)
         #[arg(long)]
         no_children: bool,
+
+        /// Use current working directory instead of parent task's repository
+        #[arg(long)]
+        from_cwd: bool,
     },
     /// Docker operations - build and manage TSK Docker images
     Docker(DockerArgs),
@@ -471,6 +475,7 @@ async fn main() {
             parent_id,
             dind,
             no_children,
+            from_cwd,
         } => Box::new(RetryCommand {
             task_ids,
             edit,
@@ -481,6 +486,7 @@ async fn main() {
             parent_id,
             dind: if dind { Some(true) } else { None },
             no_children,
+            from_cwd,
         }),
         Commands::Server(server_args) => match server_args.command {
             ServerCommands::Start {

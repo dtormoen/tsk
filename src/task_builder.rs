@@ -38,6 +38,7 @@ pub struct TaskBuilder {
     parent_id: Option<String>,
     network_isolation: bool,
     dind: Option<bool>,
+    repo_copy_source: Option<PathBuf>,
 }
 
 impl TaskBuilder {
@@ -58,6 +59,7 @@ impl TaskBuilder {
             parent_id: None,
             network_isolation: true,
             dind: None,
+            repo_copy_source: None,
         }
     }
 
@@ -163,6 +165,13 @@ impl TaskBuilder {
     /// Uses `Option<bool>` so `None` defers to config-file defaults.
     pub fn dind(mut self, enabled: Option<bool>) -> Self {
         self.dind = enabled;
+        self
+    }
+
+    /// Overrides the source directory used when copying the repository.
+    /// When set, this path is used instead of the auto-detected repository root.
+    pub fn repo_copy_source(mut self, source: Option<PathBuf>) -> Self {
+        self.repo_copy_source = source;
         self
     }
 
@@ -439,11 +448,12 @@ impl TaskBuilder {
             );
             None
         } else {
+            let copy_source = self.repo_copy_source.as_ref().unwrap_or(&repo_root);
             let repo_manager = RepoManager::new(ctx);
             let (path, _) = repo_manager
                 .copy_repo(
                     &task_dir_name,
-                    &repo_root,
+                    copy_source,
                     Some(&source_commit),
                     &branch_name,
                 )

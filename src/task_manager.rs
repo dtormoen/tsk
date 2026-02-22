@@ -1,6 +1,7 @@
 use crate::context::{AppContext, TaskStorage};
 use crate::task::{Task, TaskBuilder, TaskStatus};
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Result of cleaning terminal-state tasks.
@@ -19,6 +20,7 @@ pub struct RetryOverrides {
     pub project: Option<String>,
     pub parent_id: Option<String>,
     pub dind: Option<bool>,
+    pub repo_copy_source: Option<PathBuf>,
 }
 
 #[cfg(test)]
@@ -222,6 +224,9 @@ impl TaskManager {
         }
         if let Some(dind) = overrides.dind {
             builder = builder.dind(Some(dind));
+        }
+        if let Some(source) = overrides.repo_copy_source {
+            builder = builder.repo_copy_source(Some(source));
         }
 
         let new_task = builder

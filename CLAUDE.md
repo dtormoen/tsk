@@ -21,7 +21,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `list`: Display task status and results (shows parent task information)
 - `clean`: Delete completed tasks (skips parents with queued/running children)
 - `delete <task-id>`: Delete a specific task
-- `retry <task-id>`: Retry a previous task (supports `--dind`, `--no-children`; prompts to retry child tasks when present)
+- `retry <task-id>`: Retry a previous task
 
 *Subcommand Groups:*
 - `server start`: Start the TSK server daemon (supports `-w/--workers`, `-q/--quit`, `-s/--sound`)

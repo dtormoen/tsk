@@ -1,6 +1,5 @@
 use super::Command;
 use crate::context::AppContext;
-use crate::task::Task;
 use crate::task_manager::{RetryOverrides, TaskManager};
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -16,31 +15,28 @@ pub struct RetryCommand {
     pub parent_id: Option<String>,
     pub dind: Option<bool>,
     pub no_children: bool,
+    pub from_cwd: bool,
 }
 
-fn confirm_retry_children(task_id: &str, descendants: &[Task]) -> bool {
+/// Prompts the user with a [Y/n] question, defaulting to yes.
+/// In non-TTY mode, returns true without prompting.
+fn confirm(info: &str, prompt: &str, non_tty_message: &str) -> bool {
     use is_terminal::IsTerminal;
     use std::io::Write;
 
-    let names: Vec<&str> = descendants.iter().map(|t| t.name.as_str()).collect();
-    println!(
-        "Task {task_id} has {} child task(s): {}",
-        descendants.len(),
-        names.join(", ")
-    );
+    println!("{info}");
 
-    // Non-TTY: default to yes
     if !std::io::stdin().is_terminal() {
-        println!("Retrying children (non-interactive mode)");
+        println!("{non_tty_message}");
         return true;
     }
 
-    print!("Retry children too? [Y/n] ");
+    print!("{prompt} [Y/n] ");
     let _ = std::io::stdout().flush();
 
     let mut input = String::new();
     if std::io::stdin().read_line(&mut input).is_err() {
-        return true; // default yes on read error
+        return true;
     }
 
     let trimmed = input.trim().to_lowercase();
@@ -60,6 +56,28 @@ impl Command for RetryCommand {
 
         for task_id in &self.task_ids {
             println!("Retrying task: {task_id}");
+
+            let mut repo_copy_source = None;
+            if !self.from_cwd {
+                let storage = ctx.task_storage();
+                if let Ok(Some(original_task)) = storage.get_task(task_id).await
+                    && let Some(parent_id) = original_task.parent_ids.first()
+                    && let Ok(Some(parent_task)) = storage.get_task(parent_id).await
+                    && let Some(ref parent_repo) = parent_task.copied_repo_path
+                    && parent_repo.exists()
+                    && confirm(
+                        &format!(
+                            "Task {task_id} has parent task '{}' ({parent_id}) with an existing repository",
+                            parent_task.name
+                        ),
+                        "Use parent task's repository?",
+                        "Using parent task's repository (non-interactive mode)",
+                    )
+                {
+                    repo_copy_source = Some(parent_repo.clone());
+                }
+            }
+
             let overrides = RetryOverrides {
                 name: self.name.clone(),
                 agent: self.agent.clone(),
@@ -67,6 +85,7 @@ impl Command for RetryCommand {
                 project: self.project.clone(),
                 parent_id: self.parent_id.clone(),
                 dind: self.dind,
+                repo_copy_source,
             };
             match task_manager
                 .retry_task(task_id, self.edit, overrides, ctx)
@@ -76,11 +95,19 @@ impl Command for RetryCommand {
                     println!("Task '{task_id}' retried successfully. New task ID: {new_task_id}");
                     successful_retries += 1;
 
-                    // Check for descendant tasks to retry
                     let descendants = task_manager.find_descendant_tasks(task_id).await?;
+                    let names: Vec<&str> = descendants.iter().map(|t| t.name.as_str()).collect();
                     if !descendants.is_empty()
                         && !self.no_children
-                        && confirm_retry_children(task_id, &descendants)
+                        && confirm(
+                            &format!(
+                                "Task {task_id} has {} child task(s): {}",
+                                descendants.len(),
+                                names.join(", ")
+                            ),
+                            "Retry children too?",
+                            "Retrying children (non-interactive mode)",
+                        )
                     {
                         // Map old IDs to new IDs for parent chain reconstruction
                         let mut id_map = HashMap::new();
@@ -222,6 +249,7 @@ mod tests {
             parent_id: None,
             dind: None,
             no_children: true,
+            from_cwd: false,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -257,6 +285,7 @@ mod tests {
             parent_id: None,
             dind: None,
             no_children: true,
+            from_cwd: false,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -291,6 +320,7 @@ mod tests {
             parent_id: None,
             dind: None,
             no_children: true,
+            from_cwd: false,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -333,6 +363,7 @@ mod tests {
             parent_id: None,
             dind: None,
             no_children: true,
+            from_cwd: false,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -375,6 +406,7 @@ mod tests {
             parent_id: None,
             dind: None,
             no_children: true,
+            from_cwd: false,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -421,6 +453,7 @@ mod tests {
             parent_id: None,
             dind: None,
             no_children: true,
+            from_cwd: false,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -504,6 +537,7 @@ mod tests {
             parent_id: None,
             dind: None,
             no_children: true,
+            from_cwd: false,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -591,6 +625,7 @@ mod tests {
             parent_id: None,
             dind: None,
             no_children: false,
+            from_cwd: false,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -624,5 +659,145 @@ mod tests {
             vec![new_parent.id.clone()],
             "Retried child should point to the retried parent"
         );
+    }
+
+    /// Helper to set up a parent-child task pair where the parent has a real git repo
+    /// at its `copied_repo_path`.
+    async fn setup_parent_child_for_repo_test() -> (AppContext, TestGitRepository, String, String) {
+        let ctx = AppContext::builder().build();
+        let tsk_env = ctx.tsk_env();
+        tsk_env.ensure_directories().unwrap();
+
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        let repo_root = test_repo.path().to_path_buf();
+
+        let parent_id = "parent-repo-001";
+        let child_id = "child-repo-001";
+
+        let storage = ctx.task_storage();
+
+        // Create parent task directory with a real git repo at copied_repo_path
+        let parent_dir = tsk_env.task_dir(parent_id);
+        std::fs::create_dir_all(&parent_dir).unwrap();
+        let parent_instructions = parent_dir.join("instructions.md");
+        std::fs::write(&parent_instructions, "Parent task instructions").unwrap();
+
+        // Create a real git repo as the parent's copied_repo_path
+        let parent_repo_path = parent_dir.join("repo");
+        std::fs::create_dir_all(&parent_repo_path).unwrap();
+        std::process::Command::new("git")
+            .args(["clone", &repo_root.to_string_lossy(), "."])
+            .current_dir(&parent_repo_path)
+            .output()
+            .unwrap();
+
+        storage
+            .add_task(crate::task::Task {
+                id: parent_id.to_string(),
+                repo_root: repo_root.clone(),
+                name: "parent-task".to_string(),
+                instructions_file: parent_instructions.to_string_lossy().to_string(),
+                branch_name: format!("tsk/{parent_id}"),
+                status: TaskStatus::Complete,
+                copied_repo_path: Some(parent_repo_path),
+                started_at: Some(chrono::Utc::now()),
+                completed_at: Some(chrono::Utc::now()),
+                ..crate::task::Task::test_default()
+            })
+            .await
+            .unwrap();
+
+        // Create child task (failed, with parent)
+        let child_dir = tsk_env.task_dir(child_id);
+        std::fs::create_dir_all(&child_dir).unwrap();
+        let child_instructions = child_dir.join("instructions.md");
+        std::fs::write(&child_instructions, "Child task instructions").unwrap();
+
+        storage
+            .add_task(crate::task::Task {
+                id: child_id.to_string(),
+                repo_root: repo_root.clone(),
+                name: "child-task".to_string(),
+                instructions_file: child_instructions.to_string_lossy().to_string(),
+                branch_name: format!("tsk/{child_id}"),
+                status: TaskStatus::Failed,
+                copied_repo_path: Some(child_dir),
+                parent_ids: vec![parent_id.to_string()],
+                started_at: Some(chrono::Utc::now()),
+                ..crate::task::Task::test_default()
+            })
+            .await
+            .unwrap();
+
+        (ctx, test_repo, parent_id.to_string(), child_id.to_string())
+    }
+
+    #[tokio::test]
+    async fn test_retry_child_uses_parent_repo() {
+        let (ctx, _test_repo, _parent_id, child_id) = setup_parent_child_for_repo_test().await;
+
+        // Retry child with from_cwd=false; non-TTY defaults to using parent repo
+        let cmd = RetryCommand {
+            task_ids: vec![child_id.clone()],
+            edit: false,
+            name: None,
+            agent: None,
+            stack: None,
+            project: None,
+            parent_id: None,
+            dind: None,
+            no_children: true,
+            from_cwd: false,
+        };
+
+        let result = cmd.execute(&ctx).await;
+        assert!(result.is_ok(), "Retry should succeed: {result:?}");
+
+        let storage = ctx.task_storage();
+        let all_tasks = storage.list_tasks().await.unwrap();
+
+        // Should have 3 tasks: parent, original child, retried child
+        assert_eq!(all_tasks.len(), 3);
+
+        let new_task = all_tasks
+            .iter()
+            .find(|t| t.status == TaskStatus::Queued)
+            .expect("Should have a new queued task");
+        assert_eq!(new_task.name, "child-task");
+    }
+
+    #[tokio::test]
+    async fn test_retry_child_with_from_cwd_skips_parent_repo() {
+        let (ctx, _test_repo, _parent_id, child_id) = setup_parent_child_for_repo_test().await;
+
+        // Retry child with from_cwd=true; should skip parent repo prompt
+        let cmd = RetryCommand {
+            task_ids: vec![child_id.clone()],
+            edit: false,
+            name: None,
+            agent: None,
+            stack: None,
+            project: None,
+            parent_id: None,
+            dind: None,
+            no_children: true,
+            from_cwd: true,
+        };
+
+        let result = cmd.execute(&ctx).await;
+        assert!(result.is_ok(), "Retry should succeed: {result:?}");
+
+        let storage = ctx.task_storage();
+        let all_tasks = storage.list_tasks().await.unwrap();
+
+        // Should have 3 tasks: parent, original child, retried child
+        assert_eq!(all_tasks.len(), 3);
+
+        let new_task = all_tasks
+            .iter()
+            .find(|t| t.status == TaskStatus::Queued)
+            .expect("Should have a new queued task");
+        assert_eq!(new_task.name, "child-task");
     }
 }
