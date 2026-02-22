@@ -126,7 +126,6 @@ impl Command for AddCommand {
         }
 
         println!("\nUse 'tsk list' to view all queued tasks");
-        println!("Use 'tsk run' to execute the next task in the queue");
 
         Ok(())
     }
