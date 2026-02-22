@@ -842,7 +842,7 @@ impl ClaudeLogProcessor {
     fn format_result_message(&mut self, msg: ClaudeMessage) -> Option<String> {
         // Parse and store the result status
         if let Some(subtype) = &msg.subtype {
-            let success = subtype == "success";
+            let success = subtype == "success" && msg.is_error != Some(true);
             let message = msg.result.clone().unwrap_or_else(|| {
                 if success {
                     "Task completed successfully".to_string()
@@ -1144,7 +1144,26 @@ mod tests {
         assert!(final_result.success);
         assert_eq!(final_result.cost_usd, Some(0.15));
 
+        // Test result with subtype "success" but is_error true (e.g., auth failure)
+        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
+        let error_result_json = r#"{
+            "type": "result",
+            "subtype": "success",
+            "is_error": true,
+            "result": "Failed to authenticate. API Error: 401 Unauthorized"
+        }"#;
+        let output = processor.process_line(error_result_json).unwrap();
+        assert!(output.contains("❌ Task Result: success"));
+
+        let final_result = processor.get_final_result().unwrap();
+        assert!(!final_result.success);
+        assert_eq!(
+            final_result.message,
+            "Failed to authenticate. API Error: 401 Unauthorized"
+        );
+
         // Test summary message
+        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
         let summary_json = r#"{
             "type": "summary",
             "summary": "Refactoring completed: Renamed XdgDirectories to TskConfig"
