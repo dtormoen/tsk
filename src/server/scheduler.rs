@@ -249,10 +249,6 @@ impl TaskScheduler {
             Ok(OAuthTokenStatus::Valid) => true,
             Ok(OAuthTokenStatus::ExpiredOrExpiring) => {
                 if !self.oauth_notification_shown {
-                    println!(
-                        "Claude OAuth token is expired or expiring soon. \
-                         Please run `claude /login` to refresh your token."
-                    );
                     self.context.notification_client().notify(
                         "TSK: Claude Token Expired",
                         "Claude OAuth token is expired or expiring soon. \
@@ -260,6 +256,12 @@ impl TaskScheduler {
                     );
                     self.oauth_notification_shown = true;
                 }
+                println!(
+                    "Claude OAuth token is expired or expiring soon. \
+                     Please run `claude /login` to refresh your token. \
+                     Trying again in {} seconds.",
+                    OAUTH_RETRY_INTERVAL.as_secs()
+                );
                 self.oauth_wait_until = Some(Instant::now() + OAUTH_RETRY_INTERVAL);
                 false
             }
