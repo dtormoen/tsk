@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.6](https://github.com/dtormoen/tsk/compare/v0.8.5...v0.8.6) - 2026-02-23
+
+### Added
+
+- add interactive flag to AppContext to fix test hangs in TTY
+- prompt to use parent task's repository when retrying a child task
+- prompt to retry child tasks when retrying a parent task
+- proactively check Claude OAuth token expiry before scheduling tasks
+- save docker build logs to task directory on failure
+
+### Fixed
+
+- log OAuth token expiry on every check with retry countdown
+- detect is_error field in Claude result messages
+- capture docker build output and only display on failure
+- remove misleading 'tsk run' hint from add command output
+
 ## [0.8.5](https://github.com/dtormoen/tsk/compare/v0.8.4...v0.8.5) - 2026-02-21
 
 ### Added
