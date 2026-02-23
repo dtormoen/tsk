@@ -279,13 +279,6 @@ volumes = [
 ]
 EOF
 
-    # Ensure the named volume exists with correct ownership for the agent user
-    # (UID 1000). Docker creates named volumes as root:root by default, but
-    # Podman inside the container runs as agent and needs write access.
-    local volume_name="tsk-integ-podman-storage-${engine}"
-    "$engine" volume create "$volume_name" > /dev/null 2>&1 || true
-    "$engine" run --rm -v "${volume_name}:/storage" alpine chown 1000:1000 /storage
-
     echo -e "  Running: ${YELLOW}nested-${engine}${NC}"
 
     if cargo run --manifest-path "$MANIFEST" -- run \
