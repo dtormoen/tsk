@@ -99,6 +99,45 @@ impl ProxyManager {
         Ok(container_name)
     }
 
+    /// Resolves the IP address of the proxy container on the specified network.
+    ///
+    /// Inspects the running proxy container and extracts the IP address assigned
+    /// on the given network. This IP is used for `extra_hosts` entries so the
+    /// proxy hostname resolves inside agent containers even in nested network
+    /// namespaces (e.g., Podman builds).
+    ///
+    /// Callers should pass the **agent network** name so the returned IP is
+    /// routable from the agent container.
+    pub async fn resolve_proxy_ip(
+        &self,
+        container_name: &str,
+        network_name: &str,
+    ) -> Result<String> {
+        let json_data = self
+            .docker_client
+            .inspect_container(container_name)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to inspect proxy container: {e}"))?;
+
+        let data: serde_json::Value = serde_json::from_str(&json_data)
+            .context("Failed to parse proxy container inspect data")?;
+
+        let ip = data
+            .get("NetworkSettings")
+            .and_then(|ns| ns.get("Networks"))
+            .and_then(|n| n.get(network_name))
+            .and_then(|net| net.get("IPAddress"))
+            .and_then(|ip| ip.as_str())
+            .filter(|ip| !ip.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Could not resolve IP for proxy container '{container_name}' on network '{network_name}'"
+                )
+            })?;
+
+        Ok(ip.to_string())
+    }
+
     /// Builds the generic proxy Docker image.
     ///
     /// The image is always built without custom squid.conf baked in. Per-configuration
@@ -1180,5 +1219,40 @@ mod tests {
         assert!(squid_path.exists());
         let content = std::fs::read_to_string(&squid_path).unwrap();
         assert_eq!(content, "http_port 3128\nacl custom src all");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_proxy_ip() {
+        use serde_json::json;
+
+        let agent_network = "tsk-agent-test-task";
+
+        let mock_client = Arc::new(TrackedDockerClient {
+            inspect_container_response: json!({
+                "State": {
+                    "Health": {
+                        "Status": "healthy"
+                    }
+                },
+                "NetworkSettings": {
+                    "Networks": {
+                        agent_network: {
+                            "IPAddress": "172.18.0.2"
+                        }
+                    }
+                }
+            })
+            .to_string(),
+            ..Default::default()
+        });
+        let ctx = AppContext::builder().build();
+
+        let manager = ProxyManager::new(mock_client, ctx.tsk_env(), ContainerEngine::Docker);
+        let result = manager
+            .resolve_proxy_ip("tsk-proxy-test", agent_network)
+            .await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "172.18.0.2");
     }
 }

@@ -464,15 +464,8 @@ impl DockerImageManager {
         if self.ctx.tsk_config().container_engine == ContainerEngine::Podman {
             if std::env::var("TSK_CONTAINER").is_ok() {
                 // Inside a TSK container, forward proxy env vars so Podman builds
-                // route through the Squid proxy (Bollard API doesn't inherit env vars).
-                for var in [
-                    "HTTP_PROXY",
-                    "HTTPS_PROXY",
-                    "http_proxy",
-                    "https_proxy",
-                    "NO_PROXY",
-                    "no_proxy",
-                ] {
+                // route through the Squid proxy.
+                for var in super::PROXY_ENV_VARS {
                     if let Ok(val) = std::env::var(var) {
                         build_args.insert(var.to_string(), val);
                     }
@@ -480,14 +473,7 @@ impl DockerImageManager {
             } else {
                 // On host machines, clear any inherited proxy env vars so builds
                 // can access the internet directly with host networking.
-                for var in [
-                    "HTTP_PROXY",
-                    "HTTPS_PROXY",
-                    "http_proxy",
-                    "https_proxy",
-                    "NO_PROXY",
-                    "no_proxy",
-                ] {
+                for var in super::PROXY_ENV_VARS {
                     build_args.insert(var.to_string(), String::new());
                 }
             }
