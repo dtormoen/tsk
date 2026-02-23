@@ -91,15 +91,9 @@ impl TskConfig {
         // User project-specific config
         if let Some(config) = self.project.get(project_name)
             && let Some(ref path_str) = config.squid_conf_path
+            && let Some(content) = try_read_squid_conf(&expand_tilde(path_str))
         {
-            let path = expand_tilde(path_str);
-            match std::fs::read_to_string(&path) {
-                Ok(content) => return Some(content),
-                Err(e) => eprintln!(
-                    "Warning: Failed to read squid_conf_path '{}': {e}",
-                    path.display()
-                ),
-            }
+            return Some(content);
         }
 
         // Project-level .tsk/tsk.toml config
@@ -111,25 +105,16 @@ impl TskConfig {
             } else {
                 PathBuf::from(path_str)
             };
-            match std::fs::read_to_string(&path) {
-                Ok(content) => return Some(content),
-                Err(e) => eprintln!(
-                    "Warning: Failed to read squid_conf_path '{}': {e}",
-                    path.display()
-                ),
+            if let Some(content) = try_read_squid_conf(&path) {
+                return Some(content);
             }
         }
 
         // User defaults
-        if let Some(ref path_str) = self.defaults.squid_conf_path {
-            let path = expand_tilde(path_str);
-            match std::fs::read_to_string(&path) {
-                Ok(content) => return Some(content),
-                Err(e) => eprintln!(
-                    "Warning: Failed to read squid_conf_path '{}': {e}",
-                    path.display()
-                ),
-            }
+        if let Some(ref path_str) = self.defaults.squid_conf_path
+            && let Some(content) = try_read_squid_conf(&expand_tilde(path_str))
+        {
+            return Some(content);
         }
 
         None
@@ -302,15 +287,12 @@ pub struct ResolvedConfig {
     /// Docker-in-Docker support (default: false)
     pub dind: bool,
     /// Container memory limit in gigabytes (default: 12.0)
-    #[serde(alias = "memory_limit_gb")]
     pub memory_gb: f64,
     /// Number of CPUs available to container (default: 8)
-    #[serde(alias = "cpu_limit")]
     pub cpu: u32,
     /// Git-town parent branch tracking (default: false)
     pub git_town: bool,
     /// Host service ports to forward from proxy
-    #[serde(alias = "host_services")]
     pub host_ports: Vec<u16>,
     /// Custom setup commands
     pub setup: Option<String>,
@@ -361,19 +343,17 @@ impl ResolvedConfig {
         self.cpu as i64 * 100_000
     }
 
-    /// Returns host ports as a comma-separated string for environment variables.
+    /// Returns host ports as a sorted, comma-separated string for environment variables.
     ///
     /// Returns empty string if no ports are configured.
     pub fn host_ports_env(&self) -> String {
-        if self.host_ports.is_empty() {
-            String::new()
-        } else {
-            self.host_ports
-                .iter()
-                .map(|p| p.to_string())
-                .collect::<Vec<_>>()
-                .join(",")
-        }
+        let mut ports = self.host_ports.clone();
+        ports.sort();
+        ports
+            .iter()
+            .map(|p| p.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
     }
 
     /// Returns true if any host ports are configured
@@ -539,6 +519,20 @@ impl BindMount {
             return Err(TskEnvError::NoHomeDirectory);
         }
         Ok(expanded)
+    }
+}
+
+/// Try to read a squid configuration file, warning on failure.
+fn try_read_squid_conf(path: &Path) -> Option<String> {
+    match std::fs::read_to_string(path) {
+        Ok(content) => Some(content),
+        Err(e) => {
+            eprintln!(
+                "Warning: Failed to read squid_conf_path '{}': {e}",
+                path.display()
+            );
+            None
+        }
     }
 }
 
@@ -746,7 +740,7 @@ mod tests {
             (5.5 * 1024.0 * 1024.0 * 1024.0) as i64
         );
         assert_eq!(custom.cpu_quota_microseconds(), 400_000);
-        assert_eq!(custom.host_ports_env(), "5432,6379,3000");
+        assert_eq!(custom.host_ports_env(), "3000,5432,6379");
         assert!(custom.has_host_ports());
 
         // Empty host ports

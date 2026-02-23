@@ -24,15 +24,7 @@ impl EmbeddedAssetManager {
     pub fn new() -> Self {
         Self
     }
-}
 
-impl Default for EmbeddedAssetManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl EmbeddedAssetManager {
     /// Get a template by type (e.g., "feat", "fix", "doc")
     pub fn get_template(&self, template_type: &str) -> Result<String> {
         let filename = format!("templates/{template_type}.md");
@@ -121,6 +113,12 @@ impl EmbeddedAssetManager {
         let mut result: Vec<String> = dockerfiles.into_iter().collect();
         result.sort();
         result
+    }
+}
+
+impl Default for EmbeddedAssetManager {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

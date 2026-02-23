@@ -1013,7 +1013,7 @@ mod tests {
         let db_path = tsk_env.data_dir().join("test_resolved_config.db");
         let storage = TaskStorage::new(db_path).unwrap();
 
-        let config_json = r#"{"agent":"codex","stack":"rust","dind":true,"memory_limit_gb":24.0,"cpu_limit":16,"git_town":false,"host_services":[5432],"setup":null,"stack_config":{},"agent_config":{},"volumes":[],"env":[]}"#;
+        let config_json = r#"{"agent":"codex","stack":"rust","dind":true,"memory_gb":24.0,"cpu":16,"git_town":false,"host_ports":[5432],"setup":null,"stack_config":{},"agent_config":{},"volumes":[],"env":[]}"#;
 
         let task = Task {
             id: "config1234".to_string(),
@@ -1028,7 +1028,7 @@ mod tests {
         let retrieved = storage.get_task("config1234").await.unwrap().unwrap();
         assert_eq!(retrieved.resolved_config, Some(config_json.to_string()));
 
-        // Verify old field names deserialize into ResolvedConfig via serde aliases
+        // Verify JSON round-trip through ResolvedConfig
         let deserialized: crate::context::ResolvedConfig =
             serde_json::from_str(config_json).unwrap();
         assert_eq!(deserialized.memory_gb, 24.0);
@@ -1064,7 +1064,7 @@ mod tests {
         let db_path = tsk_env.data_dir().join("test_child_config.db");
         let storage = TaskStorage::new(db_path).unwrap();
 
-        let parent_config = r#"{"agent":"claude","stack":"rust","dind":false,"memory_limit_gb":12.0,"cpu_limit":8,"git_town":false,"host_services":[],"setup":null,"stack_config":{},"agent_config":{},"volumes":[],"env":[]}"#;
+        let parent_config = r#"{"agent":"claude","stack":"rust","dind":false,"memory_gb":12.0,"cpu":8,"git_town":false,"host_ports":[],"setup":null,"stack_config":{},"agent_config":{},"volumes":[],"env":[]}"#;
 
         // Child task starts with no resolved_config
         let child = Task {
