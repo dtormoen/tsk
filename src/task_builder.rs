@@ -1383,8 +1383,8 @@ mod tests {
         project_configs.insert(
             project_name.clone(),
             SharedConfig {
-                memory_limit_gb: Some(32.0),
-                host_services: vec![5432],
+                memory_gb: Some(32.0),
+                host_ports: vec![5432],
                 ..Default::default()
             },
         );
@@ -1407,13 +1407,13 @@ mod tests {
         let config: ResolvedConfig =
             serde_json::from_str(task.resolved_config.as_ref().unwrap()).unwrap();
         assert_eq!(
-            config.memory_limit_gb, 32.0,
+            config.memory_gb, 32.0,
             "Project config memory should be in snapshot"
         );
         assert_eq!(
-            config.host_services,
+            config.host_ports,
             vec![5432],
-            "Project config host_services should be in snapshot"
+            "Project config host_ports should be in snapshot"
         );
     }
 }

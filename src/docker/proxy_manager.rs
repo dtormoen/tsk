@@ -3,7 +3,7 @@
 //! This module provides centralized management for the TSK proxy infrastructure,
 //! handling proxy container lifecycle, health checks, and network configuration.
 //!
-//! Proxy containers are fingerprinted by their configuration (host_services and
+//! Proxy containers are fingerprinted by their configuration (host_ports and
 //! squid_conf content). Tasks with identical proxy configurations share a proxy
 //! container, while tasks with different configurations get separate instances.
 
@@ -27,7 +27,7 @@ const PROXY_PORT: &str = "3128/tcp";
 
 /// Manages TSK proxy container lifecycle with per-configuration instances.
 ///
-/// Each unique proxy configuration (host_services + squid_conf) gets its own
+/// Each unique proxy configuration (host_ports + squid_conf) gets its own
 /// proxy container identified by a fingerprint. Tasks with identical proxy
 /// configurations share the same proxy container.
 pub struct ProxyManager {
@@ -302,7 +302,7 @@ impl ProxyManager {
     async fn ensure_proxy_container(&self, proxy_config: &ResolvedProxyConfig) -> Result<()> {
         let container_name = proxy_config.proxy_container_name();
         let network_name = proxy_config.external_network_name();
-        let host_services_env = format!("TSK_HOST_SERVICES={}", proxy_config.host_services_env());
+        let host_ports_env = format!("TSK_HOST_PORTS={}", proxy_config.host_ports_env());
 
         // Prepare optional squid.conf bind mount
         let binds = if let Some(ref squid_conf_content) = proxy_config.squid_conf {
@@ -326,7 +326,7 @@ impl ProxyManager {
         let container_config = ContainerCreateBody {
             image: Some(PROXY_IMAGE.to_string()),
             exposed_ports: Some(vec![PROXY_PORT.to_string()]),
-            env: Some(vec![host_services_env]),
+            env: Some(vec![host_ports_env]),
             host_config: Some(HostConfig {
                 network_mode: Some(network_name),
                 extra_hosts: Some(vec!["host.docker.internal:host-gateway".to_string()]),
@@ -552,7 +552,7 @@ mod tests {
 
     fn default_proxy_config() -> ResolvedProxyConfig {
         ResolvedProxyConfig {
-            host_services: vec![],
+            host_ports: vec![],
             squid_conf: None,
         }
     }
@@ -585,9 +585,9 @@ mod tests {
         let extra_hosts = host_config.extra_hosts.as_ref().unwrap();
         assert!(extra_hosts.contains(&"host.docker.internal:host-gateway".to_string()));
 
-        // Verify env includes TSK_HOST_SERVICES (empty by default)
+        // Verify env includes TSK_HOST_PORTS (empty by default)
         let env = config.env.as_ref().unwrap();
-        assert!(env.iter().any(|e| e.starts_with("TSK_HOST_SERVICES=")));
+        assert!(env.iter().any(|e| e.starts_with("TSK_HOST_PORTS=")));
 
         let start_calls = mock_client.start_container_calls.lock().unwrap();
         assert_eq!(start_calls.len(), 1);
@@ -595,14 +595,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ensure_proxy_with_host_services() {
+    async fn test_ensure_proxy_with_host_ports() {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
 
         let manager =
             ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
         let proxy_config = ResolvedProxyConfig {
-            host_services: vec![5432, 6379],
+            host_ports: vec![5432, 6379],
             squid_conf: None,
         };
         let result = manager.ensure_proxy(&proxy_config, None).await;
@@ -612,9 +612,9 @@ mod tests {
         let create_calls = mock_client.create_container_calls.lock().unwrap();
         let (_, config) = &create_calls[0];
 
-        // Verify env includes configured host services (sorted)
+        // Verify env includes configured host ports (sorted)
         let env = config.env.as_ref().unwrap();
-        assert!(env.contains(&"TSK_HOST_SERVICES=5432,6379".to_string()));
+        assert!(env.contains(&"TSK_HOST_PORTS=5432,6379".to_string()));
     }
 
     #[tokio::test]
@@ -1157,7 +1157,7 @@ mod tests {
         let manager =
             ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
         let proxy_config = ResolvedProxyConfig {
-            host_services: vec![],
+            host_ports: vec![],
             squid_conf: Some("http_port 3128\nacl custom src all".to_string()),
         };
         let result = manager.ensure_proxy(&proxy_config, None).await;

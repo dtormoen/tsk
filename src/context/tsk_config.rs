@@ -138,7 +138,7 @@ impl TskConfig {
     /// Apply a SharedConfig layer onto a ResolvedConfig with proper merge semantics.
     ///
     /// - Scalars: override if `Some`
-    /// - Lists (`host_services`, `volumes`, `env`): combine with dedup/conflict resolution
+    /// - Lists (`host_ports`, `volumes`, `env`): combine with dedup/conflict resolution
     /// - Maps (`stack_config`, `agent_config`): combine keys, same key replaces entire value
     fn apply_shared_config(&self, resolved: &mut ResolvedConfig, config: &SharedConfig) {
         if let Some(ref agent) = config.agent {
@@ -150,11 +150,11 @@ impl TskConfig {
         if let Some(dind) = config.dind {
             resolved.dind = dind;
         }
-        if let Some(memory) = config.memory_limit_gb {
-            resolved.memory_limit_gb = memory;
+        if let Some(memory) = config.memory_gb {
+            resolved.memory_gb = memory;
         }
-        if let Some(cpu) = config.cpu_limit {
-            resolved.cpu_limit = cpu;
+        if let Some(cpu) = config.cpu {
+            resolved.cpu = cpu;
         }
         if let Some(git_town) = config.git_town {
             resolved.git_town = git_town;
@@ -166,10 +166,10 @@ impl TskConfig {
             resolved.squid_conf = Some(squid_conf.clone());
         }
 
-        // host_services: combine, deduplicate
-        for &port in &config.host_services {
-            if !resolved.host_services.contains(&port) {
-                resolved.host_services.push(port);
+        // host_ports: combine, deduplicate
+        for &port in &config.host_ports {
+            if !resolved.host_ports.contains(&port) {
+                resolved.host_ports.push(port);
             }
         }
 
@@ -243,14 +243,16 @@ pub struct SharedConfig {
     /// Enable Docker-in-Docker support
     pub dind: Option<bool>,
     /// Container memory limit in gigabytes
-    pub memory_limit_gb: Option<f64>,
+    #[serde(alias = "memory_limit_gb")]
+    pub memory_gb: Option<f64>,
     /// Number of CPUs available to container
-    pub cpu_limit: Option<u32>,
+    #[serde(alias = "cpu_limit")]
+    pub cpu: Option<u32>,
     /// Enable git-town parent branch tracking
     pub git_town: Option<bool>,
     /// Host service ports to forward from proxy to host
-    #[serde(default)]
-    pub host_services: Vec<u16>,
+    #[serde(default, alias = "host_services")]
+    pub host_ports: Vec<u16>,
     /// Custom setup commands for the container
     pub setup: Option<String>,
     /// Per-stack configuration overrides
@@ -300,13 +302,16 @@ pub struct ResolvedConfig {
     /// Docker-in-Docker support (default: false)
     pub dind: bool,
     /// Container memory limit in gigabytes (default: 12.0)
-    pub memory_limit_gb: f64,
+    #[serde(alias = "memory_limit_gb")]
+    pub memory_gb: f64,
     /// Number of CPUs available to container (default: 8)
-    pub cpu_limit: u32,
+    #[serde(alias = "cpu_limit")]
+    pub cpu: u32,
     /// Git-town parent branch tracking (default: false)
     pub git_town: bool,
     /// Host service ports to forward from proxy
-    pub host_services: Vec<u16>,
+    #[serde(alias = "host_services")]
+    pub host_ports: Vec<u16>,
     /// Custom setup commands
     pub setup: Option<String>,
     /// Per-stack configuration overrides
@@ -327,10 +332,10 @@ impl Default for ResolvedConfig {
             agent: "claude".to_string(),
             stack: "default".to_string(),
             dind: false,
-            memory_limit_gb: 12.0,
-            cpu_limit: 8,
+            memory_gb: 12.0,
+            cpu: 8,
             git_town: false,
-            host_services: Vec::new(),
+            host_ports: Vec::new(),
             setup: None,
             stack_config: HashMap::new(),
             agent_config: HashMap::new(),
@@ -344,7 +349,7 @@ impl Default for ResolvedConfig {
 impl ResolvedConfig {
     /// Convert memory limit from gigabytes to bytes for Docker/Bollard API
     pub fn memory_limit_bytes(&self) -> i64 {
-        (self.memory_limit_gb * 1024.0 * 1024.0 * 1024.0) as i64
+        (self.memory_gb * 1024.0 * 1024.0 * 1024.0) as i64
     }
 
     /// Convert CPU limit to microseconds per 100ms period for Docker/Bollard API
@@ -353,17 +358,17 @@ impl ResolvedConfig {
     /// per 100ms period (cpu_period defaults to 100000 microseconds).
     /// So 100,000 = 1 CPU, 200,000 = 2 CPUs, etc.
     pub fn cpu_quota_microseconds(&self) -> i64 {
-        self.cpu_limit as i64 * 100_000
+        self.cpu as i64 * 100_000
     }
 
-    /// Returns host_services as a comma-separated string for environment variables.
+    /// Returns host ports as a comma-separated string for environment variables.
     ///
-    /// Returns empty string if no services are configured.
-    pub fn host_services_env(&self) -> String {
-        if self.host_services.is_empty() {
+    /// Returns empty string if no ports are configured.
+    pub fn host_ports_env(&self) -> String {
+        if self.host_ports.is_empty() {
             String::new()
         } else {
-            self.host_services
+            self.host_ports
                 .iter()
                 .map(|p| p.to_string())
                 .collect::<Vec<_>>()
@@ -371,15 +376,15 @@ impl ResolvedConfig {
         }
     }
 
-    /// Returns true if any host service ports are configured
-    pub fn has_host_services(&self) -> bool {
-        !self.host_services.is_empty()
+    /// Returns true if any host ports are configured
+    pub fn has_host_ports(&self) -> bool {
+        !self.host_ports.is_empty()
     }
 
     /// Extract proxy-specific configuration for fingerprinting and proxy management
     pub fn proxy_config(&self) -> ResolvedProxyConfig {
         ResolvedProxyConfig {
-            host_services: self.host_services.clone(),
+            host_ports: self.host_ports.clone(),
             squid_conf: self.squid_conf.clone(),
         }
     }
@@ -389,7 +394,7 @@ impl ResolvedConfig {
 /// Used to determine proxy container identity via fingerprinting.
 #[derive(Debug, Clone, Default)]
 pub struct ResolvedProxyConfig {
-    pub host_services: Vec<u16>,
+    pub host_ports: Vec<u16>,
     pub squid_conf: Option<String>,
 }
 
@@ -400,8 +405,8 @@ impl ResolvedProxyConfig {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
 
-        // Hash sorted host_services
-        let mut ports = self.host_services.clone();
+        // Hash sorted host_ports
+        let mut ports = self.host_ports.clone();
         ports.sort();
         for port in &ports {
             hasher.update(port.to_string().as_bytes());
@@ -427,9 +432,9 @@ impl ResolvedProxyConfig {
         format!("tsk-external-{}", self.fingerprint())
     }
 
-    /// Host services as comma-separated string for environment variables
-    pub fn host_services_env(&self) -> String {
-        let mut ports = self.host_services.clone();
+    /// Host ports as comma-separated string for environment variables
+    pub fn host_ports_env(&self) -> String {
+        let mut ports = self.host_ports.clone();
         ports.sort();
         ports
             .iter()
@@ -578,7 +583,7 @@ pub fn load_config(config_dir: &Path) -> TskConfig {
                              Support for this format will be removed in a future release.\n\
                              Please migrate your config:\n\
                              - [docker] settings → top-level `container_engine` and [defaults] section\n\
-                             - [proxy] host_services → [defaults] host_services\n\
+                             - [proxy] host_services → [defaults] host_ports\n\
                              - [git_town] enabled → [defaults] git_town\n\n\
                              See the README for the new configuration format.",
                             old_sections.join(", ")
@@ -606,10 +611,10 @@ pub fn load_config(config_dir: &Path) -> TskConfig {
 ///
 /// Maps:
 /// - `[docker].container_engine` → top-level `container_engine`
-/// - `[docker].memory_limit_gb` → `[defaults].memory_limit_gb`
-/// - `[docker].cpu_limit` / `[docker].cpu_quota` → `[defaults].cpu_limit`
+/// - `[docker].memory_limit_gb` → `[defaults].memory_gb`
+/// - `[docker].cpu_limit` / `[docker].cpu_quota` → `[defaults].cpu`
 /// - `[docker].dind` → `[defaults].dind`
-/// - `[proxy].host_services` → `[defaults].host_services`
+/// - `[proxy].host_services` → `[defaults].host_ports`
 /// - `[git_town].enabled` → `[defaults].git_town`
 /// - `[project.<name>]` fields are passed through (old ProjectConfig is a subset of SharedConfig)
 fn migrate_old_config(value: &toml::Value) -> TskConfig {
@@ -626,15 +631,15 @@ fn migrate_old_config(value: &toml::Value) -> TskConfig {
             .get("memory_limit_gb")
             .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
         {
-            config.defaults.memory_limit_gb = Some(mem);
+            config.defaults.memory_gb = Some(mem);
         }
-        // Accept both cpu_limit (current) and cpu_quota (legacy field name)
+        // Accept both cpu_limit and cpu_quota (both legacy field names from old [docker] section)
         if let Some(cpu) = docker
             .get("cpu_limit")
             .or_else(|| docker.get("cpu_quota"))
             .and_then(|v| v.as_integer())
         {
-            config.defaults.cpu_limit = Some(cpu as u32);
+            config.defaults.cpu = Some(cpu as u32);
         }
         if let Some(dind) = docker.get("dind").and_then(|v| v.as_bool()) {
             config.defaults.dind = Some(dind);
@@ -644,7 +649,7 @@ fn migrate_old_config(value: &toml::Value) -> TskConfig {
     if let Some(proxy) = value.get("proxy").and_then(|v| v.as_table())
         && let Some(services) = proxy.get("host_services").and_then(|v| v.as_array())
     {
-        config.defaults.host_services = services
+        config.defaults.host_ports = services
             .iter()
             .filter_map(|v| v.as_integer().map(|i| i as u16))
             .collect();
@@ -710,10 +715,10 @@ mod tests {
         assert_eq!(resolved.agent, "claude");
         assert_eq!(resolved.stack, "default");
         assert!(!resolved.dind);
-        assert_eq!(resolved.memory_limit_gb, 12.0);
-        assert_eq!(resolved.cpu_limit, 8);
+        assert_eq!(resolved.memory_gb, 12.0);
+        assert_eq!(resolved.cpu, 8);
         assert!(!resolved.git_town);
-        assert!(resolved.host_services.is_empty());
+        assert!(resolved.host_ports.is_empty());
         assert!(resolved.setup.is_none());
         assert!(resolved.stack_config.is_empty());
         assert!(resolved.agent_config.is_empty());
@@ -731,9 +736,9 @@ mod tests {
 
         // Test with custom values
         let custom = ResolvedConfig {
-            memory_limit_gb: 5.5,
-            cpu_limit: 4,
-            host_services: vec![5432, 6379, 3000],
+            memory_gb: 5.5,
+            cpu: 4,
+            host_ports: vec![5432, 6379, 3000],
             ..Default::default()
         };
         assert_eq!(
@@ -741,12 +746,12 @@ mod tests {
             (5.5 * 1024.0 * 1024.0 * 1024.0) as i64
         );
         assert_eq!(custom.cpu_quota_microseconds(), 400_000);
-        assert_eq!(custom.host_services_env(), "5432,6379,3000");
-        assert!(custom.has_host_services());
+        assert_eq!(custom.host_ports_env(), "5432,6379,3000");
+        assert!(custom.has_host_ports());
 
-        // Empty host services
-        assert_eq!(resolved.host_services_env(), "");
-        assert!(!resolved.has_host_services());
+        // Empty host ports
+        assert_eq!(resolved.host_ports_env(), "");
+        assert!(!resolved.has_host_ports());
     }
 
     #[test]
@@ -755,7 +760,7 @@ mod tests {
         assert!(config.project.is_empty());
         assert!(config.defaults.agent.is_none());
         assert!(config.defaults.stack.is_none());
-        assert!(config.defaults.host_services.is_empty());
+        assert!(config.defaults.host_ports.is_empty());
         assert!(config.server.auto_clean_enabled);
         assert_eq!(config.server.auto_clean_age_days, 7.0);
     }
@@ -773,16 +778,16 @@ auto_clean_enabled = false
 auto_clean_age_days = 14.0
 
 [defaults]
-memory_limit_gb = 16.0
-cpu_limit = 4
-host_services = [6379]
+memory_gb = 16.0
+cpu = 4
+host_ports = [6379]
 git_town = true
 
 [project.my-project]
 agent = "codex"
 stack = "rust"
-memory_limit_gb = 24.0
-cpu_limit = 16
+memory_gb = 24.0
+cpu = 16
 dind = true
 volumes = [
     { host = "~/debug-logs", container = "/debug", readonly = true }
@@ -801,20 +806,40 @@ env = [
         assert_eq!(config.server.auto_clean_age_days, 14.0);
 
         // Check defaults
-        assert_eq!(config.defaults.memory_limit_gb, Some(16.0));
-        assert_eq!(config.defaults.cpu_limit, Some(4));
-        assert_eq!(config.defaults.host_services, vec![6379]);
+        assert_eq!(config.defaults.memory_gb, Some(16.0));
+        assert_eq!(config.defaults.cpu, Some(4));
+        assert_eq!(config.defaults.host_ports, vec![6379]);
         assert_eq!(config.defaults.git_town, Some(true));
 
         // Check project
         let project = config.project.get("my-project").unwrap();
         assert_eq!(project.agent, Some("codex".to_string()));
         assert_eq!(project.stack, Some("rust".to_string()));
-        assert_eq!(project.memory_limit_gb, Some(24.0));
-        assert_eq!(project.cpu_limit, Some(16));
+        assert_eq!(project.memory_gb, Some(24.0));
+        assert_eq!(project.cpu, Some(16));
         assert_eq!(project.dind, Some(true));
         assert_eq!(project.volumes.len(), 1);
         assert_eq!(project.env.len(), 1);
+    }
+
+    #[test]
+    fn test_new_format_config_with_old_field_names() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let config_dir = temp_dir.path();
+
+        let toml_content = r#"
+[defaults]
+memory_limit_gb = 16.0
+cpu_limit = 4
+host_services = [6379]
+"#;
+        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
+        file.write_all(toml_content.as_bytes()).unwrap();
+
+        let config = load_config(config_dir);
+        assert_eq!(config.defaults.memory_gb, Some(16.0));
+        assert_eq!(config.defaults.cpu, Some(4));
+        assert_eq!(config.defaults.host_ports, vec![6379]);
     }
 
     #[test]
@@ -822,7 +847,7 @@ env = [
         let config = TskConfig {
             defaults: SharedConfig {
                 agent: Some("codex".to_string()),
-                memory_limit_gb: Some(16.0),
+                memory_gb: Some(16.0),
                 git_town: Some(true),
                 ..Default::default()
             },
@@ -831,7 +856,7 @@ env = [
                 SharedConfig {
                     agent: Some("claude".to_string()),
                     stack: Some("rust".to_string()),
-                    cpu_limit: Some(16),
+                    cpu: Some(16),
                     dind: Some(true),
                     ..Default::default()
                 },
@@ -846,9 +871,9 @@ env = [
         // Project sets stack
         assert_eq!(resolved.stack, "rust");
         // Defaults sets memory (project doesn't override)
-        assert_eq!(resolved.memory_limit_gb, 16.0);
-        // Project sets cpu_limit
-        assert_eq!(resolved.cpu_limit, 16);
+        assert_eq!(resolved.memory_gb, 16.0);
+        // Project sets cpu
+        assert_eq!(resolved.cpu, 16);
         // Project sets dind
         assert!(resolved.dind);
         // Defaults sets git_town
@@ -858,21 +883,21 @@ env = [
         let resolved_other = config.resolve_config("other-project", None, None);
         assert_eq!(resolved_other.agent, "codex");
         assert_eq!(resolved_other.stack, "default");
-        assert_eq!(resolved_other.memory_limit_gb, 16.0);
-        assert_eq!(resolved_other.cpu_limit, 8); // built-in default
+        assert_eq!(resolved_other.memory_gb, 16.0);
+        assert_eq!(resolved_other.cpu, 8); // built-in default
     }
 
     #[test]
-    fn test_resolve_config_merging_host_services() {
+    fn test_resolve_config_merging_host_ports() {
         let config = TskConfig {
             defaults: SharedConfig {
-                host_services: vec![5432, 6379],
+                host_ports: vec![5432, 6379],
                 ..Default::default()
             },
             project: HashMap::from([(
                 "my-project".to_string(),
                 SharedConfig {
-                    host_services: vec![6379, 3000],
+                    host_ports: vec![6379, 3000],
                     ..Default::default()
                 },
             )]),
@@ -882,7 +907,7 @@ env = [
         let resolved = config.resolve_config("my-project", None, None);
 
         // Combined and deduplicated
-        assert_eq!(resolved.host_services, vec![5432, 6379, 3000]);
+        assert_eq!(resolved.host_ports, vec![5432, 6379, 3000]);
     }
 
     #[test]
@@ -1127,8 +1152,8 @@ container_engine = "podman"
 "#;
         std::fs::write(config_dir.join("tsk.toml"), toml_content).unwrap();
         let config = load_config(config_dir);
-        assert_eq!(config.defaults.memory_limit_gb, Some(8.0));
-        assert_eq!(config.defaults.cpu_limit, Some(4));
+        assert_eq!(config.defaults.memory_gb, Some(8.0));
+        assert_eq!(config.defaults.cpu, Some(4));
         assert_eq!(config.defaults.dind, Some(true));
         assert_eq!(config.container_engine, ContainerEngine::Podman);
 
@@ -1139,7 +1164,7 @@ host_services = [5432]
 "#;
         std::fs::write(config_dir.join("tsk.toml"), toml_content).unwrap();
         let config = load_config(config_dir);
-        assert_eq!(config.defaults.host_services, vec![5432]);
+        assert_eq!(config.defaults.host_ports, vec![5432]);
 
         // Test with [git_town] — enabled should migrate to git_town bool
         let toml_content = r#"
@@ -1157,7 +1182,7 @@ cpu_quota = 16
 "#;
         std::fs::write(config_dir.join("tsk.toml"), toml_content).unwrap();
         let config = load_config(config_dir);
-        assert_eq!(config.defaults.cpu_limit, Some(16));
+        assert_eq!(config.defaults.cpu, Some(16));
 
         // Test with integer memory_limit_gb (no decimal)
         let toml_content = r#"
@@ -1166,7 +1191,7 @@ memory_limit_gb = 30
 "#;
         std::fs::write(config_dir.join("tsk.toml"), toml_content).unwrap();
         let config = load_config(config_dir);
-        assert_eq!(config.defaults.memory_limit_gb, Some(30.0));
+        assert_eq!(config.defaults.memory_gb, Some(30.0));
 
         // Test combined old format
         let toml_content = r#"
@@ -1187,10 +1212,10 @@ stack = "go"
 "#;
         std::fs::write(config_dir.join("tsk.toml"), toml_content).unwrap();
         let config = load_config(config_dir);
-        assert_eq!(config.defaults.memory_limit_gb, Some(24.0));
-        assert_eq!(config.defaults.cpu_limit, Some(12));
+        assert_eq!(config.defaults.memory_gb, Some(24.0));
+        assert_eq!(config.defaults.cpu, Some(12));
         assert_eq!(config.defaults.dind, Some(true));
-        assert_eq!(config.defaults.host_services, vec![5432, 6379]);
+        assert_eq!(config.defaults.host_ports, vec![5432, 6379]);
         assert_eq!(config.defaults.git_town, Some(true));
         let project = config.project.get("my-project").unwrap();
         assert_eq!(project.agent, Some("codex".to_string()));
@@ -1205,8 +1230,8 @@ stack = "go"
         let resolved = config.resolve_config("any-project", None, None);
         assert_eq!(resolved.agent, "claude");
         assert_eq!(resolved.stack, "default");
-        assert_eq!(resolved.memory_limit_gb, 12.0);
-        assert_eq!(resolved.cpu_limit, 8);
+        assert_eq!(resolved.memory_gb, 12.0);
+        assert_eq!(resolved.cpu, 8);
         assert!(!resolved.dind);
         assert!(!resolved.git_town);
     }
@@ -1457,8 +1482,8 @@ setup = "RUN pip install custom-tool"
         let toml_content = r#"
 agent = "codex"
 stack = "python"
-memory_limit_gb = 20.0
-host_services = [8080]
+memory_gb = 20.0
+host_ports = [8080]
 setup = "RUN pip install custom-tool"
 
 [stack_config.python]
@@ -1469,8 +1494,8 @@ setup = "RUN pip install numpy"
         let config = load_project_config(project_root).unwrap();
         assert_eq!(config.agent, Some("codex".to_string()));
         assert_eq!(config.stack, Some("python".to_string()));
-        assert_eq!(config.memory_limit_gb, Some(20.0));
-        assert_eq!(config.host_services, vec![8080]);
+        assert_eq!(config.memory_gb, Some(20.0));
+        assert_eq!(config.host_ports, vec![8080]);
         assert_eq!(
             config.setup,
             Some("RUN pip install custom-tool".to_string())
@@ -1493,9 +1518,9 @@ setup = "RUN pip install numpy"
         // built-in < defaults < project .tsk/tsk.toml < user [project.<name>]
         let project_config = SharedConfig {
             agent: Some("codex".to_string()),
-            memory_limit_gb: Some(20.0),
-            cpu_limit: Some(12),
-            host_services: vec![8080],
+            memory_gb: Some(20.0),
+            cpu: Some(12),
+            host_ports: vec![8080],
             env: vec![EnvVar {
                 name: "PROJECT_VAR".to_string(),
                 value: "from-project-file".to_string(),
@@ -1511,9 +1536,9 @@ setup = "RUN pip install numpy"
 
         let config = TskConfig {
             defaults: SharedConfig {
-                memory_limit_gb: Some(16.0),
+                memory_gb: Some(16.0),
                 git_town: Some(true),
-                host_services: vec![5432],
+                host_ports: vec![5432],
                 env: vec![
                     EnvVar {
                         name: "DEFAULT_VAR".to_string(),
@@ -1530,8 +1555,8 @@ setup = "RUN pip install numpy"
                 "my-project".to_string(),
                 SharedConfig {
                     agent: Some("claude".to_string()),
-                    cpu_limit: Some(16),
-                    host_services: vec![6379],
+                    cpu: Some(16),
+                    host_ports: vec![6379],
                     env: vec![EnvVar {
                         name: "USER_VAR".to_string(),
                         value: "from-user-project".to_string(),
@@ -1553,15 +1578,15 @@ setup = "RUN pip install numpy"
         // user [project] overrides project config
         assert_eq!(resolved.agent, "claude");
         // project config overrides defaults
-        assert_eq!(resolved.memory_limit_gb, 20.0);
+        assert_eq!(resolved.memory_gb, 20.0);
         // user [project] overrides project config
-        assert_eq!(resolved.cpu_limit, 16);
+        assert_eq!(resolved.cpu, 16);
         // defaults (no override from project or user project)
         assert!(resolved.git_town);
-        // host_services combined from all layers, deduplicated
-        assert!(resolved.host_services.contains(&5432));
-        assert!(resolved.host_services.contains(&8080));
-        assert!(resolved.host_services.contains(&6379));
+        // host_ports combined from all layers, deduplicated
+        assert!(resolved.host_ports.contains(&5432));
+        assert!(resolved.host_ports.contains(&8080));
+        assert!(resolved.host_ports.contains(&6379));
         // env: project config overrides PROJECT_VAR from defaults
         assert!(
             resolved
@@ -1594,14 +1619,14 @@ setup = "RUN pip install numpy"
         let project_config = SharedConfig {
             agent: Some("codex".to_string()),
             stack: Some("python".to_string()),
-            memory_limit_gb: Some(20.0),
+            memory_gb: Some(20.0),
             ..Default::default()
         };
 
         let config = TskConfig {
             defaults: SharedConfig {
-                memory_limit_gb: Some(16.0),
-                cpu_limit: Some(4),
+                memory_gb: Some(16.0),
+                cpu: Some(4),
                 ..Default::default()
             },
             ..Default::default()
@@ -1612,9 +1637,9 @@ setup = "RUN pip install numpy"
         // project config overrides defaults for agent and memory
         assert_eq!(resolved.agent, "codex");
         assert_eq!(resolved.stack, "python");
-        assert_eq!(resolved.memory_limit_gb, 20.0);
+        assert_eq!(resolved.memory_gb, 20.0);
         // defaults still apply for unset fields
-        assert_eq!(resolved.cpu_limit, 4);
+        assert_eq!(resolved.cpu, 4);
     }
 
     #[test]
@@ -1623,10 +1648,10 @@ setup = "RUN pip install numpy"
             agent: "codex".to_string(),
             stack: "rust".to_string(),
             dind: true,
-            memory_limit_gb: 24.0,
-            cpu_limit: 16,
+            memory_gb: 24.0,
+            cpu: 16,
             git_town: true,
-            host_services: vec![5432, 6379],
+            host_ports: vec![5432, 6379],
             setup: Some("RUN apt-get install -y cmake".to_string()),
             stack_config: HashMap::from([(
                 "rust".to_string(),
@@ -1665,10 +1690,10 @@ setup = "RUN pip install numpy"
         assert_eq!(deserialized.agent, "codex");
         assert_eq!(deserialized.stack, "rust");
         assert!(deserialized.dind);
-        assert_eq!(deserialized.memory_limit_gb, 24.0);
-        assert_eq!(deserialized.cpu_limit, 16);
+        assert_eq!(deserialized.memory_gb, 24.0);
+        assert_eq!(deserialized.cpu, 16);
         assert!(deserialized.git_town);
-        assert_eq!(deserialized.host_services, vec![5432, 6379]);
+        assert_eq!(deserialized.host_ports, vec![5432, 6379]);
         assert_eq!(
             deserialized.setup,
             Some("RUN apt-get install -y cmake".to_string())
@@ -1688,7 +1713,7 @@ setup = "RUN pip install numpy"
     #[test]
     fn test_proxy_config_fingerprint_consistent() {
         let proxy = ResolvedProxyConfig {
-            host_services: vec![5432, 6379],
+            host_ports: vec![5432, 6379],
             squid_conf: Some("http_port 3128".to_string()),
         };
         let fp1 = proxy.fingerprint();
@@ -1699,13 +1724,13 @@ setup = "RUN pip install numpy"
     }
 
     #[test]
-    fn test_proxy_config_fingerprint_differs_by_host_services() {
+    fn test_proxy_config_fingerprint_differs_by_host_ports() {
         let a = ResolvedProxyConfig {
-            host_services: vec![5432],
+            host_ports: vec![5432],
             squid_conf: None,
         };
         let b = ResolvedProxyConfig {
-            host_services: vec![6379],
+            host_ports: vec![6379],
             squid_conf: None,
         };
         assert_ne!(a.fingerprint(), b.fingerprint());
@@ -1714,11 +1739,11 @@ setup = "RUN pip install numpy"
     #[test]
     fn test_proxy_config_fingerprint_differs_by_squid_conf() {
         let a = ResolvedProxyConfig {
-            host_services: vec![],
+            host_ports: vec![],
             squid_conf: Some("conf-a".to_string()),
         };
         let b = ResolvedProxyConfig {
-            host_services: vec![],
+            host_ports: vec![],
             squid_conf: Some("conf-b".to_string()),
         };
         assert_ne!(a.fingerprint(), b.fingerprint());
@@ -1727,11 +1752,11 @@ setup = "RUN pip install numpy"
     #[test]
     fn test_proxy_config_fingerprint_identical() {
         let a = ResolvedProxyConfig {
-            host_services: vec![6379, 5432],
+            host_ports: vec![6379, 5432],
             squid_conf: Some("http_port 3128".to_string()),
         };
         let b = ResolvedProxyConfig {
-            host_services: vec![5432, 6379],
+            host_ports: vec![5432, 6379],
             squid_conf: Some("http_port 3128".to_string()),
         };
         // Ports are sorted before hashing, so order should not matter
@@ -1741,7 +1766,7 @@ setup = "RUN pip install numpy"
     #[test]
     fn test_proxy_config_container_and_network_names() {
         let proxy = ResolvedProxyConfig {
-            host_services: vec![5432],
+            host_ports: vec![5432],
             squid_conf: None,
         };
         let fp = proxy.fingerprint();
@@ -1751,19 +1776,19 @@ setup = "RUN pip install numpy"
     }
 
     #[test]
-    fn test_proxy_config_host_services_env() {
+    fn test_proxy_config_host_ports_env() {
         let proxy = ResolvedProxyConfig {
-            host_services: vec![6379, 5432, 3000],
+            host_ports: vec![6379, 5432, 3000],
             squid_conf: None,
         };
-        // host_services_env sorts the ports
-        assert_eq!(proxy.host_services_env(), "3000,5432,6379");
+        // host_ports_env sorts the ports
+        assert_eq!(proxy.host_ports_env(), "3000,5432,6379");
 
         let empty = ResolvedProxyConfig {
-            host_services: vec![],
+            host_ports: vec![],
             squid_conf: None,
         };
-        assert_eq!(empty.host_services_env(), "");
+        assert_eq!(empty.host_ports_env(), "");
     }
 
     #[test]
@@ -1829,12 +1854,12 @@ setup = "RUN pip install numpy"
     #[test]
     fn test_resolved_config_proxy_config() {
         let resolved = ResolvedConfig {
-            host_services: vec![5432, 6379],
+            host_ports: vec![5432, 6379],
             squid_conf: Some("custom-conf".to_string()),
             ..Default::default()
         };
         let proxy = resolved.proxy_config();
-        assert_eq!(proxy.host_services, vec![5432, 6379]);
+        assert_eq!(proxy.host_ports, vec![5432, 6379]);
         assert_eq!(proxy.squid_conf, Some("custom-conf".to_string()));
     }
 

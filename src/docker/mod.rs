@@ -174,13 +174,10 @@ impl DockerManager {
             format!("no_proxy=localhost,127.0.0.1,{proxy_container_name}"),
         ];
 
-        // Add host service environment variables if configured
-        if resolved.has_host_services() {
-            env.push(format!(
-                "TSK_HOST_SERVICES={}",
-                resolved.host_services_env()
-            ));
-            env.push(format!("TSK_HOST_SERVICES_HOST={proxy_container_name}"));
+        // Add host port environment variables if configured
+        if resolved.has_host_ports() {
+            env.push(format!("TSK_HOST_PORTS={}", resolved.host_ports_env()));
+            env.push(format!("TSK_PROXY_HOST={proxy_container_name}"));
         }
 
         env
@@ -802,7 +799,7 @@ mod tests {
     use crate::test_utils::TrackedDockerClient;
     use std::sync::Arc;
 
-    /// Returns the proxy container name for the default proxy config (no host_services, no squid_conf).
+    /// Returns the proxy container name for the default proxy config (no host_ports, no squid_conf).
     fn default_proxy_container_name() -> String {
         ResolvedProxyConfig::default().proxy_container_name()
     }

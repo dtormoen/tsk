@@ -18,8 +18,8 @@ echo "Configuring firewall rules..."
 iptables -A INPUT -i lo -j ACCEPT
 iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 iptables -A INPUT -p tcp --dport 3128 -j ACCEPT
-if [ -n "$TSK_HOST_SERVICES" ]; then
-    for port in $(echo "$TSK_HOST_SERVICES" | tr ',' ' '); do
+if [ -n "$TSK_HOST_PORTS" ]; then
+    for port in $(echo "$TSK_HOST_PORTS" | tr ',' ' '); do
         iptables -A INPUT -p tcp --dport "$port" -j ACCEPT
     done
 fi
@@ -30,8 +30,8 @@ if command -v ip6tables >/dev/null 2>&1; then
     ip6tables -A INPUT -i lo -j ACCEPT
     ip6tables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
     ip6tables -A INPUT -p tcp --dport 3128 -j ACCEPT
-    if [ -n "$TSK_HOST_SERVICES" ]; then
-        for port in $(echo "$TSK_HOST_SERVICES" | tr ',' ' '); do
+    if [ -n "$TSK_HOST_PORTS" ]; then
+        for port in $(echo "$TSK_HOST_PORTS" | tr ',' ' '); do
             ip6tables -A INPUT -p tcp --dport "$port" -j ACCEPT
         done
     fi
@@ -40,9 +40,9 @@ fi
 
 # Start TCP forwarders for host services if configured (as squid user for security)
 # Note: Ports must be >= 1024 since we run as non-root
-if [ -n "$TSK_HOST_SERVICES" ]; then
-    echo "Starting TCP forwarders for host services: $TSK_HOST_SERVICES"
-    for port in $(echo "$TSK_HOST_SERVICES" | tr ',' ' '); do
+if [ -n "$TSK_HOST_PORTS" ]; then
+    echo "Starting TCP forwarders for host services: $TSK_HOST_PORTS"
+    for port in $(echo "$TSK_HOST_PORTS" | tr ',' ' '); do
         echo "  Forwarding port $port -> host.docker.internal:$port"
         su-exec squid socat "TCP-LISTEN:$port,fork,reuseaddr,backlog=128,max-children=100,nodelay,keepalive" "TCP:host.docker.internal:$port,nodelay,keepalive" &
     done

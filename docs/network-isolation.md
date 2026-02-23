@@ -43,7 +43,7 @@ Each agent container runs in its own Docker network created with the `internal: 
 
 ### Proxy Container (tsk-proxy-{fingerprint})
 
-The proxy container is the sole gateway between agent networks and the outside world. Each unique proxy configuration (host_services + squid.conf) gets its own proxy container identified by a fingerprint. A proxy connects to:
+The proxy container is the sole gateway between agent networks and the outside world. Each unique proxy configuration (host_ports + squid.conf) gets its own proxy container identified by a fingerprint. A proxy connects to:
 1. The `tsk-external-{fingerprint}` network (has internet access)
 2. Each active agent's isolated network (joined on-demand)
 
@@ -104,10 +104,10 @@ The proxy can forward TCP connections to services running on the host machine. C
 
 ```toml
 [defaults]
-host_services = [5432, 6379, 3000]  # PostgreSQL, Redis, dev server
+host_ports = [5432, 6379, 3000]  # PostgreSQL, Redis, dev server
 ```
 
-Agents connect to `$TSK_HOST_SERVICES_HOST:<port>` and traffic is forwarded to `host.docker.internal:<port>`.
+Agents connect to `$TSK_PROXY_HOST:<port>` and traffic is forwarded to `host.docker.internal:<port>`.
 
 ### Agent Container Hardening
 

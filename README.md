@@ -221,19 +221,19 @@ auto_clean_age_days = 7.0   # Minimum age in days before cleanup (default: 7.0)
 
 # Default settings for all projects
 [defaults]
-memory_limit_gb = 12.0       # Container memory limit (default: 12.0)
-cpu_limit = 8                # Number of CPUs (default: 8)
+memory_gb = 12.0             # Container memory limit (default: 12.0)
+cpu = 8                      # Number of CPUs (default: 8)
 dind = false                 # Enable Docker-in-Docker support (default: false)
 git_town = false             # Enable git-town parent branch tracking (default: false)
-host_services = [5432, 6379] # Forward ports from containers to host services
+host_ports = [5432, 6379]    # Forward ports from containers to host services
 
 # Project-specific overrides (matches directory name)
 [project.my-project]
 agent = "claude"        # Default agent (claude or codex)
 stack = "go"            # Default stack for auto-detection override
 dind = false            # Enable Docker-in-Docker for this project
-memory_limit_gb = 24.0  # Override memory limit for this project
-cpu_limit = 16          # Override CPU limit for this project
+memory_gb = 24.0        # Override memory limit for this project
+cpu = 16                # Override CPU limit for this project
 volumes = [
     # Bind mount: Share host directories with containers (supports ~ expansion)
     { host = "~/.cache/go-mod", container = "/go/pkg/mod" },
@@ -254,8 +254,8 @@ env = [
 ```toml
 # Project defaults shared via version control
 stack = "rust"
-memory_limit_gb = 16.0
-host_services = [5432]
+memory_gb = 16.0
+host_ports = [5432]
 setup = '''
 RUN apt-get update && apt-get install -y cmake
 '''
@@ -273,17 +273,17 @@ Volume mounts are particularly useful for:
 - **Persistent state**: Use named volumes for build caches that persist across tasks
 - **Read-only artifacts**: Mount debugging artifacts, config files, or other resources without risk of modification
 
-Environment variables (`env`) let you pass configuration to task containers, such as database URLs or API keys. To connect to host services forwarded through the proxy, use the `TSK_HOST_SERVICES_HOST` environment variable (set automatically by TSK) as the hostname.
+Environment variables (`env`) let you pass configuration to task containers, such as database URLs or API keys. To connect to host services forwarded through the proxy, use the `TSK_PROXY_HOST` environment variable (set automatically by TSK) as the hostname.
 
 The container engine can also be set per-command with the `--container-engine` flag (available on `run`, `shell`, `retry`, `server start`, and `docker build`).
 
-Host services (`host_services`) expose host services to task containers. Agents connect to `$TSK_HOST_SERVICES_HOST:<port>` to reach services running on your host machine (e.g., local databases or dev servers). The `TSK_HOST_SERVICES_HOST` environment variable is automatically set by TSK to the correct proxy container hostname.
+Host ports (`host_ports`) expose host services to task containers. Agents connect to `$TSK_PROXY_HOST:<port>` to reach services running on your host machine (e.g., local databases or dev servers). The `TSK_PROXY_HOST` environment variable is automatically set by TSK to the correct proxy container hostname.
 
 When `git_town` is enabled, TSK integrates with [git-town](https://www.git-town.com/) by setting the parent branch metadata on task branches, allowing git-town commands like `git town sync` to work correctly with TSK-created branches.
 
 Configuration priority: CLI flags > user `[project.<name>]` > project `.tsk/tsk.toml` > user `[defaults]` > auto-detection > built-in defaults
 
-Settings in `[defaults]`, `[project.<name>]`, and `.tsk/tsk.toml` share the same shape. Scalars use first-set in priority order. Lists (`volumes`, `env`, `host_services`) combine across layers, with higher-priority winning on conflicts (same container path, same env var name, same port). `stack_config`/`agent_config` maps combine all names; for the same name, higher-priority replaces the entire config.
+Settings in `[defaults]`, `[project.<name>]`, and `.tsk/tsk.toml` share the same shape. Scalars use first-set in priority order. Lists (`volumes`, `env`, `host_ports`) combine across layers, with higher-priority winning on conflicts (same container path, same env var name, same port). `stack_config`/`agent_config` maps combine all names; for the same name, higher-priority replaces the entire config.
 
 ### Customizing the TSK Sandbox Environment
 
@@ -342,7 +342,7 @@ squid_conf_path = "~/.config/tsk/squid.conf"
 
 Inline `squid_conf` takes priority over `squid_conf_path`. See the default [TSK squid.conf](./dockerfiles/tsk-proxy/squid.conf) as a starting point.
 
-**Per-configuration proxy instances:** Tasks with different proxy configurations (different `host_services` or `squid_conf`) automatically get separate proxy containers. Tasks with identical proxy config share the same proxy. Proxy containers are named `tsk-proxy-{fingerprint}` where the fingerprint is derived from the proxy configuration.
+**Per-configuration proxy instances:** Tasks with different proxy configurations (different `host_ports` or `squid_conf`) automatically get separate proxy containers. Tasks with identical proxy config share the same proxy. Proxy containers are named `tsk-proxy-{fingerprint}` where the fingerprint is derived from the proxy configuration.
 
 ## TSK Data Directory
 

@@ -1027,6 +1027,13 @@ mod tests {
 
         let retrieved = storage.get_task("config1234").await.unwrap().unwrap();
         assert_eq!(retrieved.resolved_config, Some(config_json.to_string()));
+
+        // Verify old field names deserialize into ResolvedConfig via serde aliases
+        let deserialized: crate::context::ResolvedConfig =
+            serde_json::from_str(config_json).unwrap();
+        assert_eq!(deserialized.memory_gb, 24.0);
+        assert_eq!(deserialized.cpu, 16);
+        assert_eq!(deserialized.host_ports, vec![5432]);
     }
 
     #[tokio::test]

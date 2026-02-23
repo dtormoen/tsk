@@ -271,7 +271,7 @@ run_nested_test() {
     mkdir -p "$iso_dir/config/tsk"
     cat > "$iso_dir/config/tsk/tsk.toml" << EOF
 [defaults]
-memory_limit_gb = 30.0
+memory_gb = 30.0
 
 [project.tsk]
 volumes = [
