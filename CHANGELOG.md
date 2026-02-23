@@ -9,22 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.9.0](https://github.com/dtormoen/tsk/compare/v0.8.6...v0.9.0) - 2026-02-23
 
+This is a large release that replaces filesystem-based Docker layer customization with
+inline TOML configuration and restructures the config file format. See the migration
+guide below if you have an existing `tsk.toml` or custom Dockerfiles.
+
+**Migrating from 0.8.x:**
+
+- **Config format**: The old `[docker]`, `[proxy]`, and `[git_town]` sections are replaced
+  by `[defaults]` and `[project.<name>]`. TSK detects the old format and prints a migration
+  error with guidance. Move your settings into the new shape — see the
+  [Configuration File](README.md#configuration-file) section in the README for examples.
+- **Custom Dockerfiles**: Filesystem-based Docker layers (e.g., `.tsk/dockerfiles/project/`,
+  `~/.config/tsk/dockerfiles/`) are no longer used. Replace them with `setup`,
+  `stack_config.<name>.setup`, or `agent_config.<name>.setup` fields in your `tsk.toml`.
+  Run `tsk docker build --dry-run` to preview the generated Dockerfile.
+- **Project-level config**: You can now check in shared project defaults at `.tsk/tsk.toml`
+  (same shape as `[defaults]`).
+- **Claude Code users**: Install the `tsk-config` skill to have Claude walk you through
+  the migration interactively: `/plugin marketplace add dtormoen/tsk` then
+  `/plugin install tsk-config@dtormoen/tsk`.
+
 ### Added
 
-- add template show and edit commands
-- clean up CLI output across all commands
-- rename tsk-docker-config skill to tsk-config and improve README
-- add tsk-add skill for queuing tasks from conversation context
-- replace tech-stack/project-layer templates with tsk-docker-config skill
-- add skills marketplace with tsk-docker-config skill
-- warn users about removed filesystem-based dockerfile directories
-- auto-migrate deprecated tsk.toml config format
-- remove filesystem-based Docker layers
+- [**breaking**] restructure config with `[defaults]` / `[project.<name>]` sections and project-level `.tsk/tsk.toml`
+- replace filesystem-based Docker layers with inline `setup`, `stack_config`, and `agent_config` fields in tsk.toml
+- auto-migrate deprecated tsk.toml config format with actionable error messages
+- snapshot resolved config at task creation for reproducible execution
 - per-configuration proxy instances with fingerprint-based naming
-- inline Docker layers from TOML config
-- snapshot resolved config in SQLite at task creation
-- add project-level .tsk/tsk.toml config loading and merge
-- [**breaking**] restructure TskConfig with shared config shape
+- add `tsk template show` and `tsk template edit` commands
+- add Claude Code skills marketplace with `tsk-config` and `tsk-add` skills
+- clean up CLI output across all commands
 
 ### Fixed
 
