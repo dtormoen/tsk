@@ -103,6 +103,9 @@ fn render_task_list(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::
         Style::default()
     };
 
+    // Store the inner area top for mouse click hit-testing
+    app.task_list_top = area.y + 1; // +1 for top border
+
     let block = Block::default()
         .title(" Tasks ")
         .borders(Borders::ALL)
@@ -222,7 +225,7 @@ fn render_log_viewer(app: &TuiApp, frame: &mut Frame, area: ratatui::layout::Rec
 /// Render the footer line with key binding hints.
 fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect) {
     let line = Line::from(Span::styled(
-        " \u{2190} \u{2192} focus \u{2502} \u{2191}\u{2193} navigate \u{2502} PgUp/PgDn scroll \u{2502} q quit",
+        " \u{2190}\u{2192} focus \u{2502} \u{2191}\u{2193} navigate \u{2502} click select \u{2502} PgUp/PgDn scroll \u{2502} Shift+click text \u{2502} q quit",
         Style::default().fg(Color::DarkGray),
     ));
     frame.render_widget(Paragraph::new(line), area);

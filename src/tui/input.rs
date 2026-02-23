@@ -1,5 +1,5 @@
 use super::app::{Panel, TuiApp};
-use crossterm::event::{Event, KeyCode, KeyEventKind, MouseEventKind};
+use crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use std::path::Path;
 
 /// Handle a crossterm event, updating TUI application state accordingly.
@@ -65,6 +65,20 @@ pub fn handle_event(app: &mut TuiApp, event: &Event, data_dir: &Path) {
                         app.scroll_logs_up(3);
                     }
                 }
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if in_task_panel {
+                        app.focus = Panel::Tasks;
+                        if let Some(inner_row) = mouse.row.checked_sub(app.task_list_top) {
+                            let task_index = inner_row as usize / 2 + app.task_list_state.offset();
+                            if task_index < app.tasks.len() {
+                                app.select_task(task_index);
+                                app.load_logs_for_selected_task(data_dir);
+                            }
+                        }
+                    } else {
+                        app.focus = Panel::Logs;
+                    }
+                }
                 _ => {}
             }
         }
@@ -77,7 +91,8 @@ mod tests {
     use super::*;
     use crate::task::Task;
     use crossterm::event::{
-        KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseEvent, MouseEventKind,
+        KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent,
+        MouseEventKind,
     };
     use std::fs;
 
@@ -95,6 +110,15 @@ mod tests {
             kind,
             column,
             row: 5,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    fn make_mouse_click(column: u16, row: u16) -> Event {
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
             modifiers: KeyModifiers::NONE,
         })
     }
@@ -259,6 +283,86 @@ mod tests {
 
         handle_event(&mut app, &make_key_event(KeyCode::PageUp), tmp.path());
         assert_eq!(app.log_scroll, 0);
+    }
+
+    #[test]
+    fn test_mouse_click_selects_task() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with_tasks();
+        app.task_panel_width = 30;
+        app.task_list_top = 2; // header(1) + top border(1)
+
+        // Click on the second task (rows 4-5, each task is 2 rows tall)
+        handle_event(&mut app, &make_mouse_click(5, 4), tmp.path());
+        assert_eq!(app.task_list_state.selected(), Some(1));
+        assert_eq!(app.focus, Panel::Tasks);
+
+        // Click on the third task (rows 6-7)
+        handle_event(&mut app, &make_mouse_click(5, 6), tmp.path());
+        assert_eq!(app.task_list_state.selected(), Some(2));
+    }
+
+    #[test]
+    fn test_mouse_click_loads_logs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path();
+
+        let log_dir = data_dir.join("tasks").join("t2").join("output");
+        fs::create_dir_all(&log_dir).unwrap();
+        fs::write(log_dir.join("agent.log"), "log from t2\n").unwrap();
+
+        let mut app = app_with_tasks();
+        app.task_panel_width = 30;
+        app.task_list_top = 2;
+
+        // Click on the second task
+        handle_event(&mut app, &make_mouse_click(5, 4), data_dir);
+        assert_eq!(app.task_list_state.selected(), Some(1));
+        assert_eq!(app.log_content, vec!["log from t2"]);
+    }
+
+    #[test]
+    fn test_mouse_click_out_of_bounds_ignored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with_tasks();
+        app.task_panel_width = 30;
+        app.task_list_top = 2;
+
+        // Click well below the last task (row 20, only 3 tasks at rows 2-7)
+        handle_event(&mut app, &make_mouse_click(5, 20), tmp.path());
+        assert_eq!(app.task_list_state.selected(), Some(0)); // unchanged
+
+        // Click on the top border (row 1, task_list_top is 2)
+        handle_event(&mut app, &make_mouse_click(5, 1), tmp.path());
+        assert_eq!(app.task_list_state.selected(), Some(0)); // unchanged
+    }
+
+    #[test]
+    fn test_mouse_click_empty_task_list() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = TuiApp::new(1);
+        app.task_panel_width = 30;
+        app.task_list_top = 2;
+
+        // Click in the task area with no tasks — selection should not change
+        handle_event(&mut app, &make_mouse_click(5, 3), tmp.path());
+        assert_eq!(app.task_list_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn test_mouse_click_focuses_panel() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with_tasks();
+        app.task_panel_width = 30;
+        app.task_list_top = 2;
+
+        // Click on log panel (column 50 > task_panel_width 30)
+        handle_event(&mut app, &make_mouse_click(50, 5), tmp.path());
+        assert_eq!(app.focus, Panel::Logs);
+
+        // Click on task panel focuses it back
+        handle_event(&mut app, &make_mouse_click(5, 2), tmp.path());
+        assert_eq!(app.focus, Panel::Tasks);
     }
 
     #[test]

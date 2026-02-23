@@ -36,6 +36,8 @@ pub struct TuiApp {
     pub should_quit: bool,
     /// Computed width of the task panel (set during render)
     pub task_panel_width: u16,
+    /// Y coordinate of the first task row in the task list (set during render)
+    pub task_list_top: u16,
 }
 
 impl TuiApp {
@@ -55,6 +57,7 @@ impl TuiApp {
             workers_total,
             should_quit: false,
             task_panel_width: 0,
+            task_list_top: 0,
         }
     }
 
@@ -66,6 +69,13 @@ impl TuiApp {
         let current = self.task_list_state.selected().unwrap_or(0);
         let next = (current + 1).min(self.tasks.len() - 1);
         self.task_list_state.select(Some(next));
+    }
+
+    /// Select a task by index, ignoring out-of-bounds values
+    pub fn select_task(&mut self, index: usize) {
+        if index < self.tasks.len() {
+            self.task_list_state.select(Some(index));
+        }
     }
 
     /// Move the task list selection up, clamping at the first item
