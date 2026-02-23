@@ -715,17 +715,21 @@ impl AsyncJob for TaskJob {
             Err(e) => {
                 // Check if this was a warmup failure
                 if e.is_warmup_failure {
-                    println!(
-                        "Task {} failed during warmup. Setting 1-hour wait period...",
-                        self.task.id
-                    );
+                    if !crate::docker::is_tui_active() {
+                        println!(
+                            "Task {} failed during warmup. Setting 1-hour wait period...",
+                            self.task.id
+                        );
+                    }
 
                     // Set the wait period
                     let wait_until = Instant::now() + Duration::from_secs(3600); // 1 hour
                     *self.warmup_failure_wait_until.lock().await = Some(wait_until);
 
                     // Reset task status to QUEUED so it can be retried
-                    if let Err(e) = self.storage.reset_to_queued(&self.task.id).await {
+                    if let Err(e) = self.storage.reset_to_queued(&self.task.id).await
+                        && !crate::docker::is_tui_active()
+                    {
                         eprintln!("Failed to reset task status to QUEUED: {e}");
                     }
                 }

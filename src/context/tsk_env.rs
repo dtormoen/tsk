@@ -70,9 +70,6 @@ impl TskEnv {
     }
 
     /// Get the data directory path (for persistent storage)
-    ///
-    /// Used in tests for accessing task storage directory
-    #[cfg(test)]
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
     }

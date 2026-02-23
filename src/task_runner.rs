@@ -1,7 +1,7 @@
 use crate::agent::AgentProvider;
 use crate::context::AppContext;
 use crate::context::TaskStorage;
-use crate::docker::{DockerManager, image_manager::DockerImageManager};
+use crate::docker::{DockerManager, image_manager::DockerImageManager, is_tui_active};
 use crate::git::RepoManager;
 use crate::task::{Task, TaskStatus};
 use std::sync::Arc;
@@ -167,8 +167,10 @@ impl TaskRunner {
         let branch_name = task.branch_name.clone();
 
         // Launch Docker container
-        println!("Launching {} agent...", agent.name());
-        println!("\n{}", "=".repeat(60));
+        if !is_tui_active() {
+            println!("Launching {} agent...", agent.name());
+            println!("\n{}", "=".repeat(60));
+        }
 
         let task_image_manager =
             DockerImageManager::new(&self.ctx, self.docker_manager.client(), None);
@@ -216,7 +218,9 @@ impl TaskRunner {
             }
         };
 
-        println!("\n{}", "=".repeat(60));
+        if !is_tui_active() {
+            println!("\n{}", "=".repeat(60));
+        }
 
         // Commit any changes made by the container
         let commit_message = format!("TSK automated changes for task: {}", task.name);
@@ -224,6 +228,7 @@ impl TaskRunner {
             .repo_manager
             .commit_changes(repo_path, &commit_message)
             .await
+            && !is_tui_active()
         {
             eprintln!("Error committing changes: {e}");
         }
@@ -242,13 +247,19 @@ impl TaskRunner {
             .await
         {
             Ok(true) => {
-                println!("Branch {branch_name} is now available");
+                if !is_tui_active() {
+                    println!("Branch {branch_name} is now available");
+                }
             }
             Ok(false) => {
-                println!("No changes - branch not created");
+                if !is_tui_active() {
+                    println!("No changes - branch not created");
+                }
             }
             Err(e) => {
-                eprintln!("Error fetching changes: {e}");
+                if !is_tui_active() {
+                    eprintln!("Error fetching changes: {e}");
+                }
             }
         }
 

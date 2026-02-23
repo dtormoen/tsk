@@ -18,6 +18,22 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Global flag indicating whether the TUI is currently active.
+/// When active, stdout output from log processing and task execution is suppressed
+/// because the TUI owns the terminal and logs are already written to agent.log files.
+static TUI_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Set the TUI active flag. Call with `true` when starting the TUI, `false` when stopping.
+pub fn set_tui_active(active: bool) {
+    TUI_ACTIVE.store(active, Ordering::Relaxed);
+}
+
+/// Check whether the TUI is currently active.
+pub fn is_tui_active() -> bool {
+    TUI_ACTIVE.load(Ordering::Relaxed)
+}
 
 const CONTAINER_WORKSPACE_BASE: &str = "/workspace";
 const CONTAINER_USER: &str = "agent";
@@ -847,9 +863,12 @@ fn process_complete_lines(
         let trimmed = complete_line.trim_end_matches('\r');
 
         if let Some(formatted) = log_processor.process_line(trimmed) {
-            println!("{formatted}");
+            if !is_tui_active() {
+                println!("{formatted}");
+            }
             if let Some(ref mut file) = log_file
                 && let Err(e) = writeln!(file, "{formatted}")
+                && !is_tui_active()
             {
                 eprintln!("Warning: Failed to write to agent log file: {e}");
             }

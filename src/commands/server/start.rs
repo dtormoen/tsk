@@ -1,9 +1,12 @@
 use crate::commands::Command;
 use crate::context::AppContext;
 use crate::context::docker_client::{DefaultDockerClient, DockerClient};
+use crate::docker::set_tui_active;
 use crate::server::TskServer;
+use crate::tui::run::run_tui;
 use async_trait::async_trait;
 use std::error::Error;
+use std::io::IsTerminal;
 use std::sync::Arc;
 use tokio::signal::unix::{SignalKind, signal};
 
@@ -13,10 +16,27 @@ pub struct ServerStartCommand {
     pub sound: bool,
 }
 
+/// Spawn a background task that forces process exit on the next SIGINT or SIGTERM.
+/// Used after initiating graceful shutdown so that a second signal forces immediate exit.
+fn spawn_force_exit_handler() {
+    tokio::spawn(async {
+        let mut sigterm = signal(SignalKind::terminate()).expect("Failed to listen for SIGTERM");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = sigterm.recv() => {},
+        }
+        std::process::exit(1);
+    });
+}
+
 #[async_trait]
 impl Command for ServerStartCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
-        println!("Starting TSK server with {} worker(s)...", self.workers);
+        let is_interactive = std::io::stdout().is_terminal();
+
+        if !is_interactive {
+            println!("Starting TSK server with {} worker(s)...", self.workers);
+        }
         ctx.notification_client().set_sound_enabled(self.sound);
         let docker_client: Arc<dyn DockerClient> = Arc::new(
             DefaultDockerClient::new(&ctx.tsk_config().container_engine)
@@ -28,12 +48,20 @@ impl Command for ServerStartCommand {
             format!("Cannot start server: Docker/Podman daemon is not reachable: {e}").into()
         })?;
 
+        // Create event channel for TUI mode
+        let (event_sender, event_receiver) = if is_interactive {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
+        };
+
         let server = TskServer::with_workers(
             Arc::new(ctx.clone()),
             docker_client,
             self.workers,
             self.quit,
-            None,
+            event_sender,
         );
 
         // Setup signal handlers for graceful shutdown (SIGINT and SIGTERM)
@@ -50,39 +78,64 @@ impl Command for ServerStartCommand {
             shutdown_signal_clone.notify_one();
         });
 
-        // Run server until shutdown signal or natural quit
-        tokio::select! {
-            result = server.run() => {
-                match result {
-                    Ok(_) => {},
-                    Err(e) => {
-                        let error_msg = e.to_string();
-                        eprintln!("Server error: {error_msg}");
-                        return Err(Box::new(std::io::Error::other(error_msg)));
+        if let Some(event_receiver) = event_receiver {
+            // TUI mode: run TUI alongside server
+            set_tui_active(true);
+
+            let tui_shutdown = shutdown_signal.clone();
+            let storage = ctx.task_storage();
+            let data_dir = ctx.tsk_env().data_dir().to_path_buf();
+            let workers_total = self.workers as usize;
+
+            tokio::select! {
+                result = server.run() => {
+                    set_tui_active(false);
+                    match result {
+                        Ok(_) => {},
+                        Err(e) => {
+                            let error_msg = e.to_string();
+                            return Err(Box::new(std::io::Error::other(error_msg)));
+                        }
                     }
                 }
-            }
-            _ = shutdown_signal.notified() => {
-                println!("\nReceived shutdown signal, killing running containers...");
-                println!("Press Ctrl-C again to force exit");
-
-                // Install second signal handler for force exit
-                tokio::spawn(async {
-                    let mut sigterm =
-                        signal(SignalKind::terminate()).expect("Failed to listen for SIGTERM");
-                    tokio::select! {
-                        _ = tokio::signal::ctrl_c() => {},
-                        _ = sigterm.recv() => {},
+                tui_result = run_tui(event_receiver, storage, data_dir, workers_total, tui_shutdown) => {
+                    set_tui_active(false);
+                    if let Err(e) = tui_result {
+                        eprintln!("TUI error: {e}");
                     }
-                    std::process::exit(1);
-                });
-
-                // Perform graceful shutdown
-                server.graceful_shutdown().await;
+                    // TUI quit (user pressed 'q') — perform graceful shutdown
+                    server.graceful_shutdown().await;
+                }
+                _ = shutdown_signal.notified() => {
+                    set_tui_active(false);
+                    spawn_force_exit_handler();
+                    server.graceful_shutdown().await;
+                }
             }
+        } else {
+            // Non-interactive mode: existing plain text behavior
+            tokio::select! {
+                result = server.run() => {
+                    match result {
+                        Ok(_) => {},
+                        Err(e) => {
+                            let error_msg = e.to_string();
+                            eprintln!("Server error: {error_msg}");
+                            return Err(Box::new(std::io::Error::other(error_msg)));
+                        }
+                    }
+                }
+                _ = shutdown_signal.notified() => {
+                    println!("\nReceived shutdown signal, killing running containers...");
+                    println!("Press Ctrl-C again to force exit");
+                    spawn_force_exit_handler();
+                    server.graceful_shutdown().await;
+                }
+            }
+
+            println!("TSK server stopped");
         }
 
-        println!("TSK server stopped");
         Ok(())
     }
 }

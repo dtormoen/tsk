@@ -1,5 +1,5 @@
-pub mod events;
-
-// TUI application state types; gated to tests until there are production consumers.
-#[cfg(test)]
 pub mod app;
+pub mod events;
+pub mod input;
+pub mod run;
+pub mod ui;

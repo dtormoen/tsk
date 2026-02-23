@@ -120,9 +120,13 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Provides `total_workers()`, `active_workers()`, and `available_workers()` for monitoring
 
 **TUI Module** (`src/tui/`)
-- `ServerEvent`: Structured events emitted by the scheduler (TaskScheduled, TaskCompleted, TaskFailed, StatusMessage, WarningMessage)
-- `ServerEventSender`: Type alias for `tokio::sync::mpsc::UnboundedSender<ServerEvent>`; passed optionally to `TskServer::with_workers()` and `TaskScheduler::new()`
-- `TuiApp`: Application state struct for the TUI renderer; holds task list, log viewer, and server status state
+- Interactive terminal dashboard for `tsk server start` using ratatui/crossterm; auto-enabled when stdout is a terminal, falls back to plain text when piped
+- `ServerEvent` / `ServerEventSender`: Structured event channel from scheduler to TUI
+- `TuiApp`: Application state (task list, log viewer, server status, panel focus)
+- `ui::render()`: Two-panel layout (35% task list, 65% log viewer) with header/footer
+- `input::handle_event()`: Keyboard (vim-style + arrows) and mouse input handling
+- `run::run_tui()`: Async event loop multiplexing crossterm events, server events, and periodic timers
+- `docker::TUI_ACTIVE` global flag suppresses stdout output from log processing and task execution when TUI is active
 
 **Git Operations** (`src/git.rs`, `src/git_sync.rs`, `src/git_operations.rs`, `src/repo_utils.rs`)
 - Repository cloning to centralized task directories using `CloneLocal::NoLinks` for optimized pack files

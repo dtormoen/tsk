@@ -93,14 +93,25 @@ impl TuiApp {
         self.log_scroll = self.log_scroll.saturating_add(amount);
     }
 
-    /// Load the agent log file for the currently selected task.
+    /// Load the agent log file for the currently selected task, resetting scroll to the top.
     ///
+    /// Use this when the user explicitly changes task selection.
     /// Reads from `{data_dir}/tasks/{task_id}/output/agent.log`.
-    /// Clears log content if no task is selected or the file doesn't exist.
-    /// Resets scroll position when loading new content.
     pub fn load_logs_for_selected_task(&mut self, data_dir: &Path) {
         self.log_scroll = 0;
+        self.reload_logs(data_dir);
+    }
 
+    /// Refresh the log file content for the currently selected task without resetting scroll.
+    ///
+    /// Use this for periodic live-tailing refreshes that should not disrupt the
+    /// user's scroll position.
+    pub fn refresh_logs(&mut self, data_dir: &Path) {
+        self.reload_logs(data_dir);
+    }
+
+    /// Internal helper that reads the agent.log for the selected task.
+    fn reload_logs(&mut self, data_dir: &Path) {
         let selected = match self.task_list_state.selected() {
             Some(idx) if idx < self.tasks.len() => idx,
             _ => {
