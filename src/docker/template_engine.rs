@@ -2,25 +2,19 @@ use anyhow::{Context, Result};
 use handlebars::Handlebars;
 use std::collections::HashMap;
 
-use crate::assets::embedded::EmbeddedAssetManager;
 use crate::docker::composer::{InlineLayerOverrides, LayerSource, LayerSources};
 
 /// Template engine for rendering Dockerfiles using Handlebars templates
 pub struct DockerTemplateEngine<'a> {
     handlebars: Handlebars<'a>,
-    asset_manager: &'a EmbeddedAssetManager,
     overrides: Option<&'a InlineLayerOverrides>,
 }
 
 impl<'a> DockerTemplateEngine<'a> {
     /// Creates a new Docker template engine
-    pub fn new(
-        asset_manager: &'a EmbeddedAssetManager,
-        overrides: Option<&'a InlineLayerOverrides>,
-    ) -> Self {
+    pub fn new(overrides: Option<&'a InlineLayerOverrides>) -> Self {
         Self {
             handlebars: Handlebars::new(),
-            asset_manager,
             overrides,
         }
     }
@@ -80,11 +74,11 @@ impl<'a> DockerTemplateEngine<'a> {
             }
         }
 
-        // Fall back to asset manager
+        // Fall back to embedded assets
         match layer_name {
             Some(name) => {
                 let path = format!("{}/{}", layer_type, name);
-                match self.asset_manager.get_dockerfile(&path) {
+                match crate::assets::embedded::get_dockerfile(&path) {
                     Ok(content) => {
                         let s = String::from_utf8(content)
                             .context("Failed to decode layer content as UTF-8")?;
@@ -101,12 +95,10 @@ impl<'a> DockerTemplateEngine<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assets::embedded::EmbeddedAssetManager;
 
     #[test]
     fn test_render_dockerfile_with_all_layers() {
-        let asset_manager = EmbeddedAssetManager::new();
-        let engine = DockerTemplateEngine::new(&asset_manager, None);
+        let engine = DockerTemplateEngine::new(None);
 
         let base_template = r#"FROM ubuntu:24.04
 # Stack layer
@@ -137,8 +129,7 @@ mod tests {
 
     #[test]
     fn test_render_dockerfile_with_missing_layers() {
-        let asset_manager = EmbeddedAssetManager::new();
-        let engine = DockerTemplateEngine::new(&asset_manager, None);
+        let engine = DockerTemplateEngine::new(None);
 
         let base_template = r#"FROM ubuntu:24.04
 {{{STACK}}}
@@ -165,8 +156,7 @@ mod tests {
 
     #[test]
     fn test_render_dockerfile_with_no_layers() {
-        let asset_manager = EmbeddedAssetManager::new();
-        let engine = DockerTemplateEngine::new(&asset_manager, None);
+        let engine = DockerTemplateEngine::new(None);
 
         let base_template = r#"FROM ubuntu:24.04
 {{{STACK}}}
@@ -183,12 +173,11 @@ CMD ["/bin/bash"]"#;
 
     #[test]
     fn test_inline_override_stack_layer() {
-        let asset_manager = EmbeddedAssetManager::new();
         let overrides = InlineLayerOverrides {
             stack_setup: Some("RUN apt-get install -y custom-stack-tool".to_string()),
             ..Default::default()
         };
-        let engine = DockerTemplateEngine::new(&asset_manager, Some(&overrides));
+        let engine = DockerTemplateEngine::new(Some(&overrides));
 
         let base_template = "FROM ubuntu:24.04\n{{{STACK}}}\n{{{AGENT}}}\n{{{PROJECT}}}";
 
@@ -203,12 +192,11 @@ CMD ["/bin/bash"]"#;
 
     #[test]
     fn test_inline_override_agent_layer() {
-        let asset_manager = EmbeddedAssetManager::new();
         let overrides = InlineLayerOverrides {
             agent_setup: Some("RUN npm install -g custom-agent".to_string()),
             ..Default::default()
         };
-        let engine = DockerTemplateEngine::new(&asset_manager, Some(&overrides));
+        let engine = DockerTemplateEngine::new(Some(&overrides));
 
         let base_template = "FROM ubuntu:24.04\n{{{STACK}}}\n{{{AGENT}}}\n{{{PROJECT}}}";
 
@@ -228,12 +216,11 @@ CMD ["/bin/bash"]"#;
 
     #[test]
     fn test_inline_override_project_layer() {
-        let asset_manager = EmbeddedAssetManager::new();
         let overrides = InlineLayerOverrides {
             project_setup: Some("RUN pip install project-dep".to_string()),
             ..Default::default()
         };
-        let engine = DockerTemplateEngine::new(&asset_manager, Some(&overrides));
+        let engine = DockerTemplateEngine::new(Some(&overrides));
 
         let base_template = "FROM ubuntu:24.04\n{{{STACK}}}\n{{{AGENT}}}\n{{{PROJECT}}}";
 
@@ -252,12 +239,11 @@ CMD ["/bin/bash"]"#;
 
     #[test]
     fn test_inline_override_with_no_fallback() {
-        let asset_manager = EmbeddedAssetManager::new();
         let overrides = InlineLayerOverrides {
             stack_setup: Some("RUN install-custom-stack".to_string()),
             ..Default::default()
         };
-        let engine = DockerTemplateEngine::new(&asset_manager, Some(&overrides));
+        let engine = DockerTemplateEngine::new(Some(&overrides));
 
         let base_template = "FROM ubuntu:24.04\n{{{STACK}}}\n{{{AGENT}}}\n{{{PROJECT}}}";
 
@@ -276,10 +262,9 @@ CMD ["/bin/bash"]"#;
     }
 
     #[test]
-    fn test_no_override_falls_back_to_asset_manager() {
-        let asset_manager = EmbeddedAssetManager::new();
+    fn test_no_override_falls_back_to_embedded_assets() {
         let overrides = InlineLayerOverrides::default(); // no overrides set
-        let engine = DockerTemplateEngine::new(&asset_manager, Some(&overrides));
+        let engine = DockerTemplateEngine::new(Some(&overrides));
 
         let base_template = "FROM ubuntu:24.04\n{{{STACK}}}\n{{{AGENT}}}\n{{{PROJECT}}}";
 
@@ -294,8 +279,6 @@ CMD ["/bin/bash"]"#;
 
     #[test]
     fn test_no_html_escaping_in_layers() {
-        let asset_manager = EmbeddedAssetManager::new();
-
         // Use inline overrides to inject content with special characters
         let special_content = r#"RUN curl --proto '=https' --tlsv1.2 -sSf https://example.com | sh && \
     echo "PATH=/usr/local/bin:$PATH" >> ~/.bashrc"#;
@@ -304,7 +287,7 @@ CMD ["/bin/bash"]"#;
             stack_setup: Some(special_content.to_string()),
             ..Default::default()
         };
-        let engine = DockerTemplateEngine::new(&asset_manager, Some(&overrides));
+        let engine = DockerTemplateEngine::new(Some(&overrides));
 
         let base_template = r#"FROM ubuntu:24.04
 # Stack layer

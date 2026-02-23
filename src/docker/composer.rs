@@ -6,11 +6,10 @@
 use anyhow::{Context, Result};
 use std::collections::HashSet;
 
-use crate::assets::embedded::EmbeddedAssetManager;
 use crate::docker::layers::DockerImageConfig;
 use crate::docker::template_engine::DockerTemplateEngine;
 
-/// Inline layer content from TOML config that overrides asset manager lookups.
+/// Inline layer content from TOML config that overrides embedded asset lookups.
 #[derive(Debug, Default)]
 pub struct InlineLayerOverrides {
     /// Content for the stack layer position (from `stack_config[stack].setup`)
@@ -26,7 +25,7 @@ pub struct InlineLayerOverrides {
 pub enum LayerSource {
     /// Layer content from TOML config (setup/stack_config/agent_config)
     Config,
-    /// Layer content from the asset manager (filesystem or embedded)
+    /// Layer content from embedded assets
     AssetManager,
     /// Layer was empty (no content from any source)
     #[default]
@@ -52,35 +51,31 @@ pub struct LayerSources {
 }
 
 /// Composes multiple Docker layers into a complete Dockerfile
-pub struct DockerComposer {
-    asset_manager: EmbeddedAssetManager,
-}
+pub struct DockerComposer;
 
 impl DockerComposer {
     /// Creates a new DockerComposer
-    pub fn new(asset_manager: EmbeddedAssetManager) -> Self {
-        Self { asset_manager }
+    pub fn new() -> Self {
+        Self
     }
 
     /// Compose a complete Dockerfile and associated files from the given configuration.
     ///
     /// When `overrides` is provided, inline config content takes priority over
-    /// asset manager lookups for the corresponding layer positions.
+    /// embedded asset lookups for the corresponding layer positions.
     pub fn compose(
         &self,
         config: &DockerImageConfig,
         overrides: Option<&InlineLayerOverrides>,
     ) -> Result<ComposedDockerfile> {
         // Get the base template
-        let base_dockerfile = self
-            .asset_manager
-            .get_dockerfile("base/default")
+        let base_dockerfile = crate::assets::embedded::get_dockerfile("base/default")
             .context("Failed to get base dockerfile")?;
         let base_template = String::from_utf8(base_dockerfile)
             .context("Failed to decode base dockerfile as UTF-8")?;
 
         // Create template engine and render the Dockerfile
-        let template_engine = DockerTemplateEngine::new(&self.asset_manager, overrides);
+        let template_engine = DockerTemplateEngine::new(overrides);
         let (dockerfile_content, layer_sources) = template_engine.render_dockerfile(
             &base_template,
             Some(&config.stack),
@@ -180,10 +175,9 @@ pub struct ComposedDockerfile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assets::embedded::EmbeddedAssetManager;
 
     fn create_test_composer() -> DockerComposer {
-        DockerComposer::new(EmbeddedAssetManager)
+        DockerComposer::new()
     }
 
     #[test]

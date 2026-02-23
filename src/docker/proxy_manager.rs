@@ -114,7 +114,6 @@ impl ProxyManager {
     ) -> Result<()> {
         println!("Building proxy image: {PROXY_IMAGE}");
 
-        use crate::assets::embedded::EmbeddedAssetManager;
         use crate::assets::utils::extract_dockerfile_to_temp;
 
         // Warn about deprecated legacy squid.conf file
@@ -127,8 +126,7 @@ impl ProxyManager {
         }
 
         // Extract dockerfile to temporary directory
-        let asset_manager = EmbeddedAssetManager;
-        let dockerfile_dir = extract_dockerfile_to_temp(&asset_manager, "tsk-proxy")
+        let dockerfile_dir = extract_dockerfile_to_temp("tsk-proxy")
             .context("Failed to extract proxy Dockerfile")?;
 
         // Create tar archive from the proxy dockerfile directory

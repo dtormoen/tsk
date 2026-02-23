@@ -4,7 +4,6 @@
 //! to the filesystem, particularly for Docker builds that require
 //! dockerfile directories to be available on disk.
 
-use super::embedded::EmbeddedAssetManager;
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::PathBuf;
@@ -17,22 +16,18 @@ use std::path::PathBuf;
 ///
 /// # Arguments
 ///
-/// * `asset_manager` - The asset manager to use for retrieving dockerfile files
 /// * `dockerfile_name` - The name of the dockerfile (e.g., "base/default", "tsk-proxy")
 ///
 /// # Returns
 ///
 /// The path to the temporary directory containing the extracted dockerfile files
-pub fn extract_dockerfile_to_temp(
-    asset_manager: &EmbeddedAssetManager,
-    dockerfile_name: &str,
-) -> Result<PathBuf> {
+pub fn extract_dockerfile_to_temp(dockerfile_name: &str) -> Result<PathBuf> {
     // Create a temporary directory
     let temp_dir = tempfile::TempDir::new().context("Failed to create temporary directory")?;
     let temp_path = temp_dir.path().to_owned();
 
     // Extract the main Dockerfile
-    let dockerfile_content = asset_manager.get_dockerfile(dockerfile_name)?;
+    let dockerfile_content = super::embedded::get_dockerfile(dockerfile_name)?;
     let dockerfile_path = temp_path.join("Dockerfile");
     fs::write(&dockerfile_path, dockerfile_content).context("Failed to write Dockerfile")?;
 
@@ -41,7 +36,7 @@ pub fn extract_dockerfile_to_temp(
     let additional_files = ["squid.conf", "entrypoint.sh", "requirements.txt"];
 
     for file_name in &additional_files {
-        match asset_manager.get_dockerfile_file(dockerfile_name, file_name) {
+        match super::embedded::get_dockerfile_file(dockerfile_name, file_name) {
             Ok(content) => {
                 let file_path = temp_path.join(file_name);
                 fs::write(&file_path, content)
@@ -63,14 +58,10 @@ pub fn extract_dockerfile_to_temp(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assets::embedded::EmbeddedAssetManager;
 
     #[test]
     fn test_asset_extraction() {
-        let manager = EmbeddedAssetManager::new();
-
-        // Test extracting base/default dockerfile
-        let result = extract_dockerfile_to_temp(&manager, "base/default");
+        let result = extract_dockerfile_to_temp("base/default");
         assert!(result.is_ok());
 
         let temp_dir = result.unwrap();
@@ -83,10 +74,7 @@ mod tests {
 
     #[test]
     fn test_asset_extraction_with_additional_files() {
-        let manager = EmbeddedAssetManager::new();
-
-        // Test extracting tsk-proxy dockerfile (which has squid.conf)
-        let result = extract_dockerfile_to_temp(&manager, "tsk-proxy");
+        let result = extract_dockerfile_to_temp("tsk-proxy");
         assert!(result.is_ok());
 
         let temp_dir = result.unwrap();

@@ -13,7 +13,6 @@ pub(crate) mod frontmatter;
 pub mod utils;
 
 use crate::context::tsk_env::TskEnv;
-use embedded::EmbeddedAssetManager;
 
 /// Check for deprecated filesystem-based dockerfile directories and warn the user.
 ///
@@ -86,7 +85,7 @@ pub fn find_template(name: &str, project_root: Option<&Path>, tsk_env: &TskEnv) 
     }
 
     // Fall back to embedded
-    EmbeddedAssetManager.get_template(name)
+    embedded::get_template(name)
 }
 
 /// List all available templates from project, user, and embedded sources.
@@ -102,7 +101,7 @@ pub fn list_all_templates(project_root: Option<&Path>, tsk_env: &TskEnv) -> Vec<
     scan_template_dir(&tsk_env.config_dir().join("templates"), &mut templates);
 
     // Check embedded
-    for name in EmbeddedAssetManager.list_templates() {
+    for name in embedded::list_templates() {
         templates.insert(name);
     }
 

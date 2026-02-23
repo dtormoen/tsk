@@ -4,8 +4,6 @@ pub mod image_manager;
 pub mod layers;
 pub mod proxy_manager;
 pub mod template_engine;
-pub mod template_manager;
-
 use crate::agent::{Agent, LogProcessor};
 use crate::context::AppContext;
 use crate::context::ContainerEngine;

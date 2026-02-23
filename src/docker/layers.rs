@@ -73,52 +73,11 @@ impl DockerLayer {
             name: name.into(),
         }
     }
-
-    /// Get the file path for this layer's dockerfile in the new structure
-    /// Returns the path relative to the dockerfiles directory
-    pub fn dockerfile_path(&self) -> String {
-        format!("{}/{}.dockerfile", self.layer_type, self.name)
-    }
 }
 
 impl fmt::Display for DockerLayer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}/{}", self.layer_type, self.name)
-    }
-}
-
-/// Represents the content of a Docker layer
-#[derive(Debug, Clone)]
-#[allow(dead_code)] // Fields are used via public API by template_manager
-pub struct DockerLayerContent {
-    /// The Dockerfile fragment for this layer
-    pub dockerfile_content: String,
-    /// Additional files that should be copied alongside the Dockerfile
-    pub additional_files: Vec<(String, Vec<u8>)>,
-}
-
-impl DockerLayerContent {
-    /// Creates a new DockerLayerContent with just Dockerfile content
-    ///
-    /// Used in tests and potentially useful for creating simple layer content
-    /// Used in tests
-    #[allow(dead_code)]
-    pub fn new(dockerfile_content: String) -> Self {
-        Self {
-            dockerfile_content,
-            additional_files: Vec::new(),
-        }
-    }
-
-    /// Creates a new DockerLayerContent with Dockerfile and additional files
-    pub fn with_files(
-        dockerfile_content: String,
-        additional_files: Vec<(String, Vec<u8>)>,
-    ) -> Self {
-        Self {
-            dockerfile_content,
-            additional_files,
-        }
     }
 }
 
@@ -183,26 +142,6 @@ mod tests {
     }
 
     #[test]
-    fn test_docker_layer_dockerfile_path() {
-        assert_eq!(
-            DockerLayer::base().dockerfile_path(),
-            "base/default.dockerfile"
-        );
-        assert_eq!(
-            DockerLayer::stack("rust").dockerfile_path(),
-            "stack/rust.dockerfile"
-        );
-        assert_eq!(
-            DockerLayer::agent("claude").dockerfile_path(),
-            "agent/claude.dockerfile"
-        );
-        assert_eq!(
-            DockerLayer::project("web-api").dockerfile_path(),
-            "project/web-api.dockerfile"
-        );
-    }
-
-    #[test]
     fn test_docker_image_config() {
         let config = DockerImageConfig::new(
             "rust".to_string(),
@@ -231,19 +170,5 @@ mod tests {
         assert_eq!(config.agent, "claude");
         assert_eq!(config.project, "default");
         assert_eq!(config.image_tag(), "tsk/default/claude/default");
-    }
-
-    #[test]
-    fn test_layer_content_creation() {
-        let content = DockerLayerContent::new("FROM ubuntu:24.04".to_string());
-        assert_eq!(content.dockerfile_content, "FROM ubuntu:24.04");
-        assert!(content.additional_files.is_empty());
-
-        let with_files = DockerLayerContent::with_files(
-            "FROM alpine".to_string(),
-            vec![("config.txt".to_string(), b"test".to_vec())],
-        );
-        assert_eq!(with_files.dockerfile_content, "FROM alpine");
-        assert_eq!(with_files.additional_files.len(), 1);
     }
 }

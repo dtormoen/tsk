@@ -8,7 +8,6 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::assets::embedded::EmbeddedAssetManager;
 use crate::context::AppContext;
 use crate::context::ContainerEngine;
 use crate::context::ResolvedConfig;
@@ -16,7 +15,6 @@ use crate::context::docker_client::DockerClient;
 use crate::docker::build_lock_manager::DockerBuildLockManager;
 use crate::docker::composer::{ComposedDockerfile, DockerComposer, InlineLayerOverrides};
 use crate::docker::layers::{DockerImageConfig, DockerLayerType};
-use crate::docker::template_manager::DockerTemplateManager;
 
 /// Options for building Docker images.
 pub struct BuildOptions<'a> {
@@ -102,6 +100,15 @@ fn get_git_config_from_repo(build_root: Option<&Path>, key: &str) -> Result<Stri
     }
 }
 
+/// List available layer names for a given layer type by filtering embedded dockerfiles.
+fn list_layers_of_type(layer_type: &DockerLayerType) -> Vec<String> {
+    let prefix = format!("{}/", layer_type);
+    crate::assets::embedded::list_dockerfiles()
+        .into_iter()
+        .filter_map(|path| path.strip_prefix(&prefix).map(|s| s.to_string()))
+        .collect()
+}
+
 /// Manages Docker images for TSK
 ///
 /// This struct provides a high-level interface for managing Docker images,
@@ -112,7 +119,6 @@ pub struct DockerImageManager {
     ctx: AppContext,
     client: Arc<dyn DockerClient>,
     docker_build_lock_manager: Arc<DockerBuildLockManager>,
-    template_manager: DockerTemplateManager,
     composer: DockerComposer,
 }
 
@@ -128,16 +134,13 @@ impl DockerImageManager {
         client: Arc<dyn DockerClient>,
         docker_build_lock_manager: Option<Arc<DockerBuildLockManager>>,
     ) -> Self {
-        let asset_manager = EmbeddedAssetManager;
-        let template_manager = DockerTemplateManager::new(asset_manager);
-        let composer = DockerComposer::new(EmbeddedAssetManager);
+        let composer = DockerComposer::new();
 
         Self {
             ctx: ctx.clone(),
             client,
             docker_build_lock_manager: docker_build_lock_manager
                 .unwrap_or_else(|| Arc::new(DockerBuildLockManager::new())),
-            template_manager,
             composer,
         }
     }
@@ -198,7 +201,7 @@ impl DockerImageManager {
 
     /// Helper to validate layer availability.
     ///
-    /// Returns layers that are missing from both the asset manager and inline overrides.
+    /// Returns layers that are missing from both embedded assets and inline overrides.
     fn validate_layers(
         &self,
         config: &DockerImageConfig,
@@ -221,7 +224,7 @@ impl DockerImageManager {
                     }
                 }
 
-                self.template_manager.get_layer_content(layer).is_err()
+                crate::assets::embedded::get_dockerfile(&layer.to_string()).is_err()
             })
             .collect()
     }
@@ -266,15 +269,13 @@ impl DockerImageManager {
                 DockerLayerType::Stack => {
                     return Err(anyhow::anyhow!(
                         "Stack '{stack}' not found. Available stacks: {:?}",
-                        self.template_manager
-                            .list_available_layers(DockerLayerType::Stack)
+                        list_layers_of_type(&DockerLayerType::Stack)
                     ));
                 }
                 DockerLayerType::Agent => {
                     return Err(anyhow::anyhow!(
                         "Agent '{agent}' not found. Available agents: {:?}",
-                        self.template_manager
-                            .list_available_layers(DockerLayerType::Agent)
+                        list_layers_of_type(&DockerLayerType::Agent)
                     ));
                 }
                 DockerLayerType::Project => {
