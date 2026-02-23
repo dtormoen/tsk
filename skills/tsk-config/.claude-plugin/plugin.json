@@ -1,5 +1,5 @@
 {
-  "name": "tsk-docker-config",
+  "name": "tsk-config",
   "description": "Guides users through configuring TSK Docker container images for their project, including stack, agent, and project layer setup.",
   "author": {
     "name": "TSK Contributors"

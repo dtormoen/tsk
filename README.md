@@ -39,6 +39,17 @@ cd tsk
 cargo install --path .
 ```
 
+**Claude Code users:** Install TSK skills to teach Claude how to use TSK commands directly in your conversations and help you configure your projects for use with TSK:
+
+```bash
+/plugin marketplace add dtormoen/tsk
+/plugin install tsk-help@dtormoen/tsk
+/plugin install tsk-config@dtormoen/tsk
+/plugin install tsk-add@dtormoen/tsk
+```
+
+See [Claude Code Skills Marketplace](#claude-code-skills-marketplace) for more details.
+
 ## Quick Start Guide
 
 TSK can be used in multiple ways. Here are some of the main workflows to get started. Try testing these in the TSK repository!
@@ -219,31 +230,35 @@ container_engine = "docker"  # "docker" (default) or "podman"
 auto_clean_enabled = true   # Automatically clean old tasks (default: true)
 auto_clean_age_days = 7.0   # Minimum age in days before cleanup (default: 7.0)
 
-# Default settings for all projects
+# Default settings for all projects (showing built-in defaults)
 [defaults]
-memory_gb = 12.0             # Container memory limit (default: 12.0)
-cpu = 8                      # Number of CPUs (default: 8)
-dind = false                 # Enable Docker-in-Docker support (default: false)
-git_town = false             # Enable git-town parent branch tracking (default: false)
-host_ports = [5432, 6379]    # Forward ports from containers to host services
+agent = "claude"             # AI agent: "claude" or "codex"
+stack = "default"            # Tech stack (auto-detected from project files)
+memory_gb = 12.0             # Container memory limit in GB
+cpu = 8                      # Number of CPUs
+dind = false                 # Enable Docker-in-Docker support
+git_town = false             # Enable git-town parent branch tracking
 
 # Project-specific overrides (matches directory name)
-[project.my-project]
-agent = "claude"        # Default agent (claude or codex)
-stack = "go"            # Default stack for auto-detection override
-dind = false            # Enable Docker-in-Docker for this project
-memory_gb = 24.0        # Override memory limit for this project
-cpu = 16                # Override CPU limit for this project
+[project.my-go-service]
+stack = "go"
+memory_gb = 24.0
+cpu = 16
+setup = '''
+USER root
+RUN apt-get update && apt-get install -y libssl-dev pkg-config
+USER agent
+'''
+host_ports = [5432, 6379]    # Forward host ports to containers
 volumes = [
-    # Bind mount: Share host directories with containers (supports ~ expansion)
+    # Bind mount: share host directories with containers (supports ~ expansion)
     { host = "~/.cache/go-mod", container = "/go/pkg/mod" },
-    # Named volume: Container-managed persistent storage (prefixed with tsk-)
+    # Named volume: container-managed persistent storage (prefixed with tsk-)
     { name = "go-build-cache", container = "/home/agent/.cache/go-build" },
-    # Read-only mount: Provide artifacts without modification risk
+    # Read-only mount: provide artifacts without modification risk
     { host = "~/debug-logs", container = "/debug-logs", readonly = true }
 ]
 env = [
-    # Environment variables passed to the container
     { name = "DB_PORT", value = "5432" },
     { name = "REDIS_PORT", value = "6379" },
 ]
@@ -257,7 +272,9 @@ stack = "rust"
 memory_gb = 16.0
 host_ports = [5432]
 setup = '''
+USER root
 RUN apt-get update && apt-get install -y cmake
+USER agent
 '''
 
 [stack_config.rust]
@@ -266,7 +283,7 @@ RUN cargo install cargo-nextest
 '''
 ```
 
-The `setup` field injects Dockerfile commands at the project layer position in the Docker image build. Use it for project-specific build dependencies. `stack_config.<name>.setup` and `agent_config.<name>.setup` similarly inject content at the stack and agent layer positions, and can define entirely new stacks or agents (e.g., `stack_config.scala.setup` lets you use `stack = "scala"`). Config-defined layers take priority over embedded Docker layers.
+The `setup` field injects Dockerfile commands at the project layer position in the Docker image build. Use it for project-specific build dependencies. `stack_config.<name>.setup` and `agent_config.<name>.setup` similarly inject content at the stack and agent layer positions, and can define entirely new stacks or agents (e.g., `stack_config.scala.setup` lets you use `stack = "scala"`). Config-defined layers take priority over embedded Docker layers. Setup commands run as the `agent` user by default — use `USER root` for operations that require elevated privileges (e.g., `apt-get install`) and always switch back to `USER agent` afterwards.
 
 Volume mounts are particularly useful for:
 - **Build caches**: Share Go module cache (`/go/pkg/mod`) or Rust target directories to speed up builds
@@ -300,7 +317,7 @@ Each TSK sandbox container image has 4 main parts:
 - An `agent` snippet that installs an agent, e.g. `claude` or `codex`.
 - A `project` snippet that defines project specific build steps (applied last for project-specific customizations). This does nothing by default, but can be used to add extra build steps for your project.
 
-It is very difficult to make these images general purpose enough to cover all repositories. You may need some special customization. If you use Claude Code, the `tsk-docker-config` skill can walk you through configuring TSK's Docker layers for your project (see [Claude Code Skills Marketplace](#claude-code-skills-marketplace) for installation). Otherwise, the recommended approach is to use `setup`, `stack_config`, and `agent_config` fields in your `tsk.toml` to inject custom Dockerfile commands (see [Configuration File](#configuration-file) above).
+It is very difficult to make these images general purpose enough to cover all repositories. You may need some special customization. If you use Claude Code, the `tsk-config` skill can walk you through configuring TSK's Docker layers for your project (see [Claude Code Skills Marketplace](#claude-code-skills-marketplace) for installation). Otherwise, the recommended approach is to use `setup`, `stack_config`, and `agent_config` fields in your `tsk.toml` to inject custom Dockerfile commands (see [Configuration File](#configuration-file) above).
 
 See [dockerfiles](./dockerfiles) for the built-in dockerfiles.
 
@@ -366,7 +383,7 @@ This repository includes a Claude Code skills marketplace with TSK-specific skil
 # Add the marketplace in Claude Code
 /plugin marketplace add dtormoen/tsk
 
-# Install a skill (e.g. tsk-help, tsk-docker-config, tsk-add)
+# Install a skill (e.g. tsk-help, tsk-config, tsk-add)
 /plugin install tsk-help@dtormoen/tsk
 ```
 

@@ -37,7 +37,7 @@ cp -r skills/tsk-help/skills/tsk-help .claude/skills/
 | Skill | Description |
 |-------|-------------|
 | `tsk-help` | Teaches Claude core TSK commands for delegating tasks to AI agents |
-| `tsk-docker-config` | Guides users through configuring TSK Docker container images |
+| `tsk-config` | Guides users through configuring TSK Docker container images |
 | `tsk-add` | Queues a development task from the current conversation using tsk add |
 
 ## Contributing a New Skill

@@ -13,9 +13,9 @@
       "source": "./skills/tsk-help"
     },
     {
-      "name": "tsk-docker-config",
+      "name": "tsk-config",
       "description": "Guides users through configuring TSK Docker container images for their project.",
-      "source": "./skills/tsk-docker-config"
+      "source": "./skills/tsk-config"
     },
     {
       "name": "tsk-add",

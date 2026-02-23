@@ -1,5 +1,5 @@
 ---
-name: tsk-docker-config
+name: tsk-config
 description: Use this skill when the user wants to set up or configure TSK Docker container images, customize their tsk.toml for Docker builds, configure stack/agent/project layers, or troubleshoot TSK container build issues.
 user-invocable: true
 disable-model-invocation: true
@@ -12,7 +12,7 @@ You are helping a user configure TSK Docker container images for their project. 
 
 ## Step 1: Gather Project Information
 
-Detect the project's technology stack by checking for these files in the project root:
+Detect the project's technology stack by checking for these files in the project root. These are TSK's built-in stacks with auto-detection — custom stacks for any language can be defined via `stack_config` in `tsk.toml` (covered in Step 5).
 
 | File | Stack |
 |------|-------|
@@ -26,7 +26,7 @@ Detect the project's technology stack by checking for these files in the project
 
 Also determine the project name from the current directory name.
 
-Tell the user what you detected and ask them to confirm or override.
+Tell the user what you detected and ask them to confirm or override. If their stack isn't listed above, let them know they can define a custom stack.
 
 ## Step 2: Check for Deprecated Dockerfiles
 
@@ -78,7 +78,7 @@ You customize layers 2-4 via `tsk.toml`:
 | `setup` | Project (3) | Project-specific apt packages, system libraries, custom tools |
 | `agent_config.<agent>.setup` | Agent (4) | Agent-specific setup (rarely needed) |
 
-Each `setup` field contains raw Dockerfile commands (`RUN`, `ENV`, `COPY`, etc.) that get injected into the generated Dockerfile at the corresponding layer position.
+Each `setup` field contains raw Dockerfile commands (`RUN`, `ENV`, `COPY`, etc.) that get injected into the generated Dockerfile at the corresponding layer position. Setup commands run as the `agent` user by default. Use `USER root` to switch to root for operations that require it (e.g., `apt-get`), and always switch back to `USER agent` afterwards.
 
 ### Built-in Stacks (What's Already Included)
 
@@ -109,7 +109,9 @@ Every container includes: Ubuntu 25.10, git, build-essential, curl, jq, just, ri
 ```toml
 # Project-specific dependencies (injected at the project layer)
 setup = '''
+USER root
 RUN apt-get update && apt-get install -y libssl-dev pkg-config cmake
+USER agent
 '''
 
 # Override or extend the stack layer
@@ -132,7 +134,9 @@ cpu = 8
 [project.my-project]
 stack = "rust"
 setup = '''
+USER root
 RUN apt-get update && apt-get install -y libssl-dev pkg-config
+USER agent
 '''
 
 [project.my-project.stack_config.rust]
@@ -146,24 +150,30 @@ RUN cargo install cargo-nextest
 **Rust project needing system libraries:**
 ```toml
 setup = '''
+USER root
 RUN apt-get update && apt-get install -y \
     libssl-dev pkg-config cmake protobuf-compiler
+USER agent
 '''
 ```
 
 **Python project with native dependencies:**
 ```toml
 setup = '''
+USER root
 RUN apt-get update && apt-get install -y \
     libpq-dev libffi-dev
+USER agent
 '''
 ```
 
 **Node.js project needing native build tools:**
 ```toml
 setup = '''
+USER root
 RUN apt-get update && apt-get install -y \
     libcairo2-dev libjpeg-dev libpango1.0-dev libgif-dev
+USER agent
 '''
 ```
 
@@ -171,8 +181,10 @@ RUN apt-get update && apt-get install -y \
 ```toml
 [stack_config.go]
 setup = '''
+USER root
 ENV CGO_ENABLED=1
 RUN apt-get update && apt-get install -y protobuf-compiler
+USER agent
 RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
 '''
 ```
@@ -181,7 +193,9 @@ RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
 ```toml
 [stack_config.java]
 setup = '''
+USER root
 RUN apt-get update && apt-get install -y openjdk-21-jdk
+USER agent
 ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 '''
 ```
@@ -192,20 +206,22 @@ stack = "scala"
 
 [stack_config.scala]
 setup = '''
+USER root
 RUN apt-get update && apt-get install -y openjdk-21-jdk
 RUN curl -fL https://github.com/coursier/coursier/releases/latest/download/cs-x86_64-pc-linux.gz | gzip -d > /usr/local/bin/cs \
     && chmod +x /usr/local/bin/cs \
     && cs setup --yes
+USER agent
 ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 '''
 ```
 
 ### Writing Good Setup Commands
 
+- Setup commands run as the `agent` user (UID 1000) by default. Use `USER root` when you need elevated privileges (e.g., `apt-get install`), and always switch back to `USER agent` afterwards
 - Always combine `apt-get update` with `apt-get install` in the same `RUN` to avoid stale caches
 - Use `-y` flag for non-interactive installs
 - Combine related commands with `&&` to reduce layers
-- The container runs as `agent` (UID 1000) — use `USER root` if you need root for installs, then `USER agent` to switch back (but `RUN apt-get` works as root by default in the Dockerfile context)
 - Environment variables set with `ENV` persist into the running container
 - The project layer runs BEFORE the agent layer, so project setup cannot depend on agent tools
 
