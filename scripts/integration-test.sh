@@ -270,7 +270,7 @@ run_nested_test() {
     # triggering OOM kills. 30 GB provides sufficient headroom.
     mkdir -p "$iso_dir/config/tsk"
     cat > "$iso_dir/config/tsk/tsk.toml" << EOF
-[docker]
+[defaults]
 memory_limit_gb = 30.0
 
 [project.tsk]

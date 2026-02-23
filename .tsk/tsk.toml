@@ -1,3 +1,4 @@
+setup = '''
 # Project-specific layer for tsk
 
 # TSK is a Rust project, so we'll optimize dependency compilation
@@ -19,4 +20,4 @@ RUN cargo build
 # Remove dummy source and dependency files
 # The actual source code will be mounted at runtime
 RUN rm -rf src Cargo.toml Cargo.lock
-
+'''

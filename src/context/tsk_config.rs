@@ -561,8 +561,11 @@ pub fn load_config(config_dir: &Path) -> TskConfig {
     if config_file.exists() {
         match std::fs::read_to_string(&config_file) {
             Ok(content) => {
-                // Check for old config format
-                if let Ok(value) = content.parse::<toml::Value>() {
+                // Check for old config format and migrate if found.
+                // Note: must use toml::from_str (document parser), not str::parse
+                // (value parser). str::parse::<toml::Value> fails on table headers
+                // like [docker] because it expects a single value expression.
+                if let Ok(ref value) = toml::from_str::<toml::Value>(&content) {
                     let old_sections: Vec<&str> = ["docker", "proxy", "git_town"]
                         .iter()
                         .filter(|key| value.get(key).is_some())
@@ -570,17 +573,17 @@ pub fn load_config(config_dir: &Path) -> TskConfig {
                         .collect();
                     if !old_sections.is_empty() {
                         eprintln!(
-                            "Error: Your tsk.toml uses the old configuration format.\n\
+                            "Warning: Your tsk.toml uses a deprecated configuration format.\n\
                              Found deprecated sections: {}\n\n\
-                             The configuration format has changed. Please migrate your config:\n\
+                             Support for this format will be removed in a future release.\n\
+                             Please migrate your config:\n\
                              - [docker] settings → top-level `container_engine` and [defaults] section\n\
                              - [proxy] host_services → [defaults] host_services\n\
-                             - [git_town] enabled → [defaults] git_town\n\
-                             - [project.<name>] fields remain the same but now support all shared config fields\n\n\
+                             - [git_town] enabled → [defaults] git_town\n\n\
                              See the README for the new configuration format.",
                             old_sections.join(", ")
                         );
-                        return TskConfig::default();
+                        return migrate_old_config(value);
                     }
                 }
 
@@ -597,6 +600,73 @@ pub fn load_config(config_dir: &Path) -> TskConfig {
         }
     }
     TskConfig::default()
+}
+
+/// Migrate old-format tsk.toml values to the new `TskConfig` structure.
+///
+/// Maps:
+/// - `[docker].container_engine` → top-level `container_engine`
+/// - `[docker].memory_limit_gb` → `[defaults].memory_limit_gb`
+/// - `[docker].cpu_limit` / `[docker].cpu_quota` → `[defaults].cpu_limit`
+/// - `[docker].dind` → `[defaults].dind`
+/// - `[proxy].host_services` → `[defaults].host_services`
+/// - `[git_town].enabled` → `[defaults].git_town`
+/// - `[project.<name>]` fields are passed through (old ProjectConfig is a subset of SharedConfig)
+fn migrate_old_config(value: &toml::Value) -> TskConfig {
+    let mut config = TskConfig::default();
+
+    if let Some(docker) = value.get("docker").and_then(|v| v.as_table()) {
+        if let Some(engine) = docker.get("container_engine").and_then(|v| v.as_str()) {
+            match engine {
+                "podman" => config.container_engine = ContainerEngine::Podman,
+                _ => config.container_engine = ContainerEngine::Docker,
+            }
+        }
+        if let Some(mem) = docker.get("memory_limit_gb").and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64))) {
+            config.defaults.memory_limit_gb = Some(mem);
+        }
+        // Accept both cpu_limit (current) and cpu_quota (legacy field name)
+        if let Some(cpu) = docker.get("cpu_limit").or_else(|| docker.get("cpu_quota")).and_then(|v| v.as_integer()) {
+            config.defaults.cpu_limit = Some(cpu as u32);
+        }
+        if let Some(dind) = docker.get("dind").and_then(|v| v.as_bool()) {
+            config.defaults.dind = Some(dind);
+        }
+    }
+
+    if let Some(proxy) = value.get("proxy").and_then(|v| v.as_table()) {
+        if let Some(services) = proxy.get("host_services").and_then(|v| v.as_array()) {
+            config.defaults.host_services = services
+                .iter()
+                .filter_map(|v| v.as_integer().map(|i| i as u16))
+                .collect();
+        }
+    }
+
+    if let Some(git_town) = value.get("git_town").and_then(|v| v.as_table()) {
+        if let Some(enabled) = git_town.get("enabled").and_then(|v| v.as_bool()) {
+            config.defaults.git_town = Some(enabled);
+        }
+    }
+
+    // Merge any new-format sections that may coexist with old sections
+    if let Some(server) = value.get("server") {
+        if let Ok(s) = server.clone().try_into() {
+            config.server = s;
+        }
+    }
+    if let Some(defaults) = value.get("defaults") {
+        if let Ok(d) = defaults.clone().try_into() {
+            config.defaults = d;
+        }
+    }
+    if let Some(project) = value.get("project") {
+        if let Ok(p) = project.clone().try_into() {
+            config.project = p;
+        }
+    }
+
+    config
 }
 
 /// Load project-level configuration from `.tsk/tsk.toml` in the project root.
@@ -1036,41 +1106,88 @@ env = [
     }
 
     #[test]
-    fn test_old_format_detection() {
+    fn test_old_format_migration() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let config_dir = temp_dir.path();
 
-        // Config with old [docker] section
+        // Config with old [docker] section should migrate values to defaults
         let toml_content = r#"
 [docker]
 memory_limit_gb = 8.0
 cpu_limit = 4
+dind = true
+container_engine = "podman"
 "#;
-        let mut file = std::fs::File::create(config_dir.join("tsk.toml")).unwrap();
-        file.write_all(toml_content.as_bytes()).unwrap();
-
+        std::fs::write(config_dir.join("tsk.toml"), toml_content).unwrap();
         let config = load_config(config_dir);
-        // Should return defaults since old format is detected
-        assert!(config.defaults.memory_limit_gb.is_none());
-        assert!(config.defaults.cpu_limit.is_none());
+        assert_eq!(config.defaults.memory_limit_gb, Some(8.0));
+        assert_eq!(config.defaults.cpu_limit, Some(4));
+        assert_eq!(config.defaults.dind, Some(true));
+        assert_eq!(config.container_engine, ContainerEngine::Podman);
 
-        // Test with [proxy]
+        // Test with [proxy] — host_services should migrate
         let toml_content = r#"
 [proxy]
 host_services = [5432]
 "#;
         std::fs::write(config_dir.join("tsk.toml"), toml_content).unwrap();
         let config = load_config(config_dir);
-        assert!(config.defaults.host_services.is_empty());
+        assert_eq!(config.defaults.host_services, vec![5432]);
 
-        // Test with [git_town]
+        // Test with [git_town] — enabled should migrate to git_town bool
         let toml_content = r#"
 [git_town]
 enabled = true
 "#;
         std::fs::write(config_dir.join("tsk.toml"), toml_content).unwrap();
         let config = load_config(config_dir);
-        assert!(config.defaults.git_town.is_none());
+        assert_eq!(config.defaults.git_town, Some(true));
+
+        // Test with legacy cpu_quota field name
+        let toml_content = r#"
+[docker]
+cpu_quota = 16
+"#;
+        std::fs::write(config_dir.join("tsk.toml"), toml_content).unwrap();
+        let config = load_config(config_dir);
+        assert_eq!(config.defaults.cpu_limit, Some(16));
+
+        // Test with integer memory_limit_gb (no decimal)
+        let toml_content = r#"
+[docker]
+memory_limit_gb = 30
+"#;
+        std::fs::write(config_dir.join("tsk.toml"), toml_content).unwrap();
+        let config = load_config(config_dir);
+        assert_eq!(config.defaults.memory_limit_gb, Some(30.0));
+
+        // Test combined old format
+        let toml_content = r#"
+[docker]
+memory_limit_gb = 24.0
+cpu_limit = 12
+dind = true
+
+[proxy]
+host_services = [5432, 6379]
+
+[git_town]
+enabled = true
+
+[project.my-project]
+agent = "codex"
+stack = "go"
+"#;
+        std::fs::write(config_dir.join("tsk.toml"), toml_content).unwrap();
+        let config = load_config(config_dir);
+        assert_eq!(config.defaults.memory_limit_gb, Some(24.0));
+        assert_eq!(config.defaults.cpu_limit, Some(12));
+        assert_eq!(config.defaults.dind, Some(true));
+        assert_eq!(config.defaults.host_services, vec![5432, 6379]);
+        assert_eq!(config.defaults.git_town, Some(true));
+        let project = config.project.get("my-project").unwrap();
+        assert_eq!(project.agent, Some("codex".to_string()));
+        assert_eq!(project.stack, Some("go".to_string()));
     }
 
     #[test]
