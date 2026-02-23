@@ -153,6 +153,7 @@ impl DockerManager {
                 "https_proxy",
                 "NO_PROXY",
                 "no_proxy",
+                "JAVA_TOOL_OPTIONS",
             ] {
                 if let Ok(val) = std::env::var(var) {
                     env.push(format!("{var}={val}"));
@@ -171,6 +172,17 @@ impl DockerManager {
             format!("NO_PROXY=localhost,127.0.0.1,{proxy_container_name}"),
             format!("no_proxy=localhost,127.0.0.1,{proxy_container_name}"),
         ];
+
+        // JVM proxy system properties via JAVA_TOOL_OPTIONS
+        // Maven and Gradle ignore HTTP_PROXY env vars, so this ensures all JVM
+        // processes route through the proxy. Harmless for non-Java containers.
+        env.push(format!(
+            "JAVA_TOOL_OPTIONS=-Dhttp.proxyHost={pcn} -Dhttp.proxyPort=3128 \
+             -Dhttps.proxyHost={pcn} -Dhttps.proxyPort=3128 \
+             -Dhttp.nonProxyHosts=localhost|127.0.0.1 \
+             -Dhttps.nonProxyHosts=localhost|127.0.0.1",
+            pcn = proxy_container_name
+        ));
 
         // Add host port environment variables if configured
         if resolved.has_host_ports() {
@@ -854,6 +866,10 @@ mod tests {
         let env = task_container_config.env.as_ref().unwrap();
         assert!(env.contains(&format!("HTTP_PROXY=http://{pcn}:3128")));
         assert!(env.contains(&format!("HTTPS_PROXY=http://{pcn}:3128")));
+        assert!(
+            env.iter().any(|e| e.starts_with("JAVA_TOOL_OPTIONS=")),
+            "JAVA_TOOL_OPTIONS should be set for proxy"
+        );
 
         // Check TSK environment variables
         assert!(env.contains(&"TSK_CONTAINER=1".to_string()));
@@ -1089,6 +1105,10 @@ mod tests {
         assert!(env.contains(&format!("HTTPS_PROXY=http://{pcn}:3128")));
         assert!(env.contains(&format!("NO_PROXY=localhost,127.0.0.1,{pcn}")));
         assert!(env.contains(&format!("no_proxy=localhost,127.0.0.1,{pcn}")));
+        assert!(
+            env.iter().any(|e| e.starts_with("JAVA_TOOL_OPTIONS=")),
+            "JAVA_TOOL_OPTIONS should be set for proxy"
+        );
 
         // Non-DIND task: security_opt should be None, cap_drop should include SETUID/SETGID
         assert!(
@@ -1506,6 +1526,10 @@ mod tests {
         assert!(!env.iter().any(|e| e.starts_with("HTTPS_PROXY=")));
         assert!(!env.iter().any(|e| e.starts_with("NO_PROXY=")));
         assert!(!env.iter().any(|e| e.starts_with("no_proxy=")));
+        assert!(
+            !env.iter().any(|e| e.starts_with("JAVA_TOOL_OPTIONS=")),
+            "JAVA_TOOL_OPTIONS should NOT be set when proxy is disabled"
+        );
 
         // TSK env vars should still be present
         assert!(env.contains(&"TSK_CONTAINER=1".to_string()));

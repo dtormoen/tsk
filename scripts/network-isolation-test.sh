@@ -426,7 +426,7 @@ test_unconfigured_host_port() {
 
     # Try to connect to an unconfigured port on the proxy
     # This should fail because no socat forwarder is running for this port
-    if timeout "$TIMEOUT" bash -c "exec 3<>/dev/tcp/tsk-proxy/$port" 2>/dev/null; then
+    if timeout "$TIMEOUT" bash -c "exec 3<>/dev/tcp/${TSK_PROXY_HOST:-tsk-proxy}/$port" 2>/dev/null; then
         exec 3>&- 2>/dev/null || true
         print_fail "$desc - connection succeeded to unconfigured port (should be blocked)"
     else
@@ -618,10 +618,11 @@ main() {
     print_header "Container-to-Container Communication Tests" > /dev/null
 
     # Proxy should be reachable on port 3128 (needed for HTTP proxy)
-    run_test test_container_access "tsk-proxy" "3128" "Proxy container on port 3128" "pass"
+    local proxy_host="${TSK_PROXY_HOST:-tsk-proxy}"
+    run_test test_container_access "$proxy_host" "3128" "Proxy container on port 3128" "pass"
     # But other ports on proxy should not be accessible
-    run_test test_container_access "tsk-proxy" "22" "Proxy container on port 22 (SSH)" "fail"
-    run_test test_container_access "tsk-proxy" "80" "Proxy container on port 80 (HTTP)" "fail"
+    run_test test_container_access "$proxy_host" "22" "Proxy container on port 22 (SSH)" "fail"
+    run_test test_container_access "$proxy_host" "80" "Proxy container on port 80 (HTTP)" "fail"
 
     # Test unconfigured host service ports (should fail)
     # Port 9999 should not have a socat forwarder unless explicitly configured

@@ -19,9 +19,7 @@ USER agent
 # Set Maven options for better performance
 ENV MAVEN_OPTS="-Xmx1024m"
 
-# Create directories for Maven and Gradle caches and configure proxy
-# TSK containers always route traffic through tsk-proxy:3128 (Squid proxy)
-# Maven and Gradle don't respect HTTP_PROXY env vars, so we configure them explicitly
-RUN mkdir -p ~/.m2 ~/.gradle && \
-    printf '<settings>\n  <proxies>\n    <proxy>\n      <id>tsk-http</id>\n      <active>true</active>\n      <protocol>http</protocol>\n      <host>tsk-proxy</host>\n      <port>3128</port>\n      <nonProxyHosts>localhost|127.0.0.1</nonProxyHosts>\n    </proxy>\n    <proxy>\n      <id>tsk-https</id>\n      <active>true</active>\n      <protocol>https</protocol>\n      <host>tsk-proxy</host>\n      <port>3128</port>\n      <nonProxyHosts>localhost|127.0.0.1</nonProxyHosts>\n    </proxy>\n  </proxies>\n</settings>\n' > ~/.m2/settings.xml && \
-    printf 'systemProp.http.proxyHost=tsk-proxy\nsystemProp.http.proxyPort=3128\nsystemProp.http.nonProxyHosts=localhost|127.0.0.1\nsystemProp.https.proxyHost=tsk-proxy\nsystemProp.https.proxyPort=3128\nsystemProp.https.nonProxyHosts=localhost|127.0.0.1\n' > ~/.gradle/gradle.properties
+# Create directories for Maven and Gradle caches
+# Proxy configuration is injected at runtime via JAVA_TOOL_OPTIONS env var
+# (Maven and Gradle ignore HTTP_PROXY env vars, so JVM system properties are used instead)
+RUN mkdir -p ~/.m2 ~/.gradle
