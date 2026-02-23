@@ -1,9 +1,10 @@
 use crate::agent::AgentProvider;
 use crate::context::AppContext;
 use crate::context::TaskStorage;
-use crate::docker::{DockerManager, image_manager::DockerImageManager, is_tui_active};
+use crate::docker::{DockerManager, image_manager::DockerImageManager};
 use crate::git::RepoManager;
 use crate::task::{Task, TaskStatus};
+use crate::tui::events::{ServerEvent, ServerEventSender, emit_or_print};
 use std::sync::Arc;
 
 /// Result of executing a task
@@ -44,6 +45,7 @@ pub struct TaskRunner {
     ctx: AppContext,
     repo_manager: RepoManager,
     docker_manager: DockerManager,
+    event_sender: Option<ServerEventSender>,
 }
 
 impl TaskRunner {
@@ -53,12 +55,18 @@ impl TaskRunner {
     ///
     /// * `ctx` - The application context providing all required dependencies
     /// * `docker_manager` - The DockerManager for container operations
-    pub fn new(ctx: &AppContext, docker_manager: DockerManager) -> Self {
+    /// * `event_sender` - Optional TUI event channel for structured output
+    pub fn new(
+        ctx: &AppContext,
+        docker_manager: DockerManager,
+        event_sender: Option<ServerEventSender>,
+    ) -> Self {
         Self {
             task_storage: ctx.task_storage(),
             ctx: ctx.clone(),
             repo_manager: RepoManager::new(ctx),
             docker_manager,
+            event_sender,
         }
     }
 
@@ -167,10 +175,14 @@ impl TaskRunner {
         let branch_name = task.branch_name.clone();
 
         // Launch Docker container
-        if !is_tui_active() {
-            println!("Launching {} agent...", agent.name());
-            println!("\n{}", "=".repeat(60));
-        }
+        emit_or_print(
+            &self.event_sender,
+            ServerEvent::StatusMessage(format!("Launching {} agent...", agent.name())),
+        );
+        emit_or_print(
+            &self.event_sender,
+            ServerEvent::StatusMessage("=".repeat(60)),
+        );
 
         let task_image_manager =
             DockerImageManager::new(&self.ctx, self.docker_manager.client(), None);
@@ -207,9 +219,10 @@ impl TaskRunner {
         }
 
         // Run the container using the unified method
+        let suppress_stdout = self.event_sender.is_some();
         let (_output, task_result) = match self
             .docker_manager
-            .run_task_container(&docker_image_tag, task, agent.as_ref())
+            .run_task_container(&docker_image_tag, task, agent.as_ref(), suppress_stdout)
             .await
         {
             Ok(result) => result,
@@ -218,9 +231,10 @@ impl TaskRunner {
             }
         };
 
-        if !is_tui_active() {
-            println!("\n{}", "=".repeat(60));
-        }
+        emit_or_print(
+            &self.event_sender,
+            ServerEvent::StatusMessage("=".repeat(60)),
+        );
 
         // Commit any changes made by the container
         let commit_message = format!("TSK automated changes for task: {}", task.name);
@@ -228,9 +242,11 @@ impl TaskRunner {
             .repo_manager
             .commit_changes(repo_path, &commit_message)
             .await
-            && !is_tui_active()
         {
-            eprintln!("Error committing changes: {e}");
+            emit_or_print(
+                &self.event_sender,
+                ServerEvent::WarningMessage(format!("Error committing changes: {e}")),
+            );
         }
 
         // Fetch changes back to main repository
@@ -247,19 +263,22 @@ impl TaskRunner {
             .await
         {
             Ok(true) => {
-                if !is_tui_active() {
-                    println!("Branch {branch_name} is now available");
-                }
+                emit_or_print(
+                    &self.event_sender,
+                    ServerEvent::StatusMessage(format!("Branch {branch_name} is now available")),
+                );
             }
             Ok(false) => {
-                if !is_tui_active() {
-                    println!("No changes - branch not created");
-                }
+                emit_or_print(
+                    &self.event_sender,
+                    ServerEvent::StatusMessage("No changes - branch not created".to_string()),
+                );
             }
             Err(e) => {
-                if !is_tui_active() {
-                    eprintln!("Error fetching changes: {e}");
-                }
+                emit_or_print(
+                    &self.event_sender,
+                    ServerEvent::WarningMessage(format!("Error fetching changes: {e}")),
+                );
             }
         }
 
@@ -318,7 +337,7 @@ mod tests {
         std::fs::write(&claude_json_path, "{}").unwrap();
 
         let docker_manager = DockerManager::new(&ctx, docker_client);
-        let task_runner = TaskRunner::new(&ctx, docker_manager);
+        let task_runner = TaskRunner::new(&ctx, docker_manager, None);
 
         // Create a task copy directory
         let task_copy_dir = tsk_env.task_dir("test-task-123");
@@ -383,7 +402,7 @@ mod tests {
         std::fs::write(&claude_json_path, "{}").unwrap();
 
         let docker_manager = DockerManager::new(&ctx, docker_client);
-        let task_runner = TaskRunner::new(&ctx, docker_manager);
+        let task_runner = TaskRunner::new(&ctx, docker_manager, None);
         let task_copy_dir = tsk_env.task_dir("infra-fail-123");
 
         crate::file_system::copy_dir(test_repo.path(), &task_copy_dir)
@@ -449,7 +468,7 @@ mod tests {
 
         let docker_client: Arc<dyn DockerClient> = Arc::new(NoOpDockerClient);
         let docker_manager = DockerManager::new(&ctx, docker_client);
-        let task_runner = TaskRunner::new(&ctx, docker_manager);
+        let task_runner = TaskRunner::new(&ctx, docker_manager, None);
         let _result = task_runner.store_and_run(&task).await;
 
         // Verify the task exists in storage after execution

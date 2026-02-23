@@ -23,3 +23,36 @@ pub enum ServerEvent {
 
 /// Sender half of the server event channel
 pub type ServerEventSender = tokio::sync::mpsc::UnboundedSender<ServerEvent>;
+
+/// Route an event through the TUI channel when available, otherwise print directly.
+pub fn emit_or_print(sender: &Option<ServerEventSender>, event: ServerEvent) {
+    if let Some(tx) = sender {
+        let _ = tx.send(event);
+    } else {
+        match event {
+            ServerEvent::TaskScheduled {
+                task_name, task_id, ..
+            } => {
+                println!("Scheduling {task_name} ({task_id})");
+            }
+            ServerEvent::TaskCompleted {
+                task_name, task_id, ..
+            } => {
+                println!("Task completed: {task_name} ({task_id})");
+            }
+            ServerEvent::TaskFailed {
+                task_name,
+                task_id,
+                error,
+            } => {
+                eprintln!("Task failed: {task_name} ({task_id}) - {error}");
+            }
+            ServerEvent::StatusMessage(msg) => {
+                println!("{msg}");
+            }
+            ServerEvent::WarningMessage(msg) => {
+                eprintln!("{msg}");
+            }
+        }
+    }
+}

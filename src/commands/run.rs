@@ -61,7 +61,7 @@ impl Command for RunCommand {
                 ),
             };
         let docker_manager = DockerManager::new(ctx, docker_client);
-        let task_runner = TaskRunner::new(ctx, docker_manager);
+        let task_runner = TaskRunner::new(ctx, docker_manager, None);
         let result = task_runner
             .store_and_run(&task)
             .await

@@ -46,10 +46,7 @@ pub fn handle_event(app: &mut TuiApp, event: &Event, data_dir: &Path) {
             _ => {}
         },
         Event::Mouse(mouse) => {
-            let terminal_width = crossterm::terminal::size()
-                .map(|(cols, _)| cols)
-                .unwrap_or(80);
-            let in_task_panel = mouse.column < terminal_width * 35 / 100;
+            let in_task_panel = mouse.column < app.task_panel_width;
 
             match mouse.kind {
                 MouseEventKind::ScrollDown => {
@@ -222,8 +219,9 @@ mod tests {
     fn test_mouse_scroll_in_task_panel() {
         let tmp = tempfile::tempdir().unwrap();
         let mut app = app_with_tasks();
+        app.task_panel_width = 30;
 
-        // Column 0 is well within the left 35%
+        // Column 0 is within the task panel
         let scroll_down = make_mouse_scroll(MouseEventKind::ScrollDown, 0);
         handle_event(&mut app, &scroll_down, tmp.path());
         assert_eq!(app.task_list_state.selected(), Some(1));
@@ -237,8 +235,9 @@ mod tests {
     fn test_mouse_scroll_in_log_panel() {
         let tmp = tempfile::tempdir().unwrap();
         let mut app = TuiApp::new(1);
+        app.task_panel_width = 30;
 
-        // Column 79 is well past the 35% boundary of an 80-col terminal
+        // Column 79 is well past the task panel boundary
         let scroll_down = make_mouse_scroll(MouseEventKind::ScrollDown, 79);
         handle_event(&mut app, &scroll_down, tmp.path());
         assert_eq!(app.log_scroll, 3);

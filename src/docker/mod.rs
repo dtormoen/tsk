@@ -18,22 +18,6 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-
-/// Global flag indicating whether the TUI is currently active.
-/// When active, stdout output from log processing and task execution is suppressed
-/// because the TUI owns the terminal and logs are already written to agent.log files.
-static TUI_ACTIVE: AtomicBool = AtomicBool::new(false);
-
-/// Set the TUI active flag. Call with `true` when starting the TUI, `false` when stopping.
-pub fn set_tui_active(active: bool) {
-    TUI_ACTIVE.store(active, Ordering::Relaxed);
-}
-
-/// Check whether the TUI is currently active.
-pub fn is_tui_active() -> bool {
-    TUI_ACTIVE.load(Ordering::Relaxed)
-}
 
 const CONTAINER_WORKSPACE_BASE: &str = "/workspace";
 const CONTAINER_USER: &str = "agent";
@@ -528,6 +512,7 @@ impl DockerManager {
         docker_image_tag: &str,
         task: &crate::task::Task,
         agent: &dyn Agent,
+        suppress_stdout: bool,
     ) -> Result<(String, crate::agent::TaskResult), String> {
         // --- Setup: conditionally create network and connect proxy ---
         // When nested inside a TSK container, skip proxy/network setup since the
@@ -598,6 +583,7 @@ impl DockerManager {
                 network_name.as_deref(),
                 if use_proxy { Some(&proxy_config) } else { None },
                 proxy_ip.as_deref(),
+                suppress_stdout,
             )
             .await;
 
@@ -619,6 +605,7 @@ impl DockerManager {
     ///
     /// Returns the container ID (if one was created) alongside the execution result,
     /// so the caller can clean up the container, network, and proxy in one place.
+    #[allow(clippy::too_many_arguments)]
     async fn run_container_inner(
         &self,
         docker_image_tag: &str,
@@ -627,6 +614,7 @@ impl DockerManager {
         network_name: Option<&str>,
         proxy_config: Option<&crate::context::ResolvedProxyConfig>,
         proxy_container_ip: Option<&str>,
+        suppress_stdout: bool,
     ) -> (
         Option<String>,
         Result<(String, crate::agent::TaskResult), String>,
@@ -705,7 +693,12 @@ impl DockerManager {
 
             let mut log_processor = agent.create_log_processor(Some(task));
             let output = self
-                .stream_container_logs(&container_id, &mut *log_processor, log_file)
+                .stream_container_logs(
+                    &container_id,
+                    &mut *log_processor,
+                    log_file,
+                    suppress_stdout,
+                )
                 .await;
             let task_result = log_processor.get_final_result().cloned();
 
@@ -751,6 +744,7 @@ impl DockerManager {
         container_id: &str,
         log_processor: &mut dyn LogProcessor,
         log_file: Option<std::fs::File>,
+        suppress_stdout: bool,
     ) -> Result<(String, i64), String> {
         let mut log_file = log_file;
         // Start a background task to stream logs
@@ -816,7 +810,7 @@ impl DockerManager {
 
                     // Buffer chunks and process complete lines only
                     line_buffer.push_str(&log_chunk);
-                    process_complete_lines(&mut line_buffer, log_processor, log_file.as_mut());
+                    process_complete_lines(&mut line_buffer, log_processor, log_file.as_mut(), suppress_stdout);
                 }
                 exit_code = &mut wait_future => {
                     let exit_code = exit_code?;
@@ -828,13 +822,13 @@ impl DockerManager {
                     while let Ok(log_chunk) = rx.try_recv() {
                         all_logs.push_str(&log_chunk);
                         line_buffer.push_str(&log_chunk);
-                        process_complete_lines(&mut line_buffer, log_processor, log_file.as_mut());
+                        process_complete_lines(&mut line_buffer, log_processor, log_file.as_mut(), suppress_stdout);
                     }
 
                     // Flush remaining buffer content if non-empty
                     if !line_buffer.trim().is_empty() {
                         line_buffer.push('\n');
-                        process_complete_lines(&mut line_buffer, log_processor, log_file.as_mut());
+                        process_complete_lines(&mut line_buffer, log_processor, log_file.as_mut(), suppress_stdout);
                     }
 
                     // Abort the log task
@@ -856,6 +850,7 @@ fn process_complete_lines(
     line_buffer: &mut String,
     log_processor: &mut dyn LogProcessor,
     mut log_file: Option<&mut std::fs::File>,
+    suppress_stdout: bool,
 ) {
     while let Some(newline_pos) = line_buffer.find('\n') {
         let complete_line = &line_buffer[..newline_pos];
@@ -863,12 +858,12 @@ fn process_complete_lines(
         let trimmed = complete_line.trim_end_matches('\r');
 
         if let Some(formatted) = log_processor.process_line(trimmed) {
-            if !is_tui_active() {
+            if !suppress_stdout {
                 println!("{formatted}");
             }
             if let Some(ref mut file) = log_file
                 && let Err(e) = writeln!(file, "{formatted}")
-                && !is_tui_active()
+                && !suppress_stdout
             {
                 eprintln!("Warning: Failed to write to agent log file: {e}");
             }
@@ -917,7 +912,9 @@ mod tests {
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager.run_task_container("tsk/base", &task, &agent).await;
+        let result = manager
+            .run_task_container("tsk/base", &task, &agent, false)
+            .await;
 
         assert!(result.is_ok());
         let (output, task_result) = result.unwrap();
@@ -990,7 +987,9 @@ mod tests {
 
         let task = create_test_task(true);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager.run_task_container("tsk/base", &task, &agent).await;
+        let result = manager
+            .run_task_container("tsk/base", &task, &agent, false)
+            .await;
 
         // Interactive mode should succeed with mock client
         assert!(result.is_ok());
@@ -1046,7 +1045,9 @@ mod tests {
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
 
         // Run the task container
-        let result = manager.run_task_container("tsk/base", &task, &agent).await;
+        let result = manager
+            .run_task_container("tsk/base", &task, &agent, false)
+            .await;
 
         // Non-zero exit is not an infrastructure error; it returns Ok with a failed TaskResult
         assert!(result.is_ok());
@@ -1087,7 +1088,9 @@ mod tests {
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager.run_task_container("tsk/base", &task, &agent).await;
+        let result = manager
+            .run_task_container("tsk/base", &task, &agent, false)
+            .await;
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err();
@@ -1124,7 +1127,9 @@ mod tests {
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let _ = manager.run_task_container("tsk/base", &task, &agent).await;
+        let _ = manager
+            .run_task_container("tsk/base", &task, &agent, false)
+            .await;
 
         let create_calls = mock_client.create_container_calls.lock().unwrap();
         assert_eq!(create_calls.len(), 2); // One for proxy, one for task container
@@ -1262,7 +1267,9 @@ mod tests {
         let mut task = create_test_task(false);
         task.instructions_file = "/tmp/tsk-test/instructions.txt".to_string();
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager.run_task_container("tsk/base", &task, &agent).await;
+        let result = manager
+            .run_task_container("tsk/base", &task, &agent, false)
+            .await;
 
         assert!(result.is_ok());
 
@@ -1291,7 +1298,9 @@ mod tests {
         let mut task = create_test_task(false);
         task.copied_repo_path = Some(absolute_path.clone());
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager.run_task_container("tsk/base", &task, &agent).await;
+        let result = manager
+            .run_task_container("tsk/base", &task, &agent, false)
+            .await;
 
         assert!(result.is_ok());
 
@@ -1346,7 +1355,9 @@ mod tests {
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager.run_task_container("tsk/base", &task, &agent).await;
+        let result = manager
+            .run_task_container("tsk/base", &task, &agent, false)
+            .await;
 
         assert!(result.is_ok());
 
@@ -1394,7 +1405,9 @@ mod tests {
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager.run_task_container("tsk/base", &task, &agent).await;
+        let result = manager
+            .run_task_container("tsk/base", &task, &agent, false)
+            .await;
 
         assert!(result.is_ok());
 
@@ -1442,7 +1455,9 @@ mod tests {
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager.run_task_container("tsk/base", &task, &agent).await;
+        let result = manager
+            .run_task_container("tsk/base", &task, &agent, false)
+            .await;
 
         assert!(result.is_ok());
 
@@ -1470,7 +1485,9 @@ mod tests {
         let mut task = create_test_task(false);
         task.project = "unconfigured-project".to_string();
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager.run_task_container("tsk/base", &task, &agent).await;
+        let result = manager
+            .run_task_container("tsk/base", &task, &agent, false)
+            .await;
 
         assert!(result.is_ok());
 
@@ -1518,7 +1535,9 @@ mod tests {
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager.run_task_container("tsk/base", &task, &agent).await;
+        let result = manager
+            .run_task_container("tsk/base", &task, &agent, false)
+            .await;
 
         assert!(result.is_ok());
 
@@ -1544,7 +1563,9 @@ mod tests {
         task.stack = "python".to_string();
         task.project = "my-python-app".to_string();
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let _ = manager.run_task_container("tsk/base", &task, &agent).await;
+        let _ = manager
+            .run_task_container("tsk/base", &task, &agent, false)
+            .await;
 
         let create_calls = mock_client.create_container_calls.lock().unwrap();
         let task_container_config = &create_calls[1].1;
@@ -1566,7 +1587,9 @@ mod tests {
 
         let task = create_test_task(false); // stack is "default"
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let _ = manager.run_task_container("tsk/base", &task, &agent).await;
+        let _ = manager
+            .run_task_container("tsk/base", &task, &agent, false)
+            .await;
 
         let create_calls = mock_client.create_container_calls.lock().unwrap();
         let task_container_config = &create_calls[1].1;
@@ -1584,7 +1607,9 @@ mod tests {
         let mut task = create_test_task(false);
         task.project = "unconfigured-project".to_string();
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager.run_task_container("tsk/base", &task, &agent).await;
+        let result = manager
+            .run_task_container("tsk/base", &task, &agent, false)
+            .await;
 
         assert!(result.is_ok());
 
@@ -1608,7 +1633,9 @@ mod tests {
         let mut task = create_test_task(false);
         task.network_isolation = false;
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager.run_task_container("tsk/base", &task, &agent).await;
+        let result = manager
+            .run_task_container("tsk/base", &task, &agent, false)
+            .await;
 
         assert!(result.is_ok());
 
@@ -1681,7 +1708,9 @@ mod tests {
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager.run_task_container("tsk/base", &task, &agent).await;
+        let result = manager
+            .run_task_container("tsk/base", &task, &agent, false)
+            .await;
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("out of disk space"));
@@ -1711,7 +1740,9 @@ mod tests {
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager.run_task_container("tsk/base", &task, &agent).await;
+        let result = manager
+            .run_task_container("tsk/base", &task, &agent, false)
+            .await;
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("container runtime error"));
@@ -1740,7 +1771,9 @@ mod tests {
         let mut task = create_test_task(false);
         task.dind = true;
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let _ = manager.run_task_container("tsk/base", &task, &agent).await;
+        let _ = manager
+            .run_task_container("tsk/base", &task, &agent, false)
+            .await;
 
         let create_calls = mock_client.create_container_calls.lock().unwrap();
         let task_config = &create_calls[1].1;
@@ -1791,7 +1824,9 @@ mod tests {
 
         let task = create_test_task(false); // dind defaults to false
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let _ = manager.run_task_container("tsk/base", &task, &agent).await;
+        let _ = manager
+            .run_task_container("tsk/base", &task, &agent, false)
+            .await;
 
         let create_calls = mock_client.create_container_calls.lock().unwrap();
         let task_config = &create_calls[1].1;

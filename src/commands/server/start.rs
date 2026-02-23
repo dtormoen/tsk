@@ -1,7 +1,6 @@
 use crate::commands::Command;
 use crate::context::AppContext;
 use crate::context::docker_client::{DefaultDockerClient, DockerClient};
-use crate::docker::set_tui_active;
 use crate::server::TskServer;
 use crate::tui::run::run_tui;
 use async_trait::async_trait;
@@ -80,8 +79,6 @@ impl Command for ServerStartCommand {
 
         if let Some(event_receiver) = event_receiver {
             // TUI mode: run TUI alongside server
-            set_tui_active(true);
-
             let tui_shutdown = shutdown_signal.clone();
             let storage = ctx.task_storage();
             let data_dir = ctx.tsk_env().data_dir().to_path_buf();
@@ -89,7 +86,6 @@ impl Command for ServerStartCommand {
 
             tokio::select! {
                 result = server.run() => {
-                    set_tui_active(false);
                     match result {
                         Ok(_) => {},
                         Err(e) => {
@@ -99,7 +95,6 @@ impl Command for ServerStartCommand {
                     }
                 }
                 tui_result = run_tui(event_receiver, storage, data_dir, workers_total, tui_shutdown) => {
-                    set_tui_active(false);
                     if let Err(e) = tui_result {
                         eprintln!("TUI error: {e}");
                     }
@@ -107,7 +102,6 @@ impl Command for ServerStartCommand {
                     server.graceful_shutdown().await;
                 }
                 _ = shutdown_signal.notified() => {
-                    set_tui_active(false);
                     spawn_force_exit_handler();
                     server.graceful_shutdown().await;
                 }

@@ -2,7 +2,7 @@ use chrono::Utc;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Layout},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
 };
@@ -50,10 +50,45 @@ fn render_header(app: &TuiApp, frame: &mut Frame, area: ratatui::layout::Rect) {
     frame.render_widget(Paragraph::new(line), area);
 }
 
-/// Render the two-panel main content area.
+/// Render the two-panel main content area with dynamic task panel width.
 fn render_main(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::Rect) {
+    let min_width: u16 = 20;
+    let max_width = (area.width * 30 / 100).max(min_width);
+
+    // Calculate the widest task row
+    let content_width = app
+        .tasks
+        .iter()
+        .map(|task| {
+            let is_waiting = !task.parent_ids.is_empty() && task.status == TaskStatus::Queued;
+            let status_text = if is_waiting {
+                "WAITING"
+            } else {
+                match task.status {
+                    TaskStatus::Complete => "COMPLETE",
+                    TaskStatus::Running => "RUNNING",
+                    TaskStatus::Queued => "QUEUED",
+                    TaskStatus::Failed => "FAILED",
+                }
+            };
+            // First line: " X name  STATUS"
+            let first_line_len = 1 + 1 + 1 + task.name.len() + 2 + status_text.len();
+            // Second line: "   project · type duration"
+            let duration = format_duration(task);
+            let second_line_len =
+                3 + task.project.len() + 3 + task.task_type.len() + 1 + duration.len();
+            first_line_len.max(second_line_len)
+        })
+        .max()
+        .unwrap_or(0) as u16;
+
+    // Add border padding (2 for left+right borders)
+    let desired_width = (content_width + 2).max(min_width).min(max_width);
+
+    app.task_panel_width = desired_width;
+
     let panels =
-        Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)]).split(area);
+        Layout::horizontal([Constraint::Length(desired_width), Constraint::Min(0)]).split(area);
 
     render_task_list(app, frame, panels[0]);
     render_log_viewer(app, frame, panels[1]);
@@ -116,7 +151,7 @@ fn render_task_list(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::
                 Span::raw("   "),
                 Span::styled(
                     format!("{} \u{00b7} {} {}", task.project, task.task_type, duration),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(Color::Rgb(140, 140, 140)),
                 ),
             ]);
 
@@ -124,9 +159,12 @@ fn render_task_list(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::
         })
         .collect();
 
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(Style::default().bg(Color::DarkGray));
+    let list = List::new(items).block(block).highlight_style(
+        Style::default()
+            .bg(Color::DarkGray)
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    );
 
     frame.render_stateful_widget(list, area, &mut app.task_list_state);
 }
@@ -373,7 +411,6 @@ mod tests {
             .unwrap();
 
         let buffer = terminal.backend().buffer().clone();
-        // The task panel occupies roughly left 35% of 100 = columns 0..35
         // Search for WAITING text in the rendered output
         let mut found_waiting = false;
         for y in 0..20 {
@@ -411,10 +448,11 @@ mod tests {
         let buffer = terminal.backend().buffer().clone();
 
         // Check the log panel title contains the task name
+        let panel_start = app.task_panel_width as usize;
         let mut found_title = false;
         for y in 0..20 {
-            let line: String = (35..100)
-                .map(|x| buffer[(x, y)].symbol().to_string())
+            let line: String = (panel_start..100)
+                .map(|x| buffer[(x as u16, y)].symbol().to_string())
                 .collect();
             if line.contains("my-task") {
                 found_title = true;
@@ -426,8 +464,8 @@ mod tests {
         // Check log content is rendered
         let mut found_log = false;
         for y in 0..20 {
-            let line: String = (35..100)
-                .map(|x| buffer[(x, y)].symbol().to_string())
+            let line: String = (panel_start..100)
+                .map(|x| buffer[(x as u16, y)].symbol().to_string())
                 .collect();
             if line.contains("Log line one") {
                 found_log = true;

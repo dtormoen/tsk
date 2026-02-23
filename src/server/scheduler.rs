@@ -109,31 +109,7 @@ impl TaskScheduler {
 
     /// Send a structured event through the event channel, or fall back to stdout/stderr
     fn emit(&self, event: ServerEvent) {
-        if let Some(sender) = &self.event_sender {
-            let _ = sender.send(event);
-        } else {
-            match event {
-                ServerEvent::TaskScheduled { task_id, task_name } => {
-                    println!("Scheduling {} ({})", task_name, task_id);
-                }
-                ServerEvent::TaskCompleted { task_id, task_name } => {
-                    println!("Task completed: {} ({})", task_name, task_id);
-                }
-                ServerEvent::TaskFailed {
-                    task_id,
-                    task_name,
-                    error,
-                } => {
-                    eprintln!("Task failed: {} ({}) - {}", task_name, task_id, error);
-                }
-                ServerEvent::StatusMessage(msg) => {
-                    println!("{}", msg);
-                }
-                ServerEvent::WarningMessage(msg) => {
-                    eprintln!("{}", msg);
-                }
-            }
-        }
+        crate::tui::events::emit_or_print(&self.event_sender, event);
     }
 
     /// Check if a task's parent is ready (complete or non-existent).
@@ -601,6 +577,7 @@ impl TaskScheduler {
                         docker_client: self.docker_client.clone(),
                         storage: self.storage.clone(),
                         warmup_failure_wait_until: self.warmup_failure_wait_until.clone(),
+                        event_sender: self.event_sender.clone(),
                     };
 
                     // pool is guaranteed to exist since has_available_workers was true
@@ -696,12 +673,18 @@ pub struct TaskJob {
     docker_client: Arc<dyn DockerClient>,
     storage: Arc<TaskStorage>,
     warmup_failure_wait_until: Arc<Mutex<Option<Instant>>>,
+    event_sender: Option<ServerEventSender>,
 }
 
 impl AsyncJob for TaskJob {
     async fn execute(self) -> Result<JobResult, JobError> {
-        let result =
-            Self::execute_single_task(&self.context, self.docker_client.clone(), &self.task).await;
+        let result = Self::execute_single_task(
+            &self.context,
+            self.docker_client.clone(),
+            &self.task,
+            self.event_sender.clone(),
+        )
+        .await;
 
         match result {
             Ok(_) => {
@@ -715,22 +698,26 @@ impl AsyncJob for TaskJob {
             Err(e) => {
                 // Check if this was a warmup failure
                 if e.is_warmup_failure {
-                    if !crate::docker::is_tui_active() {
-                        println!(
+                    crate::tui::events::emit_or_print(
+                        &self.event_sender,
+                        ServerEvent::StatusMessage(format!(
                             "Task {} failed during warmup. Setting 1-hour wait period...",
                             self.task.id
-                        );
-                    }
+                        )),
+                    );
 
                     // Set the wait period
                     let wait_until = Instant::now() + Duration::from_secs(3600); // 1 hour
                     *self.warmup_failure_wait_until.lock().await = Some(wait_until);
 
                     // Reset task status to QUEUED so it can be retried
-                    if let Err(e) = self.storage.reset_to_queued(&self.task.id).await
-                        && !crate::docker::is_tui_active()
-                    {
-                        eprintln!("Failed to reset task status to QUEUED: {e}");
+                    if let Err(reset_err) = self.storage.reset_to_queued(&self.task.id).await {
+                        crate::tui::events::emit_or_print(
+                            &self.event_sender,
+                            ServerEvent::WarningMessage(format!(
+                                "Failed to reset task status to QUEUED: {reset_err}"
+                            )),
+                        );
                     }
                 }
 
@@ -754,9 +741,10 @@ impl TaskJob {
         context: &AppContext,
         docker_client: Arc<dyn DockerClient>,
         task: &Task,
+        event_sender: Option<ServerEventSender>,
     ) -> Result<(), TaskExecutionError> {
         let docker_manager = DockerManager::new(context, docker_client);
-        let task_runner = TaskRunner::new(context, docker_manager);
+        let task_runner = TaskRunner::new(context, docker_manager, event_sender);
         task_runner.run_queued(task).await.map(|_| ())
     }
 }

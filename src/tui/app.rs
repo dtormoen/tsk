@@ -34,6 +34,8 @@ pub struct TuiApp {
     pub workers_total: usize,
     /// Whether the application should exit
     pub should_quit: bool,
+    /// Computed width of the task panel (set during render)
+    pub task_panel_width: u16,
 }
 
 impl TuiApp {
@@ -52,34 +54,27 @@ impl TuiApp {
             workers_active: 0,
             workers_total,
             should_quit: false,
+            task_panel_width: 0,
         }
     }
 
-    /// Move the task list selection down, wrapping at the end
+    /// Move the task list selection down, clamping at the last item
     pub fn select_next_task(&mut self) {
         if self.tasks.is_empty() {
             return;
         }
         let current = self.task_list_state.selected().unwrap_or(0);
-        let next = if current >= self.tasks.len() - 1 {
-            0
-        } else {
-            current + 1
-        };
+        let next = (current + 1).min(self.tasks.len() - 1);
         self.task_list_state.select(Some(next));
     }
 
-    /// Move the task list selection up, wrapping at the beginning
+    /// Move the task list selection up, clamping at the first item
     pub fn select_previous_task(&mut self) {
         if self.tasks.is_empty() {
             return;
         }
         let current = self.task_list_state.selected().unwrap_or(0);
-        let prev = if current == 0 {
-            self.tasks.len() - 1
-        } else {
-            current - 1
-        };
+        let prev = current.saturating_sub(1);
         self.task_list_state.select(Some(prev));
     }
 
@@ -219,17 +214,21 @@ mod tests {
         app.select_next_task();
         assert_eq!(app.task_list_state.selected(), Some(2));
 
-        // Next wraps to 0
+        // Next clamps at 2 (last item)
         app.select_next_task();
-        assert_eq!(app.task_list_state.selected(), Some(0));
-
-        // Previous wraps to 2
-        app.select_previous_task();
         assert_eq!(app.task_list_state.selected(), Some(2));
 
         // Previous goes to 1
         app.select_previous_task();
         assert_eq!(app.task_list_state.selected(), Some(1));
+
+        // Go back to 0
+        app.select_previous_task();
+        assert_eq!(app.task_list_state.selected(), Some(0));
+
+        // Previous clamps at 0 (first item)
+        app.select_previous_task();
+        assert_eq!(app.task_list_state.selected(), Some(0));
     }
 
     #[test]

@@ -123,10 +123,10 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Interactive terminal dashboard for `tsk server start` using ratatui/crossterm; auto-enabled when stdout is a terminal, falls back to plain text when piped
 - `ServerEvent` / `ServerEventSender`: Structured event channel from scheduler to TUI
 - `TuiApp`: Application state (task list, log viewer, server status, panel focus)
-- `ui::render()`: Two-panel layout (35% task list, 65% log viewer) with header/footer
+- `ui::render()`: Two-panel layout with dynamic task panel width (content-fit, min 20 cols, max 30%) and header/footer
 - `input::handle_event()`: Keyboard (vim-style + arrows) and mouse input handling
 - `run::run_tui()`: Async event loop multiplexing crossterm events, server events, and periodic timers
-- `docker::TUI_ACTIVE` global flag suppresses stdout output from log processing and task execution when TUI is active
+- Stdout suppression: `TaskRunner` and `DockerManager` accept a `suppress_stdout` flag (derived from `event_sender.is_some()`) to prevent log output from leaking into the TUI alternate screen; the `emit_or_print` helper in `tui::events` routes status messages through the event channel when available
 
 **Git Operations** (`src/git.rs`, `src/git_sync.rs`, `src/git_operations.rs`, `src/repo_utils.rs`)
 - Repository cloning to centralized task directories using `CloneLocal::NoLinks` for optimized pack files

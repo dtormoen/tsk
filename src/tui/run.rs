@@ -57,8 +57,9 @@ pub async fn run_tui(
     let mut guard = TerminalGuard { terminal };
     let mut app = TuiApp::new(workers_total);
 
-    // Load initial task list
+    // Load initial task list (newest first)
     if let Ok(tasks) = storage.list_tasks().await {
+        let tasks: Vec<_> = tasks.into_iter().rev().collect();
         app.update_tasks(tasks);
         app.load_logs_for_selected_task(&data_dir);
     }
@@ -114,6 +115,7 @@ pub async fn run_tui(
             // Periodic tick for refreshing task list and logs
             _ = tick.tick() => {
                 if let Ok(tasks) = storage.list_tasks().await {
+                    let tasks: Vec<_> = tasks.into_iter().rev().collect();
                     app.update_tasks(tasks);
                 }
                 // Also update worker counts from task data
@@ -176,8 +178,9 @@ async fn process_server_event(app: &mut TuiApp, event: &ServerEvent, storage: &T
         app.server_messages.drain(..app.server_messages.len() - 100);
     }
 
-    // Refresh task list after any server event
+    // Refresh task list after any server event (newest first)
     if let Ok(tasks) = storage.list_tasks().await {
+        let tasks: Vec<_> = tasks.into_iter().rev().collect();
         app.update_tasks(tasks);
     }
 }
