@@ -179,7 +179,8 @@ mod tests {
         let repo = TestGitRepository::new().unwrap();
         repo.init_with_commit().unwrap();
 
-        let worktree_dir = repo.path().parent().unwrap().join("worktree-test");
+        let worktree_tmp = tempfile::TempDir::new().unwrap();
+        let worktree_dir = worktree_tmp.path().join("worktree");
         repo.run_git_command(&[
             "worktree",
             "add",
@@ -194,7 +195,7 @@ mod tests {
         assert!(git_dir.is_dir());
         assert!(git_dir.to_str().unwrap().contains("worktrees"));
 
-        // Clean up worktree
+        // Clean up worktree before temp dirs are dropped
         std::fs::remove_dir_all(&worktree_dir).ok();
         repo.run_git_command(&["worktree", "prune"]).ok();
     }
@@ -214,7 +215,8 @@ mod tests {
         let repo = TestGitRepository::new().unwrap();
         repo.init_with_commit().unwrap();
 
-        let worktree_dir = repo.path().parent().unwrap().join("worktree-common-test");
+        let worktree_tmp = tempfile::TempDir::new().unwrap();
+        let worktree_dir = worktree_tmp.path().join("worktree");
         repo.run_git_command(&[
             "worktree",
             "add",
@@ -227,9 +229,13 @@ mod tests {
         let common_dir = resolve_git_common_dir(&worktree_dir).unwrap();
         let main_git_dir = resolve_git_dir(repo.path()).unwrap();
         // Common dir from worktree should point to main repo's .git
-        assert_eq!(common_dir, main_git_dir);
+        // Canonicalize both to handle macOS /var -> /private/var symlink
+        assert_eq!(
+            common_dir.canonicalize().unwrap(),
+            main_git_dir.canonicalize().unwrap()
+        );
 
-        // Clean up worktree
+        // Clean up worktree before temp dirs are dropped
         std::fs::remove_dir_all(&worktree_dir).ok();
         repo.run_git_command(&["worktree", "prune"]).ok();
     }
