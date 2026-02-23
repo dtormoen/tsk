@@ -154,6 +154,7 @@ impl DockerManager {
                 "NO_PROXY",
                 "no_proxy",
                 "JAVA_TOOL_OPTIONS",
+                "TSK_PROXY_HOST",
             ] {
                 if let Ok(val) = std::env::var(var) {
                     env.push(format!("{var}={val}"));
@@ -184,10 +185,13 @@ impl DockerManager {
             pcn = proxy_container_name
         ));
 
+        // Always export the proxy container name so scripts (e.g. network
+        // isolation tests) can reach the proxy regardless of host_ports config.
+        env.push(format!("TSK_PROXY_HOST={proxy_container_name}"));
+
         // Add host port environment variables if configured
         if resolved.has_host_ports() {
             env.push(format!("TSK_HOST_PORTS={}", resolved.host_ports_env()));
-            env.push(format!("TSK_PROXY_HOST={proxy_container_name}"));
         }
 
         env
