@@ -365,6 +365,26 @@ echo "============================================"
 echo ""
 run_stack_tests "podman"
 
+# --- Network isolation tests (only inside TSK containers) ---
+if [ "${TSK_CONTAINER:-}" = "1" ]; then
+    echo "============================================"
+    echo "  Network Isolation Tests"
+    echo "============================================"
+    echo ""
+    if "$SCRIPT_DIR/network-isolation-test.sh" 2>&1 | tee "$LOG_DIR/network-isolation.log"; then
+        echo -e "  ${GREEN}PASSED${NC}: network-isolation"
+        total_passed=$((total_passed + 1))
+    else
+        echo -e "  ${RED}FAILED${NC}: network-isolation"
+        total_failed=$((total_failed + 1))
+        all_failed+=("network-isolation")
+    fi
+    echo ""
+else
+    echo "Skipping network isolation tests (not in TSK container)"
+    echo ""
+fi
+
 # --- Summary ---
 echo "============================================"
 echo "  Integration Test Summary"
