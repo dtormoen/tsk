@@ -70,12 +70,13 @@ RUN echo "agent:100000:65536" >> /etc/subuid && \
 #     tmpfs, not the outer container's overlayfs. Previously used fuse-overlayfs
 #     but execve() fails on FUSE mounts in user namespaces on LinuxKit 6.10.14+.
 #     Revert to fuse-overlayfs once docker/for-mac#7413 is fixed.
-RUN mkdir -p /home/agent/.config/containers && \
+RUN mkdir -p /home/agent/.config/containers \
+             /home/agent/.local/share/containers/storage && \
     printf '[containers]\ndefault_sysctls = []\nnetns = "host"\npidns = "host"\n\n[engine]\ncgroup_manager = "cgroupfs"\nbuild_isolation = "chroot"\n' \
     > /home/agent/.config/containers/containers.conf && \
     printf '[storage]\ndriver = "overlay"\ngraphroot = "/home/agent/.local/share/containers/storage"\n' \
     > /home/agent/.config/containers/storage.conf && \
-    chown -R agent:agent /home/agent/.config
+    chown -R agent:agent /home/agent/.config /home/agent/.local/share/containers
 
 # Alias docker to podman so agents and scripts that use `docker` commands work seamlessly
 RUN ln -s /usr/bin/podman /usr/local/bin/docker
