@@ -8,6 +8,7 @@ allowed-tools:
   - Bash(tsk help)
   - Bash(tsk add --help)
   - Bash(tsk template list)
+  - Bash(tsk template show)
 ---
 
 # Queue Task from Conversation
@@ -21,6 +22,8 @@ These are the task templates available for use with `tsk add -t <template>`:
 ```
 !`tsk template list`
 ```
+
+To see the full content of a template, run `tsk template show <template>`. When a task is created, the `{{DESCRIPTION}}` placeholder in the template is replaced with whatever you pipe in via heredoc or pass via the `-d` flag, and any YAML frontmatter is stripped. The result is what gets sent to the agent.
 
 ## Your Job
 

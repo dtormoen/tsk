@@ -28,6 +28,8 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `server stop`: Stop the running TSK server
 - `docker build`: Build required docker images (supports `--proxy-only` to build only the proxy)
 - `template list`: List available task type templates
+- `template show <name>`: Display template contents
+- `template edit <name>`: Open template in `$EDITOR` (copies built-in templates to user config dir first)
 
 **Task Management** (`src/task.rs`, `src/context/task_storage.rs`, `src/task_manager.rs`, `src/task_runner.rs`)
 - `TaskBuilder` provides consistent task creation with builder pattern

@@ -197,6 +197,8 @@ Build container images and manage task templates.
 
 - `tsk docker build` - Build required container images
 - `tsk template list` - View available task type templates and where they are installed
+- `tsk template show <template>` - Display the contents of a template
+- `tsk template edit <template>` - Open a template in your editor for customization
 
 Run `tsk help` or `tsk help <command>` for detailed options.
 
@@ -330,6 +332,8 @@ I'm working on improving this part of `tsk` to be as seamless and easy to set up
 ### Creating Templates
 
 Templates are simply markdown files that get passed to agents. TSK additionally adds a convenience `{{description}}` placeholder that will get replaced by anything you pipe into tsk or pass in via the `-d/--description` flag.
+
+To inspect an existing template, run `tsk template show <template>`. To customize a built-in template, run `tsk template edit <template>` — TSK will copy it to `~/.config/tsk/templates/` and open it in your `$EDITOR`.
 
 To create good templates, I would recommend thinking about repetitive tasks that you need agents to do within your codebase like "make sure the unit tests pass", "write a commit message", etc. and encode those in a template file. There are many great prompting guides out there so I'll spare the details here.
 

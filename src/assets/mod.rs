@@ -88,6 +88,32 @@ pub fn find_template(name: &str, project_root: Option<&Path>, tsk_env: &TskEnv) 
     embedded::get_template(name)
 }
 
+/// Find the on-disk path of a template, if it exists as a file.
+/// Returns None for embedded-only templates.
+pub fn find_template_path(
+    name: &str,
+    project_root: Option<&Path>,
+    tsk_env: &TskEnv,
+) -> Option<std::path::PathBuf> {
+    let filename = format!("{name}.md");
+
+    // Check project level first
+    if let Some(root) = project_root {
+        let project_path = root.join(".tsk").join("templates").join(&filename);
+        if project_path.exists() {
+            return Some(project_path);
+        }
+    }
+
+    // Check user level
+    let user_path = tsk_env.config_dir().join("templates").join(&filename);
+    if user_path.exists() {
+        return Some(user_path);
+    }
+
+    None
+}
+
 /// List all available templates from project, user, and embedded sources.
 pub fn list_all_templates(project_root: Option<&Path>, tsk_env: &TskEnv) -> Vec<String> {
     let mut templates = std::collections::HashSet::new();
@@ -208,5 +234,26 @@ mod tests {
         // Function runs without error when deprecated dirs exist
         // (warning is printed to stderr)
         warn_deprecated_dockerfiles(Some(temp_dir.path()), &ctx.tsk_env());
+    }
+
+    #[test]
+    fn test_find_template_path_returns_none_for_embedded() {
+        let ctx = AppContext::builder().build();
+        // "feat" exists as embedded but not on disk in a fresh test env
+        let result = find_template_path("feat", None, &ctx.tsk_env());
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_template_path_returns_path_for_project() {
+        let ctx = AppContext::builder().build();
+        let temp_dir = TempDir::new().unwrap();
+        let templates_dir = temp_dir.path().join(".tsk").join("templates");
+        fs::create_dir_all(&templates_dir).unwrap();
+        fs::write(templates_dir.join("feat.md"), "project feat").unwrap();
+
+        let result = find_template_path("feat", Some(temp_dir.path()), &ctx.tsk_env());
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), templates_dir.join("feat.md"));
     }
 }

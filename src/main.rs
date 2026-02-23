@@ -29,7 +29,7 @@ use commands::{
     docker::DockerBuildCommand,
     server::{ServerStartCommand, ServerStopCommand},
     task_args::TaskArgs,
-    template::TemplateListCommand,
+    template::{TemplateEditCommand, TemplateListCommand, TemplateShowCommand},
 };
 use context::{AppContext, ContainerEngine};
 
@@ -363,6 +363,16 @@ struct TemplateArgs {
 enum TemplateCommands {
     /// List available task templates and their sources
     List,
+    /// Display the contents of a template
+    Show {
+        /// Template name
+        name: String,
+    },
+    /// Open a template in your editor
+    Edit {
+        /// Template name
+        name: String,
+    },
 }
 
 #[tokio::main]
@@ -525,6 +535,8 @@ async fn main() {
         },
         Commands::Template(template_args) => match template_args.command {
             TemplateCommands::List => Box::new(TemplateListCommand),
+            TemplateCommands::Show { name } => Box::new(TemplateShowCommand { name }),
+            TemplateCommands::Edit { name } => Box::new(TemplateEditCommand { name }),
         },
     };
 
