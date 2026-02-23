@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/dtormoen/tsk/compare/v0.8.6...v0.9.0) - 2026-02-23
+
+This is a large release that replaces filesystem-based Docker layer customization with
+inline TOML configuration and restructures the config file format. See the migration
+guide below if you have an existing `tsk.toml` or custom Dockerfiles.
+
+**Migrating from 0.8.x:**
+
+- **Config format**: The old `[docker]`, `[proxy]`, and `[git_town]` sections are replaced
+  by `[defaults]` and `[project.<name>]`. TSK detects the old format and prints a migration
+  error with guidance. Move your settings into the new shape — see the
+  [Configuration File](README.md#configuration-file) section in the README for examples.
+- **Custom Dockerfiles**: Filesystem-based Docker layers (e.g., `.tsk/dockerfiles/project/`,
+  `~/.config/tsk/dockerfiles/`) are no longer used. Replace them with `setup`,
+  `stack_config.<name>.setup`, or `agent_config.<name>.setup` fields in your `tsk.toml`.
+  Run `tsk docker build --dry-run` to preview the generated Dockerfile.
+- **Project-level config**: You can now check in shared project defaults at `.tsk/tsk.toml`
+  (same shape as `[defaults]`).
+- **Claude Code users**: Install the `tsk-config` skill to have Claude walk you through
+  the migration interactively: `/plugin marketplace add dtormoen/tsk` then
+  `/plugin install tsk-config@dtormoen/tsk`.
+
+### Added
+
+- [**breaking**] restructure config with `[defaults]` / `[project.<name>]` sections and project-level `.tsk/tsk.toml`
+- replace filesystem-based Docker layers with inline `setup`, `stack_config`, and `agent_config` fields in tsk.toml
+- auto-migrate deprecated tsk.toml config format with actionable error messages
+- snapshot resolved config at task creation for reproducible execution
+- per-configuration proxy instances with fingerprint-based naming
+- add `tsk template show` and `tsk template edit` commands
+- add Claude Code skills marketplace with `tsk-config` and `tsk-add` skills
+- clean up CLI output across all commands
+
+### Fixed
+
+- resolve proxy IP on agent network for extra_hosts injection
+- use unique temp dirs in worktree tests to avoid collisions
+- resolve git worktree paths for lock files, project names, and submodules
+- trigger rebuild when embedded dockerfiles or templates change
+- create Podman storage directory in base image with correct ownership
+- always export TSK_PROXY_HOST so containers can reach the proxy
+- inject Java proxy config at runtime instead of build time
+
 ## [0.8.6](https://github.com/dtormoen/tsk/compare/v0.8.5...v0.8.6) - 2026-02-23
 
 ### Added
