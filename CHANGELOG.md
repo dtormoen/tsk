@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/dtormoen/tsk/compare/v0.8.6...v0.9.0) - 2026-02-23
+
+### Added
+
+- clean up CLI output across all commands
+- rename tsk-docker-config skill to tsk-config and improve README
+- add tsk-add skill for queuing tasks from conversation context
+- replace tech-stack/project-layer templates with tsk-docker-config skill
+- add skills marketplace with tsk-docker-config skill
+- warn users about removed filesystem-based dockerfile directories
+- auto-migrate deprecated tsk.toml config format
+- remove filesystem-based Docker layers
+- per-configuration proxy instances with fingerprint-based naming
+- inline Docker layers from TOML config
+- snapshot resolved config in SQLite at task creation
+- add project-level .tsk/tsk.toml config loading and merge
+- [**breaking**] restructure TskConfig with shared config shape
+
+### Fixed
+
+- create Podman storage directory in base image with correct ownership
+- always export TSK_PROXY_HOST so containers can reach the proxy
+- inject Java proxy config at runtime instead of build time
+
 ## [0.8.6](https://github.com/dtormoen/tsk/compare/v0.8.5...v0.8.6) - 2026-02-23
 
 ### Added
