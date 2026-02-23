@@ -62,7 +62,7 @@ pub struct TaskScheduler {
 }
 
 impl TaskScheduler {
-    /// Update terminal title based on worker pool status
+    /// Update terminal title based on worker pool status.
     fn update_terminal_title(&self) {
         if let Some(pool) = &self.worker_pool {
             let active = pool.active_workers();
@@ -743,7 +743,7 @@ impl TaskJob {
         task: &Task,
         event_sender: Option<ServerEventSender>,
     ) -> Result<(), TaskExecutionError> {
-        let docker_manager = DockerManager::new(context, docker_client);
+        let docker_manager = DockerManager::new(context, docker_client, event_sender.clone());
         let task_runner = TaskRunner::new(context, docker_manager, event_sender);
         task_runner.run_queued(task).await.map(|_| ())
     }

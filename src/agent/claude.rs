@@ -269,7 +269,6 @@ impl Agent for ClaudeAgent {
             }
             None => {
                 // Fall back to prompting Claude for older CLI versions
-                println!("Falling back to Claude Code warmup...");
                 let output = Command::new("claude")
                     .args([
                         "-p",

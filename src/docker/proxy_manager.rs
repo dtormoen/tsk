@@ -11,6 +11,7 @@ use crate::context::ContainerEngine;
 use crate::context::ResolvedProxyConfig;
 use crate::context::docker_client::DockerClient;
 use crate::context::tsk_env::TskEnv;
+use crate::tui::events::{ServerEvent, ServerEventSender};
 use anyhow::{Context, Result};
 use bollard::models::{ContainerCreateBody, HostConfig};
 use bollard::query_parameters::RemoveContainerOptions;
@@ -34,6 +35,7 @@ pub struct ProxyManager {
     docker_client: Arc<dyn DockerClient>,
     tsk_env: Arc<TskEnv>,
     container_engine: ContainerEngine,
+    event_sender: Option<ServerEventSender>,
 }
 
 impl ProxyManager {
@@ -45,12 +47,19 @@ impl ProxyManager {
         client: Arc<dyn DockerClient>,
         tsk_env: Arc<TskEnv>,
         container_engine: ContainerEngine,
+        event_sender: Option<ServerEventSender>,
     ) -> Self {
         Self {
             docker_client: client,
             tsk_env,
             container_engine,
+            event_sender,
         }
+    }
+
+    /// Route an event through the TUI channel when available, otherwise print directly.
+    fn emit(&self, event: ServerEvent) {
+        crate::tui::events::emit_or_print(&self.event_sender, event);
     }
 
     /// Ensures the proxy for the given configuration is running and healthy.
@@ -151,17 +160,19 @@ impl ProxyManager {
         no_cache: bool,
         build_log_path: Option<&std::path::Path>,
     ) -> Result<()> {
-        println!("Building proxy image: {PROXY_IMAGE}");
+        self.emit(ServerEvent::StatusMessage(format!(
+            "Building proxy image: {PROXY_IMAGE}"
+        )));
 
         use crate::assets::utils::extract_dockerfile_to_temp;
 
         // Warn about deprecated legacy squid.conf file
         let legacy_squid_conf = self.tsk_env.config_dir().join("squid.conf");
         if legacy_squid_conf.exists() {
-            eprintln!(
+            self.emit(ServerEvent::WarningMessage(format!(
                 "Warning: {} is deprecated. Use squid_conf or squid_conf_path in tsk.toml instead.",
                 legacy_squid_conf.display()
-            );
+            )));
         }
 
         // Extract dockerfile to temporary directory
@@ -203,7 +214,7 @@ impl ProxyManager {
                 }
                 Err(e) => {
                     if let Some(log_path) = build_log_path {
-                        super::save_build_log(log_path, &build_output);
+                        super::save_build_log(log_path, &build_output, &self.event_sender);
                     }
                     eprint!("{build_output}");
                     return Err(anyhow::anyhow!("Failed to build proxy image: {e}"));
@@ -216,7 +227,9 @@ impl ProxyManager {
 
     /// Stops and removes the specified proxy container.
     pub async fn stop_proxy(&self, container_name: &str) -> Result<()> {
-        println!("Stopping TSK proxy container {container_name}...");
+        self.emit(ServerEvent::StatusMessage(format!(
+            "Stopping TSK proxy container {container_name}..."
+        )));
 
         match self
             .docker_client
@@ -230,11 +243,15 @@ impl ProxyManager {
             .await
         {
             Ok(_) => {
-                println!("Proxy container {container_name} stopped successfully");
+                self.emit(ServerEvent::StatusMessage(format!(
+                    "Proxy container {container_name} stopped successfully"
+                )));
                 Ok(())
             }
             Err(e) if e.to_lowercase().contains("no such container") => {
-                println!("Proxy container {container_name} was not running");
+                self.emit(ServerEvent::StatusMessage(format!(
+                    "Proxy container {container_name} was not running"
+                )));
                 Ok(())
             }
             Err(e) => Err(anyhow::anyhow!(
@@ -453,7 +470,9 @@ impl ProxyManager {
                                 {
                                     match status {
                                         "healthy" => {
-                                            println!("Proxy container is healthy");
+                                            self.emit(ServerEvent::StatusMessage(
+                                                "Proxy container is healthy".to_string(),
+                                            ));
                                             return Ok(());
                                         }
                                         "unhealthy" => {
@@ -464,9 +483,9 @@ impl ProxyManager {
                                         "starting" => {
                                             // Still starting, continue waiting
                                             if attempt == 1 {
-                                                println!(
-                                                    "Waiting for proxy container to become healthy..."
-                                                );
+                                                self.emit(ServerEvent::StatusMessage(
+                                                    "Waiting for proxy container to become healthy...".to_string(),
+                                                ));
                                             }
                                         }
                                         _ => {
@@ -477,7 +496,10 @@ impl ProxyManager {
                             } else {
                                 // No health check configured, just verify it's running
                                 // This is for backward compatibility
-                                println!("Proxy container is running (no health check configured)");
+                                self.emit(ServerEvent::StatusMessage(
+                                    "Proxy container is running (no health check configured)"
+                                        .to_string(),
+                                ));
                                 return Ok(());
                             }
                         }
@@ -563,12 +585,16 @@ impl ProxyManager {
             .disconnect_container_from_network(proxy_container_name, network_name)
             .await
         {
-            eprintln!("Warning: Failed to disconnect proxy from network {network_name}: {e}");
+            self.emit(ServerEvent::WarningMessage(format!(
+                "Warning: Failed to disconnect proxy from network {network_name}: {e}"
+            )));
         }
 
         // Remove the network
         if let Err(e) = self.docker_client.remove_network(network_name).await {
-            eprintln!("Warning: Failed to remove network {network_name}: {e}");
+            self.emit(ServerEvent::WarningMessage(format!(
+                "Warning: Failed to remove network {network_name}: {e}"
+            )));
         }
     }
 
@@ -599,8 +625,12 @@ mod tests {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
 
-        let manager =
-            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let manager = ProxyManager::new(
+            mock_client.clone(),
+            ctx.tsk_env(),
+            ContainerEngine::Docker,
+            None,
+        );
         let proxy_config = default_proxy_config();
         let result = manager.ensure_proxy(&proxy_config, None).await;
 
@@ -636,8 +666,12 @@ mod tests {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
 
-        let manager =
-            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let manager = ProxyManager::new(
+            mock_client.clone(),
+            ctx.tsk_env(),
+            ContainerEngine::Docker,
+            None,
+        );
         let proxy_config = ResolvedProxyConfig {
             host_ports: vec![5432, 6379],
             squid_conf: None,
@@ -659,8 +693,12 @@ mod tests {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
 
-        let manager =
-            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let manager = ProxyManager::new(
+            mock_client.clone(),
+            ctx.tsk_env(),
+            ContainerEngine::Docker,
+            None,
+        );
         let proxy_config = default_proxy_config();
         let container_name = proxy_config.proxy_container_name();
         let result = manager.stop_proxy(&container_name).await;
@@ -804,7 +842,7 @@ mod tests {
         let mock_client: Arc<dyn DockerClient> = Arc::new(NoContainerDockerClient);
         let ctx = AppContext::builder().build();
 
-        let manager = ProxyManager::new(mock_client, ctx.tsk_env(), ContainerEngine::Docker);
+        let manager = ProxyManager::new(mock_client, ctx.tsk_env(), ContainerEngine::Docker, None);
         let proxy_config = default_proxy_config();
         let result = manager
             .stop_proxy(&proxy_config.proxy_container_name())
@@ -833,8 +871,12 @@ mod tests {
 
         let ctx = AppContext::builder().build();
 
-        let manager =
-            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let manager = ProxyManager::new(
+            mock_client.clone(),
+            ctx.tsk_env(),
+            ContainerEngine::Docker,
+            None,
+        );
         let result = manager.wait_for_proxy_health("tsk-proxy-test").await;
 
         assert!(result.is_ok());
@@ -859,8 +901,12 @@ mod tests {
 
         let ctx = AppContext::builder().build();
 
-        let manager =
-            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let manager = ProxyManager::new(
+            mock_client.clone(),
+            ctx.tsk_env(),
+            ContainerEngine::Docker,
+            None,
+        );
         let result = manager.wait_for_proxy_health("tsk-proxy-test").await;
 
         assert!(result.is_err());
@@ -883,8 +929,12 @@ mod tests {
 
         let ctx = AppContext::builder().build();
 
-        let manager =
-            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let manager = ProxyManager::new(
+            mock_client.clone(),
+            ctx.tsk_env(),
+            ContainerEngine::Docker,
+            None,
+        );
         let result = manager.wait_for_proxy_health("tsk-proxy-test").await;
 
         assert!(result.is_ok());
@@ -906,8 +956,12 @@ mod tests {
 
         let ctx = AppContext::builder().build();
 
-        let manager =
-            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let manager = ProxyManager::new(
+            mock_client.clone(),
+            ctx.tsk_env(),
+            ContainerEngine::Docker,
+            None,
+        );
         let result = manager.wait_for_proxy_health("tsk-proxy-test").await;
 
         assert!(result.is_err());
@@ -931,8 +985,12 @@ mod tests {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
 
-        let manager =
-            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let manager = ProxyManager::new(
+            mock_client.clone(),
+            ctx.tsk_env(),
+            ContainerEngine::Docker,
+            None,
+        );
         let result = manager.create_agent_network("test-task-123").await;
 
         assert!(result.is_ok());
@@ -951,8 +1009,12 @@ mod tests {
         });
         let ctx = AppContext::builder().build();
 
-        let manager =
-            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let manager = ProxyManager::new(
+            mock_client.clone(),
+            ctx.tsk_env(),
+            ContainerEngine::Docker,
+            None,
+        );
         let result = manager.create_agent_network("test-task-123").await;
 
         assert!(result.is_err());
@@ -969,8 +1031,12 @@ mod tests {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
 
-        let manager =
-            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let manager = ProxyManager::new(
+            mock_client.clone(),
+            ctx.tsk_env(),
+            ContainerEngine::Docker,
+            None,
+        );
         let proxy_config = default_proxy_config();
         let container_name = proxy_config.proxy_container_name();
         let result = manager
@@ -989,8 +1055,12 @@ mod tests {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
 
-        let manager =
-            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let manager = ProxyManager::new(
+            mock_client.clone(),
+            ctx.tsk_env(),
+            ContainerEngine::Docker,
+            None,
+        );
         let proxy_config = default_proxy_config();
         let container_name = proxy_config.proxy_container_name();
         manager
@@ -1017,8 +1087,12 @@ mod tests {
         });
         let ctx = AppContext::builder().build();
 
-        let manager =
-            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let manager = ProxyManager::new(
+            mock_client.clone(),
+            ctx.tsk_env(),
+            ContainerEngine::Docker,
+            None,
+        );
         let proxy_config = default_proxy_config();
         manager
             .cleanup_agent_network(&proxy_config.proxy_container_name(), "tsk-agent-test-123")
@@ -1036,8 +1110,12 @@ mod tests {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
 
-        let manager =
-            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let manager = ProxyManager::new(
+            mock_client.clone(),
+            ctx.tsk_env(),
+            ContainerEngine::Docker,
+            None,
+        );
 
         let result = manager.build_proxy(false, None).await;
         assert!(result.is_ok());
@@ -1059,7 +1137,7 @@ mod tests {
 
         let ctx = AppContext::builder().build();
 
-        let manager = ProxyManager::new(mock_client, ctx.tsk_env(), ContainerEngine::Docker);
+        let manager = ProxyManager::new(mock_client, ctx.tsk_env(), ContainerEngine::Docker, None);
         let result = manager.is_proxy_running("tsk-proxy-test").await;
 
         assert!(result.is_ok());
@@ -1082,7 +1160,7 @@ mod tests {
 
         let ctx = AppContext::builder().build();
 
-        let manager = ProxyManager::new(mock_client, ctx.tsk_env(), ContainerEngine::Docker);
+        let manager = ProxyManager::new(mock_client, ctx.tsk_env(), ContainerEngine::Docker, None);
         let result = manager.is_proxy_running("tsk-proxy-test").await;
 
         assert!(result.is_ok());
@@ -1110,7 +1188,7 @@ mod tests {
 
         let ctx = AppContext::builder().build();
 
-        let manager = ProxyManager::new(mock_client, ctx.tsk_env(), ContainerEngine::Docker);
+        let manager = ProxyManager::new(mock_client, ctx.tsk_env(), ContainerEngine::Docker, None);
         let result = manager.count_connected_agents("tsk-proxy-test").await;
 
         assert!(result.is_ok());
@@ -1138,8 +1216,12 @@ mod tests {
 
         let ctx = AppContext::builder().build();
 
-        let manager =
-            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let manager = ProxyManager::new(
+            mock_client.clone(),
+            ctx.tsk_env(),
+            ContainerEngine::Docker,
+            None,
+        );
         let proxy_config = default_proxy_config();
         let result = manager.maybe_stop_proxy(&proxy_config).await;
 
@@ -1174,8 +1256,12 @@ mod tests {
 
         let ctx = AppContext::builder().build();
 
-        let manager =
-            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let manager = ProxyManager::new(
+            mock_client.clone(),
+            ctx.tsk_env(),
+            ContainerEngine::Docker,
+            None,
+        );
         let proxy_config = default_proxy_config();
         let result = manager.maybe_stop_proxy(&proxy_config).await;
 
@@ -1191,8 +1277,12 @@ mod tests {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
 
-        let manager =
-            ProxyManager::new(mock_client.clone(), ctx.tsk_env(), ContainerEngine::Docker);
+        let manager = ProxyManager::new(
+            mock_client.clone(),
+            ctx.tsk_env(),
+            ContainerEngine::Docker,
+            None,
+        );
         let proxy_config = ResolvedProxyConfig {
             host_ports: vec![],
             squid_conf: Some("http_port 3128\nacl custom src all".to_string()),
@@ -1247,7 +1337,7 @@ mod tests {
         });
         let ctx = AppContext::builder().build();
 
-        let manager = ProxyManager::new(mock_client, ctx.tsk_env(), ContainerEngine::Docker);
+        let manager = ProxyManager::new(mock_client, ctx.tsk_env(), ContainerEngine::Docker, None);
         let result = manager
             .resolve_proxy_ip("tsk-proxy-test", agent_network)
             .await;

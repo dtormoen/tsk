@@ -85,7 +85,10 @@ impl TaskRunner {
         stored_task.status = TaskStatus::Running;
         stored_task.started_at = Some(chrono::Utc::now());
         if let Err(e) = self.task_storage.add_task(stored_task).await {
-            eprintln!("Error storing task: {e}");
+            emit_or_print(
+                &self.event_sender,
+                ServerEvent::WarningMessage(format!("Error storing task: {e}")),
+            );
         }
         self.run_with_lifecycle(task).await
     }
@@ -96,7 +99,10 @@ impl TaskRunner {
     /// handles execution and completion status updates.
     pub async fn run_queued(&self, task: &Task) -> Result<TaskExecutionResult, TaskExecutionError> {
         if let Err(e) = self.task_storage.mark_running(&task.id).await {
-            eprintln!("Error updating task status: {e}");
+            emit_or_print(
+                &self.event_sender,
+                ServerEvent::WarningMessage(format!("Error updating task status: {e}")),
+            );
         }
         self.run_with_lifecycle(task).await
     }
@@ -127,7 +133,10 @@ impl TaskRunner {
                     .mark_complete(&task.id, &exec_result.branch_name)
                     .await
                 {
-                    eprintln!("Error updating task status: {e}");
+                    emit_or_print(
+                        &self.event_sender,
+                        ServerEvent::WarningMessage(format!("Error updating task status: {e}")),
+                    );
                 }
             }
             Err(e) => {
@@ -138,7 +147,12 @@ impl TaskRunner {
                 );
                 if let Err(storage_err) = self.task_storage.mark_failed(&task.id, &e.message).await
                 {
-                    eprintln!("Error updating task status: {storage_err}");
+                    emit_or_print(
+                        &self.event_sender,
+                        ServerEvent::WarningMessage(format!(
+                            "Error updating task status: {storage_err}"
+                        )),
+                    );
                 }
             }
         }
@@ -184,11 +198,16 @@ impl TaskRunner {
             ServerEvent::StatusMessage("=".repeat(60)),
         );
 
-        let task_image_manager =
-            DockerImageManager::new(&self.ctx, self.docker_manager.client(), None);
+        let task_image_manager = DockerImageManager::new(
+            &self.ctx,
+            self.docker_manager.client(),
+            None,
+            self.event_sender.clone(),
+        );
 
         // Resolve config for this task to provide inline layer overrides
-        let resolved_config = crate::docker::resolve_config_from_task(task, &self.ctx);
+        let resolved_config =
+            crate::docker::resolve_config_from_task(task, &self.ctx, &self.event_sender);
 
         // Ensure the Docker image exists - always rebuild to pick up any changes
         let build_log_path = self
@@ -219,10 +238,9 @@ impl TaskRunner {
         }
 
         // Run the container using the unified method
-        let suppress_stdout = self.event_sender.is_some();
         let (_output, task_result) = match self
             .docker_manager
-            .run_task_container(&docker_image_tag, task, agent.as_ref(), suppress_stdout)
+            .run_task_container(&docker_image_tag, task, agent.as_ref())
             .await
         {
             Ok(result) => result,
@@ -258,7 +276,8 @@ impl TaskRunner {
                 &task.repo_root,
                 &task.source_commit,
                 task.source_branch.as_deref(),
-                crate::docker::resolve_config_from_task(task, &self.ctx).git_town,
+                crate::docker::resolve_config_from_task(task, &self.ctx, &self.event_sender)
+                    .git_town,
             )
             .await
         {
@@ -336,7 +355,7 @@ mod tests {
         }
         std::fs::write(&claude_json_path, "{}").unwrap();
 
-        let docker_manager = DockerManager::new(&ctx, docker_client);
+        let docker_manager = DockerManager::new(&ctx, docker_client, None);
         let task_runner = TaskRunner::new(&ctx, docker_manager, None);
 
         // Create a task copy directory
@@ -401,7 +420,7 @@ mod tests {
         }
         std::fs::write(&claude_json_path, "{}").unwrap();
 
-        let docker_manager = DockerManager::new(&ctx, docker_client);
+        let docker_manager = DockerManager::new(&ctx, docker_client, None);
         let task_runner = TaskRunner::new(&ctx, docker_manager, None);
         let task_copy_dir = tsk_env.task_dir("infra-fail-123");
 
@@ -467,7 +486,7 @@ mod tests {
         };
 
         let docker_client: Arc<dyn DockerClient> = Arc::new(NoOpDockerClient);
-        let docker_manager = DockerManager::new(&ctx, docker_client);
+        let docker_manager = DockerManager::new(&ctx, docker_client, None);
         let task_runner = TaskRunner::new(&ctx, docker_manager, None);
         let _result = task_runner.store_and_run(&task).await;
 

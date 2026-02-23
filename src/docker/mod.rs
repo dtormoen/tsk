@@ -11,6 +11,7 @@ use crate::context::VolumeMount;
 use crate::context::docker_client::DockerClient;
 use crate::context::tsk_config;
 use crate::docker::proxy_manager::ProxyManager;
+use crate::tui::events::{ServerEvent, ServerEventSender};
 use bollard::models::{ContainerCreateBody, HostConfig};
 use bollard::query_parameters::{LogsOptions, RemoveContainerOptions};
 use futures_util::stream::StreamExt;
@@ -45,14 +46,18 @@ fn container_working_dir(project: &str) -> String {
 pub(crate) fn resolve_config_from_task(
     task: &crate::task::Task,
     ctx: &AppContext,
+    event_sender: &Option<crate::tui::events::ServerEventSender>,
 ) -> crate::context::ResolvedConfig {
     if let Some(ref json) = task.resolved_config {
         match serde_json::from_str(json) {
             Ok(config) => return config,
             Err(e) => {
-                eprintln!(
-                    "Warning: Failed to deserialize resolved_config for task {}: {e}. Falling back to live resolution.",
-                    task.id
+                crate::tui::events::emit_or_print(
+                    event_sender,
+                    crate::tui::events::ServerEvent::WarningMessage(format!(
+                        "Warning: Failed to deserialize resolved_config for task {}: {e}. Falling back to live resolution.",
+                        task.id
+                    )),
                 );
             }
         }
@@ -67,17 +72,28 @@ pub(crate) fn resolve_config_from_task(
 }
 
 /// Write build output to a log file on failure, printing warnings on error.
-pub(crate) fn save_build_log(log_path: &std::path::Path, build_output: &str) {
+pub(crate) fn save_build_log(
+    log_path: &std::path::Path,
+    build_output: &str,
+    event_sender: &Option<crate::tui::events::ServerEventSender>,
+) {
+    use crate::tui::events::{ServerEvent, emit_or_print};
     if let Some(parent) = log_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
     if let Err(write_err) = std::fs::write(log_path, build_output) {
-        eprintln!(
-            "Warning: Failed to write build log to {}: {write_err}",
-            log_path.display()
+        emit_or_print(
+            event_sender,
+            ServerEvent::WarningMessage(format!(
+                "Warning: Failed to write build log to {}: {write_err}",
+                log_path.display()
+            )),
         );
     } else {
-        eprintln!("Build log saved to: {}", log_path.display());
+        emit_or_print(
+            event_sender,
+            ServerEvent::StatusMessage(format!("Build log saved to: {}", log_path.display())),
+        );
     }
 }
 
@@ -92,6 +108,7 @@ pub struct DockerManager {
     ctx: AppContext,
     client: Arc<dyn DockerClient>,
     proxy_manager: ProxyManager,
+    event_sender: Option<ServerEventSender>,
 }
 
 impl DockerManager {
@@ -100,17 +117,29 @@ impl DockerManager {
     /// # Arguments
     /// * `ctx` - The application context containing all dependencies
     /// * `client` - The Docker client for container operations
-    pub fn new(ctx: &AppContext, client: Arc<dyn DockerClient>) -> Self {
+    /// * `event_sender` - Optional TUI event channel for structured output
+    pub fn new(
+        ctx: &AppContext,
+        client: Arc<dyn DockerClient>,
+        event_sender: Option<ServerEventSender>,
+    ) -> Self {
         let proxy_manager = ProxyManager::new(
             client.clone(),
             ctx.tsk_env(),
             ctx.tsk_config().container_engine.clone(),
+            event_sender.clone(),
         );
         Self {
             ctx: ctx.clone(),
             client,
             proxy_manager,
+            event_sender,
         }
+    }
+
+    /// Route an event through the TUI channel when available, otherwise print directly.
+    fn emit(&self, event: ServerEvent) {
+        crate::tui::events::emit_or_print(&self.event_sender, event);
     }
 
     /// Returns the Docker client for use by other components
@@ -312,7 +341,7 @@ impl DockerManager {
         proxy_config: Option<&crate::context::ResolvedProxyConfig>,
         proxy_container_ip: Option<&str>,
     ) -> ContainerCreateBody {
-        let resolved = resolve_config_from_task(task, &self.ctx);
+        let resolved = resolve_config_from_task(task, &self.ctx, &self.event_sender);
         let binds = self.build_bind_volumes(task, agent, &resolved);
         let instructions_file_path = PathBuf::from(&task.instructions_file);
         let working_dir = container_working_dir(&task.project);
@@ -512,12 +541,11 @@ impl DockerManager {
         docker_image_tag: &str,
         task: &crate::task::Task,
         agent: &dyn Agent,
-        suppress_stdout: bool,
     ) -> Result<(String, crate::agent::TaskResult), String> {
         // --- Setup: conditionally create network and connect proxy ---
         // When nested inside a TSK container, skip proxy/network setup since the
         // outer container already provides network isolation.
-        let resolved = resolve_config_from_task(task, &self.ctx);
+        let resolved = resolve_config_from_task(task, &self.ctx, &self.event_sender);
         let proxy_config = resolved.proxy_config();
 
         let mut proxy_ip: Option<String> = None;
@@ -563,7 +591,9 @@ impl DockerManager {
             proxy_ip = match self.proxy_manager.resolve_proxy_ip(&pcn, &name).await {
                 Ok(ip) => Some(ip),
                 Err(e) => {
-                    eprintln!("Warning: Could not resolve proxy IP for extra_hosts: {e}");
+                    self.emit(ServerEvent::WarningMessage(format!(
+                        "Warning: Could not resolve proxy IP for extra_hosts: {e}"
+                    )));
                     None
                 }
             };
@@ -583,7 +613,6 @@ impl DockerManager {
                 network_name.as_deref(),
                 if use_proxy { Some(&proxy_config) } else { None },
                 proxy_ip.as_deref(),
-                suppress_stdout,
             )
             .await;
 
@@ -595,7 +624,9 @@ impl DockerManager {
             self.proxy_manager.cleanup_agent_network(pcn, name).await;
         }
         if use_proxy && let Err(e) = self.proxy_manager.maybe_stop_proxy(&proxy_config).await {
-            eprintln!("Warning: Failed to check/stop idle proxy: {e}");
+            self.emit(ServerEvent::WarningMessage(format!(
+                "Warning: Failed to check/stop idle proxy: {e}"
+            )));
         }
 
         result
@@ -605,7 +636,6 @@ impl DockerManager {
     ///
     /// Returns the container ID (if one was created) alongside the execution result,
     /// so the caller can clean up the container, network, and proxy in one place.
-    #[allow(clippy::too_many_arguments)]
     async fn run_container_inner(
         &self,
         docker_image_tag: &str,
@@ -614,11 +644,11 @@ impl DockerManager {
         network_name: Option<&str>,
         proxy_config: Option<&crate::context::ResolvedProxyConfig>,
         proxy_container_ip: Option<&str>,
-        suppress_stdout: bool,
     ) -> (
         Option<String>,
         Result<(String, crate::agent::TaskResult), String>,
     ) {
+        let suppress_stdout = self.event_sender.is_some();
         let config = self.create_container_config(
             docker_image_tag,
             task,
@@ -678,13 +708,17 @@ impl DockerManager {
             let log_file = {
                 let output_dir = self.ctx.tsk_env().task_dir(&task.id).join("output");
                 if let Err(e) = std::fs::create_dir_all(&output_dir) {
-                    eprintln!("Warning: Failed to create output directory: {e}");
+                    self.emit(ServerEvent::WarningMessage(format!(
+                        "Warning: Failed to create output directory: {e}"
+                    )));
                     None
                 } else {
                     match std::fs::File::create(output_dir.join("agent.log")) {
                         Ok(file) => Some(file),
                         Err(e) => {
-                            eprintln!("Warning: Failed to create agent log file: {e}");
+                            self.emit(ServerEvent::WarningMessage(format!(
+                                "Warning: Failed to create agent log file: {e}"
+                            )));
                             None
                         }
                     }
@@ -751,6 +785,7 @@ impl DockerManager {
         let client_clone = Arc::clone(&self.client);
         let container_id_clone = container_id.to_string();
         let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(100);
+        let log_event_sender = self.event_sender.clone();
 
         let log_task = tokio::spawn(async move {
             let log_options = LogsOptions {
@@ -774,14 +809,24 @@ impl DockerManager {
                                 }
                             }
                             Err(e) => {
-                                eprintln!("Error streaming logs: {e}");
+                                crate::tui::events::emit_or_print(
+                                    &log_event_sender,
+                                    crate::tui::events::ServerEvent::WarningMessage(format!(
+                                        "Error streaming logs: {e}"
+                                    )),
+                                );
                                 break;
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to start log streaming: {e}");
+                    crate::tui::events::emit_or_print(
+                        &log_event_sender,
+                        crate::tui::events::ServerEvent::WarningMessage(format!(
+                            "Failed to start log streaming: {e}"
+                        )),
+                    );
                 }
             }
         });
@@ -810,7 +855,7 @@ impl DockerManager {
 
                     // Buffer chunks and process complete lines only
                     line_buffer.push_str(&log_chunk);
-                    process_complete_lines(&mut line_buffer, log_processor, log_file.as_mut(), suppress_stdout);
+                    process_complete_lines(&mut line_buffer, log_processor, log_file.as_mut(), suppress_stdout, &self.event_sender);
                 }
                 exit_code = &mut wait_future => {
                     let exit_code = exit_code?;
@@ -822,13 +867,13 @@ impl DockerManager {
                     while let Ok(log_chunk) = rx.try_recv() {
                         all_logs.push_str(&log_chunk);
                         line_buffer.push_str(&log_chunk);
-                        process_complete_lines(&mut line_buffer, log_processor, log_file.as_mut(), suppress_stdout);
+                        process_complete_lines(&mut line_buffer, log_processor, log_file.as_mut(), suppress_stdout, &self.event_sender);
                     }
 
                     // Flush remaining buffer content if non-empty
                     if !line_buffer.trim().is_empty() {
                         line_buffer.push('\n');
-                        process_complete_lines(&mut line_buffer, log_processor, log_file.as_mut(), suppress_stdout);
+                        process_complete_lines(&mut line_buffer, log_processor, log_file.as_mut(), suppress_stdout, &self.event_sender);
                     }
 
                     // Abort the log task
@@ -851,6 +896,7 @@ fn process_complete_lines(
     log_processor: &mut dyn LogProcessor,
     mut log_file: Option<&mut std::fs::File>,
     suppress_stdout: bool,
+    event_sender: &Option<ServerEventSender>,
 ) {
     while let Some(newline_pos) = line_buffer.find('\n') {
         let complete_line = &line_buffer[..newline_pos];
@@ -863,9 +909,13 @@ fn process_complete_lines(
             }
             if let Some(ref mut file) = log_file
                 && let Err(e) = writeln!(file, "{formatted}")
-                && !suppress_stdout
             {
-                eprintln!("Warning: Failed to write to agent log file: {e}");
+                crate::tui::events::emit_or_print(
+                    event_sender,
+                    ServerEvent::WarningMessage(format!(
+                        "Warning: Failed to write to agent log file: {e}"
+                    )),
+                );
             }
         }
 
@@ -908,13 +958,11 @@ mod tests {
     async fn test_run_task_container_success() {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
-        let manager = DockerManager::new(&ctx, mock_client.clone());
+        let manager = DockerManager::new(&ctx, mock_client.clone(), None);
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager
-            .run_task_container("tsk/base", &task, &agent, false)
-            .await;
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
         let (output, task_result) = result.unwrap();
@@ -983,13 +1031,11 @@ mod tests {
         // Test interactive mode with mock client
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
-        let manager = DockerManager::new(&ctx, mock_client.clone());
+        let manager = DockerManager::new(&ctx, mock_client.clone(), None);
 
         let task = create_test_task(true);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager
-            .run_task_container("tsk/base", &task, &agent, false)
-            .await;
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         // Interactive mode should succeed with mock client
         assert!(result.is_ok());
@@ -1039,15 +1085,13 @@ mod tests {
             ..Default::default()
         });
         let ctx = AppContext::builder().build();
-        let manager = DockerManager::new(&ctx, mock_client.clone());
+        let manager = DockerManager::new(&ctx, mock_client.clone(), None);
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
 
         // Run the task container
-        let result = manager
-            .run_task_container("tsk/base", &task, &agent, false)
-            .await;
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         // Non-zero exit is not an infrastructure error; it returns Ok with a failed TaskResult
         assert!(result.is_ok());
@@ -1084,13 +1128,11 @@ mod tests {
         };
         let mock_client = Arc::new(mock_client);
         let ctx = AppContext::builder().build();
-        let manager = DockerManager::new(&ctx, mock_client.clone());
+        let manager = DockerManager::new(&ctx, mock_client.clone(), None);
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager
-            .run_task_container("tsk/base", &task, &agent, false)
-            .await;
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err();
@@ -1123,13 +1165,11 @@ mod tests {
             ..Default::default()
         });
         let ctx = AppContext::builder().build();
-        let manager = DockerManager::new(&ctx, mock_client.clone());
+        let manager = DockerManager::new(&ctx, mock_client.clone(), None);
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let _ = manager
-            .run_task_container("tsk/base", &task, &agent, false)
-            .await;
+        let _ = manager.run_task_container("tsk/base", &task, &agent).await;
 
         let create_calls = mock_client.create_container_calls.lock().unwrap();
         assert_eq!(create_calls.len(), 2); // One for proxy, one for task container
@@ -1262,14 +1302,12 @@ mod tests {
     async fn test_run_task_container_with_instructions_file() {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
-        let manager = DockerManager::new(&ctx, mock_client.clone());
+        let manager = DockerManager::new(&ctx, mock_client.clone(), None);
 
         let mut task = create_test_task(false);
         task.instructions_file = "/tmp/tsk-test/instructions.txt".to_string();
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager
-            .run_task_container("tsk/base", &task, &agent, false)
-            .await;
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
 
@@ -1289,7 +1327,7 @@ mod tests {
     async fn test_relative_path_conversion() {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
-        let manager = DockerManager::new(&ctx, mock_client.clone());
+        let manager = DockerManager::new(&ctx, mock_client.clone(), None);
 
         // Create a temporary directory to use as base
         let temp_dir = tempfile::TempDir::new().unwrap();
@@ -1298,9 +1336,7 @@ mod tests {
         let mut task = create_test_task(false);
         task.copied_repo_path = Some(absolute_path.clone());
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager
-            .run_task_container("tsk/base", &task, &agent, false)
-            .await;
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
 
@@ -1351,13 +1387,11 @@ mod tests {
         };
 
         let ctx = AppContext::builder().with_tsk_config(tsk_config).build();
-        let manager = DockerManager::new(&ctx, mock_client.clone());
+        let manager = DockerManager::new(&ctx, mock_client.clone(), None);
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager
-            .run_task_container("tsk/base", &task, &agent, false)
-            .await;
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
 
@@ -1401,13 +1435,11 @@ mod tests {
         };
 
         let ctx = AppContext::builder().with_tsk_config(tsk_config).build();
-        let manager = DockerManager::new(&ctx, mock_client.clone());
+        let manager = DockerManager::new(&ctx, mock_client.clone(), None);
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager
-            .run_task_container("tsk/base", &task, &agent, false)
-            .await;
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
 
@@ -1451,13 +1483,11 @@ mod tests {
         };
 
         let ctx = AppContext::builder().with_tsk_config(tsk_config).build();
-        let manager = DockerManager::new(&ctx, mock_client.clone());
+        let manager = DockerManager::new(&ctx, mock_client.clone(), None);
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager
-            .run_task_container("tsk/base", &task, &agent, false)
-            .await;
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
 
@@ -1480,14 +1510,12 @@ mod tests {
         // Test that binds don't include project volumes when project is not in config
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
-        let manager = DockerManager::new(&ctx, mock_client.clone());
+        let manager = DockerManager::new(&ctx, mock_client.clone(), None);
 
         let mut task = create_test_task(false);
         task.project = "unconfigured-project".to_string();
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager
-            .run_task_container("tsk/base", &task, &agent, false)
-            .await;
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
 
@@ -1531,13 +1559,11 @@ mod tests {
         };
 
         let ctx = AppContext::builder().with_tsk_config(tsk_config).build();
-        let manager = DockerManager::new(&ctx, mock_client.clone());
+        let manager = DockerManager::new(&ctx, mock_client.clone(), None);
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager
-            .run_task_container("tsk/base", &task, &agent, false)
-            .await;
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
 
@@ -1557,15 +1583,13 @@ mod tests {
     async fn test_python_stack_sets_pythonpath() {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
-        let manager = DockerManager::new(&ctx, mock_client.clone());
+        let manager = DockerManager::new(&ctx, mock_client.clone(), None);
 
         let mut task = create_test_task(false);
         task.stack = "python".to_string();
         task.project = "my-python-app".to_string();
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let _ = manager
-            .run_task_container("tsk/base", &task, &agent, false)
-            .await;
+        let _ = manager.run_task_container("tsk/base", &task, &agent).await;
 
         let create_calls = mock_client.create_container_calls.lock().unwrap();
         let task_container_config = &create_calls[1].1;
@@ -1583,13 +1607,11 @@ mod tests {
     async fn test_non_python_stack_no_pythonpath() {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
-        let manager = DockerManager::new(&ctx, mock_client.clone());
+        let manager = DockerManager::new(&ctx, mock_client.clone(), None);
 
         let task = create_test_task(false); // stack is "default"
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let _ = manager
-            .run_task_container("tsk/base", &task, &agent, false)
-            .await;
+        let _ = manager.run_task_container("tsk/base", &task, &agent).await;
 
         let create_calls = mock_client.create_container_calls.lock().unwrap();
         let task_container_config = &create_calls[1].1;
@@ -1602,14 +1624,12 @@ mod tests {
         // Test that env vars don't include project env vars when project is not in config
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
-        let manager = DockerManager::new(&ctx, mock_client.clone());
+        let manager = DockerManager::new(&ctx, mock_client.clone(), None);
 
         let mut task = create_test_task(false);
         task.project = "unconfigured-project".to_string();
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager
-            .run_task_container("tsk/base", &task, &agent, false)
-            .await;
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
 
@@ -1628,14 +1648,12 @@ mod tests {
     async fn test_run_task_container_no_network_isolation() {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
-        let manager = DockerManager::new(&ctx, mock_client.clone());
+        let manager = DockerManager::new(&ctx, mock_client.clone(), None);
 
         let mut task = create_test_task(false);
         task.network_isolation = false;
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager
-            .run_task_container("tsk/base", &task, &agent, false)
-            .await;
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_ok());
 
@@ -1704,13 +1722,11 @@ mod tests {
             ..Default::default()
         });
         let ctx = AppContext::builder().build();
-        let manager = DockerManager::new(&ctx, mock_client.clone());
+        let manager = DockerManager::new(&ctx, mock_client.clone(), None);
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager
-            .run_task_container("tsk/base", &task, &agent, false)
-            .await;
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("out of disk space"));
@@ -1736,13 +1752,11 @@ mod tests {
             ..Default::default()
         });
         let ctx = AppContext::builder().build();
-        let manager = DockerManager::new(&ctx, mock_client.clone());
+        let manager = DockerManager::new(&ctx, mock_client.clone(), None);
 
         let task = create_test_task(false);
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let result = manager
-            .run_task_container("tsk/base", &task, &agent, false)
-            .await;
+        let result = manager.run_task_container("tsk/base", &task, &agent).await;
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("container runtime error"));
@@ -1766,14 +1780,12 @@ mod tests {
     async fn test_dind_security_relaxations() {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
-        let manager = DockerManager::new(&ctx, mock_client.clone());
+        let manager = DockerManager::new(&ctx, mock_client.clone(), None);
 
         let mut task = create_test_task(false);
         task.dind = true;
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let _ = manager
-            .run_task_container("tsk/base", &task, &agent, false)
-            .await;
+        let _ = manager.run_task_container("tsk/base", &task, &agent).await;
 
         let create_calls = mock_client.create_container_calls.lock().unwrap();
         let task_config = &create_calls[1].1;
@@ -1820,13 +1832,11 @@ mod tests {
     async fn test_non_dind_security_defaults() {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = AppContext::builder().build();
-        let manager = DockerManager::new(&ctx, mock_client.clone());
+        let manager = DockerManager::new(&ctx, mock_client.clone(), None);
 
         let task = create_test_task(false); // dind defaults to false
         let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
-        let _ = manager
-            .run_task_container("tsk/base", &task, &agent, false)
-            .await;
+        let _ = manager.run_task_container("tsk/base", &task, &agent).await;
 
         let create_calls = mock_client.create_container_calls.lock().unwrap();
         let task_config = &create_calls[1].1;
@@ -1870,7 +1880,7 @@ mod tests {
         let log_path = temp_dir.path().join("output").join("docker-build.log");
         let build_output = "Step 1/5: FROM ubuntu\nStep 2/5: RUN apt-get update\n";
 
-        super::save_build_log(&log_path, build_output);
+        super::save_build_log(&log_path, build_output, &None);
 
         assert!(log_path.exists());
         let content = std::fs::read_to_string(&log_path).unwrap();

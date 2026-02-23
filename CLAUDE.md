@@ -126,7 +126,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `ui::render()`: Two-panel layout with dynamic task panel width (content-fit, min 20 cols, max 30%) and header/footer
 - `input::handle_event()`: Keyboard (vim-style + arrows) and mouse input handling
 - `run::run_tui()`: Async event loop multiplexing crossterm events, server events, and periodic timers
-- Stdout suppression: `TaskRunner` and `DockerManager` accept a `suppress_stdout` flag (derived from `event_sender.is_some()`) to prevent log output from leaking into the TUI alternate screen; the `emit_or_print` helper in `tui::events` routes status messages through the event channel when available
+- Stdout suppression: `TaskRunner`, `DockerManager`, `DockerImageManager`, `ProxyManager`, and `DockerBuildLockManager` accept an optional `ServerEventSender` to route output through the TUI event channel; `DockerManager` derives a `suppress_stdout` flag from `event_sender.is_some()` to suppress raw agent log output in TUI mode; the `emit_or_print` helper in `tui::events` routes status messages through the event channel when available, falling back to stdout/stderr when no sender is provided
 
 **Git Operations** (`src/git.rs`, `src/git_sync.rs`, `src/git_operations.rs`, `src/repo_utils.rs`)
 - Repository cloning to centralized task directories using `CloneLocal::NoLinks` for optimized pack files

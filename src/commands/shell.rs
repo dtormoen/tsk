@@ -42,7 +42,7 @@ impl Command for ShellCommand {
             DefaultDockerClient::new(&ctx.tsk_config().container_engine)
                 .map_err(|e| -> Box<dyn Error> { e.into() })?,
         );
-        let docker_manager = DockerManager::new(ctx, docker_client);
+        let docker_manager = DockerManager::new(ctx, docker_client, None);
         let task_runner = TaskRunner::new(ctx, docker_manager, None);
         let result = task_runner
             .store_and_run(&task)

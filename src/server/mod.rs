@@ -6,7 +6,7 @@ use crate::context::AppContext;
 use crate::context::docker_client::DockerClient;
 use crate::docker::proxy_manager::ProxyManager;
 use crate::task::TaskStatus;
-use crate::tui::events::ServerEventSender;
+use crate::tui::events::{ServerEvent, ServerEventSender};
 use lifecycle::ServerLifecycle;
 use scheduler::TaskScheduler;
 use std::collections::HashSet;
@@ -26,6 +26,7 @@ pub struct TskServer {
     running_flag: Arc<Mutex<bool>>,
     lifecycle: ServerLifecycle,
     workers: u32,
+    event_sender: Option<ServerEventSender>,
 }
 
 impl TskServer {
@@ -70,7 +71,13 @@ impl TskServer {
             running_flag,
             lifecycle,
             workers,
+            event_sender,
         }
+    }
+
+    /// Route an event through the TUI channel when available, otherwise print directly.
+    fn emit(&self, event: ServerEvent) {
+        crate::tui::events::emit_or_print(&self.event_sender, event);
     }
 
     /// Start the server and process tasks
@@ -83,21 +90,30 @@ impl TskServer {
         // Write PID file
         self.lifecycle.write_pid()?;
 
-        println!("TSK Server started (PID {})", std::process::id());
+        self.emit(ServerEvent::StatusMessage(format!(
+            "TSK Server started (PID {})",
+            std::process::id()
+        )));
 
         // Start the task scheduler in the background
         let scheduler = self.scheduler.clone();
         let workers = self.workers;
+        let event_sender_clone = self.event_sender.clone();
         let scheduler_handle = tokio::spawn(async move {
             if let Err(e) = scheduler.lock().await.start(workers).await {
-                eprintln!("Scheduler error: {e}");
+                crate::tui::events::emit_or_print(
+                    &event_sender_clone,
+                    ServerEvent::WarningMessage(format!("Scheduler error: {e}")),
+                );
             }
         });
         *self.scheduler_handle.lock().await = Some(scheduler_handle);
 
         // Wait for the quit signal from the scheduler (quit-when-done mode)
         self.quit_signal.notified().await;
-        println!("Received quit signal from scheduler...");
+        self.emit(ServerEvent::StatusMessage(
+            "Received quit signal from scheduler...".to_string(),
+        ));
 
         // Wait for the scheduler task to finish its cleanup
         if let Some(handle) = self.scheduler_handle.lock().await.take() {
@@ -132,6 +148,7 @@ impl TskServer {
             self.docker_client.clone(),
             self.app_context.tsk_env(),
             self.app_context.tsk_config().container_engine.clone(),
+            self.event_sender.clone(),
         );
 
         if !task_ids.is_empty() {
@@ -139,7 +156,9 @@ impl TskServer {
             for id in &task_ids {
                 let container_name = format!("tsk-{id}");
                 if let Err(e) = docker_client.kill_container(&container_name).await {
-                    eprintln!("Note: Could not kill container {container_name}: {e}");
+                    self.emit(ServerEvent::WarningMessage(format!(
+                        "Note: Could not kill container {container_name}: {e}"
+                    )));
                 }
             }
         }
@@ -150,7 +169,9 @@ impl TskServer {
                 .await
                 .is_err()
         {
-            eprintln!("Warning: Scheduler did not stop within 5 seconds");
+            self.emit(ServerEvent::WarningMessage(
+                "Warning: Scheduler did not stop within 5 seconds".to_string(),
+            ));
         }
 
         let storage = self.app_context.task_storage();
@@ -161,19 +182,27 @@ impl TskServer {
                     let _ = storage.mark_failed(task_id, "Server shutdown").await;
                 }
                 // Collect unique proxy configs and stop idle proxies
-                let resolved = crate::docker::resolve_config_from_task(&task, &self.app_context);
+                let resolved = crate::docker::resolve_config_from_task(
+                    &task,
+                    &self.app_context,
+                    &self.event_sender,
+                );
                 let proxy_config = resolved.proxy_config();
                 let fp = proxy_config.fingerprint();
                 if stopped_fingerprints.insert(fp)
                     && let Err(e) = proxy_manager.maybe_stop_proxy(&proxy_config).await
                 {
-                    eprintln!("Warning: Failed to stop proxy during shutdown: {e}");
+                    self.emit(ServerEvent::WarningMessage(format!(
+                        "Warning: Failed to stop proxy during shutdown: {e}"
+                    )));
                 }
             }
         }
 
         if let Err(e) = self.lifecycle.cleanup() {
-            eprintln!("Warning: Failed to clean up PID file: {e}");
+            self.emit(ServerEvent::WarningMessage(format!(
+                "Warning: Failed to clean up PID file: {e}"
+            )));
         }
 
         self.app_context.terminal_operations().restore_title();

@@ -39,6 +39,7 @@ impl Command for DockerBuildCommand {
                 docker_client,
                 ctx.tsk_env(),
                 ctx.tsk_config().container_engine.clone(),
+                None,
             );
             proxy_manager.build_proxy(self.no_cache, None).await?;
             println!("Successfully built Docker image: tsk/proxy");
@@ -98,7 +99,7 @@ impl Command for DockerBuildCommand {
         );
 
         // Create image manager with AppContext
-        let image_manager = DockerImageManager::new(ctx, docker_client.clone(), None);
+        let image_manager = DockerImageManager::new(ctx, docker_client.clone(), None, None);
 
         // Build the main image (with dry_run flag)
         let image_tag = image_manager
@@ -126,6 +127,7 @@ impl Command for DockerBuildCommand {
                 docker_client,
                 ctx.tsk_env(),
                 ctx.tsk_config().container_engine.clone(),
+                None,
             );
             proxy_manager.build_proxy(self.no_cache, None).await?;
             println!("Successfully built Docker image: tsk/proxy");

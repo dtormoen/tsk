@@ -15,6 +15,7 @@ use crate::context::docker_client::DockerClient;
 use crate::docker::build_lock_manager::DockerBuildLockManager;
 use crate::docker::composer::{ComposedDockerfile, DockerComposer, InlineLayerOverrides};
 use crate::docker::layers::{DockerImageConfig, DockerLayerType};
+use crate::tui::events::{ServerEvent, ServerEventSender};
 
 /// Options for building Docker images.
 pub struct BuildOptions<'a> {
@@ -120,6 +121,7 @@ pub struct DockerImageManager {
     client: Arc<dyn DockerClient>,
     docker_build_lock_manager: Arc<DockerBuildLockManager>,
     composer: DockerComposer,
+    event_sender: Option<ServerEventSender>,
 }
 
 impl DockerImageManager {
@@ -129,10 +131,12 @@ impl DockerImageManager {
     /// * `ctx` - Application context with all dependencies
     /// * `client` - Docker client for image operations
     /// * `docker_build_lock_manager` - Optional shared lock manager; creates a new one if `None`
+    /// * `event_sender` - Optional TUI event channel for structured output
     pub fn new(
         ctx: &AppContext,
         client: Arc<dyn DockerClient>,
         docker_build_lock_manager: Option<Arc<DockerBuildLockManager>>,
+        event_sender: Option<ServerEventSender>,
     ) -> Self {
         let composer = DockerComposer::new();
 
@@ -142,7 +146,13 @@ impl DockerImageManager {
             docker_build_lock_manager: docker_build_lock_manager
                 .unwrap_or_else(|| Arc::new(DockerBuildLockManager::new())),
             composer,
+            event_sender,
         }
+    }
+
+    /// Route an event through the TUI channel when available, otherwise print directly.
+    fn emit(&self, event: ServerEvent) {
+        crate::tui::events::emit_or_print(&self.event_sender, event);
     }
 
     /// Helper to create DockerImageConfig
@@ -254,7 +264,10 @@ impl DockerImageManager {
             && missing_layers[0].layer_type == DockerLayerType::Project
             && project != "default"
         {
-            println!("Note: Using default project layer as project-specific layer was not found");
+            self.emit(ServerEvent::StatusMessage(
+                "Note: Using default project layer as project-specific layer was not found"
+                    .to_string(),
+            ));
             return Ok((format!("tsk/{stack}/{agent}/default"), true));
         }
 
@@ -316,11 +329,14 @@ impl DockerImageManager {
         // Acquire build lock for this image
         let _lock = self
             .docker_build_lock_manager
-            .acquire_build_lock(&tag)
+            .acquire_build_lock(&tag, &self.event_sender)
             .await;
 
         // Build the image
-        println!("Building Docker image: {}", tag);
+        self.emit(ServerEvent::StatusMessage(format!(
+            "Building Docker image: {}",
+            tag
+        )));
 
         // Determine actual project to use (considering fallback)
         let actual_project = if used_fallback {
@@ -506,7 +522,7 @@ impl DockerImageManager {
                 }
                 Err(e) => {
                     if let Some(log_path) = options.build_log_path {
-                        super::save_build_log(log_path, &build_output);
+                        super::save_build_log(log_path, &build_output, &self.event_sender);
                     }
                     eprint!("{build_output}");
                     return Err(anyhow::anyhow!("Docker build failed: {e}"));
@@ -563,7 +579,7 @@ mod tests {
     fn create_test_manager() -> DockerImageManager {
         use crate::test_utils::NoOpDockerClient;
         let ctx = AppContext::builder().build();
-        DockerImageManager::new(&ctx, Arc::new(NoOpDockerClient), None)
+        DockerImageManager::new(&ctx, Arc::new(NoOpDockerClient), None, None)
     }
 
     #[test]
@@ -863,7 +879,7 @@ mod tests {
 
         // Launch two concurrent tasks that try to acquire the same lock
         let task1 = tokio::spawn(async move {
-            let _guard = lock1.acquire_build_lock("test-image").await;
+            let _guard = lock1.acquire_build_lock("test-image", &None).await;
             order1.lock().unwrap().push(1);
             // Hold lock for a bit
             sleep(Duration::from_millis(50)).await;
@@ -874,7 +890,7 @@ mod tests {
         let task2 = tokio::spawn(async move {
             // Small delay to ensure task 1 gets lock first
             sleep(Duration::from_millis(10)).await;
-            let _guard = lock2.acquire_build_lock("test-image").await;
+            let _guard = lock2.acquire_build_lock("test-image", &None).await;
             order2.lock().unwrap().push(3);
             sleep(Duration::from_millis(10)).await;
             order2.lock().unwrap().push(4);
@@ -910,6 +926,7 @@ mod tests {
             &ctx1,
             Arc::new(NoOpDockerClient),
             Some(lock_manager.clone()),
+            None,
         );
 
         let ctx2 = AppContext::builder().build();
@@ -917,6 +934,7 @@ mod tests {
             &ctx2,
             Arc::new(NoOpDockerClient),
             Some(lock_manager.clone()),
+            None,
         );
 
         // Launch two concurrent ensure_image tasks for different images
