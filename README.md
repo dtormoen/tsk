@@ -366,7 +366,7 @@ This repository includes a Claude Code skills marketplace with TSK-specific skil
 # Add the marketplace in Claude Code
 /plugin marketplace add dtormoen/tsk
 
-# Install the tsk-help skill
+# Install a skill (e.g. tsk-help, tsk-docker-config, tsk-add)
 /plugin install tsk-help@dtormoen/tsk
 ```
 

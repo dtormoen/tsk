@@ -1,0 +1,7 @@
+{
+  "name": "tsk-add",
+  "description": "Helps Claude queue a development task from the current conversation using tsk add.",
+  "author": {
+    "name": "TSK Contributors"
+  }
+}

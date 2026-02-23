@@ -16,6 +16,11 @@
       "name": "tsk-docker-config",
       "description": "Guides users through configuring TSK Docker container images for their project.",
       "source": "./skills/tsk-docker-config"
+    },
+    {
+      "name": "tsk-add",
+      "description": "Helps queue a development task from the current conversation using tsk add.",
+      "source": "./skills/tsk-add"
     }
   ]
 }

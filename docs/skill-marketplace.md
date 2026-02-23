@@ -22,7 +22,7 @@ Browse and install individual skills:
 
 ### Manual installation
 
-You can also copy skills directly:
+You can also copy skills directly. Replace `tsk-help` with any skill name from the Available Skills table below:
 
 ```bash
 # User-level (available in all projects)
@@ -38,6 +38,7 @@ cp -r skills/tsk-help/skills/tsk-help .claude/skills/
 |-------|-------------|
 | `tsk-help` | Teaches Claude core TSK commands for delegating tasks to AI agents |
 | `tsk-docker-config` | Guides users through configuring TSK Docker container images |
+| `tsk-add` | Queues a development task from the current conversation using tsk add |
 
 ## Contributing a New Skill
 
