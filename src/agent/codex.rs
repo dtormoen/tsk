@@ -100,10 +100,9 @@ impl Agent for CodexAgent {
 
     fn create_log_processor(
         &self,
-        task: Option<&crate::task::Task>,
+        _task: Option<&crate::task::Task>,
     ) -> Box<dyn super::LogProcessor> {
-        let task_name = task.map(|t| t.name.clone());
-        Box::new(CodexLogProcessor::new(task_name))
+        Box::new(CodexLogProcessor::new())
     }
 
     fn name(&self) -> &str {

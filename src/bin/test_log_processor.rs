@@ -6,9 +6,13 @@ use std::io::{BufRead, BufReader};
 mod agent {
     use async_trait::async_trait;
 
+    pub mod log_line {
+        pub use super::super::log_line::*;
+    }
+
     #[async_trait]
     pub trait LogProcessor: Send + Sync {
-        fn process_line(&mut self, line: &str) -> Option<String>;
+        fn process_line(&mut self, line: &str) -> Option<log_line::LogLine>;
         fn get_final_result(&self) -> Option<&TaskResult>;
     }
 
@@ -25,6 +29,10 @@ mod agent {
         pub use super::super::claude_log_processor::ClaudeLogProcessor;
     }
 }
+
+// Include the log_line module
+#[path = "../agent/log_line.rs"]
+mod log_line;
 
 // Include the log processor module
 #[path = "../agent/claude/claude_log_processor.rs"]
@@ -45,12 +53,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file = File::open(log_file_path)?;
     let reader = BufReader::new(file);
 
-    let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
+    let mut processor = ClaudeLogProcessor::new();
 
     for line in reader.lines() {
         let line = line?;
-        if let Some(formatted) = processor.process_line(&line) {
-            println!("{}", formatted);
+        if let Some(log_line) = processor.process_line(&line) {
+            println!("{}", log_line);
         }
     }
 

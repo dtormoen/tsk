@@ -208,7 +208,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut app = TuiApp::new(1);
         app.focus = Panel::Logs;
-        app.log_content = (0..100).map(|i| format!("line {i}")).collect();
+        app.log_content = (0..100)
+            .map(|i| crate::agent::log_line::LogLine::message(vec![], None, format!("line {i}")))
+            .collect();
         app.log_viewport_height = 10;
 
         handle_event(&mut app, &make_key_event(KeyCode::Char('j')), tmp.path());
@@ -229,16 +231,26 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let data_dir = tmp.path();
 
-        // Create log files for tasks
+        // Create log files for tasks in JSON-lines format
         let log_dir = data_dir.join("tasks").join("t2").join("output");
         fs::create_dir_all(&log_dir).unwrap();
-        fs::write(log_dir.join("agent.log"), "log from t2\n").unwrap();
+        let log_line = crate::agent::log_line::LogLine::message(vec![], None, "log from t2".into());
+        let json = serde_json::to_string(&log_line).unwrap();
+        fs::write(log_dir.join("agent.log"), format!("{json}\n")).unwrap();
 
         let mut app = app_with_tasks();
 
         handle_event(&mut app, &make_key_event(KeyCode::Char('j')), data_dir);
         assert_eq!(app.task_list_state.selected(), Some(1));
-        assert_eq!(app.log_content, vec!["log from t2"]);
+        assert_eq!(app.log_content.len(), 1);
+        assert_eq!(
+            app.log_content,
+            vec![crate::agent::log_line::LogLine::message(
+                vec![],
+                None,
+                "log from t2".into()
+            )]
+        );
     }
 
     #[test]
@@ -262,7 +274,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut app = TuiApp::new(1);
         app.task_panel_width = 30;
-        app.log_content = (0..100).map(|i| format!("line {i}")).collect();
+        app.log_content = (0..100)
+            .map(|i| crate::agent::log_line::LogLine::message(vec![], None, format!("line {i}")))
+            .collect();
         app.log_viewport_height = 10;
 
         // Column 79 is well past the task panel boundary
@@ -313,7 +327,9 @@ mod tests {
 
         let log_dir = data_dir.join("tasks").join("t2").join("output");
         fs::create_dir_all(&log_dir).unwrap();
-        fs::write(log_dir.join("agent.log"), "log from t2\n").unwrap();
+        let log_line = crate::agent::log_line::LogLine::message(vec![], None, "log from t2".into());
+        let json = serde_json::to_string(&log_line).unwrap();
+        fs::write(log_dir.join("agent.log"), format!("{json}\n")).unwrap();
 
         let mut app = app_with_tasks();
         app.task_panel_width = 30;
@@ -322,7 +338,15 @@ mod tests {
         // Click on the second task
         handle_event(&mut app, &make_mouse_click(5, 4), data_dir);
         assert_eq!(app.task_list_state.selected(), Some(1));
-        assert_eq!(app.log_content, vec!["log from t2"]);
+        assert_eq!(app.log_content.len(), 1);
+        assert_eq!(
+            app.log_content,
+            vec![crate::agent::log_line::LogLine::message(
+                vec![],
+                None,
+                "log from t2".into()
+            )]
+        );
     }
 
     #[test]

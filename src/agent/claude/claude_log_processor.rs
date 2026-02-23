@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
+#[cfg(test)]
+use crate::agent::log_line::Level;
+use crate::agent::log_line::{LogLine, TodoItem, TodoStatus};
 use crate::agent::{LogProcessor, TaskResult};
 
 /// Represents a message from Claude's JSON output
@@ -46,9 +49,9 @@ struct Usage {
     service_tier: Option<String>,
 }
 
-/// Todo item structure from Claude's TodoWrite tool
+/// Todo item structure from Claude's TodoWrite tool (internal deserialization)
 #[derive(Debug, Deserialize, Serialize, Clone)]
-struct TodoItem {
+struct ClaudeTodoItem {
     content: String,
     status: String,
     #[serde(rename = "activeForm")]
@@ -66,7 +69,7 @@ struct TaskInvocation {
 
 /// Claude Code specific log processor that parses and formats JSON output
 ///
-/// This processor provides rich output including:
+/// This processor produces structured `LogLine` values including:
 /// - Tool usage information (Edit, Bash, Write, etc.)
 /// - Tool result summaries from user messages
 /// - TODO list updates with status indicators
@@ -83,40 +86,32 @@ pub struct ClaudeLogProcessor {
     json_mode_active: bool,
     /// Track whether the previous line was a parsing error to avoid duplicate error messages
     last_line_was_parse_error: bool,
-    /// Optional task name for prefixing log lines
-    task_name: Option<String>,
     /// Track task contexts by parent_tool_use_id for sub-agent message tagging
     task_contexts: HashMap<String, TaskInvocation>,
 }
 
 impl ClaudeLogProcessor {
     /// Creates a new ClaudeLogProcessor
-    pub fn new(task_name: Option<String>) -> Self {
+    pub fn new() -> Self {
         Self {
             final_result: None,
             json_mode_active: false,
             last_line_was_parse_error: false,
-            task_name,
             task_contexts: HashMap::new(),
         }
     }
 
-    /// Creates a prefix for log lines in the format: <emoji> [<Task.name>][<model>][<sub-agent-name>]:
-    fn create_prefix(
+    /// Build tags from model and parent_tool_use_id context.
+    fn build_tags(
         &self,
-        emoji: &str,
         model: Option<&str>,
         sub_agent: Option<&str>,
         parent_tool_use_id: Option<&str>,
-    ) -> String {
-        let mut prefix = emoji.to_string();
-
-        if let Some(task_name) = &self.task_name {
-            prefix.push_str(&format!(" [{}]", task_name));
-        }
+    ) -> Vec<String> {
+        let mut tags = Vec::new();
 
         if let Some(model) = model {
-            prefix.push_str(&format!("[{}]", model));
+            tags.push(model.to_string());
         }
 
         // Two-level fallback for sub_agent name:
@@ -129,15 +124,14 @@ impl ClaudeLogProcessor {
         });
 
         if let Some(sub_agent_name) = sub_agent_name {
-            prefix.push_str(&format!("[{}]", sub_agent_name));
+            tags.push(sub_agent_name.to_string());
         }
 
-        prefix.push_str(": ");
-        prefix
+        tags
     }
 
     /// Formats a Claude message based on its type
-    fn format_message(&mut self, msg: ClaudeMessage) -> Option<String> {
+    fn format_message(&mut self, msg: ClaudeMessage) -> Option<LogLine> {
         let parent_tool_use_id = msg.parent_tool_use_id.as_deref();
 
         match msg.message_type.as_str() {
@@ -145,6 +139,7 @@ impl ClaudeLogProcessor {
             "user" => self.format_user_message(&msg),
             "result" => self.format_result_message(msg),
             "summary" => {
+                let tags = self.build_tags(None, None, parent_tool_use_id);
                 if let Some(summary_text) = msg.summary {
                     // Store as final result if not already set
                     if self.final_result.is_none() {
@@ -155,23 +150,14 @@ impl ClaudeLogProcessor {
                             duration_ms: None,
                         });
                     }
-                    Some(format!(
-                        "{}{summary_text}",
-                        self.create_prefix("✅", None, None, parent_tool_use_id)
-                    ))
+                    Some(LogLine::success(tags, None, summary_text))
                 } else {
-                    Some(format!(
-                        "{}Task Complete",
-                        self.create_prefix("✅", None, None, parent_tool_use_id)
-                    ))
+                    Some(LogLine::success(tags, None, "Task Complete".into()))
                 }
             }
             other_type => {
-                // For other message types, just show a brief indicator
-                Some(format!(
-                    "{}[{other_type}]",
-                    self.create_prefix("📋", None, None, parent_tool_use_id)
-                ))
+                let tags = self.build_tags(None, None, parent_tool_use_id);
+                Some(LogLine::message(tags, None, format!("[{other_type}]")))
             }
         }
     }
@@ -211,7 +197,7 @@ impl ClaudeLogProcessor {
     }
 
     /// Formats a user message with tool result information
-    fn format_user_message(&mut self, msg: &ClaudeMessage) -> Option<String> {
+    fn format_user_message(&mut self, msg: &ClaudeMessage) -> Option<LogLine> {
         let parent_tool_use_id = msg.parent_tool_use_id.as_deref();
 
         // Check if this is a tool result message
@@ -289,32 +275,28 @@ impl ClaudeLogProcessor {
             // Check if it's a regular user message with string content
             else if let Value::String(text) = content {
                 let first_line = text.lines().next().unwrap_or("").trim();
+                let tags = self.build_tags(None, None, parent_tool_use_id);
                 if first_line.starts_with("# ") {
-                    return Some(format!(
-                        "{}User: {}",
-                        self.create_prefix("👤", None, None, parent_tool_use_id),
-                        first_line.trim_start_matches("# ")
+                    return Some(LogLine::message(
+                        tags,
+                        None,
+                        format!("User: {}", first_line.trim_start_matches("# ")),
                     ));
                 } else if first_line.len() > 60 {
-                    return Some(format!(
-                        "{}User: {}...",
-                        self.create_prefix("👤", None, None, parent_tool_use_id),
-                        &first_line[..60]
+                    return Some(LogLine::message(
+                        tags,
+                        None,
+                        format!("User: {}...", &first_line[..60]),
                     ));
                 } else if !first_line.is_empty() {
-                    return Some(format!(
-                        "{}User: {first_line}",
-                        self.create_prefix("👤", None, None, parent_tool_use_id)
-                    ));
+                    return Some(LogLine::message(tags, None, format!("User: {first_line}")));
                 }
             }
         }
 
         // Default fallback
-        Some(format!(
-            "{}[user]",
-            self.create_prefix("👤", None, None, parent_tool_use_id)
-        ))
+        let tags = self.build_tags(None, None, parent_tool_use_id);
+        Some(LogLine::message(tags, None, "[user]".into()))
     }
 
     /// Formats tool result based on its content
@@ -324,139 +306,119 @@ impl ClaudeLogProcessor {
         tool_use_id: Option<&str>,
         parent_tool_use_id: Option<&str>,
         actual_content: Option<&str>,
-    ) -> String {
+    ) -> LogLine {
         // Check if this is a Task tool result with sub-agent output
         if let Some(tool_use_id) = tool_use_id
             && let Some(task_info) = self.task_contexts.get(tool_use_id)
         {
-            let prefix = self.create_prefix(
-                "🤖",
-                None,
-                Some(&task_info.subagent_type),
-                parent_tool_use_id,
-            );
+            let tags = self.build_tags(None, Some(&task_info.subagent_type), parent_tool_use_id);
 
             // Use the actual content from the message instead of tool_result
-            if let Some(content) = actual_content {
-                // If content is not empty, display it properly
-                if !content.trim().is_empty() {
-                    // Convert escaped newlines to actual newlines for better display
-                    let processed_content = content.replace("\\n", "\n");
-                    return format!(
-                        "{}Task Complete: {} ({})\n\n📋 Sub-agent Output:\n{}",
-                        prefix, task_info.description, task_info.subagent_type, processed_content
-                    );
-                }
+            if let Some(content) = actual_content
+                && !content.trim().is_empty()
+            {
+                let processed_content = content.replace("\\n", "\n");
+                return LogLine::message(
+                    tags,
+                    Some("Task".into()),
+                    format!(
+                        "Complete: {} ({})\n\nSub-agent Output:\n{}",
+                        task_info.description, task_info.subagent_type, processed_content
+                    ),
+                );
             }
 
-            // Fallback for empty or missing content
-            return format!(
-                "{}Task Complete: {} ({})",
-                prefix, task_info.description, task_info.subagent_type
+            return LogLine::message(
+                tags,
+                Some("Task".into()),
+                format!(
+                    "Complete: {} ({})",
+                    task_info.description, task_info.subagent_type
+                ),
             );
         }
+
+        let tags = self.build_tags(None, None, parent_tool_use_id);
+
         // Check for specific result types to identify the tool
         if tool_result.get("type").and_then(|t| t.as_str()) == Some("text") {
             if let Some(file_info) = tool_result.get("file")
                 && let Some(path) = file_info.get("filePath").and_then(|p| p.as_str())
             {
                 let filename = path.rsplit('/').next().unwrap_or(path);
-                return format!(
-                    "{}Read result: {filename}",
-                    self.create_prefix("📖", None, None, parent_tool_use_id)
-                );
+                return LogLine::message(tags, Some("Read".into()), format!("result: {filename}"));
             }
-            return format!(
-                "{}Read result",
-                self.create_prefix("📖", None, None, parent_tool_use_id)
-            );
+            return LogLine::message(tags, Some("Read".into()), "result".into());
         }
 
         if tool_result.get("filePath").is_some() {
-            return format!(
-                "{}Edit result",
-                self.create_prefix("✏️", None, None, parent_tool_use_id)
-            );
+            return LogLine::message(tags, Some("Edit".into()), "result".into());
         }
 
         if tool_result.get("oldTodos").is_some() || tool_result.get("newTodos").is_some() {
-            // For TodoWrite results, show the todo update
             if let Some(new_todos) = tool_result.get("newTodos")
-                && let Ok(todos) = serde_json::from_value::<Vec<TodoItem>>(new_todos.clone())
+                && let Ok(todos) = serde_json::from_value::<Vec<ClaudeTodoItem>>(new_todos.clone())
             {
-                return format!(
-                    "{}TodoWrite result - {} todos",
-                    self.create_prefix("📝", None, None, parent_tool_use_id),
-                    todos.len()
+                return LogLine::message(
+                    tags,
+                    Some("TodoWrite".into()),
+                    format!("result - {} todos", todos.len()),
                 );
             }
-            return format!(
-                "{}TodoWrite result",
-                self.create_prefix("📝", None, None, parent_tool_use_id)
-            );
+            return LogLine::message(tags, Some("TodoWrite".into()), "result".into());
         }
 
         if let Some(filenames) = tool_result.get("filenames").and_then(|v| v.as_array()) {
             let count = filenames.len();
-            return format!(
-                "{}Search result: Found {} file{}",
-                self.create_prefix("🔍", None, None, parent_tool_use_id),
-                count,
-                if count == 1 { "" } else { "s" }
+            return LogLine::message(
+                tags,
+                Some("Glob".into()),
+                format!(
+                    "result: Found {} file{}",
+                    count,
+                    if count == 1 { "" } else { "s" }
+                ),
             );
         }
 
         if let Some(stdout) = tool_result.get("stdout").and_then(|v| v.as_str()) {
             if stdout.contains("test result: ok") {
-                return format!(
-                    "{}Bash result: Tests passed ✅",
-                    self.create_prefix("🖥️", None, None, parent_tool_use_id)
-                );
+                return LogLine::success(tags, Some("Bash".into()), "result: Tests passed".into());
             } else if stdout.contains("test result: FAILED") {
-                return format!(
-                    "{}Bash result: Tests failed ❌",
-                    self.create_prefix("🖥️", None, None, parent_tool_use_id)
-                );
+                return LogLine::error(tags, Some("Bash".into()), "result: Tests failed".into());
             } else if stdout.trim().is_empty() {
-                return format!(
-                    "{}Bash result: Command completed",
-                    self.create_prefix("🖥️", None, None, parent_tool_use_id)
+                return LogLine::message(
+                    tags,
+                    Some("Bash".into()),
+                    "result: Command completed".into(),
                 );
             } else {
                 let first_line = stdout.lines().next().unwrap_or("").trim();
                 if first_line.len() > 40 {
-                    return format!(
-                        "{}Bash result: {}...",
-                        self.create_prefix("🖥️", None, None, parent_tool_use_id),
-                        &first_line[..40]
+                    return LogLine::message(
+                        tags,
+                        Some("Bash".into()),
+                        format!("result: {}...", &first_line[..40]),
                     );
                 } else {
-                    return format!(
-                        "{}Bash result: {first_line}",
-                        self.create_prefix("🖥️", None, None, parent_tool_use_id)
+                    return LogLine::message(
+                        tags,
+                        Some("Bash".into()),
+                        format!("result: {first_line}"),
                     );
                 }
             }
         }
 
         if let Some(error) = tool_result.get("error").and_then(|v| v.as_str()) {
-            return format!(
-                "{}Tool error: {error}",
-                self.create_prefix("❌", None, None, parent_tool_use_id)
-            );
+            return LogLine::error(tags, None, format!("Tool error: {error}"));
         }
 
         if tool_result.get("is_error").and_then(|v| v.as_bool()) == Some(true) {
-            return format!(
-                "{}Tool error occurred",
-                self.create_prefix("❌", None, None, parent_tool_use_id)
-            );
+            return LogLine::error(tags, None, "Tool error occurred".into());
         }
 
-        format!(
-            "{}Tool result: Completed",
-            self.create_prefix("🔧", None, None, parent_tool_use_id)
-        )
+        LogLine::message(tags, None, "Tool result: Completed".into())
     }
 
     /// Formats a Task tool result with sub-agent output
@@ -465,43 +427,44 @@ impl ClaudeLogProcessor {
         task_info: &TaskInvocation,
         parent_tool_use_id: Option<&str>,
         actual_content: Option<&str>,
-    ) -> String {
-        let prefix = self.create_prefix(
-            "🤖",
-            None,
-            Some(&task_info.subagent_type),
-            parent_tool_use_id,
-        );
+    ) -> LogLine {
+        let tags = self.build_tags(None, Some(&task_info.subagent_type), parent_tool_use_id);
 
-        // Use the actual content from the message instead of tool_result
-        if let Some(content) = actual_content {
-            // If content is not empty, display it properly
-            if !content.trim().is_empty() {
-                // Convert escaped newlines to actual newlines for better display
-                let processed_content = content.replace("\\n", "\n");
-                return format!(
-                    "{}Task Complete: {} ({})\n\n📋 Sub-agent Output:\n{}",
-                    prefix, task_info.description, task_info.subagent_type, processed_content
-                );
-            }
+        // Use the actual content from the message
+        if let Some(content) = actual_content
+            && !content.trim().is_empty()
+        {
+            let processed_content = content.replace("\\n", "\n");
+            return LogLine::message(
+                tags,
+                Some("Task".into()),
+                format!(
+                    "Complete: {} ({})\n\nSub-agent Output:\n{}",
+                    task_info.description, task_info.subagent_type, processed_content
+                ),
+            );
         }
 
         // Fallback for empty or missing content
-        format!(
-            "{}Task Complete: {} ({})",
-            prefix, task_info.description, task_info.subagent_type
+        LogLine::message(
+            tags,
+            Some("Task".into()),
+            format!(
+                "Complete: {} ({})",
+                task_info.description, task_info.subagent_type
+            ),
         )
     }
 
     /// Formats an assistant message, extracting text content, tool uses, and todo updates
-    fn format_assistant_message(&mut self, msg: ClaudeMessage) -> Option<String> {
+    fn format_assistant_message(&mut self, msg: ClaudeMessage) -> Option<LogLine> {
         let parent_tool_use_id = msg.parent_tool_use_id.as_deref();
 
         if let Some(message) = msg.message {
             if let Some(content) = message.content {
                 match content {
                     Value::Array(contents) => {
-                        let mut output = String::new();
+                        let mut lines: Vec<LogLine> = Vec::new();
 
                         for item in contents {
                             // Check for tool use
@@ -530,19 +493,17 @@ impl ClaudeLogProcessor {
                                         description,
                                     };
 
-                                    // Add to task_contexts for tracking messages by parent_tool_use_id
                                     self.task_contexts
                                         .insert(tool_use_id.to_string(), task_invocation);
                                 }
 
-                                let tool_output = self.format_tool_use(
+                                if let Some(tool_line) = self.format_tool_use(
                                     tool_name,
                                     &item,
                                     message.model.as_deref(),
                                     parent_tool_use_id,
-                                );
-                                if !tool_output.is_empty() {
-                                    output.push_str(&tool_output);
+                                ) {
+                                    lines.push(tool_line);
                                 }
                             }
 
@@ -550,33 +511,39 @@ impl ClaudeLogProcessor {
                             if let Some(text) = item.get("text").and_then(|t| t.as_str())
                                 && !text.trim().is_empty()
                             {
-                                if !output.is_empty() {
-                                    output.push('\n');
-                                }
-                                let prefix = self.create_prefix(
-                                    "🤖",
+                                let tags = self.build_tags(
                                     message.model.as_deref(),
                                     None,
                                     parent_tool_use_id,
                                 );
-                                output.push_str(&format!("{}{text}", prefix));
+                                lines.push(LogLine::message(tags, None, text.to_string()));
                             }
                         }
 
-                        if !output.is_empty() {
-                            Some(output.trim_end().to_string())
+                        if lines.len() == 1 {
+                            Some(lines.remove(0))
+                        } else if lines.len() > 1 {
+                            // Merge multiple LogLines into a single Message with newlines
+                            let merged_text = lines
+                                .iter()
+                                .map(|l: &LogLine| l.to_string())
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            // Use the tags from the first line
+                            let tags = match &lines[0] {
+                                LogLine::Message { tags, .. } => tags.clone(),
+                                LogLine::Todo { tags, .. } => tags.clone(),
+                                _ => vec![],
+                            };
+                            Some(LogLine::message(tags, None, merged_text))
                         } else {
                             None
                         }
                     }
                     Value::String(text) => {
-                        let prefix = self.create_prefix(
-                            "🤖",
-                            message.model.as_deref(),
-                            None,
-                            parent_tool_use_id,
-                        );
-                        Some(format!("{}{text}", prefix))
+                        let tags =
+                            self.build_tags(message.model.as_deref(), None, parent_tool_use_id);
+                        Some(LogLine::message(tags, None, text))
                     }
                     _ => None,
                 }
@@ -595,7 +562,9 @@ impl ClaudeLogProcessor {
         item: &Value,
         model: Option<&str>,
         parent_tool_use_id: Option<&str>,
-    ) -> String {
+    ) -> Option<LogLine> {
+        let tags = self.build_tags(model, None, parent_tool_use_id);
+
         match tool_name {
             "Task" => {
                 if let Some(input) = item.get("input") {
@@ -609,32 +578,43 @@ impl ClaudeLogProcessor {
                         .unwrap_or("No description");
                     let prompt = input.get("prompt").and_then(|p| p.as_str()).unwrap_or("");
 
-                    let prefix = self.create_prefix("🤖", model, None, parent_tool_use_id);
                     if !prompt.is_empty() {
-                        format!(
-                            "{}Starting Task: {} ({})\n\nPrompt: {}",
-                            prefix, description, subagent_type, prompt
-                        )
+                        Some(LogLine::message(
+                            tags,
+                            Some("Task".into()),
+                            format!(
+                                "Starting: {} ({})\n\nPrompt: {}",
+                                description, subagent_type, prompt
+                            ),
+                        ))
                     } else {
-                        format!(
-                            "{}Starting Task: {} ({})",
-                            prefix, description, subagent_type
-                        )
+                        Some(LogLine::message(
+                            tags,
+                            Some("Task".into()),
+                            format!("Starting: {} ({})", description, subagent_type),
+                        ))
                     }
                 } else {
-                    let prefix = self.create_prefix("🤖", model, None, parent_tool_use_id);
-                    format!("{}Starting Task", prefix)
+                    Some(LogLine::message(
+                        tags,
+                        Some("Task".into()),
+                        "Starting".into(),
+                    ))
                 }
             }
             "TodoWrite" => {
                 if let Some(input) = item.get("input")
                     && let Some(todos) = input.get("todos")
-                    && let Ok(todo_items) = serde_json::from_value::<Vec<TodoItem>>(todos.clone())
+                    && let Ok(todo_items) =
+                        serde_json::from_value::<Vec<ClaudeTodoItem>>(todos.clone())
                 {
-                    self.format_todo_update(&todo_items, parent_tool_use_id)
+                    Some(self.format_todo_update(&todo_items, parent_tool_use_id))
                 } else {
-                    let prefix = self.create_prefix("📝", model, None, parent_tool_use_id);
-                    format!("{}Using TodoWrite\n", prefix)
+                    Some(LogLine::message(
+                        tags,
+                        Some("TodoWrite".into()),
+                        "update".into(),
+                    ))
                 }
             }
             "Read" => {
@@ -642,47 +622,73 @@ impl ClaudeLogProcessor {
                     && let Some(file_path) = input.get("file_path").and_then(|f| f.as_str())
                 {
                     let file_name = file_path.rsplit('/').next().unwrap_or(file_path);
-                    let prefix = self.create_prefix("📖", model, None, parent_tool_use_id);
-                    format!("{}Reading {file_name}\n", prefix)
+                    Some(LogLine::message(
+                        tags,
+                        Some("Read".into()),
+                        format!("Reading {file_name}"),
+                    ))
                 } else {
-                    let prefix = self.create_prefix("📖", model, None, parent_tool_use_id);
-                    format!("{}Reading file\n", prefix)
+                    Some(LogLine::message(
+                        tags,
+                        Some("Read".into()),
+                        "Reading file".into(),
+                    ))
                 }
             }
-            "NotebookRead" => {
-                let prefix = self.create_prefix("📓", model, None, parent_tool_use_id);
-                format!("{}Reading notebook\n", prefix)
-            }
+            "NotebookRead" => Some(LogLine::message(
+                tags,
+                Some("NotebookRead".into()),
+                "Reading notebook".into(),
+            )),
             "Edit" | "MultiEdit" => {
                 if let Some(input) = item.get("input")
                     && let Some(file_path) = input.get("file_path").and_then(|f| f.as_str())
                 {
                     let file_name = file_path.rsplit('/').next().unwrap_or(file_path);
-                    let prefix = self.create_prefix("🔧", model, None, parent_tool_use_id);
                     if tool_name == "MultiEdit" {
                         if let Some(edits) = input.get("edits").and_then(|e| e.as_array()) {
-                            format!("{}Editing {file_name} ({} changes)\n", prefix, edits.len())
+                            Some(LogLine::message(
+                                tags,
+                                Some(tool_name.into()),
+                                format!("Editing {file_name} ({} changes)", edits.len()),
+                            ))
                         } else {
-                            format!("{}Editing {file_name}\n", prefix)
+                            Some(LogLine::message(
+                                tags,
+                                Some(tool_name.into()),
+                                format!("Editing {file_name}"),
+                            ))
                         }
                     } else {
-                        format!("{}Editing {file_name}\n", prefix)
+                        Some(LogLine::message(
+                            tags,
+                            Some("Edit".into()),
+                            format!("Editing {file_name}"),
+                        ))
                     }
                 } else {
-                    let prefix = self.create_prefix("🔧", model, None, parent_tool_use_id);
-                    format!("{}Using {tool_name}\n", prefix)
+                    Some(LogLine::message(
+                        tags,
+                        Some(tool_name.into()),
+                        format!("Using {tool_name}"),
+                    ))
                 }
             }
             "Bash" => {
                 if let Some(input) = item.get("input")
                     && let Some(cmd) = input.get("command").and_then(|c| c.as_str())
                 {
-                    // Show the full command, not just a preview
-                    let prefix = self.create_prefix("🖥️", model, None, parent_tool_use_id);
-                    format!("{}Running: {cmd}\n", prefix)
+                    Some(LogLine::message(
+                        tags,
+                        Some("Bash".into()),
+                        format!("Running: {cmd}"),
+                    ))
                 } else {
-                    let prefix = self.create_prefix("🖥️", model, None, parent_tool_use_id);
-                    format!("{}Running command\n", prefix)
+                    Some(LogLine::message(
+                        tags,
+                        Some("Bash".into()),
+                        "Running command".into(),
+                    ))
                 }
             }
             "Write" => {
@@ -690,33 +696,51 @@ impl ClaudeLogProcessor {
                     && let Some(file_path) = input.get("file_path").and_then(|f| f.as_str())
                 {
                     let file_name = file_path.rsplit('/').next().unwrap_or(file_path);
-                    let prefix = self.create_prefix("📝", model, None, parent_tool_use_id);
-                    format!("{}Writing {file_name}\n", prefix)
+                    Some(LogLine::message(
+                        tags,
+                        Some("Write".into()),
+                        format!("Writing {file_name}"),
+                    ))
                 } else {
-                    let prefix = self.create_prefix("📝", model, None, parent_tool_use_id);
-                    format!("{}Writing file\n", prefix)
+                    Some(LogLine::message(
+                        tags,
+                        Some("Write".into()),
+                        "Writing file".into(),
+                    ))
                 }
             }
             "Grep" => {
                 if let Some(input) = item.get("input")
                     && let Some(pattern) = input.get("pattern").and_then(|p| p.as_str())
                 {
-                    let prefix = self.create_prefix("🔍", model, None, parent_tool_use_id);
-                    format!("{}Searching for: {pattern}\n", prefix)
+                    Some(LogLine::message(
+                        tags,
+                        Some("Grep".into()),
+                        format!("Searching for: {pattern}"),
+                    ))
                 } else {
-                    let prefix = self.create_prefix("🔍", model, None, parent_tool_use_id);
-                    format!("{}Searching\n", prefix)
+                    Some(LogLine::message(
+                        tags,
+                        Some("Grep".into()),
+                        "Searching".into(),
+                    ))
                 }
             }
             "WebSearch" => {
                 if let Some(input) = item.get("input")
                     && let Some(query) = input.get("query").and_then(|q| q.as_str())
                 {
-                    let prefix = self.create_prefix("🌐", model, None, parent_tool_use_id);
-                    format!("{}Web search: {query}\n", prefix)
+                    Some(LogLine::message(
+                        tags,
+                        Some("WebSearch".into()),
+                        format!("Web search: {query}"),
+                    ))
                 } else {
-                    let prefix = self.create_prefix("🌐", model, None, parent_tool_use_id);
-                    format!("{}Web search\n", prefix)
+                    Some(LogLine::message(
+                        tags,
+                        Some("WebSearch".into()),
+                        "Web search".into(),
+                    ))
                 }
             }
             _ => {
@@ -730,117 +754,45 @@ impl ClaudeLogProcessor {
                 } else {
                     String::new()
                 };
-                let prefix = self.create_prefix("🔧", model, None, parent_tool_use_id);
-                format!("{}Using {tool_name}{description}\n", prefix)
+                Some(LogLine::message(
+                    tags,
+                    Some(tool_name.into()),
+                    format!("Using {tool_name}{description}"),
+                ))
             }
         }
     }
 
-    /// Formats a todo list update with status indicators and summary
-    fn format_todo_update(&self, todos: &[TodoItem], parent_tool_use_id: Option<&str>) -> String {
-        let mut output = String::new();
-        let prefix = self.create_prefix("📝", None, None, parent_tool_use_id);
-        output.push_str(&format!("{}TODO Update:\n", prefix));
-        output.push_str(&"─".repeat(60));
-        output.push('\n');
+    /// Formats a todo list update as a structured Todo LogLine
+    fn format_todo_update(
+        &self,
+        todos: &[ClaudeTodoItem],
+        parent_tool_use_id: Option<&str>,
+    ) -> LogLine {
+        let tags = self.build_tags(None, None, parent_tool_use_id);
 
-        // Display todos with status emoji
-        for (idx, todo) in todos.iter().enumerate() {
-            let status_emoji = match todo.status.as_str() {
-                "in_progress" => "🔄",
-                "pending" => "⏳",
-                "completed" => "✅",
-                _ => "⏳",
-            };
+        let items: Vec<TodoItem> = todos
+            .iter()
+            .map(|t| {
+                let status = match t.status.as_str() {
+                    "in_progress" => TodoStatus::InProgress,
+                    "completed" => TodoStatus::Completed,
+                    _ => TodoStatus::Pending,
+                };
+                TodoItem {
+                    content: t.content.clone(),
+                    status,
+                    active_form: t.active_form.clone(),
+                    priority: t.priority.clone(),
+                }
+            })
+            .collect();
 
-            let priority_emoji = if let Some(ref priority) = todo.priority {
-                self.get_priority_emoji(priority)
-            } else {
-                ""
-            };
-
-            // Use activeForm if available, otherwise use content
-            let display_text = if todo.status == "in_progress" {
-                todo.active_form.as_ref().unwrap_or(&todo.content)
-            } else {
-                &todo.content
-            };
-
-            output.push_str(&format!(
-                "{} {} [{}] {}\n",
-                status_emoji,
-                priority_emoji,
-                idx + 1,
-                display_text
-            ));
-        }
-
-        output.push_str(&"─".repeat(60));
-        output.push('\n');
-
-        // Add summary
-        let total = todos.len();
-        let completed = todos.iter().filter(|t| t.status == "completed").count();
-        let in_progress = todos.iter().filter(|t| t.status == "in_progress").count();
-        let pending = todos.iter().filter(|t| t.status == "pending").count();
-
-        output.push_str(&format!(
-            "Summary: {total} total | {completed} completed | {in_progress} in progress | {pending} pending\n"
-        ));
-        output.push_str(&"─".repeat(60));
-
-        output
-    }
-
-    /// Returns an emoji for the given priority level
-    fn get_priority_emoji(&self, priority: &str) -> &'static str {
-        match priority {
-            "high" => "🔴",
-            "medium" => "🟡",
-            "low" => "🟢",
-            _ => "⚪",
-        }
-    }
-
-    /// Formats duration in milliseconds to a human-readable string
-    fn format_duration(&self, duration_ms: u64) -> String {
-        let total_seconds = duration_ms / 1000;
-        let hours = total_seconds / 3600;
-        let minutes = (total_seconds % 3600) / 60;
-        let seconds = total_seconds % 60;
-
-        let mut parts = Vec::new();
-
-        if hours > 0 {
-            parts.push(format!(
-                "{} hour{}",
-                hours,
-                if hours == 1 { "" } else { "s" }
-            ));
-        }
-
-        if minutes > 0 {
-            parts.push(format!(
-                "{} minute{}",
-                minutes,
-                if minutes == 1 { "" } else { "s" }
-            ));
-        }
-
-        if seconds > 0 || parts.is_empty() {
-            parts.push(format!(
-                "{} second{}",
-                seconds,
-                if seconds == 1 { "" } else { "s" }
-            ));
-        }
-
-        parts.join(", ")
+        LogLine::todo(tags, items)
     }
 
     /// Formats a result message and stores the task result
-    fn format_result_message(&mut self, msg: ClaudeMessage) -> Option<String> {
-        // Parse and store the result status
+    fn format_result_message(&mut self, msg: ClaudeMessage) -> Option<LogLine> {
         if let Some(subtype) = &msg.subtype {
             let success = subtype == "success" && msg.is_error != Some(true);
             let message = msg.result.clone().unwrap_or_else(|| {
@@ -871,33 +823,13 @@ impl ClaudeLogProcessor {
                 duration_ms: msg.duration_ms,
             });
 
-            // Format a nice summary
-            let mut output = String::new();
-            output.push('\n');
-            output.push_str(&"─".repeat(60));
-            output.push('\n');
-
-            let status_emoji = if success { "✅" } else { "❌" };
-            output.push_str(&format!("{status_emoji} Task Result: {subtype}\n"));
-
-            if let Some(cost) = cost_usd {
-                output.push_str(&format!("💰 Cost: ${cost:.2}\n"));
-            }
-
-            if let Some(duration) = msg.duration_ms {
-                output.push_str(&format!(
-                    "⏱️ Duration: {}\n",
-                    self.format_duration(duration)
-                ));
-            }
-
-            if let Some(turns) = msg.num_turns {
-                output.push_str(&format!("🔄 Turns: {turns}\n"));
-            }
-
-            output.push_str(&"─".repeat(60));
-
-            Some(output)
+            Some(LogLine::summary(
+                success,
+                message,
+                cost_usd,
+                msg.duration_ms,
+                msg.num_turns,
+            ))
         } else {
             None
         }
@@ -931,7 +863,7 @@ impl ClaudeLogProcessor {
 
 #[async_trait]
 impl LogProcessor for ClaudeLogProcessor {
-    fn process_line(&mut self, line: &str) -> Option<String> {
+    fn process_line(&mut self, line: &str) -> Option<LogLine> {
         // Skip empty lines - don't reset error tracking
         if line.trim().is_empty() {
             return None;
@@ -957,15 +889,12 @@ impl LogProcessor for ClaudeLogProcessor {
                     } else {
                         // Show first parsing error in sequence
                         self.last_line_was_parse_error = true;
-                        Some(format!(
-                            "{}parsing error",
-                            self.create_prefix("‼️", None, None, None)
-                        ))
+                        Some(LogLine::warning(vec![], None, "parsing error".into()))
                     }
                 } else {
                     // Before JSON mode is active, pass through non-JSON lines as-is
                     // Don't set last_line_was_parse_error since we're not in JSON mode yet
-                    Some(line.to_string())
+                    Some(LogLine::message(vec![], None, line.to_string()))
                 }
             }
         }
@@ -1032,19 +961,57 @@ mod tests {
         json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "TodoWrite", "input": {"todos": serde_json::from_str::<serde_json::Value>(todos).unwrap()}}]}}).to_string()
     }
 
-    // Simplified assertion helpers
-    fn has_tag(output: &str, tag: &str) {
-        assert!(output.contains(&format!("[{}]", tag)));
+    /// Assert the log line is a Message variant with specific tool
+    fn assert_message_tool(line: &LogLine, expected_tool: Option<&str>) {
+        if let LogLine::Message { tool, .. } = line {
+            assert_eq!(tool.as_deref(), expected_tool);
+        } else {
+            panic!("Expected Message variant, got {:?}", line);
+        }
     }
-    fn no_tag(output: &str, tag: &str) {
-        assert!(!output.contains(&format!("[{}]", tag)));
+
+    /// Assert the log line contains a tag
+    fn has_tag(line: &LogLine, tag: &str) {
+        let tags = match line {
+            LogLine::Message { tags, .. } => tags,
+            LogLine::Todo { tags, .. } => tags,
+            _ => panic!("Variant has no tags"),
+        };
+        assert!(
+            tags.iter().any(|t| t == tag),
+            "Expected tag '{}' in {:?}",
+            tag,
+            tags
+        );
+    }
+
+    /// Assert the log line does NOT contain a tag
+    fn no_tag(line: &LogLine, tag: &str) {
+        let tags = match line {
+            LogLine::Message { tags, .. } => tags,
+            LogLine::Todo { tags, .. } => tags,
+            LogLine::Summary { .. } => return, // Summary has no tags
+        };
+        assert!(
+            !tags.iter().any(|t| t == tag),
+            "Did not expect tag '{}' in {:?}",
+            tag,
+            tags
+        );
+    }
+
+    fn get_message_text(line: &LogLine) -> &str {
+        match line {
+            LogLine::Message { message, .. } => message,
+            _ => panic!("Expected Message variant"),
+        }
     }
 
     #[test]
     fn test_todo_processing() {
-        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new();
 
-        // Test basic format with status icons and summary
+        // Test basic format with structured todo items
         let todos = r#"[
             {"content": "Analyze current usage", "status": "in_progress", "activeForm": "Analyzing current usage"},
             {"content": "Move file to new location", "status": "pending", "activeForm": "Moving file to new location"},
@@ -1052,26 +1019,37 @@ mod tests {
         ]"#;
         let msg = todo_msg(todos);
         let output = processor.process_line(&msg).unwrap();
-        assert!(output.contains("📝 [test-task]: TODO Update:"));
-        assert!(output.contains("🔄  [1] Analyzing current usage"));
-        assert!(output.contains("⏳  [2] Move file to new location"));
-        assert!(output.contains("✅  [3] Update imports"));
-        assert!(output.contains("Summary: 3 total | 1 completed | 1 in progress | 1 pending"));
+        if let LogLine::Todo { items, .. } = &output {
+            assert_eq!(items.len(), 3);
+            assert_eq!(items[0].status, TodoStatus::InProgress);
+            assert_eq!(
+                items[0].active_form.as_deref(),
+                Some("Analyzing current usage")
+            );
+            assert_eq!(items[1].status, TodoStatus::Pending);
+            assert_eq!(items[2].status, TodoStatus::Completed);
+        } else {
+            panic!("Expected Todo variant");
+        }
 
-        // Test priority indicators
+        // Test priority is preserved
         let todos_with_priority = r#"[
             {"content": "High priority task", "status": "pending", "activeForm": "Working on high priority", "priority": "high"},
             {"content": "Low priority task", "status": "completed", "activeForm": "Completed low priority", "priority": "low"}
         ]"#;
         let msg = todo_msg(todos_with_priority);
         let output = processor.process_line(&msg).unwrap();
-        assert!(output.contains("⏳ 🔴 [1]")); // pending with high priority
-        assert!(output.contains("✅ 🟢 [2]")); // completed with low priority
+        if let LogLine::Todo { items, .. } = &output {
+            assert_eq!(items[0].priority.as_deref(), Some("high"));
+            assert_eq!(items[1].priority.as_deref(), Some("low"));
+        } else {
+            panic!("Expected Todo variant");
+        }
     }
 
     #[test]
     fn test_user_message_with_todo_result() {
-        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new();
         let json = r#"{
             "type": "user",
             "message": {
@@ -1089,43 +1067,41 @@ mod tests {
 
         let result = processor.process_line(json);
         assert!(result.is_some());
-        assert_eq!(
-            result.unwrap(),
-            "📝 [test-task]: TodoWrite result - 2 todos"
-        );
+        let line = result.unwrap();
+        assert_message_tool(&line, Some("TodoWrite"));
+        assert!(get_message_text(&line).contains("result - 2 todos"));
     }
 
     #[test]
     fn test_assistant_message_formats() {
-        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new();
 
         // Text message without model
         let json = r#"{"type": "assistant", "message": {"content": [{"type": "text", "text": "Hello, world!"}]}}"#;
         let output = processor.process_line(json).unwrap();
-        assert_eq!(output, "🤖 [test-task]: Hello, world!");
+        assert_eq!(get_message_text(&output), "Hello, world!");
 
         // Text message with model
         let json = r#"{"type": "assistant", "message": {"model": "claude-opus", "content": [{"type": "text", "text": "Hello with model!"}]}}"#;
         let output = processor.process_line(json).unwrap();
-        assert_eq!(output, "🤖 [test-task][claude-opus]: Hello with model!");
+        assert_eq!(get_message_text(&output), "Hello with model!");
+        has_tag(&output, "claude-opus");
 
         // Direct string content with model
         let json = r#"{"type": "assistant", "message": {"model": "claude-3-sonnet", "content": "Direct string content"}}"#;
         let output = processor.process_line(json).unwrap();
-        assert_eq!(
-            output,
-            "🤖 [test-task][claude-3-sonnet]: Direct string content"
-        );
+        assert_eq!(get_message_text(&output), "Direct string content");
+        has_tag(&output, "claude-3-sonnet");
 
         // Bash tool use
         let json = r#"{"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": "cargo test"}}]}}"#;
         let output = processor.process_line(json).unwrap();
-        assert_eq!(output, "🖥️ [test-task]: Running: cargo test");
+        assert!(get_message_text(&output).contains("Running: cargo test"));
     }
 
     #[test]
     fn test_result_and_summary_messages() {
-        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new();
 
         // Test result message with cost and duration
         let result_json = r#"{
@@ -1136,16 +1112,26 @@ mod tests {
             "result": "Task completed successfully"
         }"#;
         let output = processor.process_line(result_json).unwrap();
-        assert!(output.contains("✅ Task Result: success"));
-        assert!(output.contains("💰 Cost: $0.15"));
-        assert!(output.contains("⏱️ Duration: 45 seconds"));
+        if let LogLine::Summary {
+            success,
+            cost_usd,
+            duration_ms,
+            ..
+        } = &output
+        {
+            assert!(success);
+            assert_eq!(*cost_usd, Some(0.15));
+            assert_eq!(*duration_ms, Some(45000));
+        } else {
+            panic!("Expected Summary variant");
+        }
 
         let final_result = processor.get_final_result().unwrap();
         assert!(final_result.success);
         assert_eq!(final_result.cost_usd, Some(0.15));
 
         // Test result with subtype "success" but is_error true (e.g., auth failure)
-        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new();
         let error_result_json = r#"{
             "type": "result",
             "subtype": "success",
@@ -1153,7 +1139,11 @@ mod tests {
             "result": "Failed to authenticate. API Error: 401 Unauthorized"
         }"#;
         let output = processor.process_line(error_result_json).unwrap();
-        assert!(output.contains("❌ Task Result: success"));
+        if let LogLine::Summary { success, .. } = &output {
+            assert!(!success);
+        } else {
+            panic!("Expected Summary variant");
+        }
 
         let final_result = processor.get_final_result().unwrap();
         assert!(!final_result.success);
@@ -1162,38 +1152,45 @@ mod tests {
             "Failed to authenticate. API Error: 401 Unauthorized"
         );
 
-        // Test summary message
-        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
+        // Test summary message (not the result type)
+        let mut processor = ClaudeLogProcessor::new();
         let summary_json = r#"{
             "type": "summary",
             "summary": "Refactoring completed: Renamed XdgDirectories to TskConfig"
         }"#;
         let output = processor.process_line(summary_json).unwrap();
-        assert_eq!(
-            output,
-            "✅ [test-task]: Refactoring completed: Renamed XdgDirectories to TskConfig"
-        );
+        if let LogLine::Message { level, message, .. } = &output {
+            assert_eq!(*level, Level::Success);
+            assert_eq!(
+                message,
+                "Refactoring completed: Renamed XdgDirectories to TskConfig"
+            );
+        } else {
+            panic!("Expected Message variant with Success level");
+        }
     }
 
     #[test]
     fn test_json_mode_behavior() {
-        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new();
 
         // Initially not in JSON mode
         assert!(!processor.json_mode_active);
 
         // Before JSON mode is active, non-JSON lines should be passed through as-is
         let result = processor.process_line("Error: Claude Code is misconfigured");
+        let line = result.unwrap();
         assert_eq!(
-            result,
-            Some("Error: Claude Code is misconfigured".to_string())
+            get_message_text(&line),
+            "Error: Claude Code is misconfigured"
         );
         assert!(!processor.json_mode_active);
 
         let result = processor.process_line("Configuration warning: API key missing");
+        let line = result.unwrap();
         assert_eq!(
-            result,
-            Some("Configuration warning: API key missing".to_string())
+            get_message_text(&line),
+            "Configuration warning: API key missing"
         );
         assert!(!processor.json_mode_active);
 
@@ -1201,21 +1198,28 @@ mod tests {
         let json =
             r#"{"type": "assistant", "message": {"content": [{"type": "text", "text": "Hello"}]}}"#;
         let result = processor.process_line(json);
-        assert_eq!(result, Some("🤖 [test-task]: Hello".to_string()));
+        let line = result.unwrap();
+        assert_eq!(get_message_text(&line), "Hello");
         assert!(processor.json_mode_active);
 
         // After JSON mode is active, non-JSON lines should show parsing error
         let result = processor.process_line("This is not JSON");
-        assert_eq!(result, Some("‼️ [test-task]: parsing error".to_string()));
+        let line = result.unwrap();
+        if let LogLine::Message { level, message, .. } = &line {
+            assert_eq!(*level, Level::Warning);
+            assert_eq!(message, "parsing error");
+        } else {
+            panic!("Expected Message variant");
+        }
 
         // Consecutive parsing errors should be suppressed
         let result = processor.process_line("random text");
-        assert_eq!(result, None);
+        assert!(result.is_none());
     }
 
     #[test]
     fn test_empty_tool_results_filtered() {
-        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new();
 
         // Test empty tool result (should return None)
         let empty_tool_result_json = r#"{
@@ -1227,13 +1231,12 @@ mod tests {
         }"#;
 
         let result = processor.process_line(empty_tool_result_json);
-        // Should return None for empty tool results, not show "🔧 Tool result"
         assert!(result.is_none());
     }
 
     #[test]
     fn test_sub_agent_tagging_scenarios() {
-        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new();
 
         // Task invocation should NOT have sub-agent tag
         let msg = task_msg(
@@ -1268,7 +1271,7 @@ mod tests {
 
     #[test]
     fn test_task_tool_scenarios() {
-        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new();
 
         // Test with prompt
         let msg1 = task_msg(
@@ -1278,17 +1281,17 @@ mod tests {
             Some("Check patterns"),
         );
         let output = processor.process_line(&msg1).unwrap();
-        assert!(
-            output.contains("🤖 [test-task]: Starting Task: Analyze code (software-architect)")
-        );
-        assert!(output.contains("Prompt: Check patterns"));
+        let text = get_message_text(&output);
+        assert!(text.contains("Starting: Analyze code (software-architect)"));
+        assert!(text.contains("Prompt: Check patterns"));
 
         let result = task_result("toolu_123", "Analysis complete", None);
         let output = processor.process_line(&result).unwrap();
-        assert!(output.contains("Task Complete: Analyze code (software-architect)"));
+        let text = get_message_text(&output);
+        assert!(text.contains("Complete: Analyze code (software-architect)"));
 
         // Test array content with sub-agent output
-        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new();
         let msg2 = task_msg("toolu_456", "data-analyst", "Analyze patterns", None);
         processor.process_line(&msg2);
 
@@ -1298,52 +1301,55 @@ mod tests {
             None,
         );
         let output = processor.process_line(&result).unwrap();
-        assert!(output.contains("Task Complete: Analyze patterns (data-analyst)"));
-        assert!(output.contains("📋 Sub-agent Output:"));
-        assert!(output.contains("Found 5 patterns"));
+        let text = get_message_text(&output);
+        assert!(text.contains("Complete: Analyze patterns (data-analyst)"));
+        assert!(text.contains("Sub-agent Output:"));
+        assert!(text.contains("Found 5 patterns"));
 
         // Test empty content (no sub-agent output section)
-        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new();
         let msg3 = task_msg("toolu_789", "test-agent", "Test edge cases", None);
         processor.process_line(&msg3);
 
         let result = task_result("toolu_789", "", None);
         let output = processor.process_line(&result).unwrap();
-        assert!(output.contains("Task Complete: Test edge cases (test-agent)"));
-        assert!(!output.contains("📋 Sub-agent Output:"));
+        let text = get_message_text(&output);
+        assert!(text.contains("Complete: Test edge cases (test-agent)"));
+        assert!(!text.contains("Sub-agent Output:"));
     }
 
     #[test]
     fn test_parse_error_deduplication() {
-        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new();
 
         // First, activate JSON mode with a valid JSON line
         let json =
             r#"{"type": "assistant", "message": {"content": [{"type": "text", "text": "Hello"}]}}"#;
         let result = processor.process_line(json);
-        assert_eq!(result, Some("🤖 [test-task]: Hello".to_string()));
+        assert_eq!(get_message_text(&result.unwrap()), "Hello");
         assert!(processor.json_mode_active);
 
         // First parsing error should be shown
-        let result = processor.process_line("This is not JSON");
-        assert_eq!(result, Some("‼️ [test-task]: parsing error".to_string()));
+        let result = processor.process_line("This is not JSON").unwrap();
+        if let LogLine::Message { level, message, .. } = &result {
+            assert_eq!(*level, Level::Warning);
+            assert_eq!(message, "parsing error");
+        }
 
         // Second parsing error should be suppressed (returns None)
-        let result = processor.process_line("Another non-JSON line");
-        assert_eq!(result, None);
+        assert!(processor.process_line("Another non-JSON line").is_none());
 
         // Third parsing error should also be suppressed
-        let result = processor.process_line("Yet another non-JSON line");
-        assert_eq!(result, None);
-
-        // Fourth parsing error should also be suppressed
-        let result = processor.process_line("Still more non-JSON");
-        assert_eq!(result, None);
+        assert!(
+            processor
+                .process_line("Yet another non-JSON line")
+                .is_none()
+        );
     }
 
     #[test]
     fn test_parse_error_resume_after_valid_json() {
-        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new();
 
         // Activate JSON mode
         let json =
@@ -1351,32 +1357,33 @@ mod tests {
         processor.process_line(json);
 
         // First parsing error shown
-        let result = processor.process_line("Bad line 1");
-        assert_eq!(result, Some("‼️ [test-task]: parsing error".to_string()));
+        let result = processor.process_line("Bad line 1").unwrap();
+        if let LogLine::Message { level, .. } = &result {
+            assert_eq!(*level, Level::Warning);
+        }
 
         // Consecutive errors suppressed
-        let result = processor.process_line("Bad line 2");
-        assert_eq!(result, None);
-        let result = processor.process_line("Bad line 3");
-        assert_eq!(result, None);
+        assert!(processor.process_line("Bad line 2").is_none());
+        assert!(processor.process_line("Bad line 3").is_none());
 
         // Valid JSON resets the error flag
         let json = r#"{"type": "assistant", "message": {"content": [{"type": "text", "text": "Second"}]}}"#;
         let result = processor.process_line(json);
-        assert_eq!(result, Some("🤖 [test-task]: Second".to_string()));
+        assert_eq!(get_message_text(&result.unwrap()), "Second");
 
         // Next parsing error should be shown again
-        let result = processor.process_line("Bad line 4");
-        assert_eq!(result, Some("‼️ [test-task]: parsing error".to_string()));
+        let result = processor.process_line("Bad line 4").unwrap();
+        if let LogLine::Message { level, .. } = &result {
+            assert_eq!(*level, Level::Warning);
+        }
 
         // And consecutive errors suppressed again
-        let result = processor.process_line("Bad line 5");
-        assert_eq!(result, None);
+        assert!(processor.process_line("Bad line 5").is_none());
     }
 
     #[test]
     fn test_empty_lines_dont_reset_error_tracking() {
-        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new();
 
         // Activate JSON mode
         let json =
@@ -1384,24 +1391,22 @@ mod tests {
         processor.process_line(json);
 
         // First parsing error shown
-        let result = processor.process_line("Bad line 1");
-        assert_eq!(result, Some("‼️ [test-task]: parsing error".to_string()));
+        let result = processor.process_line("Bad line 1").unwrap();
+        if let LogLine::Message { level, .. } = &result {
+            assert_eq!(*level, Level::Warning);
+        }
 
         // Empty line should not reset error tracking
-        let result = processor.process_line("");
-        assert_eq!(result, None);
+        assert!(processor.process_line("").is_none());
 
         // Next parsing error should still be suppressed
-        let result = processor.process_line("Bad line 2");
-        assert_eq!(result, None);
+        assert!(processor.process_line("Bad line 2").is_none());
 
         // Another empty line
-        let result = processor.process_line("   ");
-        assert_eq!(result, None);
+        assert!(processor.process_line("   ").is_none());
 
         // Parsing error still suppressed
-        let result = processor.process_line("Bad line 3");
-        assert_eq!(result, None);
+        assert!(processor.process_line("Bad line 3").is_none());
 
         // Valid JSON resets the state
         let json =
@@ -1409,44 +1414,52 @@ mod tests {
         processor.process_line(json);
 
         // Empty line after valid JSON
-        let result = processor.process_line("");
-        assert_eq!(result, None);
+        assert!(processor.process_line("").is_none());
 
         // Next parsing error should be shown (error flag was reset by valid JSON)
-        let result = processor.process_line("Bad line 4");
-        assert_eq!(result, Some("‼️ [test-task]: parsing error".to_string()));
+        let result = processor.process_line("Bad line 4").unwrap();
+        if let LogLine::Message { level, .. } = &result {
+            assert_eq!(*level, Level::Warning);
+        }
     }
 
     #[test]
     fn test_pre_json_mode_behavior_unchanged() {
-        let mut processor = ClaudeLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = ClaudeLogProcessor::new();
 
         // Before JSON mode, non-JSON lines should be passed through
         let result = processor.process_line("Configuration error message");
-        assert_eq!(result, Some("Configuration error message".to_string()));
+        assert_eq!(
+            get_message_text(&result.unwrap()),
+            "Configuration error message"
+        );
         assert!(!processor.json_mode_active);
 
         // Multiple non-JSON lines should all be passed through
         let result = processor.process_line("Warning: API key missing");
-        assert_eq!(result, Some("Warning: API key missing".to_string()));
+        assert_eq!(
+            get_message_text(&result.unwrap()),
+            "Warning: API key missing"
+        );
         assert!(!processor.json_mode_active);
 
         let result = processor.process_line("Another warning");
-        assert_eq!(result, Some("Another warning".to_string()));
+        assert_eq!(get_message_text(&result.unwrap()), "Another warning");
         assert!(!processor.json_mode_active);
 
         // Now activate JSON mode
         let json =
             r#"{"type": "assistant", "message": {"content": [{"type": "text", "text": "Start"}]}}"#;
         let result = processor.process_line(json);
-        assert_eq!(result, Some("🤖 [test-task]: Start".to_string()));
+        assert_eq!(get_message_text(&result.unwrap()), "Start");
         assert!(processor.json_mode_active);
 
         // Now parsing errors should be shown and deduplicated
-        let result = processor.process_line("Bad line 1");
-        assert_eq!(result, Some("‼️ [test-task]: parsing error".to_string()));
+        let result = processor.process_line("Bad line 1").unwrap();
+        if let LogLine::Message { level, .. } = &result {
+            assert_eq!(*level, Level::Warning);
+        }
 
-        let result = processor.process_line("Bad line 2");
-        assert_eq!(result, None);
+        assert!(processor.process_line("Bad line 2").is_none());
     }
 }

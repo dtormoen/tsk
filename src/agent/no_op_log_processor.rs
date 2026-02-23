@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 
+use crate::agent::log_line::LogLine;
 use crate::agent::{LogProcessor, TaskResult};
 
 /// A simple log processor for the no-op agent that passes through all lines.
@@ -16,9 +17,9 @@ impl NoOpLogProcessor {
 
 #[async_trait]
 impl LogProcessor for NoOpLogProcessor {
-    fn process_line(&mut self, line: &str) -> Option<String> {
-        // Pass through all lines without modification
-        Some(line.to_string())
+    fn process_line(&mut self, line: &str) -> Option<LogLine> {
+        // Pass through all lines as Info-level messages without modification
+        Some(LogLine::message(vec![], None, line.to_string()))
     }
 
     fn get_final_result(&self) -> Option<&TaskResult> {

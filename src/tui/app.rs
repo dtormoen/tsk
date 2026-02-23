@@ -1,3 +1,4 @@
+use crate::agent::log_line::LogLine;
 use crate::task::Task;
 use ratatui::widgets::ListState;
 use std::path::Path;
@@ -22,9 +23,9 @@ pub struct TuiApp {
     pub task_list_state: ListState,
     /// Current list of tasks from storage
     pub tasks: Vec<Task>,
-    /// Lines of log content for the selected task
-    pub log_content: Vec<String>,
-    /// Vertical scroll offset for the log viewer
+    /// Structured log lines for the selected task
+    pub log_content: Vec<LogLine>,
+    /// Vertical scroll offset for the log viewer (in visual lines)
     pub log_scroll: usize,
     /// Height of the log viewer viewport in rows (set during render)
     pub log_viewport_height: usize,
@@ -94,10 +95,19 @@ impl TuiApp {
         self.task_list_state.select(Some(prev));
     }
 
+    /// Count the total number of visual lines across all log entries.
+    ///
+    /// Each LogLine maps to visual lines as follows:
+    /// - Message: 1 line per newline-separated segment
+    /// - Todo: 1 line per item + 1 summary line
+    /// - Summary: 1 line
+    pub fn visual_line_count(&self) -> usize {
+        self.log_content.iter().map(visual_lines_for).sum()
+    }
+
     /// Maximum scroll offset for the log viewer, based on content and viewport size
     pub fn max_log_scroll(&self) -> usize {
-        self.log_content
-            .len()
+        self.visual_line_count()
             .saturating_sub(self.log_viewport_height)
     }
 
@@ -142,6 +152,9 @@ impl TuiApp {
     }
 
     /// Internal helper that reads the agent.log for the selected task.
+    ///
+    /// Parses JSON-lines format; non-JSON lines (pre-migration fallback) are
+    /// wrapped as `LogLine::Message`.
     fn reload_logs(&mut self, data_dir: &Path) {
         let selected = match self.task_list_state.selected() {
             Some(idx) if idx < self.tasks.len() => idx,
@@ -160,7 +173,16 @@ impl TuiApp {
 
         match std::fs::read_to_string(&log_path) {
             Ok(content) => {
-                self.log_content = content.lines().map(String::from).collect();
+                self.log_content = content
+                    .lines()
+                    .filter(|line| !line.is_empty())
+                    .map(|line| {
+                        serde_json::from_str::<LogLine>(line).unwrap_or_else(|_| {
+                            // Fallback for pre-migration plain text lines
+                            LogLine::message(vec![], None, line.to_string())
+                        })
+                    })
+                    .collect();
             }
             Err(_) => {
                 self.log_content.clear();
@@ -192,11 +214,34 @@ impl TuiApp {
     }
 }
 
+/// Count the number of visual lines a LogLine occupies when rendered.
+pub fn visual_lines_for(log_line: &LogLine) -> usize {
+    match log_line {
+        LogLine::Message { message, .. } => {
+            // Count newlines in message text
+            message.lines().count().max(1)
+        }
+        LogLine::Todo { items, .. } => {
+            // One line per item + summary count line
+            items.len() + 1
+        }
+        LogLine::Summary { .. } => 1,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::log_line::{LogLine, TodoItem, TodoStatus};
     use crate::task::Task;
     use std::fs;
+
+    /// Helper to create LogLine entries for tests
+    fn make_log_lines(count: usize) -> Vec<LogLine> {
+        (0..count)
+            .map(|i| LogLine::message(vec![], None, format!("line {i}")))
+            .collect()
+    }
 
     #[test]
     fn test_new_defaults() {
@@ -273,7 +318,7 @@ mod tests {
     fn test_scroll_logs() {
         let mut app = TuiApp::new(1);
         // 20 lines of content, viewport of 10 -> max scroll = 10
-        app.log_content = (0..20).map(|i| format!("line {i}")).collect();
+        app.log_content = make_log_lines(20);
         app.log_viewport_height = 10;
 
         // Start at 0
@@ -354,7 +399,13 @@ mod tests {
         let task_id = "test-task-123";
         let log_dir = data_dir.join("tasks").join(task_id).join("output");
         fs::create_dir_all(&log_dir).unwrap();
-        fs::write(log_dir.join("agent.log"), "line 1\nline 2\nline 3\n").unwrap();
+        // Write JSON-lines format
+        let lines = [
+            serde_json::to_string(&LogLine::message(vec![], None, "line 1".into())).unwrap(),
+            serde_json::to_string(&LogLine::message(vec![], None, "line 2".into())).unwrap(),
+            serde_json::to_string(&LogLine::message(vec![], None, "line 3".into())).unwrap(),
+        ];
+        fs::write(log_dir.join("agent.log"), lines.join("\n") + "\n").unwrap();
 
         let mut app = TuiApp::new(1);
         app.log_viewport_height = 2;
@@ -371,7 +422,7 @@ mod tests {
 
         app.load_logs_for_selected_task(data_dir);
 
-        assert_eq!(app.log_content, vec!["line 1", "line 2", "line 3"]);
+        assert_eq!(app.log_content.len(), 3);
         // Scroll starts at bottom: 3 lines - 2 viewport = 1
         assert_eq!(app.log_scroll, 1);
         assert!(app.log_follow);
@@ -390,14 +441,14 @@ mod tests {
         let task_id = "follow-task";
         let log_dir = data_dir.join("tasks").join(task_id).join("output");
         fs::create_dir_all(&log_dir).unwrap();
-        fs::write(
-            log_dir.join("agent.log"),
-            (0..20)
-                .map(|i| format!("line {i}"))
-                .collect::<Vec<_>>()
-                .join("\n"),
-        )
-        .unwrap();
+
+        // Write 20 JSON-lines
+        let lines: Vec<String> = (0..20)
+            .map(|i| {
+                serde_json::to_string(&LogLine::message(vec![], None, format!("line {i}"))).unwrap()
+            })
+            .collect();
+        fs::write(log_dir.join("agent.log"), lines.join("\n")).unwrap();
 
         let mut app = TuiApp::new(1);
         app.log_viewport_height = 10;
@@ -432,14 +483,12 @@ mod tests {
 
         // Re-enable follow and refresh with more content - should auto-scroll
         app.log_follow = true;
-        fs::write(
-            log_dir.join("agent.log"),
-            (0..30)
-                .map(|i| format!("line {i}"))
-                .collect::<Vec<_>>()
-                .join("\n"),
-        )
-        .unwrap();
+        let lines: Vec<String> = (0..30)
+            .map(|i| {
+                serde_json::to_string(&LogLine::message(vec![], None, format!("line {i}"))).unwrap()
+            })
+            .collect();
+        fs::write(log_dir.join("agent.log"), lines.join("\n")).unwrap();
         app.refresh_logs(data_dir);
         assert_eq!(app.log_scroll, 20); // 30 lines - 10 viewport
     }
@@ -448,7 +497,7 @@ mod tests {
     fn test_scroll_clamping() {
         let mut app = TuiApp::new(1);
         // Viewport bigger than content
-        app.log_content = (0..5).map(|i| format!("line {i}")).collect();
+        app.log_content = make_log_lines(5);
         app.log_viewport_height = 10;
 
         assert_eq!(app.max_log_scroll(), 0);
@@ -463,16 +512,99 @@ mod tests {
         let mut app = TuiApp::new(1);
 
         // 20 lines, viewport 10
-        app.log_content = (0..20).map(|i| format!("line {i}")).collect();
+        app.log_content = make_log_lines(20);
         app.log_viewport_height = 10;
         assert_eq!(app.max_log_scroll(), 10);
 
         // 5 lines, viewport 10
-        app.log_content = (0..5).map(|i| format!("line {i}")).collect();
+        app.log_content = make_log_lines(5);
         assert_eq!(app.max_log_scroll(), 0);
 
         // 0 lines, viewport 10
         app.log_content.clear();
         assert_eq!(app.max_log_scroll(), 0);
+    }
+
+    #[test]
+    fn test_visual_lines_message() {
+        // Single line message
+        let line = LogLine::message(vec![], None, "hello".into());
+        assert_eq!(visual_lines_for(&line), 1);
+
+        // Multi-line message
+        let line = LogLine::message(vec![], None, "line1\nline2\nline3".into());
+        assert_eq!(visual_lines_for(&line), 3);
+    }
+
+    #[test]
+    fn test_visual_lines_todo() {
+        let items = vec![
+            TodoItem {
+                content: "a".into(),
+                status: TodoStatus::Pending,
+                active_form: None,
+                priority: None,
+            },
+            TodoItem {
+                content: "b".into(),
+                status: TodoStatus::Completed,
+                active_form: None,
+                priority: None,
+            },
+        ];
+        let line = LogLine::todo(vec![], items);
+        // 2 items + 1 summary = 3
+        assert_eq!(visual_lines_for(&line), 3);
+    }
+
+    #[test]
+    fn test_visual_lines_summary() {
+        let line = LogLine::summary(true, "done".into(), None, None, None);
+        assert_eq!(visual_lines_for(&line), 1);
+    }
+
+    #[test]
+    fn test_reload_logs_json_lines() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let data_dir = tmp_dir.path();
+
+        let task_id = "json-test";
+        let log_dir = data_dir.join("tasks").join(task_id).join("output");
+        fs::create_dir_all(&log_dir).unwrap();
+
+        // Write mixed: JSON-lines and a plain text fallback
+        let json_line = serde_json::to_string(&LogLine::message(
+            vec![],
+            Some("Bash".into()),
+            "cargo test".into(),
+        ))
+        .unwrap();
+        let content = format!("{json_line}\nplain text line\n");
+        fs::write(log_dir.join("agent.log"), content).unwrap();
+
+        let mut app = TuiApp::new(1);
+        app.tasks = vec![Task {
+            id: task_id.to_string(),
+            name: "json-test".to_string(),
+            branch_name: "tsk/feat/json-test/json-test".to_string(),
+            ..Task::test_default()
+        }];
+
+        app.load_logs_for_selected_task(data_dir);
+
+        assert_eq!(app.log_content.len(), 2);
+        // First should be the parsed JSON line
+        if let LogLine::Message { tool, message, .. } = &app.log_content[0] {
+            assert_eq!(tool.as_deref(), Some("Bash"));
+            assert_eq!(message, "cargo test");
+        } else {
+            panic!("Expected Message variant");
+        }
+        // Second should be the fallback plain text
+        if let LogLine::Message { message, .. } = &app.log_content[1] {
+            assert_eq!(message, "plain text line");
+        } else {
+            panic!("Expected Message variant");
+        }
     }
 }

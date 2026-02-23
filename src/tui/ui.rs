@@ -7,6 +7,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 
+use crate::agent::log_line::{Level, LogLine, TodoStatus};
 use crate::task::TaskStatus;
 
 use super::app::{Panel, TuiApp};
@@ -172,7 +173,7 @@ fn render_task_list(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::
     frame.render_stateful_widget(list, area, &mut app.task_list_state);
 }
 
-/// Render the log viewer panel on the right side.
+/// Render the log viewer panel on the right side with styled LogLine rendering.
 fn render_log_viewer(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::Rect) {
     let focused = app.focus == Panel::Logs;
     let border_style = if focused {
@@ -212,17 +213,163 @@ fn render_log_viewer(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout:
         .alignment(Alignment::Center);
         frame.render_widget(placeholder, area);
     } else {
-        let text: Text = Text::from(
-            app.log_content
-                .iter()
-                .map(|line| Line::raw(line.as_str()))
-                .collect::<Vec<_>>(),
-        );
+        // Render LogLine entries into styled ratatui Lines
+        let mut lines: Vec<Line> = Vec::new();
+        for log_line in &app.log_content {
+            render_log_line(log_line, &mut lines);
+        }
+
+        let text = Text::from(lines);
         let paragraph = Paragraph::new(text)
             .block(block)
             // ratatui's Paragraph::scroll takes (u16, u16); clamp for logs > 65535 lines
             .scroll((app.log_scroll.min(u16::MAX as usize) as u16, 0));
         frame.render_widget(paragraph, area);
+    }
+}
+
+/// Render a single LogLine into one or more styled ratatui Lines.
+fn render_log_line<'a>(log_line: &'a LogLine, lines: &mut Vec<Line<'a>>) {
+    match log_line {
+        LogLine::Message {
+            level,
+            tags,
+            tool,
+            message,
+        } => {
+            let level_color = match level {
+                Level::Info => Color::Reset,
+                Level::Success => Color::Green,
+                Level::Warning => Color::Yellow,
+                Level::Error => Color::Red,
+            };
+
+            // Build prefix spans: tags + tool
+            let mut prefix_spans: Vec<Span> = Vec::new();
+            let mut prefix_width = 0;
+
+            for tag in tags {
+                let tag_text = format!("[{tag}]");
+                prefix_width += tag_text.len();
+                prefix_spans.push(Span::styled(
+                    tag_text,
+                    Style::default().fg(Color::Rgb(100, 100, 100)),
+                ));
+            }
+            if !tags.is_empty() {
+                prefix_spans.push(Span::raw(" "));
+                prefix_width += 1;
+            }
+
+            if let Some(tool_name) = tool {
+                let tool_text = format!("{tool_name}: ");
+                prefix_width += tool_text.len();
+                prefix_spans.push(Span::styled(
+                    tool_text,
+                    Style::default().add_modifier(Modifier::BOLD),
+                ));
+            }
+
+            // Render message lines
+            let msg_lines: Vec<&str> = message.lines().collect();
+            for (i, msg_line) in msg_lines.iter().enumerate() {
+                let mut spans = Vec::new();
+                if i == 0 {
+                    // First line gets the prefix
+                    spans.extend(prefix_spans.clone());
+                } else {
+                    // Subsequent lines indented to align with message start
+                    spans.push(Span::raw(" ".repeat(prefix_width)));
+                }
+                spans.push(Span::styled(
+                    msg_line.to_string(),
+                    Style::default().fg(level_color),
+                ));
+                lines.push(Line::from(spans));
+            }
+
+            // Handle empty message (shouldn't happen normally, but be safe)
+            if msg_lines.is_empty() {
+                let mut spans = Vec::new();
+                spans.extend(prefix_spans);
+                lines.push(Line::from(spans));
+            }
+        }
+        LogLine::Todo { tags, items } => {
+            // Render each item as a checkbox line
+            for item in items {
+                let mut spans: Vec<Span> = Vec::new();
+
+                // Tags prefix (only on first item)
+                for tag in tags {
+                    spans.push(Span::styled(
+                        format!("[{tag}]"),
+                        Style::default().fg(Color::Rgb(100, 100, 100)),
+                    ));
+                }
+                if !tags.is_empty() {
+                    spans.push(Span::raw(" "));
+                }
+
+                match item.status {
+                    TodoStatus::Completed => {
+                        spans.push(Span::styled(
+                            format!("[x] {}", item.content),
+                            Style::default().fg(Color::Green),
+                        ));
+                    }
+                    TodoStatus::InProgress => {
+                        let text = item.active_form.as_deref().unwrap_or(&item.content);
+                        spans.push(Span::styled(
+                            format!("[~] {text}"),
+                            Style::default().fg(Color::Yellow),
+                        ));
+                    }
+                    TodoStatus::Pending => {
+                        spans.push(Span::raw(format!("[ ] {}", item.content)));
+                    }
+                }
+
+                lines.push(Line::from(spans));
+            }
+
+            // Summary count line
+            let completed = items
+                .iter()
+                .filter(|i| i.status == TodoStatus::Completed)
+                .count();
+            lines.push(Line::from(Span::styled(
+                format!("{}/{} done", completed, items.len()),
+                Style::default().fg(Color::Rgb(100, 100, 100)),
+            )));
+        }
+        LogLine::Summary {
+            success,
+            message,
+            cost_usd,
+            duration_ms,
+            num_turns,
+        } => {
+            let color = if *success { Color::Green } else { Color::Red };
+            let status = if *success { "SUCCESS" } else { "FAILED" };
+
+            let mut parts = vec![format!("{status}: {message}")];
+            if let Some(cost) = cost_usd {
+                parts.push(format!("${cost:.2}"));
+            }
+            if let Some(ms) = duration_ms {
+                let secs = ms / 1000;
+                parts.push(format!("{secs}s"));
+            }
+            if let Some(turns) = num_turns {
+                parts.push(format!("{turns} turns"));
+            }
+
+            lines.push(Line::from(Span::styled(
+                parts.join(" | "),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            )));
+        }
     }
 }
 
@@ -272,6 +419,7 @@ fn format_duration(task: &crate::task::Task) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::log_line::{LogLine, TodoItem, TodoStatus};
     use crate::task::{Task, TaskStatus};
     use chrono::{Duration, Utc};
     use ratatui::{Terminal, backend::TestBackend};
@@ -444,7 +592,10 @@ mod tests {
             branch_name: "tsk/feat/my-task/t1".to_string(),
             ..Task::test_default()
         }];
-        app.log_content = vec!["Log line one".to_string(), "Log line two".to_string()];
+        app.log_content = vec![
+            LogLine::message(vec![], None, "Log line one".into()),
+            LogLine::message(vec![], None, "Log line two".into()),
+        ];
 
         terminal
             .draw(|frame| {
@@ -480,5 +631,80 @@ mod tests {
             }
         }
         assert!(found_log, "expected log content to be rendered");
+    }
+
+    #[test]
+    fn test_render_styled_log_lines() {
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = TuiApp::new(1);
+
+        app.tasks = vec![Task {
+            id: "t1".to_string(),
+            name: "styled-task".to_string(),
+            branch_name: "tsk/feat/styled-task/t1".to_string(),
+            ..Task::test_default()
+        }];
+        app.log_content = vec![
+            // Message with tags and tool
+            LogLine::message(
+                vec!["opus-4".into()],
+                Some("Bash".into()),
+                "Running: cargo test".into(),
+            ),
+            // Error message
+            LogLine::error(vec![], Some("Bash".into()), "Tests failed".into()),
+            // Todo items
+            LogLine::todo(
+                vec![],
+                vec![
+                    TodoItem {
+                        content: "Done".into(),
+                        status: TodoStatus::Completed,
+                        active_form: None,
+                        priority: None,
+                    },
+                    TodoItem {
+                        content: "Working".into(),
+                        status: TodoStatus::InProgress,
+                        active_form: Some("Working on it".into()),
+                        priority: None,
+                    },
+                ],
+            ),
+            // Summary
+            LogLine::summary(true, "All done".into(), Some(0.15), Some(45000), Some(12)),
+        ];
+
+        terminal
+            .draw(|frame| {
+                render(&mut app, frame);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        let panel_start = app.task_panel_width as usize;
+
+        // Verify styled content renders
+        let mut found_bash = false;
+        let mut found_done = false;
+        let mut found_success = false;
+        for y in 0..30 {
+            let line: String = (panel_start..120)
+                .map(|x| buffer[(x as u16, y)].symbol().to_string())
+                .collect();
+            if line.contains("Bash") && line.contains("cargo test") {
+                found_bash = true;
+            }
+            if line.contains("[x]") && line.contains("Done") {
+                found_done = true;
+            }
+            if line.contains("SUCCESS") && line.contains("All done") {
+                found_success = true;
+            }
+        }
+        assert!(found_bash, "expected Bash tool line in rendered output");
+        assert!(found_done, "expected completed todo in rendered output");
+        assert!(found_success, "expected summary line in rendered output");
     }
 }

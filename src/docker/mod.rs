@@ -891,6 +891,9 @@ impl DockerManager {
 /// This function extracts all complete lines (terminated by newline) from the buffer,
 /// processes each through the log processor, and removes them from the buffer.
 /// Any partial line (without a trailing newline) remains in the buffer.
+///
+/// Log lines are serialized as JSON-lines to the log file (for TUI consumption)
+/// and rendered as plain text to stdout (for non-TUI mode).
 fn process_complete_lines(
     line_buffer: &mut String,
     log_processor: &mut dyn LogProcessor,
@@ -903,19 +906,32 @@ fn process_complete_lines(
         // Handle CRLF by trimming trailing \r
         let trimmed = complete_line.trim_end_matches('\r');
 
-        if let Some(formatted) = log_processor.process_line(trimmed) {
+        if let Some(log_line) = log_processor.process_line(trimmed) {
             if !suppress_stdout {
-                println!("{formatted}");
+                println!("{log_line}");
             }
-            if let Some(ref mut file) = log_file
-                && let Err(e) = writeln!(file, "{formatted}")
-            {
-                crate::tui::events::emit_or_print(
-                    event_sender,
-                    ServerEvent::WarningMessage(format!(
-                        "Warning: Failed to write to agent log file: {e}"
-                    )),
-                );
+            if let Some(ref mut file) = log_file {
+                // Serialize as JSON-lines for structured TUI consumption
+                match serde_json::to_string(&log_line) {
+                    Ok(json) => {
+                        if let Err(e) = writeln!(file, "{json}") {
+                            crate::tui::events::emit_or_print(
+                                event_sender,
+                                ServerEvent::WarningMessage(format!(
+                                    "Warning: Failed to write to agent log file: {e}"
+                                )),
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        crate::tui::events::emit_or_print(
+                            event_sender,
+                            ServerEvent::WarningMessage(format!(
+                                "Warning: Failed to serialize log line: {e}"
+                            )),
+                        );
+                    }
+                }
             }
         }
 

@@ -218,10 +218,9 @@ impl Agent for ClaudeAgent {
 
     fn create_log_processor(
         &self,
-        task: Option<&crate::task::Task>,
+        _task: Option<&crate::task::Task>,
     ) -> Box<dyn super::LogProcessor> {
-        let task_name = task.map(|t| t.name.clone());
-        Box::new(ClaudeLogProcessor::new(task_name))
+        Box::new(ClaudeLogProcessor::new())
     }
 
     fn name(&self) -> &str {

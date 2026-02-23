@@ -3,6 +3,7 @@ use async_trait::async_trait;
 mod claude;
 mod codex;
 mod integ;
+pub mod log_line;
 mod log_processor;
 mod no_op;
 mod no_op_log_processor;
@@ -90,6 +91,7 @@ pub trait Agent: Send + Sync {
 
 #[cfg(test)]
 mod tests {
+    use super::log_line::LogLine;
     use super::*;
 
     /// Test agent for testing purposes
@@ -135,8 +137,8 @@ mod tests {
 
             #[async_trait]
             impl LogProcessor for TestLogProcessor {
-                fn process_line(&mut self, _line: &str) -> Option<String> {
-                    Some("test".to_string())
+                fn process_line(&mut self, line: &str) -> Option<LogLine> {
+                    Some(LogLine::message(vec![], None, line.to_string()))
                 }
 
                 fn get_final_result(&self) -> Option<&TaskResult> {
@@ -212,10 +214,14 @@ mod tests {
 
         let mut processor = NoOpLogProcessor::new();
 
-        // Test process_line passes through
+        // Test process_line passes through as LogLine::Message
         let line = "test output line";
-        let result = processor.process_line(line);
-        assert_eq!(result, Some(line.to_string()));
+        let result = processor.process_line(line).unwrap();
+        if let LogLine::Message { message, .. } = &result {
+            assert_eq!(message, line);
+        } else {
+            panic!("Expected Message variant");
+        }
 
         // Test get_final_result returns None
         assert!(processor.get_final_result().is_none());
@@ -225,7 +231,7 @@ mod tests {
     fn test_codex_log_processor() {
         use super::codex::codex_log_processor::CodexLogProcessor;
 
-        let mut processor = CodexLogProcessor::new(Some("test-task".to_string()));
+        let mut processor = CodexLogProcessor::new();
 
         // Test that thread.started is filtered out
         let thread_started = r#"{"type":"thread.started","thread_id":"test-123"}"#;
@@ -235,7 +241,7 @@ mod tests {
         let cmd_started = r#"{"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"ls","status":"in_progress"}}"#;
         let output = processor.process_line(cmd_started);
         assert!(output.is_some());
-        assert!(output.unwrap().contains("Running: ls"));
+        assert!(output.unwrap().to_string().contains("Running: ls"));
 
         // Test get_final_result returns None before turn.completed
         assert!(processor.get_final_result().is_none());
