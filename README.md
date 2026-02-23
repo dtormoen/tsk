@@ -358,6 +358,20 @@ These default paths follow XDG conventions. You can override them with TSK-speci
 - `TSK_RUNTIME_DIR` - overrides `XDG_RUNTIME_DIR` for TSK (default: `/tmp`)
 - `TSK_CONFIG_HOME` - overrides `XDG_CONFIG_HOME` for TSK (default: `~/.config`)
 
+## Claude Code Skills Marketplace
+
+This repository includes a Claude Code skills marketplace with TSK-specific skills that teach Claude how to use TSK commands. To install:
+
+```bash
+# Add the marketplace in Claude Code
+/plugin marketplace add dtormoen/tsk
+
+# Install the tsk-help skill
+/plugin install tsk-help@dtormoen/tsk
+```
+
+Skills follow the [Agent Skills](https://agentskills.io) open standard. See the [Skills Marketplace Guide](docs/skill-marketplace.md) for details on available skills, manual installation, and contributing new skills.
+
 ## Contributing
 
 This project uses:

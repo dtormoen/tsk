@@ -174,6 +174,12 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Used by `TaskBuilder`, `DockerBuildCommand`, and `ShellCommand` when `--stack` and `--project` flags are not provided
 - Provides user feedback when auto-detection is used vs. explicit flags
 
+**Skills Marketplace** (`skills/`, `.claude-plugin/marketplace.json`)
+- Claude Code skills following the [Agent Skills](https://agentskills.io) open standard
+- Marketplace manifest at `.claude-plugin/marketplace.json` registers available plugins
+- Each skill is a plugin directory: `skills/<name>/.claude-plugin/plugin.json` + `skills/<name>/skills/<name>/SKILL.md`
+- Users install via `/plugin marketplace add dtormoen/tsk` then `/plugin install <name>@dtormoen/tsk`
+
 ### Development Conventions
 
 - Avoid `#[allow(dead_code)]` directives

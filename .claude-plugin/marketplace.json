@@ -1,0 +1,21 @@
+{
+  "name": "tsk",
+  "owner": {
+    "name": "TSK Contributors"
+  },
+  "metadata": {
+    "description": "Claude Code skills for the TSK AI Agent Task Manager"
+  },
+  "plugins": [
+    {
+      "name": "tsk-help",
+      "description": "Teaches Claude core TSK commands for delegating tasks to AI agents in sandboxed containers.",
+      "source": "./skills/tsk-help"
+    },
+    {
+      "name": "tsk-docker-config",
+      "description": "Guides users through configuring TSK Docker container images for their project.",
+      "source": "./skills/tsk-docker-config"
+    }
+  ]
+}
