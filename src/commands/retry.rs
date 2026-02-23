@@ -54,8 +54,6 @@ impl Command for RetryCommand {
         let mut failed_retries = 0;
 
         for task_id in &self.task_ids {
-            println!("Retrying task: {task_id}");
-
             let mut repo_copy_source = None;
             if !self.from_cwd {
                 let storage = ctx.task_storage();
@@ -66,11 +64,11 @@ impl Command for RetryCommand {
                     && parent_repo.exists()
                     && confirm(
                         &format!(
-                            "Task {task_id} has parent task '{}' ({parent_id}) with an existing repository",
+                            "Task {task_id} has parent '{}' ({parent_id}) with existing repo",
                             parent_task.name
                         ),
-                        "Use parent task's repository?",
-                        "Using parent task's repository (non-interactive mode)",
+                        "Use parent's repo?",
+                        "Using parent's repo (non-interactive mode)",
                         ctx.interactive(),
                     )
                 {
@@ -92,7 +90,7 @@ impl Command for RetryCommand {
                 .await
             {
                 Ok(new_task_id) => {
-                    println!("Task '{task_id}' retried successfully. New task ID: {new_task_id}");
+                    println!("Retried {task_id} -> {new_task_id}");
                     successful_retries += 1;
 
                     let descendants = task_manager.find_descendant_tasks(task_id).await?;
@@ -127,29 +125,17 @@ impl Command for RetryCommand {
                                 ..Default::default()
                             };
 
-                            let parent_display = new_parent_id.as_deref().unwrap_or("none");
-                            println!(
-                                "Retrying child task: {} (parent: {parent_display})",
-                                descendant.id
-                            );
-
                             match task_manager
                                 .retry_task(&descendant.id, false, child_overrides, ctx)
                                 .await
                             {
                                 Ok(new_child_id) => {
-                                    println!(
-                                        "Task '{}' retried successfully. New task ID: {new_child_id}",
-                                        descendant.id
-                                    );
+                                    println!("Retried {} -> {new_child_id}", descendant.id);
                                     id_map.insert(descendant.id.clone(), new_child_id);
                                     successful_retries += 1;
                                 }
                                 Err(e) => {
-                                    eprintln!(
-                                        "Failed to retry child task '{}': {e}",
-                                        descendant.id
-                                    );
+                                    eprintln!("Failed to retry {}: {e}", descendant.id);
                                     failed_retries += 1;
                                 }
                             }
@@ -157,7 +143,7 @@ impl Command for RetryCommand {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to retry task '{task_id}': {e}");
+                    eprintln!("Failed to retry {task_id}: {e}");
                     failed_retries += 1;
                 }
             }
@@ -165,15 +151,9 @@ impl Command for RetryCommand {
 
         if failed_retries > 0 {
             if successful_retries > 0 {
-                println!(
-                    "\nSummary: {successful_retries} tasks retried successfully, {failed_retries} failed"
-                );
+                println!("\n{successful_retries} retried, {failed_retries} failed");
             }
             return Err(format!("{failed_retries} task(s) failed to retry").into());
-        }
-
-        if self.task_ids.len() > 1 {
-            println!("\nAll {} tasks retried successfully", self.task_ids.len());
         }
 
         Ok(())

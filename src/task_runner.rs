@@ -166,10 +166,8 @@ impl TaskRunner {
         })?;
         let branch_name = task.branch_name.clone();
 
-        println!("Using repository copy at: {}", repo_path.display());
-
         // Launch Docker container
-        println!("Launching Docker container with {} agent...", agent.name());
+        println!("Launching {} agent...", agent.name());
         println!("\n{}", "=".repeat(60));
 
         let task_image_manager =
@@ -219,14 +217,6 @@ impl TaskRunner {
         };
 
         println!("\n{}", "=".repeat(60));
-        if task_result.success {
-            println!("Container execution completed successfully");
-        } else {
-            println!(
-                "Container execution completed with failure: {}",
-                task_result.message
-            );
-        }
 
         // Commit any changes made by the container
         let commit_message = format!("TSK automated changes for task: {}", task.name);
@@ -252,10 +242,10 @@ impl TaskRunner {
             .await
         {
             Ok(true) => {
-                println!("Branch {branch_name} is now available in the main repository");
+                println!("Branch {branch_name} is now available");
             }
             Ok(false) => {
-                println!("No changes to merge - branch was not created");
+                println!("No changes - branch not created");
             }
             Err(e) => {
                 eprintln!("Error fetching changes: {e}");

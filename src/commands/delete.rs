@@ -20,14 +20,13 @@ impl Command for DeleteCommand {
         let mut failed_deletes = 0;
 
         for task_id in &self.task_ids {
-            println!("Deleting task: {task_id}");
             match task_manager.delete_task(task_id).await {
                 Ok(()) => {
-                    println!("Task '{task_id}' deleted successfully");
+                    println!("Deleted {task_id}");
                     successful_deletes += 1;
                 }
                 Err(e) => {
-                    eprintln!("Failed to delete task '{task_id}': {e}");
+                    eprintln!("Failed to delete {task_id}: {e}");
                     failed_deletes += 1;
                 }
             }
@@ -35,15 +34,9 @@ impl Command for DeleteCommand {
 
         if failed_deletes > 0 {
             if successful_deletes > 0 {
-                println!(
-                    "\nSummary: {successful_deletes} tasks deleted successfully, {failed_deletes} failed"
-                );
+                println!("\n{successful_deletes} deleted, {failed_deletes} failed");
             }
             return Err(format!("{failed_deletes} task(s) failed to delete").into());
-        }
-
-        if self.task_ids.len() > 1 {
-            println!("\nAll {} tasks deleted successfully", self.task_ids.len());
         }
 
         Ok(())

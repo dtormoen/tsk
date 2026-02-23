@@ -9,18 +9,11 @@ pub struct CleanCommand;
 #[async_trait]
 impl Command for CleanCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
-        println!("Cleaning completed tasks...");
         let task_manager = TaskManager::new(ctx)?;
         let result = task_manager.clean_tasks(false, None).await?;
-        println!(
-            "Cleanup complete: {} completed task(s) deleted",
-            result.deleted
-        );
+        println!("Cleaned {} task(s)", result.deleted);
         if result.skipped > 0 {
-            println!(
-                "Skipped {} task(s) with pending child tasks",
-                result.skipped
-            );
+            println!("Skipped {} with pending children", result.skipped);
         }
         Ok(())
     }

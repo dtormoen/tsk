@@ -22,9 +22,6 @@ impl Command for ShellCommand {
         let args = &self.task_args;
         let name = args.resolved_name();
 
-        println!("Starting shell session: {name}");
-        println!("Type: {}", args.r#type);
-
         let description = args.resolve_description()?;
         let repo_root = args.resolve_repo_root()?;
 
@@ -34,11 +31,7 @@ impl Command for ShellCommand {
             .build(ctx)
             .await?;
 
-        if let Some(ref agent) = args.agent {
-            println!("Agent: {agent}");
-        }
-
-        println!("Task ID: {}", task.id);
+        println!("Shell {} ({}, {})", task.id, task.stack, task.agent);
 
         // Update terminal title for the shell session
         ctx.terminal_operations()

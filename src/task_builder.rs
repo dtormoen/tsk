@@ -213,15 +213,9 @@ impl TaskBuilder {
 
         // Auto-detect project name first (needed for project config lookup)
         let project = match self.project {
-            Some(ref p) => {
-                println!("Using project: {p}");
-                p.clone()
-            }
+            Some(ref p) => p.clone(),
             None => match crate::repository::detect_project_name(&repo_root).await {
-                Ok(detected) => {
-                    println!("Auto-detected project name: {detected}");
-                    detected
-                }
+                Ok(detected) => detected,
                 Err(e) => {
                     eprintln!("Warning: Failed to detect project name: {e}. Using default.");
                     "default".to_string()
@@ -352,10 +346,7 @@ impl TaskBuilder {
 
         // Resolve stack: CLI flag > config (project > defaults) > auto-detect > built-in default
         let stack = match self.stack {
-            Some(ts) => {
-                println!("Using stack: {ts}");
-                ts
-            }
+            Some(ts) => ts,
             None => {
                 // Check if any config layer explicitly sets a stack
                 // Priority: user [project.<name>] > project .tsk/tsk.toml > user [defaults]
@@ -367,15 +358,11 @@ impl TaskBuilder {
                     .or_else(|| tsk_config.defaults.stack.clone());
 
                 if let Some(config_stack) = config_stack {
-                    println!("Using stack from config: {config_stack}");
                     config_stack
                 } else {
                     // Auto-detect stack
                     match crate::repository::detect_stack(&repo_root).await {
-                        Ok(detected) => {
-                            println!("Auto-detected stack: {detected}");
-                            detected
-                        }
+                        Ok(detected) => detected,
                         Err(e) => {
                             eprintln!("Warning: Failed to detect stack: {e}. Using default.");
                             "default".to_string()
@@ -439,10 +426,6 @@ impl TaskBuilder {
         // Tasks with parents skip repo copy - they'll get it from the parent when scheduled
         let copied_repo_path = if has_parent {
             // Skip repo copy for child tasks - the scheduler will copy from parent task
-            println!(
-                "Task has parent '{}' - repository copy deferred until parent completes",
-                self.parent_id.as_ref().unwrap()
-            );
             None
         } else {
             let copy_source = self.repo_copy_source.as_ref().unwrap_or(&repo_root);
@@ -546,14 +529,11 @@ impl TaskBuilder {
             crate::file_system::write_file(dest_path, &initial_content).await?;
         }
 
-        println!("Created instructions file: {}", dest_path.display());
         Ok(dest_path.to_string_lossy().to_string())
     }
 
     fn open_editor(&self, instructions_path: &str, tsk_env: &TskEnv) -> Result<(), Box<dyn Error>> {
         let editor = tsk_env.editor();
-
-        println!("Opening instructions file in editor: {}", editor);
 
         let status = std::process::Command::new(editor)
             .arg(instructions_path)

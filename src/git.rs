@@ -104,13 +104,10 @@ impl RepoManager {
         // overwrite the working directory files we're about to overlay from the source
         match source_commit {
             Some(commit_sha) => {
-                // Create branch from specific commit
                 git_operations::create_branch_from_commit(&repo_path, &branch_name, commit_sha)
                     .await?;
-                println!("Created branch from commit: {commit_sha}");
             }
             None => {
-                // Create branch from HEAD (existing behavior)
                 git_operations::create_branch(&repo_path, &branch_name).await?;
             }
         }
@@ -294,8 +291,6 @@ impl RepoManager {
                 .map_err(|e| format!("Failed to copy .tsk directory: {e}"))?;
         }
 
-        println!("Created repository copy at: {}", repo_path.display());
-        println!("Branch: {branch_name}");
         Ok((repo_path, branch_name))
     }
 
@@ -359,10 +354,6 @@ impl RepoManager {
                 continue;
             }
 
-            println!(
-                "Committed submodule changes in '{}': {}",
-                submodule.path, message
-            );
             committed_submodules.push(submodule.path);
         }
 
@@ -383,7 +374,6 @@ impl RepoManager {
         let status_output = git_operations::get_status(repo_path).await?;
 
         if status_output.trim().is_empty() {
-            println!("No changes to commit");
             return Ok(());
         }
 
@@ -393,7 +383,6 @@ impl RepoManager {
         // Commit changes
         git_operations::commit(repo_path, message).await?;
 
-        println!("Committed changes: {message}");
         Ok(())
     }
 
@@ -451,7 +440,6 @@ impl RepoManager {
         // Check if there are any changes by comparing HEAD with source commit
         let current_head = git_operations::get_current_commit(repo_path).await?;
         if current_head == source_commit {
-            println!("No changes detected - skipping branch creation");
             return Ok(false);
         }
 
@@ -525,20 +513,16 @@ impl RepoManager {
                     git_operations::has_commits_not_in_base(&main_repo, branch_name, "main")
                         .await?;
 
-                if !has_commits {
-                    println!("No new commits in branch {branch_name} - deleting branch");
-                    if let Err(e) = git_operations::delete_branch(&main_repo, branch_name).await {
-                        eprintln!("Warning: Failed to delete branch {branch_name}: {e}");
-                    }
+                if !has_commits
+                    && let Err(e) = git_operations::delete_branch(&main_repo, branch_name).await
+                {
+                    eprintln!("Warning: Failed to delete branch {branch_name}: {e}");
                 }
 
                 Ok::<bool, String>(has_commits)
             })
             .await?;
 
-        if has_commits {
-            println!("Fetched changes from copied repository");
-        }
         Ok(has_commits)
     }
 

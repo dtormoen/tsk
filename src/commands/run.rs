@@ -20,9 +20,6 @@ impl Command for RunCommand {
         let args = &self.task_args;
         let name = args.resolved_name();
 
-        println!("Running task: {name}");
-        println!("Type: {}", args.r#type);
-
         let agents = args.parse_and_validate_agents()?;
 
         // Run command only supports single agent (no multi-agent execution)
@@ -46,8 +43,10 @@ impl Command for RunCommand {
             .build(ctx)
             .await?;
 
-        println!("Agent: {}", agents[0]);
-        println!("Task ID: {}", task.id);
+        println!(
+            "Running {} ({}, {}, {})",
+            task.id, task.task_type, task.stack, task.agent
+        );
 
         // Update terminal title for the task
         ctx.terminal_operations().set_title(&format!("TSK: {name}"));

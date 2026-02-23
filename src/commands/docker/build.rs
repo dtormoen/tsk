@@ -47,20 +47,14 @@ impl Command for DockerBuildCommand {
 
         // Auto-detect stack if not provided
         let stack = match &self.stack {
-            Some(ts) => {
-                println!("Using stack: {ts}");
-                ts.clone()
-            }
+            Some(ts) => ts.clone(),
             None => {
                 use crate::repo_utils::find_repository_root;
                 let repo_root = find_repository_root(std::path::Path::new("."))
                     .unwrap_or_else(|_| std::path::PathBuf::from("."));
 
                 match crate::repository::detect_stack(&repo_root).await {
-                    Ok(detected) => {
-                        println!("Auto-detected stack: {detected}");
-                        detected
-                    }
+                    Ok(detected) => detected,
                     Err(e) => {
                         eprintln!("Warning: Failed to detect stack: {e}. Using default.");
                         "default".to_string()
@@ -73,20 +67,14 @@ impl Command for DockerBuildCommand {
 
         // Auto-detect project if not provided
         let project = match &self.project {
-            Some(p) => {
-                println!("Using project: {p}");
-                Some(p.clone())
-            }
+            Some(p) => Some(p.clone()),
             None => {
                 use crate::repo_utils::find_repository_root;
                 let repo_root = find_repository_root(std::path::Path::new("."))
                     .unwrap_or_else(|_| std::path::PathBuf::from("."));
 
                 match crate::repository::detect_project_name(&repo_root).await {
-                    Ok(detected) => {
-                        println!("Auto-detected project name: {detected}");
-                        Some(detected)
-                    }
+                    Ok(detected) => Some(detected),
                     Err(e) => {
                         eprintln!("Warning: Failed to detect project name: {e}. Using default.");
                         Some("default".to_string())

@@ -376,7 +376,7 @@ impl TaskScheduler {
                             self.submitted_tasks.lock().await.remove(&result.job_id);
 
                             if result.success {
-                                println!("Task completed successfully: {}", result.job_id);
+                                println!("Task completed: {}", result.job_id);
                                 // Re-enable OAuth expiry notifications after a successful task
                                 self.oauth_notification_shown = false;
                             } else if let Some(msg) = &result.message {
@@ -477,10 +477,7 @@ impl TaskScheduler {
                         if let Some(ParentStatus::Ready(parent_task)) =
                             Self::is_parent_ready(&task, &tasks)
                         {
-                            println!(
-                                "Preparing child task {} from parent {}",
-                                task.id, parent_task.id
-                            );
+                            println!("Preparing {} from parent {}", task.id, parent_task.id);
                             match self.prepare_child_task(&task, &parent_task).await {
                                 Ok(prepared_task) => {
                                     task = prepared_task;
@@ -500,7 +497,7 @@ impl TaskScheduler {
                         }
                     }
 
-                    println!("Scheduling task: {} ({})", task.name, task.id);
+                    println!("Scheduling {} ({})", task.name, task.id);
 
                     // Update task status to running
                     let running_task = match self.storage.mark_running(&task.id).await {

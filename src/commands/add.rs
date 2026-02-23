@@ -16,8 +16,6 @@ impl Command for AddCommand {
         let args = &self.task_args;
         let name = args.resolved_name();
 
-        println!("Adding task to queue: {name}");
-
         let agents = args.parse_and_validate_agents()?;
         let description = args.resolve_description()?;
         let repo_root = args.resolve_repo_root()?;
@@ -103,29 +101,37 @@ impl Command for AddCommand {
             created_tasks.push(task);
         }
 
-        // Print success messages for all created tasks
+        // Print compact summary
+        let parent_suffix = |task: &crate::task::Task| -> String {
+            if task.parent_ids.is_empty() {
+                String::new()
+            } else {
+                format!(" parent:{}", task.parent_ids.join(","))
+            }
+        };
+
         if created_tasks.len() == 1 {
             let task = &created_tasks[0];
-            println!("\nTask successfully added to queue!");
-            println!("Task ID: {}", task.id);
-            println!("Type: {}", args.r#type);
-            if args.prompt.is_some() {
-                println!("Prompt: Copied to task directory");
-            }
-            println!("Agent: {}", task.agent);
-        } else {
             println!(
-                "\n{} tasks successfully added to queue!",
-                created_tasks.len()
+                "Queued {} ({}, {}, {}){}",
+                task.id,
+                task.task_type,
+                task.stack,
+                task.agent,
+                parent_suffix(task)
             );
-            println!("Type: {}", args.r#type);
-            println!("\nCreated tasks:");
+        } else {
+            let first = &created_tasks[0];
+            println!(
+                "Queued {} tasks ({}, {}):",
+                created_tasks.len(),
+                first.task_type,
+                first.stack
+            );
             for task in &created_tasks {
-                println!("  - Task ID: {} (Agent: {})", task.id, task.agent);
+                println!("  {} ({}){}", task.id, task.agent, parent_suffix(task));
             }
         }
-
-        println!("\nUse 'tsk list' to view all queued tasks");
 
         Ok(())
     }

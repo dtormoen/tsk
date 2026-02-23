@@ -76,7 +76,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - **Container environment variables**: All task containers receive `TSK_CONTAINER=1` and `TSK_TASK_ID=<task-id>` for in-container detection. When `TSK_CONTAINER=1` is set, TSK auto-defaults to Podman and skips proxy/network isolation (handled by outer container).
 - **Directory override environment variables**: `TSK_DATA_HOME`, `TSK_RUNTIME_DIR`, and `TSK_CONFIG_HOME` override the corresponding XDG base directories for TSK only (without affecting other XDG-aware software). Resolution priority: builder override > TSK env var > XDG env var > default fallback.
 - Volume mounting for repository copies and agent config
-- Layered image system: base → tech-stack → agent → project
+- Layered image system: base → stack → project → agent
 - Automatic fallback to default project layer when specific layer is missing
 
 **Storage** (`src/context/`)
@@ -172,7 +172,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Default: "default" (when no specific files found)
 - Automatic project name detection from repository directory name with cleaning for Docker compatibility
 - Used by `TaskBuilder`, `DockerBuildCommand`, and `ShellCommand` when `--stack` and `--project` flags are not provided
-- Provides user feedback when auto-detection is used vs. explicit flags
+- Silent operation: auto-detection runs without user-facing output; warnings emitted only on failure
 
 **Skills Marketplace** (`skills/`, `.claude-plugin/marketplace.json`)
 - Claude Code skills following the [Agent Skills](https://agentskills.io) open standard

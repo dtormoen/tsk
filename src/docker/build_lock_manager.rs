@@ -117,16 +117,6 @@ impl DockerBuildLockManager {
                     lock.waiting_count -= 1;
                 }
                 lock.state = BuildLockState::Building;
-
-                // Log that we acquired the lock
-                if lock.waiting_count > 0 {
-                    println!(
-                        "Acquired Docker build lock for image '{}' ({} tasks still waiting)",
-                        image_tag, lock.waiting_count
-                    );
-                } else {
-                    println!("Acquired Docker build lock for image '{}'", image_tag);
-                }
             }
         }
 

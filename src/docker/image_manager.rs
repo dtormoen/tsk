@@ -367,12 +367,6 @@ impl DockerImageManager {
     ) -> Result<String> {
         let project = project.unwrap_or("default");
 
-        // Log which repository context is being used
-        match options.build_root {
-            Some(root) => println!("Building Docker image using build root: {}", root.display()),
-            None => println!("Building Docker image without project-specific context"),
-        }
-
         // Extract inline overrides from config
         let overrides = Self::extract_inline_overrides(resolved_config, stack, agent);
 
