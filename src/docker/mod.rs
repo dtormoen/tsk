@@ -15,6 +15,7 @@ use bollard::models::{ContainerCreateBody, HostConfig};
 use bollard::query_parameters::{LogsOptions, RemoveContainerOptions};
 use futures_util::stream::StreamExt;
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -669,9 +670,26 @@ impl DockerManager {
                 }
             }
         } else {
+            // Open a log file to persist processed agent output
+            let log_file = {
+                let output_dir = self.ctx.tsk_env().task_dir(&task.id).join("output");
+                if let Err(e) = std::fs::create_dir_all(&output_dir) {
+                    eprintln!("Warning: Failed to create output directory: {e}");
+                    None
+                } else {
+                    match std::fs::File::create(output_dir.join("agent.log")) {
+                        Ok(file) => Some(file),
+                        Err(e) => {
+                            eprintln!("Warning: Failed to create agent log file: {e}");
+                            None
+                        }
+                    }
+                }
+            };
+
             let mut log_processor = agent.create_log_processor(Some(task));
             let output = self
-                .stream_container_logs(&container_id, &mut *log_processor)
+                .stream_container_logs(&container_id, &mut *log_processor, log_file)
                 .await;
             let task_result = log_processor.get_final_result().cloned();
 
@@ -716,7 +734,9 @@ impl DockerManager {
         &self,
         container_id: &str,
         log_processor: &mut dyn LogProcessor,
+        log_file: Option<std::fs::File>,
     ) -> Result<(String, i64), String> {
+        let mut log_file = log_file;
         // Start a background task to stream logs
         let client_clone = Arc::clone(&self.client);
         let container_id_clone = container_id.to_string();
@@ -780,7 +800,7 @@ impl DockerManager {
 
                     // Buffer chunks and process complete lines only
                     line_buffer.push_str(&log_chunk);
-                    process_complete_lines(&mut line_buffer, log_processor);
+                    process_complete_lines(&mut line_buffer, log_processor, log_file.as_mut());
                 }
                 exit_code = &mut wait_future => {
                     let exit_code = exit_code?;
@@ -792,15 +812,13 @@ impl DockerManager {
                     while let Ok(log_chunk) = rx.try_recv() {
                         all_logs.push_str(&log_chunk);
                         line_buffer.push_str(&log_chunk);
-                        process_complete_lines(&mut line_buffer, log_processor);
+                        process_complete_lines(&mut line_buffer, log_processor, log_file.as_mut());
                     }
 
                     // Flush remaining buffer content if non-empty
                     if !line_buffer.trim().is_empty() {
-                        let trimmed = line_buffer.trim_end_matches('\r');
-                        if let Some(formatted) = log_processor.process_line(trimmed) {
-                            println!("{formatted}");
-                        }
+                        line_buffer.push('\n');
+                        process_complete_lines(&mut line_buffer, log_processor, log_file.as_mut());
                     }
 
                     // Abort the log task
@@ -818,7 +836,11 @@ impl DockerManager {
 /// This function extracts all complete lines (terminated by newline) from the buffer,
 /// processes each through the log processor, and removes them from the buffer.
 /// Any partial line (without a trailing newline) remains in the buffer.
-fn process_complete_lines(line_buffer: &mut String, log_processor: &mut dyn LogProcessor) {
+fn process_complete_lines(
+    line_buffer: &mut String,
+    log_processor: &mut dyn LogProcessor,
+    mut log_file: Option<&mut std::fs::File>,
+) {
     while let Some(newline_pos) = line_buffer.find('\n') {
         let complete_line = &line_buffer[..newline_pos];
         // Handle CRLF by trimming trailing \r
@@ -826,6 +848,11 @@ fn process_complete_lines(line_buffer: &mut String, log_processor: &mut dyn LogP
 
         if let Some(formatted) = log_processor.process_line(trimmed) {
             println!("{formatted}");
+            if let Some(ref mut file) = log_file
+                && let Err(e) = writeln!(file, "{formatted}")
+            {
+                eprintln!("Warning: Failed to write to agent log file: {e}");
+            }
         }
 
         // Use drain() for efficient in-place removal
