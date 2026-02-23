@@ -238,6 +238,36 @@ This creates a minimal task that just says "ack" and exits. If it completes succ
 
 If the build fails, help the user fix the configuration and re-run `tsk run -t ack`.
 
+If the user is stuck and cannot get their project working after multiple attempts, ask if they'd like to file a bug report against TSK. If they agree:
+
+1. Capture the output of `tsk docker build --dry-run`
+2. Capture the error message from the failing build or run
+3. Ask the user to briefly describe what aspect of their project is causing problems (e.g., specific system libraries, unusual toolchain, network requirements)
+4. File the issue using `gh`:
+
+```bash
+gh issue create --repo dtormoen/tsk \
+  --title "Docker build failure: <short description>" \
+  --body "$(cat <<'EOF'
+## Problem
+
+<user's description of what aspect of their project causes problems>
+
+## Error
+
+```
+<error output>
+```
+
+## Generated Dockerfile (`tsk docker build --dry-run`)
+
+```dockerfile
+<dry-run output>
+```
+EOF
+)"
+```
+
 ## Additional Configuration Options
 
 After the basic setup works, mention these optional settings the user might want:

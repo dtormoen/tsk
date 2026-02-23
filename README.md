@@ -300,11 +300,11 @@ Each TSK sandbox container image has 4 main parts:
 - An `agent` snippet that installs an agent, e.g. `claude` or `codex`.
 - A `project` snippet that defines project specific build steps (applied last for project-specific customizations). This does nothing by default, but can be used to add extra build steps for your project.
 
-It is very difficult to make these images general purpose enough to cover all repositories. You may need some special customization. The recommended approach is to use `setup`, `stack_config`, and `agent_config` fields in your `tsk.toml` to inject custom Dockerfile commands (see [Configuration File](#configuration-file) above).
+It is very difficult to make these images general purpose enough to cover all repositories. You may need some special customization. If you use Claude Code, the `tsk-docker-config` skill can walk you through configuring TSK's Docker layers for your project (see [Claude Code Skills Marketplace](#claude-code-skills-marketplace) for installation). Otherwise, the recommended approach is to use `setup`, `stack_config`, and `agent_config` fields in your `tsk.toml` to inject custom Dockerfile commands (see [Configuration File](#configuration-file) above).
 
 See [dockerfiles](./dockerfiles) for the built-in dockerfiles.
 
-You can run `tsk docker build --dry-run` to see the dockerfile that `tsk` will dynamically generate for your repository. You can also run `tsk run --type tech-stack` or `tsk run --type project-layer` to try to generate a `stack` or `project` snippet for your project, but this has not been heavily tested.
+You can run `tsk docker build --dry-run` to see the dockerfile that `tsk` will dynamically generate for your repository.
 
 See the [Docker Builds Guide](docs/docker-builds.md) for a more in-depth walk through, and the [Network Isolation Guide](docs/network-isolation.md) for details on how TSK secures agent network access.
 
