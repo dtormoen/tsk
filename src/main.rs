@@ -374,6 +374,10 @@ async fn main() {
         .with_container_engine(cli.command.container_engine())
         .build();
 
+    // Warn about deprecated dockerfile directories and old config format
+    let project_root = repo_utils::find_repository_root(std::path::Path::new(".")).ok();
+    assets::warn_deprecated_dockerfiles(project_root.as_deref(), &app_context.tsk_env());
+
     let command: Box<dyn Command> = match cli.command {
         Commands::Add {
             name,

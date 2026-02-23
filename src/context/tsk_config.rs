@@ -573,7 +573,7 @@ pub fn load_config(config_dir: &Path) -> TskConfig {
                         .collect();
                     if !old_sections.is_empty() {
                         eprintln!(
-                            "Warning: Your tsk.toml uses a deprecated configuration format.\n\
+                            "\x1b[31mWarning: Your tsk.toml uses a deprecated configuration format.\x1b[0m\n\
                              Found deprecated sections: {}\n\n\
                              Support for this format will be removed in a future release.\n\
                              Please migrate your config:\n\
@@ -622,11 +622,18 @@ fn migrate_old_config(value: &toml::Value) -> TskConfig {
                 _ => config.container_engine = ContainerEngine::Docker,
             }
         }
-        if let Some(mem) = docker.get("memory_limit_gb").and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64))) {
+        if let Some(mem) = docker
+            .get("memory_limit_gb")
+            .and_then(|v| v.as_float().or_else(|| v.as_integer().map(|i| i as f64)))
+        {
             config.defaults.memory_limit_gb = Some(mem);
         }
         // Accept both cpu_limit (current) and cpu_quota (legacy field name)
-        if let Some(cpu) = docker.get("cpu_limit").or_else(|| docker.get("cpu_quota")).and_then(|v| v.as_integer()) {
+        if let Some(cpu) = docker
+            .get("cpu_limit")
+            .or_else(|| docker.get("cpu_quota"))
+            .and_then(|v| v.as_integer())
+        {
             config.defaults.cpu_limit = Some(cpu as u32);
         }
         if let Some(dind) = docker.get("dind").and_then(|v| v.as_bool()) {
@@ -634,36 +641,36 @@ fn migrate_old_config(value: &toml::Value) -> TskConfig {
         }
     }
 
-    if let Some(proxy) = value.get("proxy").and_then(|v| v.as_table()) {
-        if let Some(services) = proxy.get("host_services").and_then(|v| v.as_array()) {
-            config.defaults.host_services = services
-                .iter()
-                .filter_map(|v| v.as_integer().map(|i| i as u16))
-                .collect();
-        }
+    if let Some(proxy) = value.get("proxy").and_then(|v| v.as_table())
+        && let Some(services) = proxy.get("host_services").and_then(|v| v.as_array())
+    {
+        config.defaults.host_services = services
+            .iter()
+            .filter_map(|v| v.as_integer().map(|i| i as u16))
+            .collect();
     }
 
-    if let Some(git_town) = value.get("git_town").and_then(|v| v.as_table()) {
-        if let Some(enabled) = git_town.get("enabled").and_then(|v| v.as_bool()) {
-            config.defaults.git_town = Some(enabled);
-        }
+    if let Some(git_town) = value.get("git_town").and_then(|v| v.as_table())
+        && let Some(enabled) = git_town.get("enabled").and_then(|v| v.as_bool())
+    {
+        config.defaults.git_town = Some(enabled);
     }
 
     // Merge any new-format sections that may coexist with old sections
-    if let Some(server) = value.get("server") {
-        if let Ok(s) = server.clone().try_into() {
-            config.server = s;
-        }
+    if let Some(server) = value.get("server")
+        && let Ok(s) = server.clone().try_into()
+    {
+        config.server = s;
     }
-    if let Some(defaults) = value.get("defaults") {
-        if let Ok(d) = defaults.clone().try_into() {
-            config.defaults = d;
-        }
+    if let Some(defaults) = value.get("defaults")
+        && let Ok(d) = defaults.clone().try_into()
+    {
+        config.defaults = d;
     }
-    if let Some(project) = value.get("project") {
-        if let Ok(p) = project.clone().try_into() {
-            config.project = p;
-        }
+    if let Some(project) = value.get("project")
+        && let Ok(p) = project.clone().try_into()
+    {
+        config.project = p;
     }
 
     config

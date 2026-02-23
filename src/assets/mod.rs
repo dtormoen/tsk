@@ -15,6 +15,51 @@ pub mod utils;
 use crate::context::tsk_env::TskEnv;
 use embedded::EmbeddedAssetManager;
 
+/// Check for deprecated filesystem-based dockerfile directories and warn the user.
+///
+/// Previously, TSK loaded custom dockerfiles from `.tsk/dockerfiles/` and
+/// `~/.config/tsk/dockerfiles/`. These are now replaced by inline config fields
+/// (`setup`, `stack_config`, `agent_config`) in `tsk.toml`.
+pub fn warn_deprecated_dockerfiles(project_root: Option<&Path>, tsk_env: &TskEnv) {
+    let paths: Vec<(&str, std::path::PathBuf)> = [
+        (
+            ".tsk/tsk.toml",
+            project_root.map(|r| r.join(".tsk").join("dockerfiles")),
+        ),
+        (
+            "~/.config/tsk/tsk.toml",
+            Some(tsk_env.config_dir().join("dockerfiles")),
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(config, path)| path.map(|p| (config, p)))
+    .filter(|(_, path)| path.exists())
+    .collect();
+
+    for (config_location, path) in paths {
+        let mut layers = Vec::new();
+        if path.join("project").exists() {
+            layers.push("  - project/*.dockerfile → `setup` field");
+        }
+        if path.join("stack").exists() {
+            layers.push("  - stack/*.dockerfile   → `[stack_config.<name>]` setup field");
+        }
+        if path.join("agent").exists() {
+            layers.push("  - agent/*.dockerfile   → `[agent_config.<name>]` setup field");
+        }
+        eprintln!(
+            "\x1b[31mWarning: Found removed dockerfile directory: {}\x1b[0m\n\
+             Filesystem-based Docker layers have been removed and are no longer loaded.\n\
+             Migrate to inline config in {}:\n\
+             {}\n\
+             See the README for the new configuration format.",
+            path.display(),
+            config_location,
+            layers.join("\n"),
+        );
+    }
+}
+
 /// Find a template by name, checking project, user, and embedded sources in priority order.
 pub fn find_template(name: &str, project_root: Option<&Path>, tsk_env: &TskEnv) -> Result<String> {
     let filename = format!("{name}.md");
@@ -144,5 +189,25 @@ mod tests {
         let mut sorted = templates.clone();
         sorted.sort();
         assert_eq!(templates, sorted);
+    }
+
+    #[test]
+    fn test_warn_deprecated_dockerfiles_no_warning_when_absent() {
+        let ctx = AppContext::builder().build();
+        let temp_dir = TempDir::new().unwrap();
+        // No .tsk/dockerfiles/ directory exists — should not panic or error
+        warn_deprecated_dockerfiles(Some(temp_dir.path()), &ctx.tsk_env());
+    }
+
+    #[test]
+    fn test_warn_deprecated_dockerfiles_detects_project_dir() {
+        let ctx = AppContext::builder().build();
+        let temp_dir = TempDir::new().unwrap();
+        let dockerfiles_dir = temp_dir.path().join(".tsk").join("dockerfiles");
+        fs::create_dir_all(dockerfiles_dir.join("project")).unwrap();
+        fs::create_dir_all(dockerfiles_dir.join("stack")).unwrap();
+        // Function runs without error when deprecated dirs exist
+        // (warning is printed to stderr)
+        warn_deprecated_dockerfiles(Some(temp_dir.path()), &ctx.tsk_env());
     }
 }
