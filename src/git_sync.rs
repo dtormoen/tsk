@@ -32,7 +32,9 @@ impl GitSyncManager {
         let lock = self.get_or_create_lock(&canonical_path).await;
         let _guard = lock.lock().await;
 
-        let lock_path = canonical_path.join(".git").join("tsk.lock");
+        let lock_dir = crate::repo_utils::resolve_git_common_dir(&canonical_path)
+            .unwrap_or_else(|_| canonical_path.join(".git"));
+        let lock_path = lock_dir.join("tsk.lock");
         let _flock_file = acquire_flock(lock_path.clone()).await.unwrap_or_else(|e| {
             panic!(
                 "Failed to acquire repository file lock at {}: {}",
@@ -215,7 +217,9 @@ mod tests {
         let sync_manager = GitSyncManager::new();
         let repo = create_temp_repo();
         let repo_path = repo.path().to_path_buf();
-        let expected_lock = repo.path().join(".git").join("tsk.lock");
+        let common_dir = crate::repo_utils::resolve_git_common_dir(&repo_path)
+            .unwrap_or_else(|_| repo_path.join(".git"));
+        let expected_lock = common_dir.join("tsk.lock");
 
         assert!(!expected_lock.exists(), "Lock file should not exist yet");
 
@@ -223,7 +227,40 @@ mod tests {
 
         assert!(
             expected_lock.exists(),
-            "Lock file should exist at <repo>/.git/tsk.lock"
+            "Lock file should exist at <common_git_dir>/tsk.lock"
         );
+    }
+
+    #[tokio::test]
+    async fn test_lock_file_in_worktree() {
+        let sync_manager = GitSyncManager::new();
+        let repo = TestGitRepository::new().unwrap();
+        repo.init_with_commit().unwrap();
+
+        let worktree_dir = repo.path().parent().unwrap().join("sync-worktree-test");
+        repo.run_git_command(&[
+            "worktree",
+            "add",
+            worktree_dir.to_str().unwrap(),
+            "-b",
+            "wt-sync",
+        ])
+        .unwrap();
+
+        // This should NOT panic
+        sync_manager
+            .with_repo_lock(&worktree_dir, || async {})
+            .await;
+
+        // Lock file should be in the MAIN repo's .git, not the worktree
+        let main_lock = repo.path().join(".git").join("tsk.lock");
+        assert!(
+            main_lock.exists(),
+            "Lock file should be in main repo's .git dir"
+        );
+
+        // Clean up
+        std::fs::remove_dir_all(&worktree_dir).ok();
+        repo.run_git_command(&["worktree", "prune"]).ok();
     }
 }

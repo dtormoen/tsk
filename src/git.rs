@@ -86,7 +86,9 @@ impl RepoManager {
         // Copy .git/modules from source to preserve submodule git data
         // This must happen BEFORE branch creation and file overlay so that
         // submodule .git files have valid targets to point to
-        let src_modules = current_dir.join(".git/modules");
+        let src_git_common = crate::repo_utils::resolve_git_common_dir(&current_dir)
+            .unwrap_or_else(|_| current_dir.join(".git"));
+        let src_modules = src_git_common.join("modules");
         let dst_modules = repo_path.join(".git/modules");
 
         if crate::file_system::exists(&src_modules)

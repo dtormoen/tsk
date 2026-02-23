@@ -52,14 +52,25 @@ pub async fn detect_stack(repo_path: &Path) -> Result<String> {
 ///
 /// Falls back to "default" if no name can be extracted
 pub async fn detect_project_name(repo_path: &Path) -> Result<String> {
-    // Extract the directory name from the repository path
-    let project_name = repo_path
+    // Try to resolve the main repository root via the common git dir.
+    // In a worktree, this gives us the main repo's name instead of the worktree dir name.
+    let effective_path = match crate::repo_utils::resolve_git_common_dir(repo_path) {
+        Ok(common_dir) => {
+            // The common dir is the main repo's .git — its parent is the repo root
+            common_dir
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| repo_path.to_path_buf())
+        }
+        Err(_) => repo_path.to_path_buf(),
+    };
+
+    let project_name = effective_path
         .file_name()
         .and_then(|name| name.to_str())
         .map(clean_project_name)
         .unwrap_or_else(|| "default".to_string());
 
-    // Ensure the name is not empty after cleaning
     let project_name = if project_name.is_empty() {
         "default".to_string()
     } else {
@@ -339,5 +350,63 @@ mod tests {
     async fn test_project_name_fallback() {
         let result = detect_project_name(Path::new("/")).await.unwrap();
         assert_eq!(result, "default");
+    }
+
+    #[tokio::test]
+    async fn test_detect_project_name_from_worktree() {
+        let temp_base = TempDir::new().unwrap();
+        let main_repo_dir = temp_base.path().join("my-real-project");
+        std::fs::create_dir(&main_repo_dir).unwrap();
+
+        let output = std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&main_repo_dir)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&main_repo_dir)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test User"])
+            .current_dir(&main_repo_dir)
+            .output()
+            .unwrap();
+
+        std::fs::write(main_repo_dir.join("file.txt"), "content").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(&main_repo_dir)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(&main_repo_dir)
+            .output()
+            .unwrap();
+
+        // Create worktree with a different name
+        let worktree_dir = temp_base.path().join("my-real-project-wt");
+        std::process::Command::new("git")
+            .args([
+                "worktree",
+                "add",
+                worktree_dir.to_str().unwrap(),
+                "-b",
+                "wt-proj",
+            ])
+            .current_dir(&main_repo_dir)
+            .output()
+            .unwrap();
+
+        // Detect project name from worktree — should return main repo's name
+        let name = detect_project_name(&worktree_dir).await.unwrap();
+        assert_eq!(name, "my-real-project");
+
+        // Clean up
+        std::fs::remove_dir_all(&worktree_dir).ok();
     }
 }

@@ -116,17 +116,18 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Provides `poll_completed()` for retrieving finished job results
   - Provides `total_workers()`, `active_workers()`, and `available_workers()` for monitoring
 
-**Git Operations** (`src/git.rs`, `src/git_sync.rs`, `src/git_operations.rs`)
+**Git Operations** (`src/git.rs`, `src/git_sync.rs`, `src/git_operations.rs`, `src/repo_utils.rs`)
 - Repository cloning to centralized task directories using `CloneLocal::NoLinks` for optimized pack files
 - Working directory overlay preserves uncommitted/unstaged changes from source
 - Isolated branch creation and result integration
 - Automatic commit and fetch operations
+- `resolve_git_dir` / `resolve_git_common_dir` (`src/repo_utils.rs`): Helpers that handle both normal repos (`.git` is a directory) and git worktrees (`.git` is a file with `gitdir:` pointer). Used by lock file placement, project name detection, and submodule path resolution
 - `GitSyncManager`: Repository-level synchronization for concurrent git operations
   - Prevents concurrent fetch operations to the same repository
   - Uses dual-lock architecture: in-process `tokio::Mutex` + cross-process `flock(2)` file locks
-  - Lock file at `<repo>/.git/tsk.lock` provides cross-process safety (multiple `tsk` processes on same repo)
+  - Lock file at `<common_git_dir>/tsk.lock` provides cross-process safety (multiple `tsk` processes on same repo); in a git worktree this resolves to the main repository's `.git/tsk.lock`
 - **Submodule Support**: Full support for repositories with git submodules
-  - Copies `.git/modules/` directory to preserve submodule git data without network access
+  - Copies `<common_git_dir>/modules/` directory to preserve submodule git data without network access (resolves through main repo's `.git` in worktrees)
   - Fixes gitdir paths in submodule `.git` files to point to correct locations
   - Agents can work on files across superproject and all submodules
   - Commits made in submodules are fetched back with the same branch name as the superproject task
@@ -170,7 +171,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Go: `go.mod` → "go"
   - Java: `pom.xml`, `build.gradle`, `build.gradle.kts` → "java"
   - Default: "default" (when no specific files found)
-- Automatic project name detection from repository directory name with cleaning for Docker compatibility
+- Automatic project name detection from repository directory name with cleaning for Docker compatibility; in a git worktree, resolves to the main repository's directory name via `resolve_git_common_dir`
 - Used by `TaskBuilder`, `DockerBuildCommand`, and `ShellCommand` when `--stack` and `--project` flags are not provided
 - Silent operation: auto-detection runs without user-facing output; warnings emitted only on failure
 
