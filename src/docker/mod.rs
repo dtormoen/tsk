@@ -22,6 +22,17 @@ const CONTAINER_WORKSPACE_BASE: &str = "/workspace";
 const CONTAINER_USER: &str = "agent";
 const SECCOMP_DIND_PROFILE: &str = include_str!("seccomp_dind.json");
 
+/// Standard proxy environment variable names forwarded to/from containers.
+/// Additional variables like JAVA_TOOL_OPTIONS and TSK_PROXY_HOST are handled separately.
+pub(crate) const PROXY_ENV_VARS: &[&str] = &[
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "NO_PROXY",
+    "no_proxy",
+];
+
 fn container_working_dir(project: &str) -> String {
     format!("{CONTAINER_WORKSPACE_BASE}/{project}")
 }
@@ -124,13 +135,11 @@ impl DockerManager {
 
     /// Returns true if at least one proxy env var references the `tsk-proxy` host.
     fn has_tsk_proxy_env() -> bool {
-        ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]
-            .iter()
-            .any(|var| {
-                std::env::var(var)
-                    .map(|val| val.contains("tsk-proxy"))
-                    .unwrap_or(false)
-            })
+        PROXY_ENV_VARS.iter().any(|var| {
+            std::env::var(var)
+                .map(|val| val.contains("tsk-proxy"))
+                .unwrap_or(false)
+        })
     }
 
     /// Build proxy environment variables for the container.
@@ -146,16 +155,11 @@ impl DockerManager {
             // Forward proxy env vars from the outer container's environment.
             // The outer TSK container already has network isolation via Docker.
             let mut env = Vec::new();
-            for var in [
-                "HTTP_PROXY",
-                "HTTPS_PROXY",
-                "http_proxy",
-                "https_proxy",
-                "NO_PROXY",
-                "no_proxy",
-                "JAVA_TOOL_OPTIONS",
-                "TSK_PROXY_HOST",
-            ] {
+            for var in PROXY_ENV_VARS
+                .iter()
+                .copied()
+                .chain(["JAVA_TOOL_OPTIONS", "TSK_PROXY_HOST"])
+            {
                 if let Ok(val) = std::env::var(var) {
                     env.push(format!("{var}={val}"));
                 }
@@ -305,6 +309,7 @@ impl DockerManager {
         agent: &dyn Agent,
         network_name: Option<&str>,
         proxy_config: Option<&crate::context::ResolvedProxyConfig>,
+        proxy_container_ip: Option<&str>,
     ) -> ContainerCreateBody {
         let resolved = resolve_config_from_task(task, &self.ctx);
         let binds = self.build_bind_volumes(task, agent, &resolved);
@@ -466,6 +471,12 @@ impl DockerManager {
                 } else {
                     None
                 },
+                extra_hosts: match (proxy_config, proxy_container_ip) {
+                    (Some(pc), Some(ip)) => {
+                        Some(vec![format!("{}:{}", pc.proxy_container_name(), ip)])
+                    }
+                    _ => None,
+                },
                 ..Default::default()
             }),
             working_dir: Some(working_dir),
@@ -507,6 +518,7 @@ impl DockerManager {
         let resolved = resolve_config_from_task(task, &self.ctx);
         let proxy_config = resolved.proxy_config();
 
+        let mut proxy_ip: Option<String> = None;
         let (network_name, proxy_container_name) = if task.network_isolation && !self.is_nested() {
             let proxy_build_log_path = self
                 .ctx
@@ -526,6 +538,14 @@ impl DockerManager {
                         The task should be retried later when the proxy is available. \
                         Check the status in Docker."
                     ));
+                }
+            };
+
+            proxy_ip = match self.proxy_manager.resolve_proxy_ip(&proxy_config).await {
+                Ok(ip) => Some(ip),
+                Err(e) => {
+                    eprintln!("Warning: Could not resolve proxy IP for extra_hosts: {e}");
+                    None
                 }
             };
 
@@ -557,6 +577,7 @@ impl DockerManager {
                 agent,
                 network_name.as_deref(),
                 if use_proxy { Some(&proxy_config) } else { None },
+                proxy_ip.as_deref(),
             )
             .await;
 
@@ -585,12 +606,19 @@ impl DockerManager {
         agent: &dyn Agent,
         network_name: Option<&str>,
         proxy_config: Option<&crate::context::ResolvedProxyConfig>,
+        proxy_container_ip: Option<&str>,
     ) -> (
         Option<String>,
         Result<(String, crate::agent::TaskResult), String>,
     ) {
-        let config =
-            self.create_container_config(docker_image_tag, task, agent, network_name, proxy_config);
+        let config = self.create_container_config(
+            docker_image_tag,
+            task,
+            agent,
+            network_name,
+            proxy_config,
+            proxy_container_ip,
+        );
         let container_name = self.build_container_name(task);
         let options = bollard::query_parameters::CreateContainerOptionsBuilder::default()
             .name(&container_name)
@@ -1028,7 +1056,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_container_configuration() {
-        let mock_client = Arc::new(TrackedDockerClient::default());
+        let proxy_config = ResolvedProxyConfig::default();
+        let network_name = proxy_config.external_network_name();
+        let mock_client = Arc::new(TrackedDockerClient {
+            inspect_container_response: serde_json::json!({
+                "State": { "Health": { "Status": "healthy" } },
+                "NetworkSettings": {
+                    "Networks": {
+                        network_name: { "IPAddress": "172.18.0.2" }
+                    }
+                }
+            })
+            .to_string(),
+            ..Default::default()
+        });
         let ctx = AppContext::builder().build();
         let manager = DockerManager::new(&ctx, mock_client.clone());
 
@@ -1081,8 +1122,14 @@ mod tests {
             host_config.network_mode,
             Some("tsk-agent-test-task-id".to_string())
         );
-        // Agent containers should NOT have extra_hosts (no direct host access)
-        assert!(host_config.extra_hosts.is_none());
+        // Agent containers should have extra_hosts with proxy hostname -> IP mapping
+        let extra_hosts = host_config
+            .extra_hosts
+            .as_ref()
+            .expect("extra_hosts should be set");
+        assert_eq!(extra_hosts.len(), 1);
+        assert!(extra_hosts[0].contains(&pcn));
+        assert!(extra_hosts[0].contains("172.18.0.2"));
         let default_resolved = crate::context::ResolvedConfig::default();
         assert_eq!(
             host_config.memory,

@@ -29,7 +29,7 @@ TSK composes Docker images from four distinct layers, each serving a specific pu
 
 ### 1. Base Layer
 The foundation of all TSK containers (`base/default.dockerfile`):
-- Ubuntu 24.04 base operating system
+- Ubuntu 25.10 base operating system
 - Essential development tools (git, curl, build-essential, ripgrep, etc.)
 - Non-root `agent` user (created by renaming the default `ubuntu` user) for security
 - Git configuration inherited from host user via build arguments

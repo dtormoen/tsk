@@ -3,13 +3,6 @@ FROM ubuntu:25.10
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Configure apt proxy if building through a proxy (e.g., Podman builds inside TSK containers).
-# This is a no-op when building on host machines without proxy env vars.
-RUN if [ -n "${http_proxy:-}" ]; then \
-        echo "Acquire::http::Proxy \"${http_proxy}\";" > /etc/apt/apt.conf.d/99proxy; \
-        echo "Acquire::https::Proxy \"${http_proxy}\";" >> /etc/apt/apt.conf.d/99proxy; \
-    fi
-
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -76,7 +69,7 @@ RUN mkdir -p /home/agent/.config/containers \
     > /home/agent/.config/containers/containers.conf && \
     printf '[storage]\ndriver = "overlay"\ngraphroot = "/home/agent/.local/share/containers/storage"\n' \
     > /home/agent/.config/containers/storage.conf && \
-    chown -R agent:agent /home/agent/.config /home/agent/.local/share/containers
+    chown -R agent:agent /home/agent/.config /home/agent/.local
 
 # Alias docker to podman so agents and scripts that use `docker` commands work seamlessly
 RUN ln -s /usr/bin/podman /usr/local/bin/docker
