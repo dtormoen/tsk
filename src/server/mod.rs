@@ -6,6 +6,7 @@ use crate::context::AppContext;
 use crate::context::docker_client::DockerClient;
 use crate::docker::proxy_manager::ProxyManager;
 use crate::task::TaskStatus;
+use crate::tui::events::ServerEventSender;
 use lifecycle::ServerLifecycle;
 use scheduler::TaskScheduler;
 use std::collections::HashSet;
@@ -34,6 +35,7 @@ impl TskServer {
         docker_client: Arc<dyn DockerClient>,
         workers: u32,
         quit_when_done: bool,
+        event_sender: Option<ServerEventSender>,
     ) -> Self {
         let tsk_env = app_context.tsk_env();
         let storage = app_context.task_storage();
@@ -47,6 +49,7 @@ impl TskServer {
             storage.clone(),
             quit_when_done,
             quit_signal.clone(),
+            event_sender.clone(),
         );
 
         // Extract shared state handles before wrapping scheduler in Mutex.
@@ -187,7 +190,7 @@ mod tests {
     async fn test_graceful_shutdown_kills_containers_and_marks_tasks_failed() {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = Arc::new(AppContext::builder().build());
-        let server = TskServer::with_workers(ctx.clone(), mock_client.clone(), 1, false);
+        let server = TskServer::with_workers(ctx.clone(), mock_client.clone(), 1, false, None);
 
         // Add tasks to storage as Running
         let storage = ctx.task_storage();
@@ -255,7 +258,7 @@ mod tests {
     async fn test_graceful_shutdown_skips_completed_tasks() {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = Arc::new(AppContext::builder().build());
-        let server = TskServer::with_workers(ctx.clone(), mock_client.clone(), 1, false);
+        let server = TskServer::with_workers(ctx.clone(), mock_client.clone(), 1, false, None);
 
         // Add a task that's already completed
         let storage = ctx.task_storage();

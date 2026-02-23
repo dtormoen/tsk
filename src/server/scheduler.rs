@@ -9,6 +9,7 @@ use crate::server::worker_pool::{AsyncJob, JobError, JobResult, WorkerPool};
 use crate::task::{Task, TaskStatus};
 use crate::task_manager::TaskManager;
 use crate::task_runner::{TaskExecutionError, TaskRunner};
+use crate::tui::events::{ServerEvent, ServerEventSender};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -55,6 +56,9 @@ pub struct TaskScheduler {
     oauth_wait_until: Option<Instant>,
     /// Whether the "please login" notification has been shown for the current OAuth expiry
     oauth_notification_shown: bool,
+    /// Optional channel for sending structured events to the TUI.
+    /// When None, events are printed to stdout/stderr instead.
+    event_sender: Option<ServerEventSender>,
 }
 
 impl TaskScheduler {
@@ -84,6 +88,7 @@ impl TaskScheduler {
         storage: Arc<TaskStorage>,
         quit_when_done: bool,
         quit_signal: Arc<tokio::sync::Notify>,
+        event_sender: Option<ServerEventSender>,
     ) -> Self {
         Self {
             context,
@@ -98,6 +103,36 @@ impl TaskScheduler {
             last_auto_clean: Instant::now() - Duration::from_secs(3600),
             oauth_wait_until: None,
             oauth_notification_shown: false,
+            event_sender,
+        }
+    }
+
+    /// Send a structured event through the event channel, or fall back to stdout/stderr
+    fn emit(&self, event: ServerEvent) {
+        if let Some(sender) = &self.event_sender {
+            let _ = sender.send(event);
+        } else {
+            match event {
+                ServerEvent::TaskScheduled { task_id, task_name } => {
+                    println!("Scheduling {} ({})", task_name, task_id);
+                }
+                ServerEvent::TaskCompleted { task_id, task_name } => {
+                    println!("Task completed: {} ({})", task_name, task_id);
+                }
+                ServerEvent::TaskFailed {
+                    task_id,
+                    task_name,
+                    error,
+                } => {
+                    eprintln!("Task failed: {} ({}) - {}", task_name, task_id, error);
+                }
+                ServerEvent::StatusMessage(msg) => {
+                    println!("{}", msg);
+                }
+                ServerEvent::WarningMessage(msg) => {
+                    eprintln!("{}", msg);
+                }
+            }
         }
     }
 
@@ -189,10 +224,10 @@ impl TaskScheduler {
             .collect();
 
         for task in child_tasks {
-            println!(
+            self.emit(ServerEvent::WarningMessage(format!(
                 "Marking task {} as failed due to parent task failure",
                 task.id
-            );
+            )));
             self.storage
                 .mark_failed(&task.id, &format!("Parent task {} failed", failed_task_id))
                 .await?;
@@ -260,19 +295,21 @@ impl TaskScheduler {
                     );
                     self.oauth_notification_shown = true;
                 }
-                println!(
+                self.emit(ServerEvent::WarningMessage(format!(
                     "Claude OAuth token is expired or expiring soon. \
                      Please run `claude /login` to refresh your token. \
                      Trying again in {} seconds.",
                     OAUTH_RETRY_INTERVAL.as_secs()
-                );
+                )));
                 self.oauth_wait_until = Some(Instant::now() + OAUTH_RETRY_INTERVAL);
                 false
             }
             Err(e) => {
                 // If we can't read the credentials file, allow scheduling to proceed.
                 // The agent's own warmup/validate will handle actual auth errors.
-                eprintln!("Warning: Could not check OAuth token: {e}");
+                self.emit(ServerEvent::WarningMessage(format!(
+                    "Warning: Could not check OAuth token: {e}"
+                )));
                 true
             }
         }
@@ -290,10 +327,15 @@ impl TaskScheduler {
         *running = true;
         drop(running);
 
-        println!("Task scheduler started with {} worker(s)", workers);
+        self.emit(ServerEvent::StatusMessage(format!(
+            "Task scheduler started with {} worker(s)",
+            workers
+        )));
 
         if self.quit_when_done {
-            println!("Running in quit-when-done mode - will exit when queue is empty");
+            self.emit(ServerEvent::StatusMessage(
+                "Running in quit-when-done mode - will exit when queue is empty".to_string(),
+            ));
         }
 
         // Create the worker pool
@@ -313,7 +355,9 @@ impl TaskScheduler {
                 .count();
 
             if queued_count == 0 {
-                println!("Queue is empty at startup. Exiting immediately...");
+                self.emit(ServerEvent::StatusMessage(
+                    "Queue is empty at startup. Exiting immediately...".to_string(),
+                ));
                 self.quit_signal.notify_one();
                 self.stop().await;
                 // Loop will check running flag and exit immediately
@@ -324,7 +368,9 @@ impl TaskScheduler {
         loop {
             // Check if we should continue running
             if !*self.running.lock().await {
-                println!("Task scheduler stopping, waiting for active tasks to complete...");
+                self.emit(ServerEvent::StatusMessage(
+                    "Task scheduler stopping, waiting for active tasks to complete...".to_string(),
+                ));
 
                 // Shutdown the worker pool and wait for all tasks
                 if let Some(pool) = &self.worker_pool {
@@ -347,18 +393,24 @@ impl TaskScheduler {
                 match task_manager {
                     Ok(tm) => match tm.clean_tasks(true, Some(min_age)).await {
                         Ok(result) if result.deleted > 0 => {
-                            println!(
+                            self.emit(ServerEvent::StatusMessage(format!(
                                 "Auto-clean: removed {} old task(s) ({} skipped)",
                                 result.deleted, result.skipped
-                            );
+                            )));
                         }
                         Err(e) => {
-                            eprintln!("Auto-clean failed: {}", e);
+                            self.emit(ServerEvent::WarningMessage(format!(
+                                "Auto-clean failed: {}",
+                                e
+                            )));
                         }
                         _ => {}
                     },
                     Err(e) => {
-                        eprintln!("Auto-clean: failed to create task manager: {}", e);
+                        self.emit(ServerEvent::WarningMessage(format!(
+                            "Auto-clean: failed to create task manager: {}",
+                            e
+                        )));
                     }
                 }
             }
@@ -375,19 +427,31 @@ impl TaskScheduler {
                             // Remove from submitted tasks
                             self.submitted_tasks.lock().await.remove(&result.job_id);
 
+                            let task_name = match self.storage.get_task(&result.job_id).await {
+                                Ok(Some(t)) => t.name,
+                                _ => result.job_id.clone(),
+                            };
+
                             if result.success {
-                                println!("Task completed: {}", result.job_id);
+                                self.emit(ServerEvent::TaskCompleted {
+                                    task_id: result.job_id.clone(),
+                                    task_name,
+                                });
                                 // Re-enable OAuth expiry notifications after a successful task
                                 self.oauth_notification_shown = false;
                             } else if let Some(msg) = &result.message {
-                                eprintln!("Task failed: {} - {}", result.job_id, msg);
+                                self.emit(ServerEvent::TaskFailed {
+                                    task_id: result.job_id.clone(),
+                                    task_name,
+                                    error: msg.clone(),
+                                });
                                 // Handle cascading failures for child tasks
                                 let tasks = self.storage.list_tasks().await?;
                                 self.fail_child_tasks(&result.job_id, &tasks).await?;
                             }
                         }
                         Err(e) => {
-                            eprintln!("Job error: {}", e);
+                            self.emit(ServerEvent::WarningMessage(format!("Job error: {}", e)));
                         }
                     }
                 }
@@ -399,10 +463,10 @@ impl TaskScheduler {
                 if Instant::now() < wait_instant {
                     let remaining = wait_instant - Instant::now();
                     drop(wait_until);
-                    println!(
+                    self.emit(ServerEvent::StatusMessage(format!(
                         "Waiting {} seconds due to warmup failure before attempting new tasks...",
                         remaining.as_secs()
-                    );
+                    )));
                     // Sleep for the minimum of remaining time or 60 seconds
                     let sleep_duration = std::cmp::min(remaining, Duration::from_secs(60));
                     sleep(sleep_duration).await;
@@ -411,7 +475,9 @@ impl TaskScheduler {
                 drop(wait_until);
                 // Clear the wait period
                 *self.warmup_failure_wait_until.lock().await = None;
-                println!("Warmup failure wait period has ended, resuming task processing");
+                self.emit(ServerEvent::StatusMessage(
+                    "Warmup failure wait period has ended, resuming task processing".to_string(),
+                ));
             } else {
                 drop(wait_until);
             }
@@ -437,10 +503,10 @@ impl TaskScheduler {
                     match Self::is_parent_ready(task, &tasks) {
                         Some(ParentStatus::NotFound(pid)) => {
                             // Mark task as failed - parent doesn't exist
-                            eprintln!(
+                            self.emit(ServerEvent::WarningMessage(format!(
                                 "Task {} has missing parent {}, marking as failed",
                                 task.id, pid
-                            );
+                            )));
                             let _ = self
                                 .storage
                                 .mark_failed(&task.id, &format!("Parent task {} not found", pid))
@@ -448,7 +514,10 @@ impl TaskScheduler {
                         }
                         Some(ParentStatus::Failed(msg)) => {
                             // Mark task as failed - parent failed (cascade)
-                            eprintln!("Task {} has failed parent, marking as failed", task.id);
+                            self.emit(ServerEvent::WarningMessage(format!(
+                                "Task {} has failed parent, marking as failed",
+                                task.id
+                            )));
                             let _ = self.storage.mark_failed(&task.id, &msg).await;
                         }
                         _ => {}
@@ -477,13 +546,19 @@ impl TaskScheduler {
                         if let Some(ParentStatus::Ready(parent_task)) =
                             Self::is_parent_ready(&task, &tasks)
                         {
-                            println!("Preparing {} from parent {}", task.id, parent_task.id);
+                            self.emit(ServerEvent::StatusMessage(format!(
+                                "Preparing {} from parent {}",
+                                task.id, parent_task.id
+                            )));
                             match self.prepare_child_task(&task, &parent_task).await {
                                 Ok(prepared_task) => {
                                     task = prepared_task;
                                 }
                                 Err(e) => {
-                                    eprintln!("Failed to prepare child task {}: {}", task.id, e);
+                                    self.emit(ServerEvent::WarningMessage(format!(
+                                        "Failed to prepare child task {}: {}",
+                                        task.id, e
+                                    )));
                                     let _ = self
                                         .storage
                                         .mark_failed(
@@ -497,13 +572,18 @@ impl TaskScheduler {
                         }
                     }
 
-                    println!("Scheduling {} ({})", task.name, task.id);
+                    self.emit(ServerEvent::TaskScheduled {
+                        task_id: task.id.clone(),
+                        task_name: task.name.clone(),
+                    });
 
                     // Update task status to running
                     let running_task = match self.storage.mark_running(&task.id).await {
                         Ok(t) => t,
                         Err(e) => {
-                            eprintln!("Error marking task as running: {e}");
+                            self.emit(ServerEvent::WarningMessage(format!(
+                                "Error marking task as running: {e}"
+                            )));
                             continue;
                         }
                     };
@@ -531,7 +611,9 @@ impl TaskScheduler {
                         }
                         Ok(None) => {
                             // No workers available (shouldn't happen since we checked)
-                            eprintln!("Failed to submit job: no workers available");
+                            self.emit(ServerEvent::WarningMessage(
+                                "Failed to submit job: no workers available".to_string(),
+                            ));
                             // Remove from submitted tasks since it didn't actually submit
                             self.submitted_tasks.lock().await.remove(&task.id);
 
@@ -539,7 +621,10 @@ impl TaskScheduler {
                             let _ = self.storage.reset_to_queued(&task.id).await;
                         }
                         Err(e) => {
-                            eprintln!("Failed to submit job: {}", e);
+                            self.emit(ServerEvent::WarningMessage(format!(
+                                "Failed to submit job: {}",
+                                e
+                            )));
                             // Remove from submitted tasks since it didn't actually submit
                             self.submitted_tasks.lock().await.remove(&task.id);
 
@@ -572,7 +657,9 @@ impl TaskScheduler {
                 let in_oauth_wait = self.oauth_wait_until.is_some();
 
                 if queued_count == 0 && active_workers == 0 && !in_warmup_wait && !in_oauth_wait {
-                    println!("Queue is empty and no workers active. Shutting down...");
+                    self.emit(ServerEvent::StatusMessage(
+                        "Queue is empty and no workers active. Shutting down...".to_string(),
+                    ));
                     self.quit_signal.notify_one();
                     self.stop().await;
                     // Loop will exit on next iteration when running becomes false
@@ -750,6 +837,7 @@ mod tests {
             storage,
             false,
             quit_signal,
+            None,
         );
 
         // Test that scheduler starts as not running
@@ -791,6 +879,7 @@ mod tests {
             storage.clone(),
             false,
             quit_signal,
+            None,
         );
 
         // Start scheduler in background with 1 worker
@@ -844,7 +933,8 @@ mod tests {
         let storage = ctx.task_storage();
 
         let quit_signal = Arc::new(tokio::sync::Notify::new());
-        let scheduler = TaskScheduler::new(ctx, test_docker_client(), storage, false, quit_signal);
+        let scheduler =
+            TaskScheduler::new(ctx, test_docker_client(), storage, false, quit_signal, None);
 
         // Initially no wait period
         assert!(
@@ -886,6 +976,7 @@ mod tests {
             storage,
             false,
             quit_signal,
+            None,
         );
 
         // Add a task ID to submitted tasks
@@ -1258,6 +1349,7 @@ mod tests {
             storage.clone(),
             false,
             quit_signal,
+            None,
         );
 
         // Get all tasks

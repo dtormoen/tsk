@@ -103,6 +103,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Quit-when-done mode (`-q/--quit`): Exits automatically when queue is empty
 - Sound notifications (`-s/--sound`): Play sound on task completion (platform-specific)
 - `TaskScheduler`: Manages task scheduling and execution delegation
+  - Emits structured `ServerEvent` values via `emit()` instead of printing directly; when `event_sender` is `None` (non-TUI mode), falls back to stdout/stderr output
   - Polls for completed jobs from the worker pool
   - Schedules queued tasks when workers are available
   - Updates terminal title with active/total worker counts by querying the pool
@@ -117,6 +118,11 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Tracks active jobs in JoinSet for efficient completion polling
   - Provides `poll_completed()` for retrieving finished job results
   - Provides `total_workers()`, `active_workers()`, and `available_workers()` for monitoring
+
+**TUI Module** (`src/tui/`)
+- `ServerEvent`: Structured events emitted by the scheduler (TaskScheduled, TaskCompleted, TaskFailed, StatusMessage, WarningMessage)
+- `ServerEventSender`: Type alias for `tokio::sync::mpsc::UnboundedSender<ServerEvent>`; passed optionally to `TskServer::with_workers()` and `TaskScheduler::new()`
+- `TuiApp`: Application state struct for the TUI renderer; holds task list, log viewer, and server status state
 
 **Git Operations** (`src/git.rs`, `src/git_sync.rs`, `src/git_operations.rs`, `src/repo_utils.rs`)
 - Repository cloning to centralized task directories using `CloneLocal::NoLinks` for optimized pack files

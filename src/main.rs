@@ -21,6 +21,7 @@ mod task_manager;
 mod task_runner;
 #[cfg(test)]
 mod test_utils;
+mod tui;
 mod utils;
 
 use commands::{

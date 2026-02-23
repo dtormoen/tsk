@@ -33,6 +33,7 @@ impl Command for ServerStartCommand {
             docker_client,
             self.workers,
             self.quit,
+            None,
         );
 
         // Setup signal handlers for graceful shutdown (SIGINT and SIGTERM)
