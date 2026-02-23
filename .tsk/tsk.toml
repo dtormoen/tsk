@@ -1,3 +1,7 @@
+volumes = [
+    { name = "podman-storage", container = "/home/agent/.local/share/containers/storage" },
+]
+
 setup = '''
 # Project-specific layer for tsk
 

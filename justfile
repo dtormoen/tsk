@@ -26,8 +26,8 @@ precommit: format lint test
     cargo run -- --help > /dev/null
     # Run network isolation tests if inside a TSK container
     if [ "${TSK_CONTAINER:-}" = "1" ]; then \
-        echo "Running network isolation tests..."; \
-        ./scripts/network-isolation-test.sh; \
+        echo "Running integration tests"; \
+        just integration-test; \
     else \
         echo "Skipping network isolation tests (not in TSK container)"; \
     fi
