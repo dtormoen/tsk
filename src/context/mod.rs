@@ -18,6 +18,8 @@ pub use task_storage::TaskStorage;
 pub use tsk_env::TskEnv;
 
 use crate::git_sync::GitSyncManager;
+#[cfg(not(test))]
+use is_terminal::IsTerminal;
 use notifications::NotificationClient;
 
 use std::sync::Arc;
@@ -28,6 +30,7 @@ use tempfile::TempDir;
 #[derive(Clone)]
 pub struct AppContext {
     git_sync_manager: Arc<GitSyncManager>,
+    interactive: bool,
     notification_client: Arc<NotificationClient>,
     task_storage: Arc<TaskStorage>,
     terminal_operations: Arc<terminal::TerminalOperations>,
@@ -44,6 +47,13 @@ impl AppContext {
 
     pub fn git_sync_manager(&self) -> Arc<GitSyncManager> {
         Arc::clone(&self.git_sync_manager)
+    }
+
+    /// Whether the session is interactive (should prompt the user for input).
+    ///
+    /// Defaults to `stdin().is_terminal()` in production, `false` in tests.
+    pub fn interactive(&self) -> bool {
+        self.interactive
     }
 
     pub fn notification_client(&self) -> Arc<NotificationClient> {
@@ -71,6 +81,7 @@ impl AppContext {
 pub struct AppContextBuilder {
     container_engine: Option<ContainerEngine>,
     git_sync_manager: Option<Arc<GitSyncManager>>,
+    interactive: Option<bool>,
     notification_client: Option<Arc<NotificationClient>>,
     tsk_config: Option<Arc<TskConfig>>,
     tsk_env: Option<Arc<TskEnv>>,
@@ -87,6 +98,7 @@ impl AppContextBuilder {
         Self {
             container_engine: None,
             git_sync_manager: None,
+            interactive: None,
             notification_client: None,
             tsk_config: None,
             tsk_env: None,
@@ -116,6 +128,15 @@ impl AppContextBuilder {
     /// When set, overrides the container_engine from tsk.toml config.
     pub fn with_container_engine(mut self, engine: Option<ContainerEngine>) -> Self {
         self.container_engine = engine;
+        self
+    }
+
+    /// Override the interactive flag.
+    ///
+    /// When not set, defaults to `stdin().is_terminal()` in production and `false` in tests.
+    #[allow(dead_code)]
+    pub fn with_interactive(mut self, interactive: bool) -> Self {
+        self.interactive = Some(interactive);
         self
     }
 
@@ -154,6 +175,7 @@ impl AppContextBuilder {
                 git_sync_manager: self
                     .git_sync_manager
                     .unwrap_or_else(|| Arc::new(GitSyncManager::new())),
+                interactive: self.interactive.unwrap_or(false),
                 notification_client: self
                     .notification_client
                     .unwrap_or_else(notifications::create_notification_client),
@@ -194,6 +216,9 @@ impl AppContextBuilder {
                 git_sync_manager: self
                     .git_sync_manager
                     .unwrap_or_else(|| Arc::new(GitSyncManager::new())),
+                interactive: self
+                    .interactive
+                    .unwrap_or_else(|| std::io::stdin().is_terminal()),
                 notification_client: self
                     .notification_client
                     .unwrap_or_else(notifications::create_notification_client),
@@ -221,5 +246,8 @@ mod tests {
         let _notification = app_context.notification_client();
         let _terminal = app_context.terminal_operations();
         let _storage = app_context.task_storage();
+
+        // Tests default to non-interactive
+        assert!(!app_context.interactive());
     }
 }

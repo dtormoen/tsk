@@ -19,15 +19,14 @@ pub struct RetryCommand {
 }
 
 /// Prompts the user with a [Y/n] question, defaulting to yes.
-/// In non-TTY mode, returns true without prompting.
-fn confirm(info: &str, prompt: &str, non_tty_message: &str) -> bool {
-    use is_terminal::IsTerminal;
+/// In non-interactive mode, returns true without prompting.
+fn confirm(info: &str, prompt: &str, non_interactive_message: &str, interactive: bool) -> bool {
     use std::io::Write;
 
     println!("{info}");
 
-    if !std::io::stdin().is_terminal() {
-        println!("{non_tty_message}");
+    if !interactive {
+        println!("{non_interactive_message}");
         return true;
     }
 
@@ -72,6 +71,7 @@ impl Command for RetryCommand {
                         ),
                         "Use parent task's repository?",
                         "Using parent task's repository (non-interactive mode)",
+                        ctx.interactive(),
                     )
                 {
                     repo_copy_source = Some(parent_repo.clone());
@@ -107,6 +107,7 @@ impl Command for RetryCommand {
                             ),
                             "Retry children too?",
                             "Retrying children (non-interactive mode)",
+                            ctx.interactive(),
                         )
                     {
                         // Map old IDs to new IDs for parent chain reconstruction
