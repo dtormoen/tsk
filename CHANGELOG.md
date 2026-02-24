@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1](https://github.com/dtormoen/tsk/compare/v0.9.0...v0.9.1) - 2026-02-24
+
+This release adds an interactive TUI dashboard to `tsk server start` and a `tsk cancel`
+command. When running in an interactive terminal, the server now shows a split-pane view
+with a task list on the left and a live log viewer on the right. Navigate with vim keys,
+mouse, or arrow keys. Cancel and delete tasks directly from the dashboard with `c` and `d`.
+When stdout is piped, the server falls back to plain text output as before.
+
+### Added
+
+- interactive TUI dashboard for `tsk server start` with task list, log viewer, mouse support, and keyboard navigation
+- `tsk cancel` command for cancelling running or queued tasks
+- CANCELLED task status: Ctrl+C during `tsk run` and server shutdown now mark tasks as CANCELLED instead of FAILED
+- per-task structured log files (`agent.log`) capturing infrastructure phases and agent output
+
+### Fixed
+
+- prevent proxy race condition between concurrent task startup and shutdown
+- fix piped stdin detection on platforms where `is_terminal` was unreliable
+
 ## [0.9.0](https://github.com/dtormoen/tsk/compare/v0.8.6...v0.9.0) - 2026-02-23
 
 This is a large release that replaces filesystem-based Docker layer customization with
