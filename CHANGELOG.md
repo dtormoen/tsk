@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1](https://github.com/dtormoen/tsk/compare/v0.9.0...v0.9.1) - 2026-02-24
+
+### Added
+
+- add cancel/delete hints to TUI footer and preserve selection index on delete
+- add `c` and `d` keybindings to TUI for cancelling and deleting tasks
+- use CANCELLED status for server shutdown and inline task interrupts
+- add `tsk cancel` CLI command for cancelling running or queued tasks
+- add CANCELLED terminal status to task model, storage, and display
+- make TUI task list scrollbar clickable and viewport-based
+- add scrollbar to TUI task list panel
+- route post-task completion logs into per-task agent.log
+- route infrastructure logs into per-task agent.log for TUI display
+- show task ID on second line of TUI task list items
+- show parent info as additional line on child tasks in TUI
+- sort TUI task list by state and parent-child relationship
+- add TodoWrite: header line to TUI todo list rendering
+- enable native ratatui wrapping and remove custom indentation
+- replace plain-text agent logs with structured LogLine format
+- improve TUI log viewer with follow mode, scroll bounds, and artifact fixes
+- widen TUI task sidebar and add inner padding
+- add mouse click-to-select for TUI task sidebar
+- improve TUI dashboard with sort order, colors, dynamic layout, and structured logging
+- implement TUI dashboard for tsk server start
+- add TUI module with app state types and server event channel
+- add ratatui/crossterm dependencies and persistent agent log files
+
+### Fixed
+
+- prevent proxy race condition between concurrent task startup and shutdown
+- remove duplicate "Building Docker image" log from task runner
+- stabilize TUI task ordering after cancel and delete operations
+- prevent TUI scrollbar from getting stuck when scrolling to top
+- align TUI scrollbar thumb with mouse during click and drag
+- use fstat to detect piped stdin instead of is_terminal check
+- correct mouse click selection for variable-height TUI task items
+- use accurate wrapped line count for TUI log scroll clamping
+- route infrastructure messages through TUI event channel
+
 ## [0.9.0](https://github.com/dtormoen/tsk/compare/v0.8.6...v0.9.0) - 2026-02-23
 
 This is a large release that replaces filesystem-based Docker layer customization with
