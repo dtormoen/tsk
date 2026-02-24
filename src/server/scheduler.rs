@@ -24,6 +24,8 @@ enum ParentStatus {
     Waiting,
     /// Parent task failed
     Failed(String),
+    /// Parent task was cancelled
+    Cancelled,
     /// Parent task was not found in storage
     NotFound(String),
 }
@@ -134,6 +136,7 @@ impl TaskScheduler {
                     "Parent task {} failed",
                     parent_id
                 ))),
+                TaskStatus::Cancelled => Some(ParentStatus::Cancelled),
                 TaskStatus::Queued | TaskStatus::Running => Some(ParentStatus::Waiting),
             },
         }
@@ -184,29 +187,43 @@ impl TaskScheduler {
             .map_err(|e| format!("Failed to update prepared task in storage: {e}"))
     }
 
-    /// Mark child tasks as failed when their parent task fails.
+    /// Cascade terminal status to child tasks when their parent fails or is cancelled.
     ///
-    /// This implements cascading failures: when a task fails, all tasks that
-    /// have it as their parent are also marked as failed.
-    async fn fail_child_tasks(
+    /// When a parent task fails, children are marked as FAILED.
+    /// When a parent task is cancelled, children are marked as CANCELLED.
+    async fn cascade_to_child_tasks(
         &self,
-        failed_task_id: &str,
+        parent_task_id: &str,
+        parent_status: &TaskStatus,
         all_tasks: &[Task],
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Find all tasks that have the failed task as their parent
         let child_tasks: Vec<&Task> = all_tasks
             .iter()
-            .filter(|t| t.parent_ids.contains(&failed_task_id.to_string()))
+            .filter(|t| t.parent_ids.contains(&parent_task_id.to_string()))
             .collect();
 
         for task in child_tasks {
-            self.emit(ServerEvent::WarningMessage(format!(
-                "Marking task {} as failed due to parent task failure",
-                task.id
-            )));
-            self.storage
-                .mark_failed(&task.id, &format!("Parent task {} failed", failed_task_id))
-                .await?;
+            match parent_status {
+                TaskStatus::Cancelled => {
+                    self.emit(ServerEvent::WarningMessage(format!(
+                        "Marking task {} as cancelled due to parent task cancellation",
+                        task.id
+                    )));
+                    // mark_cancelled only works on RUNNING/QUEUED, which is what children should be
+                    let _ = self.storage.mark_cancelled(&task.id).await;
+                }
+                _ => {
+                    self.emit(ServerEvent::WarningMessage(format!(
+                        "Marking task {} as failed due to parent task failure",
+                        task.id
+                    )));
+                    // Guarded: mark_failed is a no-op if task is already terminal
+                    let _ = self
+                        .storage
+                        .mark_failed(&task.id, &format!("Parent task {} failed", parent_task_id))
+                        .await;
+                }
+            }
         }
 
         Ok(())
@@ -234,6 +251,7 @@ impl TaskScheduler {
             Some(ParentStatus::Ready(_)) => true,     // Parent complete
             Some(ParentStatus::Waiting) => false,     // Still waiting
             Some(ParentStatus::Failed(_)) => false,   // Will be failed by cascade
+            Some(ParentStatus::Cancelled) => false,   // Will be cancelled by cascade
             Some(ParentStatus::NotFound(_)) => false, // Will be failed by handler
         }
     }
@@ -423,7 +441,12 @@ impl TaskScheduler {
                                 });
                                 // Handle cascading failures for child tasks
                                 let tasks = self.storage.list_tasks().await?;
-                                self.fail_child_tasks(&result.job_id, &tasks).await?;
+                                let failed_task = tasks.iter().find(|t| t.id == result.job_id);
+                                let parent_status = failed_task
+                                    .map(|t| &t.status)
+                                    .unwrap_or(&TaskStatus::Failed);
+                                self.cascade_to_child_tasks(&result.job_id, parent_status, &tasks)
+                                    .await?;
                             }
                         }
                         Err(e) => {
@@ -495,6 +518,14 @@ impl TaskScheduler {
                                 task.id
                             )));
                             let _ = self.storage.mark_failed(&task.id, &msg).await;
+                        }
+                        Some(ParentStatus::Cancelled) => {
+                            // Mark task as cancelled - parent was cancelled (cascade)
+                            self.emit(ServerEvent::WarningMessage(format!(
+                                "Task {} has cancelled parent, marking as cancelled",
+                                task.id
+                            )));
+                            let _ = self.storage.mark_cancelled(&task.id).await;
                         }
                         _ => {}
                     }
@@ -1314,7 +1345,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fail_child_tasks() {
+    async fn test_cascade_failed_to_child_tasks() {
         let ctx = AppContext::builder().build();
         let tsk_env = ctx.tsk_env();
 
@@ -1347,9 +1378,9 @@ mod tests {
         // Get all tasks
         let tasks = storage.list_tasks().await.unwrap();
 
-        // Fail child tasks
+        // Cascade failure to child tasks
         scheduler
-            .fail_child_tasks("parent-1", &tasks)
+            .cascade_to_child_tasks("parent-1", &TaskStatus::Failed, &tasks)
             .await
             .unwrap();
 
@@ -1363,6 +1394,52 @@ mod tests {
         assert!(
             child.error_message.as_ref().unwrap().contains("parent-1"),
             "Error message should mention parent task"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cascade_cancelled_to_child_tasks() {
+        let ctx = AppContext::builder().build();
+        let tsk_env = ctx.tsk_env();
+
+        let (test_repo, commit_sha) = setup_test_repo().unwrap();
+
+        let parent_task = create_test_task(
+            "parent-2",
+            test_repo.path(),
+            &commit_sha,
+            tsk_env.data_dir(),
+        );
+        let child_task = create_child_task("child-2", test_repo.path(), &commit_sha, "parent-2");
+
+        let storage = ctx.task_storage();
+        storage.add_task(parent_task.clone()).await.unwrap();
+        storage.add_task(child_task.clone()).await.unwrap();
+
+        let quit_signal = Arc::new(tokio::sync::Notify::new());
+        let scheduler = TaskScheduler::new(
+            Arc::new(ctx),
+            test_docker_client(),
+            storage.clone(),
+            false,
+            quit_signal,
+            None,
+        );
+
+        let tasks = storage.list_tasks().await.unwrap();
+
+        // Cascade cancellation to child tasks
+        scheduler
+            .cascade_to_child_tasks("parent-2", &TaskStatus::Cancelled, &tasks)
+            .await
+            .unwrap();
+
+        // Verify child task is marked as cancelled (not failed)
+        let child = storage.get_task("child-2").await.unwrap().unwrap();
+        assert_eq!(
+            child.status,
+            TaskStatus::Cancelled,
+            "Child task should be marked as cancelled when parent is cancelled"
         );
     }
 }

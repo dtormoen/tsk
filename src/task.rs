@@ -47,6 +47,9 @@ pub enum TaskStatus {
     /// Task completed successfully
     #[serde(rename = "COMPLETE")]
     Complete,
+    /// Task was intentionally cancelled (by user, shutdown, or signal)
+    #[serde(rename = "CANCELLED")]
+    Cancelled,
 }
 
 /// Represents a TSK task with all required fields for execution
@@ -226,6 +229,10 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&TaskStatus::Complete).unwrap(),
             "\"COMPLETE\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TaskStatus::Cancelled).unwrap(),
+            "\"CANCELLED\""
         );
     }
 

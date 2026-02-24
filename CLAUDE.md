@@ -45,7 +45,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Automatic migration from legacy `tasks.json` to SQLite on first run (renames to `tasks.json.bak`)
 - Centralized SQLite persistence in XDG data directory (`$XDG_DATA_HOME/tsk/tasks.db`)
 - **Config snapshotting**: At task creation, the fully-resolved `ResolvedConfig` is serialized to JSON and stored in the `resolved_config` column. At execution time, `docker::resolve_config_from_task()` deserializes the snapshot instead of re-resolving from config files. Falls back to live resolution if `resolved_config` is NULL (pre-migration tasks). Chained tasks inherit the parent's snapshot.
-- Task status: Queued → Running → Complete/Failed (Waiting status shown in list for tasks awaiting parent completion)
+- Task status: Queued → Running → Complete/Failed/Cancelled (Waiting status shown in list for tasks awaiting parent completion)
 - Two execution paths:
   - **Server-scheduled**: `add` stores tasks as `Queued`, server scheduler picks them up and transitions to `Running`
   - **Inline**: `run`/`shell` store tasks as `Running` (via `TaskRunner::store_and_execute_task`) and execute immediately; the `Running` status prevents the scheduler from picking them up
@@ -57,7 +57,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Child task's branch starts from parent task's final commit
   - Git-town parent is set to the parent task's branch (not the original user branch)
   - Chained tasks (A → B → C) are supported naturally
-  - If parent task fails, all child tasks are marked as Failed (cascading failure)
+  - If parent task fails, children are marked as Failed; if cancelled, children are marked as Cancelled
 
 **Docker Integration** (`src/docker/`)
 - **Container engine**: Supports Docker (default) and Podman via `--container-engine` flag on container-related subcommands (`run`, `shell`, `retry`, `server start`, `docker build`) or top-level `container_engine` in tsk.toml. Podman uses host network mode for builds and case-insensitive error matching.
@@ -112,8 +112,8 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Tasks that fail during warmup are reset to queued status and retried after wait
   - Parent-aware scheduling: tasks with incomplete parents are skipped
   - Prepares child tasks by copying repository from parent task before scheduling
-  - Handles cascading failures when parent tasks fail
-  - Auto-cleans completed/failed tasks based on `[server]` config (default: enabled, 7 days, hourly check, runs on startup)
+  - Handles cascading terminal states when parent tasks fail or are cancelled
+  - Auto-cleans completed/failed/cancelled tasks based on `[server]` config (default: enabled, 7 days, hourly check, runs on startup)
 - `WorkerPool`: Generic async job execution pool with semaphore-based concurrency control
   - Tracks active jobs in JoinSet for efficient completion polling
   - Provides `poll_completed()` for retrieving finished job results

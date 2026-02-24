@@ -37,10 +37,15 @@ impl Command for ListCommand {
                         TaskStatus::Running => "RUNNING".to_string(),
                         TaskStatus::Failed => "FAILED".to_string(),
                         TaskStatus::Complete => "COMPLETE".to_string(),
+                        TaskStatus::Cancelled => "CANCELLED".to_string(),
                     };
 
                     let duration = match (&task.status, &task.started_at, &task.completed_at) {
-                        (TaskStatus::Complete | TaskStatus::Failed, Some(start), Some(end)) => {
+                        (
+                            TaskStatus::Complete | TaskStatus::Failed | TaskStatus::Cancelled,
+                            Some(start),
+                            Some(end),
+                        ) => {
                             let secs = (*end - *start).num_seconds();
                             format_duration(secs)
                         }
@@ -108,6 +113,10 @@ impl Command for ListCommand {
                 .iter()
                 .filter(|t| t.status == TaskStatus::Failed)
                 .count();
+            let cancelled = tasks
+                .iter()
+                .filter(|t| t.status == TaskStatus::Cancelled)
+                .count();
 
             let cs = |count: usize, label: &str| -> String {
                 if styled
@@ -119,12 +128,13 @@ impl Command for ListCommand {
                 format!("{count} {label}")
             };
             println!(
-                "\nSummary: {}, {}, {}, {}, {}",
+                "\nSummary: {}, {}, {}, {}, {}, {}",
                 cs(queued, "queued"),
                 cs(waiting, "waiting"),
                 cs(running, "running"),
                 cs(complete, "complete"),
                 cs(failed, "failed"),
+                cs(cancelled, "cancelled"),
             );
         }
 

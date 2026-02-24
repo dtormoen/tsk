@@ -142,7 +142,7 @@ tsk list
 tsk add -t feat -n add-tests -d "Add integration tests for the users API" --parent <taskid>
 ```
 
-Child tasks wait for their parent to complete, then start from the parent's final commit. `tsk list` shows these tasks as `WAITING`. If a parent fails, its children are automatically marked as `FAILED`. Chains of any length (A → B → C) are supported.
+Child tasks wait for their parent to complete, then start from the parent's final commit. `tsk list` shows these tasks as `WAITING`. If a parent fails, its children are automatically marked as `FAILED`; if a parent is cancelled, its children are marked as `CANCELLED`. Chains of any length (A → B → C) are supported.
 
 ### Create a Simple Task Template
 
@@ -186,7 +186,7 @@ Create, manage, and monitor tasks assigned to AI agents.
 
 ### Server Commands
 
-Manage the TSK server daemon for parallel task execution. The server automatically cleans up completed and failed tasks older than 7 days.
+Manage the TSK server daemon for parallel task execution. The server automatically cleans up completed, failed, and cancelled tasks older than 7 days.
 
 - `tsk server start` - Start the TSK server daemon
 - `tsk server stop` - Stop the running TSK server

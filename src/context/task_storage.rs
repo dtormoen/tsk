@@ -19,6 +19,7 @@ fn task_status_to_str(status: &TaskStatus) -> &'static str {
         TaskStatus::Running => "RUNNING",
         TaskStatus::Failed => "FAILED",
         TaskStatus::Complete => "COMPLETE",
+        TaskStatus::Cancelled => "CANCELLED",
     }
 }
 
@@ -28,6 +29,7 @@ fn str_to_task_status(s: &str) -> Result<TaskStatus, Box<dyn std::error::Error +
         "RUNNING" => Ok(TaskStatus::Running),
         "FAILED" => Ok(TaskStatus::Failed),
         "COMPLETE" => Ok(TaskStatus::Complete),
+        "CANCELLED" => Ok(TaskStatus::Cancelled),
         _ => Err(format!("Unknown task status: {s}").into()),
     }
 }
@@ -406,6 +408,9 @@ impl TaskStorage {
     }
 
     /// Transition a task to Complete status, setting `completed_at` to now and `branch_name`.
+    ///
+    /// Guarded: only updates tasks with status = RUNNING. If the task exists but is
+    /// no longer RUNNING (e.g., already CANCELLED), returns the current task as-is (no-op).
     pub async fn mark_complete(
         &self,
         id: &str,
@@ -418,11 +423,12 @@ impl TaskStorage {
             let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
             let now = chrono::Utc::now().to_rfc3339();
             let rows_affected = conn.execute(
-                "UPDATE tasks SET status = 'COMPLETE', completed_at = ?1, branch_name = ?2 WHERE id = ?3",
+                "UPDATE tasks SET status = 'COMPLETE', completed_at = ?1, branch_name = ?2 WHERE id = ?3 AND status = 'RUNNING'",
                 rusqlite::params![now, branch_name, id],
             )?;
             if rows_affected == 0 {
-                return Err("Task not found".into());
+                // Task may not exist, or may already be in a terminal state (e.g. CANCELLED)
+                return read_task_by_id(&conn, &id);
             }
             read_task_by_id(&conn, &id)
         })
@@ -430,6 +436,10 @@ impl TaskStorage {
     }
 
     /// Transition a task to Failed status, setting `completed_at` to now and `error_message`.
+    ///
+    /// Guarded: only updates tasks with status RUNNING or QUEUED. If the task exists
+    /// but is already in a terminal state (COMPLETE, FAILED, or CANCELLED), returns
+    /// the current task as-is (no-op).
     pub async fn mark_failed(
         &self,
         id: &str,
@@ -442,11 +452,43 @@ impl TaskStorage {
             let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
             let now = chrono::Utc::now().to_rfc3339();
             let rows_affected = conn.execute(
-                "UPDATE tasks SET status = 'FAILED', completed_at = ?1, error_message = ?2 WHERE id = ?3",
+                "UPDATE tasks SET status = 'FAILED', completed_at = ?1, error_message = ?2 WHERE id = ?3 AND status IN ('RUNNING', 'QUEUED')",
                 rusqlite::params![now, error_message, id],
             )?;
             if rows_affected == 0 {
-                return Err("Task not found".into());
+                // Task may not exist, or may already be in a terminal state (e.g. CANCELLED)
+                return read_task_by_id(&conn, &id);
+            }
+            read_task_by_id(&conn, &id)
+        })
+        .await?
+    }
+
+    /// Transition a task to Cancelled status, setting `completed_at` to now.
+    ///
+    /// Works for both RUNNING and QUEUED tasks. Returns an error if the task
+    /// is not found or is already in a terminal state.
+    pub async fn mark_cancelled(
+        &self,
+        id: &str,
+    ) -> Result<Task, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = Arc::clone(&self.conn);
+        let id = id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+            let now = chrono::Utc::now().to_rfc3339();
+            let rows_affected = conn.execute(
+                "UPDATE tasks SET status = 'CANCELLED', completed_at = ?1 WHERE id = ?2 AND status IN ('RUNNING', 'QUEUED')",
+                rusqlite::params![now, id],
+            )?;
+            if rows_affected == 0 {
+                // Check if task exists — if so, it's already terminal
+                let task = read_task_by_id(&conn, &id)?;
+                return Err(format!(
+                    "Task {} is already in terminal state: {}",
+                    id,
+                    task_status_to_str(&task.status)
+                ).into());
             }
             read_task_by_id(&conn, &id)
         })
@@ -1093,6 +1135,142 @@ mod tests {
             updated.resolved_config,
             Some(parent_config.to_string()),
             "Child should inherit parent's resolved_config"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mark_cancelled_from_running() {
+        let ctx = AppContext::builder().build();
+        let tsk_env = ctx.tsk_env();
+        let db_path = tsk_env.data_dir().join("test_cancel_running.db");
+        let storage = TaskStorage::new(db_path).unwrap();
+
+        let task = Task {
+            id: "cancel-run1".to_string(),
+            repo_root: tsk_env.data_dir().to_path_buf(),
+            branch_name: "tsk/feat/cancel-test/cancel-run1".to_string(),
+            copied_repo_path: Some(tsk_env.data_dir().to_path_buf()),
+            ..Task::test_default()
+        };
+        storage.add_task(task).await.unwrap();
+        storage.mark_running("cancel-run1").await.unwrap();
+
+        let updated = storage.mark_cancelled("cancel-run1").await.unwrap();
+        assert_eq!(updated.status, TaskStatus::Cancelled);
+        assert!(updated.completed_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_mark_cancelled_from_queued() {
+        let ctx = AppContext::builder().build();
+        let tsk_env = ctx.tsk_env();
+        let db_path = tsk_env.data_dir().join("test_cancel_queued.db");
+        let storage = TaskStorage::new(db_path).unwrap();
+
+        let task = Task {
+            id: "cancel-q1".to_string(),
+            repo_root: tsk_env.data_dir().to_path_buf(),
+            branch_name: "tsk/feat/cancel-test/cancel-q1".to_string(),
+            copied_repo_path: Some(tsk_env.data_dir().to_path_buf()),
+            ..Task::test_default()
+        };
+        storage.add_task(task).await.unwrap();
+
+        let updated = storage.mark_cancelled("cancel-q1").await.unwrap();
+        assert_eq!(updated.status, TaskStatus::Cancelled);
+        assert!(updated.completed_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_mark_cancelled_already_terminal() {
+        let ctx = AppContext::builder().build();
+        let tsk_env = ctx.tsk_env();
+        let db_path = tsk_env.data_dir().join("test_cancel_terminal.db");
+        let storage = TaskStorage::new(db_path).unwrap();
+
+        let task = Task {
+            id: "cancel-done1".to_string(),
+            repo_root: tsk_env.data_dir().to_path_buf(),
+            branch_name: "tsk/feat/cancel-test/cancel-done1".to_string(),
+            copied_repo_path: Some(tsk_env.data_dir().to_path_buf()),
+            ..Task::test_default()
+        };
+        storage.add_task(task).await.unwrap();
+        storage.mark_running("cancel-done1").await.unwrap();
+        storage
+            .mark_complete("cancel-done1", "tsk/feat/done/cancel-done1")
+            .await
+            .unwrap();
+
+        // Cancelling an already-complete task should fail
+        let result = storage.mark_cancelled("cancel-done1").await;
+        assert!(
+            result.is_err(),
+            "Should error when cancelling a terminal task"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mark_failed_guard_on_cancelled_task() {
+        let ctx = AppContext::builder().build();
+        let tsk_env = ctx.tsk_env();
+        let db_path = tsk_env.data_dir().join("test_fail_guard.db");
+        let storage = TaskStorage::new(db_path).unwrap();
+
+        let task = Task {
+            id: "guard1".to_string(),
+            repo_root: tsk_env.data_dir().to_path_buf(),
+            branch_name: "tsk/feat/guard-test/guard1".to_string(),
+            copied_repo_path: Some(tsk_env.data_dir().to_path_buf()),
+            ..Task::test_default()
+        };
+        storage.add_task(task).await.unwrap();
+        storage.mark_running("guard1").await.unwrap();
+        storage.mark_cancelled("guard1").await.unwrap();
+
+        // mark_failed should be a no-op (task is already CANCELLED)
+        let result = storage
+            .mark_failed("guard1", "should not apply")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.status,
+            TaskStatus::Cancelled,
+            "Status should remain CANCELLED"
+        );
+        assert!(
+            result.error_message.is_none(),
+            "Error message should not be set by the guarded mark_failed"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mark_complete_guard_on_cancelled_task() {
+        let ctx = AppContext::builder().build();
+        let tsk_env = ctx.tsk_env();
+        let db_path = tsk_env.data_dir().join("test_complete_guard.db");
+        let storage = TaskStorage::new(db_path).unwrap();
+
+        let task = Task {
+            id: "guard2".to_string(),
+            repo_root: tsk_env.data_dir().to_path_buf(),
+            branch_name: "tsk/feat/guard-test/guard2".to_string(),
+            copied_repo_path: Some(tsk_env.data_dir().to_path_buf()),
+            ..Task::test_default()
+        };
+        storage.add_task(task).await.unwrap();
+        storage.mark_running("guard2").await.unwrap();
+        storage.mark_cancelled("guard2").await.unwrap();
+
+        // mark_complete should be a no-op (task is already CANCELLED)
+        let result = storage
+            .mark_complete("guard2", "tsk/feat/new-branch/guard2")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.status,
+            TaskStatus::Cancelled,
+            "Status should remain CANCELLED"
         );
     }
 }

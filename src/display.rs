@@ -51,6 +51,7 @@ pub fn status_color(status: &str) -> Option<&'static str> {
         "RUNNING" | "running" => Some("\x1b[34m"),
         "COMPLETE" | "complete" => Some("\x1b[32m"),
         "FAILED" | "failed" => Some("\x1b[31m"),
+        "CANCELLED" | "cancelled" => Some("\x1b[35m"),
         _ => None,
     }
 }
@@ -192,6 +193,9 @@ mod tests {
 
         let result = colorize_status("WAITING", true);
         assert_eq!(result, "\x1b[36mWAITING\x1b[0m");
+
+        let result = colorize_status("CANCELLED", true);
+        assert_eq!(result, "\x1b[35mCANCELLED\x1b[0m");
     }
 
     #[test]

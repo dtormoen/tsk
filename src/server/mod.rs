@@ -289,7 +289,7 @@ mod tests {
         let ctx = Arc::new(AppContext::builder().build());
         let server = TskServer::with_workers(ctx.clone(), mock_client.clone(), 1, false, None);
 
-        // Add a task that's already completed
+        // Add a task that's already completed (must go through Running first)
         let storage = ctx.task_storage();
         let task = Task {
             id: "task-done".to_string(),
@@ -298,6 +298,7 @@ mod tests {
             ..Task::test_default()
         };
         storage.add_task(task).await.unwrap();
+        storage.mark_running("task-done").await.unwrap();
         storage
             .mark_complete("task-done", "tsk/test/task-done")
             .await

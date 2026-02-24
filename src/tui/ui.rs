@@ -127,6 +127,7 @@ fn render_task_list(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::
                     TaskStatus::Running => ("\u{25b8}", Color::Yellow),
                     TaskStatus::Queued => ("\u{25cb}", Color::Blue),
                     TaskStatus::Failed => ("\u{2717}", Color::Red),
+                    TaskStatus::Cancelled => ("\u{2298}", Color::Magenta),
                 }
             };
 
@@ -459,6 +460,7 @@ pub(super) fn status_text(task: &crate::task::Task) -> &'static str {
             TaskStatus::Running => "RUNNING",
             TaskStatus::Queued => "QUEUED",
             TaskStatus::Failed => "FAILED",
+            TaskStatus::Cancelled => "CANCELLED",
         }
     }
 }
@@ -476,7 +478,7 @@ fn format_duration(task: &crate::task::Task) -> String {
             let elapsed = Utc::now() - started;
             elapsed.num_seconds().max(0)
         }
-        TaskStatus::Complete => {
+        TaskStatus::Complete | TaskStatus::Failed | TaskStatus::Cancelled => {
             let (Some(started), Some(completed)) = (task.started_at, task.completed_at) else {
                 return String::new();
             };

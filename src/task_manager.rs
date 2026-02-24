@@ -123,7 +123,8 @@ impl TaskManager {
             .iter()
             .filter(|t| {
                 let status_match = t.status == TaskStatus::Complete
-                    || (include_failed && t.status == TaskStatus::Failed);
+                    || (include_failed
+                        && (t.status == TaskStatus::Failed || t.status == TaskStatus::Cancelled));
                 if !status_match {
                     return false;
                 }
