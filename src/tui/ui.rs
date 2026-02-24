@@ -52,8 +52,8 @@ fn render_header(app: &TuiApp, frame: &mut Frame, area: ratatui::layout::Rect) {
 
 /// Render the two-panel main content area with dynamic task panel width.
 fn render_main(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::Rect) {
-    let min_width: u16 = 20;
-    let max_width = (area.width * 30 / 100).max(min_width);
+    let min_width: u16 = 30;
+    let max_width = (area.width * 40 / 100).max(min_width);
 
     // Calculate the widest task row
     let content_width = app
@@ -82,8 +82,8 @@ fn render_main(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::Rect)
         .max()
         .unwrap_or(0) as u16;
 
-    // Add border padding (2 for left+right borders)
-    let desired_width = (content_width + 2).max(min_width).min(max_width);
+    // Add border padding (2 for left+right borders) + 1 for inner right padding
+    let desired_width = (content_width + 3).max(min_width).min(max_width);
 
     app.task_panel_width = desired_width;
 
