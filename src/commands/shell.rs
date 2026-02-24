@@ -23,11 +23,11 @@ impl Command for ShellCommand {
         let args = &self.task_args;
         let name = args.resolved_name();
 
-        let description = args.resolve_description()?;
+        let prompt = args.resolve_prompt()?;
         let repo_root = args.resolve_repo_root()?;
 
         let task = args
-            .configure_builder(repo_root, name.clone(), args.agent.clone(), description)
+            .configure_builder(repo_root, name.clone(), args.agent.clone(), prompt)
             .with_interactive(true) // Shell sessions are always interactive
             .build(ctx)
             .await?;

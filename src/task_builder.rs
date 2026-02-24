@@ -26,9 +26,9 @@ pub struct TaskBuilder {
     repo_root: Option<PathBuf>,
     name: Option<String>,
     task_type: Option<String>,
-    description: Option<String>,
-    /// Path to a file containing instructions
-    instructions_file_path: Option<PathBuf>,
+    prompt: Option<String>,
+    /// Path to a file containing the task prompt
+    prompt_file_path: Option<PathBuf>,
     edit: bool,
     agent: Option<String>,
     stack: Option<String>,
@@ -49,8 +49,8 @@ impl TaskBuilder {
             repo_root: None,
             name: None,
             task_type: None,
-            description: None,
-            instructions_file_path: None,
+            prompt: None,
+            prompt_file_path: None,
             edit: false,
             agent: None,
             stack: None,
@@ -80,8 +80,8 @@ impl TaskBuilder {
         // Note: We intentionally don't copy parent_id when retrying a task.
         // The retry creates a fresh task from the current repository state.
 
-        // Copy the instructions file path
-        builder.instructions_file_path = Some(PathBuf::from(&task.instructions_file));
+        // Copy the prompt file path from the existing task's instructions file
+        builder.prompt_file_path = Some(PathBuf::from(&task.instructions_file));
 
         builder
     }
@@ -104,15 +104,15 @@ impl TaskBuilder {
         self
     }
 
-    /// Sets the task description
-    pub fn description(mut self, description: Option<String>) -> Self {
-        self.description = description;
+    /// Sets the task prompt text that replaces the `{{PROMPT}}` placeholder in templates
+    pub fn prompt(mut self, prompt: Option<String>) -> Self {
+        self.prompt = prompt;
         self
     }
 
-    /// Sets the path to a file containing instructions
-    pub fn instructions_file(mut self, path: Option<PathBuf>) -> Self {
-        self.instructions_file_path = path;
+    /// Sets the path to a file containing the task prompt
+    pub fn prompt_file(mut self, path: Option<PathBuf>) -> Self {
+        self.prompt_file_path = path;
         self
     }
 
@@ -188,27 +188,26 @@ impl TaskBuilder {
             .clone()
             .unwrap_or_else(|| "generic".to_string());
 
-        // Check if template requires description
-        let template_needs_description = if task_type != "generic" {
+        // Check if template requires a prompt
+        let template_needs_prompt = if task_type != "generic" {
             match find_template(&task_type, Some(&repo_root), &ctx.tsk_env()) {
                 Ok(template_content) => {
-                    strip_frontmatter(&template_content).contains("{{DESCRIPTION}}")
+                    let body = strip_frontmatter(&template_content);
+                    body.contains("{{PROMPT}}") || body.contains("{{DESCRIPTION}}")
                 }
-                Err(_) => true, // If we can't read the template, assume it needs description
+                Err(_) => true, // If we can't read the template, assume it needs a prompt
             }
         } else {
-            true // Generic tasks always need description
+            true // Generic tasks always need a prompt
         };
 
         // Validate input
-        if template_needs_description
-            && self.description.is_none()
-            && self.instructions_file_path.is_none()
+        if template_needs_prompt
+            && self.prompt.is_none()
+            && self.prompt_file_path.is_none()
             && !self.edit
         {
-            return Err(
-                "Either description or prompt file must be provided, or use edit mode".into(),
-            );
+            return Err("Either prompt or prompt file must be provided, or use edit mode".into());
         }
 
         // Auto-detect project name first (needed for project config lookup)
@@ -482,16 +481,24 @@ impl TaskBuilder {
         task_type: &str,
         ctx: &AppContext,
     ) -> Result<String, Box<dyn Error>> {
-        if let Some(ref file_path) = self.instructions_file_path {
+        if let Some(ref file_path) = self.prompt_file_path {
             // File path provided - read and copy content
             let content = crate::file_system::read_file(file_path).await?;
             crate::file_system::write_file(dest_path, &content).await?;
-        } else if let Some(ref desc) = self.description {
+        } else if let Some(ref desc) = self.prompt {
             // Check if a template exists for this task type
             let content = if task_type != "generic" {
                 match find_template(task_type, self.repo_root.as_deref(), &ctx.tsk_env()) {
                     Ok(template_content) => {
-                        strip_frontmatter(&template_content).replace("{{DESCRIPTION}}", desc)
+                        let body = strip_frontmatter(&template_content);
+                        let mut content = body.replace("{{PROMPT}}", desc);
+                        if body.contains("{{DESCRIPTION}}") {
+                            eprintln!(
+                                "Warning: {{{{DESCRIPTION}}}} placeholder is deprecated. Use {{{{PROMPT}}}} instead."
+                            );
+                            content = content.replace("{{DESCRIPTION}}", desc);
+                        }
+                        content
                     }
                     Err(e) => {
                         eprintln!("Warning: Failed to read template: {e}");
@@ -504,19 +511,27 @@ impl TaskBuilder {
 
             crate::file_system::write_file(dest_path, &content).await?;
         } else {
-            // No description provided - use template as-is or create empty file
+            // No prompt provided - use template as-is or create empty file
             let initial_content = if task_type != "generic" {
                 match find_template(task_type, self.repo_root.as_deref(), &ctx.tsk_env()) {
                     Ok(template_content) => {
                         let body = strip_frontmatter(&template_content);
-                        // If template has description placeholder and we're in edit mode, add TODO
-                        if self.edit && body.contains("{{DESCRIPTION}}") {
-                            body.replace(
+                        if self.edit
+                            && (body.contains("{{PROMPT}}") || body.contains("{{DESCRIPTION}}"))
+                        {
+                            let content = body
+                                .replace("{{PROMPT}}", "<!-- TODO: Add your task prompt here -->");
+                            if body.contains("{{DESCRIPTION}}") {
+                                eprintln!(
+                                    "Warning: {{{{DESCRIPTION}}}} placeholder is deprecated. Use {{{{PROMPT}}}} instead."
+                                );
+                            }
+                            content.replace(
                                 "{{DESCRIPTION}}",
-                                "<!-- TODO: Add your task description here -->",
+                                "<!-- TODO: Add your task prompt here -->",
                             )
                         } else {
-                            // Use template as-is (for templates without description placeholder)
+                            // Use template as-is (for templates without prompt placeholder)
                             body.to_string()
                         }
                     }
@@ -582,7 +597,7 @@ mod tests {
     }
 
     /// Helper function to create a basic task for testing
-    async fn create_basic_task(name: &str, description: &str) -> Task {
+    async fn create_basic_task(name: &str, prompt: &str) -> Task {
         let (test_repo, ctx) = create_test_context().await;
         let current_dir = test_repo.path().to_path_buf();
 
@@ -590,7 +605,7 @@ mod tests {
             .repo_root(current_dir)
             .name(name.to_string())
             .task_type("generic".to_string())
-            .description(Some(description.to_string()))
+            .prompt(Some(prompt.to_string()))
             .build(&ctx)
             .await
             .unwrap()
@@ -636,7 +651,7 @@ mod tests {
             .repo_root(current_dir)
             .name("custom-task".to_string())
             .task_type("feat".to_string())
-            .description(Some("Custom description".to_string()))
+            .prompt(Some("Custom description".to_string()))
             .stack(Some("rust".to_string()))
             .project(Some("web-api".to_string()))
             .build(&ctx)
@@ -659,7 +674,7 @@ mod tests {
 
         // Create template with frontmatter
         let template_content =
-            "---\ndescription: A feature template\n---\n# Feature Template\n\n{{DESCRIPTION}}";
+            "---\ndescription: A feature template\n---\n# Feature Template\n\n{{PROMPT}}";
         test_repo
             .create_file(".tsk/templates/feat.md", template_content)
             .unwrap();
@@ -670,7 +685,7 @@ mod tests {
             .repo_root(current_dir)
             .name("test-feature".to_string())
             .task_type("feat".to_string())
-            .description(Some("My new feature".to_string()))
+            .prompt(Some("My new feature".to_string()))
             .build(&ctx)
             .await
             .unwrap();
@@ -696,6 +711,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_deprecated_description_placeholder_still_works() {
+        use crate::test_utils::TestGitRepository;
+
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        let current_dir = test_repo.path().to_path_buf();
+
+        // Create template using the deprecated {{DESCRIPTION}} placeholder
+        let template_content =
+            "---\ndescription: A legacy template\n---\n# Legacy Template\n\n{{DESCRIPTION}}";
+        test_repo
+            .create_file(".tsk/templates/legacy.md", template_content)
+            .unwrap();
+
+        let ctx = AppContext::builder().build();
+
+        let task = TaskBuilder::new()
+            .repo_root(current_dir)
+            .name("legacy-test".to_string())
+            .task_type("legacy".to_string())
+            .prompt(Some("My prompt text".to_string()))
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        // Verify the deprecated placeholder was replaced with the prompt text
+        verify_instructions_content(&ctx, &task, "My prompt text").await;
+
+        // Verify the placeholder itself is gone
+        let instructions_path = ctx
+            .tsk_env()
+            .data_dir()
+            .join("tasks")
+            .join(&task.id)
+            .join(&task.instructions_file);
+        let content = crate::file_system::read_file(&instructions_path)
+            .await
+            .unwrap();
+        assert!(
+            !content.contains("{{DESCRIPTION}}"),
+            "Deprecated placeholder should be replaced"
+        );
+    }
+
+    #[tokio::test]
     async fn test_task_builder_validation_errors() {
         let ctx = AppContext::builder().build();
         let non_git_dir = ctx.tsk_env().data_dir().to_path_buf();
@@ -716,7 +776,7 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Task name"));
 
-        // Test missing description for generic task
+        // Test missing prompt for generic task
         let result = TaskBuilder::new()
             .repo_root(non_git_dir)
             .name("test".to_string())
@@ -727,7 +787,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("Either description or prompt file")
+                .contains("Either prompt or prompt file")
         );
     }
 
@@ -746,7 +806,7 @@ mod tests {
         let task = TaskBuilder::new()
             .repo_root(current_dir)
             .name("file-task".to_string())
-            .instructions_file(Some(instructions_path))
+            .prompt_file(Some(instructions_path))
             .build(&ctx)
             .await
             .unwrap();
@@ -781,7 +841,7 @@ mod tests {
         let task = TaskBuilder::new()
             .repo_root(test_repo.path().to_path_buf())
             .name("test-task".to_string())
-            .description(Some("Test".to_string()))
+            .prompt(Some("Test".to_string()))
             .build(&ctx)
             .await
             .unwrap();
@@ -797,7 +857,7 @@ mod tests {
         let task = TaskBuilder::new()
             .repo_root(test_repo.path().to_path_buf())
             .name("interactive-task".to_string())
-            .description(Some("Test".to_string()))
+            .prompt(Some("Test".to_string()))
             .with_interactive(true)
             .build(&ctx)
             .await
@@ -809,7 +869,7 @@ mod tests {
         let task2 = TaskBuilder::new()
             .repo_root(test_repo.path().to_path_buf())
             .name("regular-task".to_string())
-            .description(Some("Test".to_string()))
+            .prompt(Some("Test".to_string()))
             .build(&ctx)
             .await
             .unwrap();
@@ -839,7 +899,7 @@ mod tests {
         let task = TaskBuilder::new()
             .repo_root(test_repo.path().to_path_buf())
             .name("copy-test".to_string())
-            .description(Some("Test repository copy".to_string()))
+            .prompt(Some("Test repository copy".to_string()))
             .build(&ctx)
             .await
             .unwrap();
@@ -866,7 +926,7 @@ mod tests {
         let task = TaskBuilder::new()
             .repo_root(test_repo.path().to_path_buf())
             .name("output-test".to_string())
-            .description(Some("Test output directory creation".to_string()))
+            .prompt(Some("Test output directory creation".to_string()))
             .build(&ctx)
             .await
             .unwrap();
@@ -896,7 +956,7 @@ mod tests {
             .repo_root(repo_path.clone())
             .name("test-task".to_string())
             .task_type("generic".to_string())
-            .description(Some("Test description".to_string()))
+            .prompt(Some("Test description".to_string()))
             .build(&ctx)
             .await;
 
@@ -970,7 +1030,7 @@ mod tests {
         let task = TaskBuilder::new()
             .repo_root(repo_path)
             .name("cli-override-test".to_string())
-            .description(Some("Test".to_string()))
+            .prompt(Some("Test".to_string()))
             .project(Some(project_name))
             .agent(Some("claude".to_string()))
             .stack(Some("rust".to_string()))
@@ -1026,7 +1086,7 @@ mod tests {
         let task = TaskBuilder::new()
             .repo_root(repo_path)
             .name("config-override-test".to_string())
-            .description(Some("Test".to_string()))
+            .prompt(Some("Test".to_string()))
             .project(Some(project_name))
             .build(&ctx)
             .await
@@ -1076,7 +1136,7 @@ mod tests {
         let task = TaskBuilder::new()
             .repo_root(repo_path)
             .name("partial-config-test".to_string())
-            .description(Some("Test".to_string()))
+            .prompt(Some("Test".to_string()))
             .project(Some(project_name))
             .build(&ctx)
             .await
@@ -1108,7 +1168,7 @@ mod tests {
         let task = TaskBuilder::new()
             .repo_root(repo_path)
             .name("no-config-test".to_string())
-            .description(Some("Test".to_string()))
+            .prompt(Some("Test".to_string()))
             .build(&ctx)
             .await
             .unwrap();
@@ -1141,7 +1201,7 @@ mod tests {
         let task = TaskBuilder::new()
             .repo_root(repo_path.clone())
             .name("dind-docker-default".to_string())
-            .description(Some("Test".to_string()))
+            .prompt(Some("Test".to_string()))
             .build(&ctx)
             .await
             .unwrap();
@@ -1168,7 +1228,7 @@ mod tests {
         let task = TaskBuilder::new()
             .repo_root(repo_path.clone())
             .name("dind-project-override".to_string())
-            .description(Some("Test".to_string()))
+            .prompt(Some("Test".to_string()))
             .project(Some(project_name.clone()))
             .build(&ctx)
             .await
@@ -1195,7 +1255,7 @@ mod tests {
         let task = TaskBuilder::new()
             .repo_root(repo_path.clone())
             .name("dind-cli-override".to_string())
-            .description(Some("Test".to_string()))
+            .prompt(Some("Test".to_string()))
             .project(Some(project_name))
             .dind(Some(true))
             .build(&ctx)
@@ -1218,7 +1278,7 @@ mod tests {
         let parent_task = TaskBuilder::new()
             .repo_root(repo_path.clone())
             .name("parent-task".to_string())
-            .description(Some("Parent task".to_string()))
+            .prompt(Some("Parent task".to_string()))
             .build(&ctx)
             .await
             .unwrap();
@@ -1231,7 +1291,7 @@ mod tests {
         let child_task = TaskBuilder::new()
             .repo_root(repo_path)
             .name("child-task".to_string())
-            .description(Some("Child task".to_string()))
+            .prompt(Some("Child task".to_string()))
             .parent_id(Some(parent_task.id.clone()))
             .build(&ctx)
             .await
@@ -1262,7 +1322,7 @@ mod tests {
         let result = TaskBuilder::new()
             .repo_root(repo_path)
             .name("orphan-task".to_string())
-            .description(Some("Orphan task".to_string()))
+            .prompt(Some("Orphan task".to_string()))
             .parent_id(Some("nonexistent-task-id".to_string()))
             .build(&ctx)
             .await;
@@ -1294,7 +1354,7 @@ mod tests {
         let task_a = TaskBuilder::new()
             .repo_root(repo_path.clone())
             .name("task-a".to_string())
-            .description(Some("Task A".to_string()))
+            .prompt(Some("Task A".to_string()))
             .build(&ctx)
             .await
             .unwrap();
@@ -1304,7 +1364,7 @@ mod tests {
         let task_b = TaskBuilder::new()
             .repo_root(repo_path.clone())
             .name("task-b".to_string())
-            .description(Some("Task B".to_string()))
+            .prompt(Some("Task B".to_string()))
             .parent_id(Some(task_a.id.clone()))
             .build(&ctx)
             .await
@@ -1315,7 +1375,7 @@ mod tests {
         let task_c = TaskBuilder::new()
             .repo_root(repo_path.clone())
             .name("task-c".to_string())
-            .description(Some("Task C".to_string()))
+            .prompt(Some("Task C".to_string()))
             .parent_id(Some(task_b.id.clone()))
             .build(&ctx)
             .await
@@ -1378,7 +1438,7 @@ mod tests {
         let task = TaskBuilder::new()
             .repo_root(repo_path)
             .name("config-merge-test".to_string())
-            .description(Some("Test".to_string()))
+            .prompt(Some("Test".to_string()))
             .project(Some(project_name))
             .build(&ctx)
             .await

@@ -149,14 +149,13 @@ mod tests {
     }
 
     #[test]
-    fn test_description_replacement_after_strip() {
-        let content =
-            "---\ndescription: Fix a bug\n---\n# Fix\n{{DESCRIPTION}}\nMore instructions.\n";
+    fn test_prompt_replacement_after_strip() {
+        let content = "---\ndescription: Fix a bug\n---\n# Fix\n{{PROMPT}}\nMore instructions.\n";
         let body = strip_frontmatter(content);
-        assert!(body.contains("{{DESCRIPTION}}"));
-        let replaced = body.replace("{{DESCRIPTION}}", "Fix the login timeout issue");
+        assert!(body.contains("{{PROMPT}}"));
+        let replaced = body.replace("{{PROMPT}}", "Fix the login timeout issue");
         assert!(replaced.contains("Fix the login timeout issue"));
-        assert!(!replaced.contains("{{DESCRIPTION}}"));
+        assert!(!replaced.contains("{{PROMPT}}"));
         assert!(!replaced.contains("description: Fix a bug"));
     }
 

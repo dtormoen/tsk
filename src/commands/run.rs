@@ -31,16 +31,11 @@ impl Command for RunCommand {
             );
         }
 
-        let description = args.resolve_description()?;
+        let prompt = args.resolve_prompt()?;
         let repo_root = args.resolve_repo_root()?;
 
         let task = args
-            .configure_builder(
-                repo_root,
-                name.clone(),
-                Some(agents[0].clone()),
-                description,
-            )
+            .configure_builder(repo_root, name.clone(), Some(agents[0].clone()), prompt)
             .build(ctx)
             .await?;
 
@@ -131,14 +126,13 @@ mod tests {
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(
-            err_msg
-                .contains("Either description or prompt file must be provided, or use edit mode"),
+            err_msg.contains("Either prompt or prompt file must be provided, or use edit mode"),
             "Expected validation error, but got: {err_msg}"
         );
     }
 
     #[tokio::test]
-    async fn test_run_command_template_without_description() {
+    async fn test_run_command_template_without_prompt() {
         use crate::test_utils::TestGitRepository;
 
         let test_repo = TestGitRepository::new().unwrap();

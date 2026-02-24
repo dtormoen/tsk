@@ -109,7 +109,7 @@ mod tests {
         assert!(result.is_ok());
         let content = result.unwrap();
         assert!(content.contains("Feature"));
-        assert!(content.contains("{{DESCRIPTION}}"));
+        assert!(content.contains("{{PROMPT}}"));
     }
 
     #[test]

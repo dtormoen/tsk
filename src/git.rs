@@ -1639,10 +1639,7 @@ mod tests {
             .create_file(".tsk/config.json", r#"{"agent": "claude"}"#)
             .unwrap();
         test_repo
-            .create_file(
-                ".tsk/templates/feat.md",
-                "# Feature Template\n{{DESCRIPTION}}",
-            )
+            .create_file(".tsk/templates/feat.md", "# Feature Template\n{{PROMPT}}")
             .unwrap();
         test_repo
             .create_file(".tsk/tsk.toml", "stack = \"rust\"\n")

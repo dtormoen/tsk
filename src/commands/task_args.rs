@@ -1,5 +1,5 @@
 use crate::repo_utils::find_repository_root;
-use crate::stdin_utils::{merge_description_with_stdin, read_piped_input};
+use crate::stdin_utils::{merge_prompt_with_stdin, read_piped_input};
 use crate::task::TaskBuilder;
 use std::error::Error;
 use std::path::{Path, PathBuf};
@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 /// Shared task creation arguments extracted from CLI commands.
 ///
 /// Holds the common fields across Add, Run, and Shell commands and provides
-/// methods for the shared pre-processing steps (agent validation, description
+/// methods for the shared pre-processing steps (agent validation, prompt
 /// resolution, repo root discovery, and TaskBuilder configuration).
 #[derive(Default)]
 pub struct TaskArgs {
@@ -50,10 +50,10 @@ impl TaskArgs {
         Ok(agents)
     }
 
-    /// Reads piped stdin and merges with the CLI description.
-    pub fn resolve_description(&self) -> Result<Option<String>, Box<dyn Error>> {
+    /// Reads piped stdin and merges with the CLI prompt.
+    pub fn resolve_prompt(&self) -> Result<Option<String>, Box<dyn Error>> {
         let piped_input = read_piped_input()?;
-        Ok(merge_description_with_stdin(
+        Ok(merge_prompt_with_stdin(
             self.description.clone(),
             piped_input,
         ))
@@ -76,14 +76,14 @@ impl TaskArgs {
         repo_root: PathBuf,
         name: String,
         agent: Option<String>,
-        description: Option<String>,
+        prompt: Option<String>,
     ) -> TaskBuilder {
         TaskBuilder::new()
             .repo_root(repo_root)
             .name(name)
             .task_type(self.r#type.clone())
-            .description(description)
-            .instructions_file(self.prompt.as_ref().map(PathBuf::from))
+            .prompt(prompt)
+            .prompt_file(self.prompt.as_ref().map(PathBuf::from))
             .edit(self.edit)
             .agent(agent)
             .stack(self.stack.clone())

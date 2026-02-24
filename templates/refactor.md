@@ -5,7 +5,7 @@ description: Refactor existing code
 # Refactoring Request
 You need to refactor the code in the following way:
 
-{{DESCRIPTION}}
+{{PROMPT}}
 
 ## Refactoring Best Practices
 While working on the change, keep in mind the following:

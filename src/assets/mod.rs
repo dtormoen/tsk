@@ -160,7 +160,7 @@ mod tests {
         let ctx = AppContext::builder().build();
         let result = find_template("feat", None, &ctx.tsk_env());
         assert!(result.is_ok());
-        assert!(result.unwrap().contains("{{DESCRIPTION}}"));
+        assert!(result.unwrap().contains("{{PROMPT}}"));
     }
 
     #[test]

@@ -30,7 +30,7 @@ fn stdin_is_pipe_or_file() -> bool {
 pub fn read_piped_input() -> Result<Option<String>, io::Error> {
     if stdin_is_pipe_or_file() {
         // Show feedback when reading from stdin
-        eprintln!("Reading task description from stdin...");
+        eprintln!("Reading task prompt from stdin...");
 
         let mut buffer = String::new();
         io::stdin().read_to_string(&mut buffer)?;
@@ -48,20 +48,20 @@ pub fn read_piped_input() -> Result<Option<String>, io::Error> {
     }
 }
 
-/// Merges piped input with existing description, warning if both exist
+/// Merges piped input with existing prompt, warning if both exist
 ///
-/// This function handles the priority logic for combining CLI --description flag
-/// with piped stdin input. Piped input takes precedence over the CLI flag.
+/// This function handles the priority logic for combining CLI --description/--prompt
+/// flag with piped stdin input. Piped input takes precedence over the CLI flag.
 ///
 /// # Arguments
 ///
-/// - `cli_description` - Description provided via --description flag
-/// - `piped_input` - Description read from stdin pipe
-pub fn merge_description_with_stdin(
-    cli_description: Option<String>,
+/// - `cli_prompt` - Prompt provided via --description or --prompt flag
+/// - `piped_input` - Prompt read from stdin pipe
+pub fn merge_prompt_with_stdin(
+    cli_prompt: Option<String>,
     piped_input: Option<String>,
 ) -> Option<String> {
-    match (cli_description, piped_input) {
+    match (cli_prompt, piped_input) {
         (Some(_), Some(piped)) => {
             eprintln!(
                 "Warning: Both --description flag and piped input provided. Using piped input."
@@ -69,7 +69,7 @@ pub fn merge_description_with_stdin(
             Some(piped)
         }
         (None, Some(piped)) => Some(piped),
-        (Some(desc), None) => Some(desc),
+        (Some(prompt), None) => Some(prompt),
         (None, None) => None,
     }
 }
@@ -81,24 +81,22 @@ mod tests {
     use crate::test_utils::TestGitRepository;
 
     #[test]
-    fn test_merge_description_with_stdin() {
+    fn test_merge_prompt_with_stdin() {
         // Test case 1: Both CLI and piped - piped wins
-        let result = merge_description_with_stdin(
-            Some("cli desc".to_string()),
-            Some("piped desc".to_string()),
-        );
+        let result =
+            merge_prompt_with_stdin(Some("cli desc".to_string()), Some("piped desc".to_string()));
         assert_eq!(result, Some("piped desc".to_string()));
 
         // Test case 2: Only piped input
-        let result = merge_description_with_stdin(None, Some("piped desc".to_string()));
+        let result = merge_prompt_with_stdin(None, Some("piped desc".to_string()));
         assert_eq!(result, Some("piped desc".to_string()));
 
-        // Test case 3: Only CLI description
-        let result = merge_description_with_stdin(Some("cli desc".to_string()), None);
+        // Test case 3: Only CLI prompt
+        let result = merge_prompt_with_stdin(Some("cli desc".to_string()), None);
         assert_eq!(result, Some("cli desc".to_string()));
 
-        // Test case 4: No description
-        let result = merge_description_with_stdin(None, None);
+        // Test case 4: No prompt
+        let result = merge_prompt_with_stdin(None, None);
         assert_eq!(result, None);
     }
 
@@ -113,7 +111,7 @@ mod tests {
         test_repo.init_with_commit().unwrap();
 
         // Create a template file
-        let template_content = "# Task: {{TYPE}}\n{{DESCRIPTION}}";
+        let template_content = "# Task: {{TYPE}}\n{{PROMPT}}";
         test_repo
             .create_file(".tsk/templates/generic.md", template_content)
             .unwrap();
@@ -167,7 +165,7 @@ mod tests {
         let test_repo = TestGitRepository::new().unwrap();
         test_repo.init_with_commit().unwrap();
 
-        // Create a template file without {{DESCRIPTION}} placeholder
+        // Create a template file without {{PROMPT}} placeholder
         let template_content = "Say ack and exit.";
         test_repo
             .create_file(".tsk/templates/ack.md", template_content)
@@ -187,7 +185,7 @@ mod tests {
             docker_client_override: Some(Arc::new(NoOpDockerClient)),
         };
 
-        // Should succeed for templates without {{DESCRIPTION}} placeholder
+        // Should succeed for templates without {{PROMPT}} placeholder
         let result = cmd.execute(&ctx).await;
         assert!(
             result.is_ok(),

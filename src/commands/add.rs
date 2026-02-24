@@ -17,7 +17,7 @@ impl Command for AddCommand {
         let name = args.resolved_name();
 
         let agents = args.parse_and_validate_agents()?;
-        let description = args.resolve_description()?;
+        let prompt = args.resolve_prompt()?;
         let repo_root = args.resolve_repo_root()?;
 
         // Create tasks for each agent
@@ -32,7 +32,7 @@ impl Command for AddCommand {
                         repo_root.clone(),
                         name.clone(),
                         Some(agent.clone()),
-                        description.clone(),
+                        prompt.clone(),
                     )
                     .parent_id(self.parent_id.clone())
                     .build(ctx)
@@ -57,7 +57,7 @@ impl Command for AddCommand {
                         if first_task_instructions.is_some() {
                             None
                         } else {
-                            description.clone()
+                            prompt.clone()
                         },
                     )
                     .parent_id(self.parent_id.clone());
@@ -76,7 +76,7 @@ impl Command for AddCommand {
                     // Disable edit mode — instructions are already finalized from the first task
                     let task = builder
                         .edit(false)
-                        .instructions_file(Some(temp_instructions.clone()))
+                        .prompt_file(Some(temp_instructions.clone()))
                         .build(ctx)
                         .await?;
 
@@ -162,8 +162,7 @@ mod tests {
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(
-            err_msg
-                .contains("Either description or prompt file must be provided, or use edit mode"),
+            err_msg.contains("Either prompt or prompt file must be provided, or use edit mode"),
             "Expected validation error, but got: {err_msg}"
         );
     }
@@ -192,7 +191,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_add_command_template_without_description() {
+    async fn test_add_command_template_without_prompt() {
         use crate::test_utils::TestGitRepository;
 
         let test_repo = TestGitRepository::new().unwrap();
@@ -218,7 +217,7 @@ mod tests {
         let result = cmd.execute(&ctx).await;
         assert!(
             result.is_ok(),
-            "Command should succeed for template without description placeholder"
+            "Command should succeed for template without prompt placeholder"
         );
     }
 
@@ -229,7 +228,7 @@ mod tests {
         let test_repo = TestGitRepository::new().unwrap();
         test_repo.init_with_commit().unwrap();
 
-        let template_content = "# Task: {{TYPE}}\n{{DESCRIPTION}}";
+        let template_content = "# Task: {{TYPE}}\n{{PROMPT}}";
         test_repo
             .create_file(".tsk/templates/generic.md", template_content)
             .unwrap();
@@ -265,7 +264,7 @@ mod tests {
         let test_repo = TestGitRepository::new().unwrap();
         test_repo.init_with_commit().unwrap();
 
-        let template_content = "# Task: {{TYPE}}\n{{DESCRIPTION}}";
+        let template_content = "# Task: {{TYPE}}\n{{PROMPT}}";
         test_repo
             .create_file(".tsk/templates/generic.md", template_content)
             .unwrap();
@@ -367,7 +366,7 @@ mod tests {
         let test_repo = TestGitRepository::new().unwrap();
         test_repo.init_with_commit().unwrap();
 
-        let template_content = "# Task: {{TYPE}}\n{{DESCRIPTION}}";
+        let template_content = "# Task: {{TYPE}}\n{{PROMPT}}";
         test_repo
             .create_file(".tsk/templates/generic.md", template_content)
             .unwrap();
@@ -405,7 +404,7 @@ mod tests {
         let test_repo = TestGitRepository::new().unwrap();
         test_repo.init_with_commit().unwrap();
 
-        let template_content = "# Task: {{TYPE}}\n{{DESCRIPTION}}";
+        let template_content = "# Task: {{TYPE}}\n{{PROMPT}}";
         test_repo
             .create_file(".tsk/templates/generic.md", template_content)
             .unwrap();

@@ -5,7 +5,7 @@ description: Create an implementation plan
 # Implementation Plan Request
 Write a detailed document describing how to implement the following changes to the repository:
 
-{{DESCRIPTION}}
+{{PROMPT}}
 
 ## Planning Best Practices
 - Think carefully about how to achieve the stated goal

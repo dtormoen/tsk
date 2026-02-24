@@ -5,7 +5,7 @@ description: Implement a new feature or change
 # Feature Request
 You need to implement a new feature or change. The description of the feature is:
 
-{{DESCRIPTION}}
+{{PROMPT}}
 
 ## Coding Best Practices
 - Write documentation following rustdoc best practices.
