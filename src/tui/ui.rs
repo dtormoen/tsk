@@ -74,10 +74,16 @@ fn render_main(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::Rect)
             };
             // First line: " X name  STATUS"
             let first_line_len = 1 + 1 + 1 + task.name.len() + 2 + status_text.len();
-            // Second line: "   project · type duration"
+            // Second line: "   project · type · id duration"
             let duration = format_duration(task);
-            let second_line_len =
-                3 + task.project.len() + 3 + task.task_type.len() + 1 + duration.len();
+            let second_line_len = 3
+                + task.project.len()
+                + 3
+                + task.task_type.len()
+                + 3
+                + task.id.len()
+                + 1
+                + duration.len();
             // Third line (children only): "   ↳ parent-name"
             let third_line_len = find_parent_name(task, &app.tasks)
                 .map(|name| 3 + 2 + name.len())
@@ -158,7 +164,10 @@ fn render_task_list(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::
             let second_line = Line::from(vec![
                 Span::raw("   "),
                 Span::styled(
-                    format!("{} \u{00b7} {} {}", task.project, task.task_type, duration),
+                    format!(
+                        "{} \u{00b7} {} \u{00b7} {} {}",
+                        task.project, task.task_type, task.id, duration
+                    ),
                     Style::default().fg(Color::Rgb(140, 140, 140)),
                 ),
             ]);
@@ -1031,6 +1040,7 @@ mod tests {
         let buffer = terminal.backend().buffer().clone();
         let mut found_parent_ref = false;
         let mut found_project_info = false;
+        let mut found_task_id = false;
         for y in 0..20 {
             let line: String = (0..50)
                 .map(|x| buffer[(x, y)].symbol().to_string())
@@ -1041,6 +1051,9 @@ mod tests {
             if line.contains("my-project") && line.contains("feat") {
                 found_project_info = true;
             }
+            if line.contains("child-id") {
+                found_task_id = true;
+            }
         }
         assert!(
             found_parent_ref,
@@ -1049,6 +1062,10 @@ mod tests {
         assert!(
             found_project_info,
             "expected child task to still show project and type info"
+        );
+        assert!(
+            found_task_id,
+            "expected child task to show task ID on second line"
         );
     }
 }
