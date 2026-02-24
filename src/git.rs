@@ -521,7 +521,6 @@ impl RepoManager {
                     .await
                 {
                     warnings.push(format!("Failed to fetch submodule changes: {e}"));
-                    // Don't fail - superproject changes are still valid
                 }
 
                 // Check if the fetched branch has any commits not in main
@@ -1119,46 +1118,11 @@ mod tests {
 
         // Create main repository
         let main_repo = TestGitRepository::new().unwrap();
-        main_repo.init().unwrap();
-        // Configure git to use main as default branch
-        main_repo
-            .run_git_command(&["config", "init.defaultBranch", "main"])
-            .unwrap();
-        main_repo
-            .run_git_command(&["checkout", "-b", "main"])
-            .unwrap();
-        // Create initial commit
-        main_repo
-            .create_file("README.md", "# Test Repository\n")
-            .unwrap();
-        main_repo.stage_all().unwrap();
-        main_repo.commit("Initial commit").unwrap();
+        main_repo.init_with_main_branch().unwrap();
 
         // Create task repository (simulating a copied repository)
         let task_repo = TestGitRepository::new().unwrap();
-        task_repo.init().unwrap();
-
-        // Set up task repo to have main repo as origin
-        task_repo
-            .run_git_command(&[
-                "remote",
-                "add",
-                "origin",
-                main_repo.path().to_str().unwrap(),
-            ])
-            .unwrap();
-
-        // Fetch main branch to task repo
-        task_repo.run_git_command(&["fetch", "origin"]).unwrap();
-        let main_branch = main_repo.current_branch().unwrap();
-        task_repo
-            .run_git_command(&[
-                "checkout",
-                "-b",
-                &main_branch,
-                &format!("origin/{main_branch}"),
-            ])
-            .unwrap();
+        task_repo.clone_from(&main_repo).unwrap();
 
         // Create a branch in task repo with no new commits
         let branch_name = "tsk/test/test-task/abcd1234";
@@ -1202,46 +1166,11 @@ mod tests {
 
         // Create main repository
         let main_repo = TestGitRepository::new().unwrap();
-        main_repo.init().unwrap();
-        // Configure git to use main as default branch
-        main_repo
-            .run_git_command(&["config", "init.defaultBranch", "main"])
-            .unwrap();
-        main_repo
-            .run_git_command(&["checkout", "-b", "main"])
-            .unwrap();
-        // Create initial commit
-        main_repo
-            .create_file("README.md", "# Test Repository\n")
-            .unwrap();
-        main_repo.stage_all().unwrap();
-        main_repo.commit("Initial commit").unwrap();
+        main_repo.init_with_main_branch().unwrap();
 
         // Create task repository (simulating a copied repository)
         let task_repo = TestGitRepository::new().unwrap();
-        task_repo.init().unwrap();
-
-        // Set up task repo to have main repo as origin
-        task_repo
-            .run_git_command(&[
-                "remote",
-                "add",
-                "origin",
-                main_repo.path().to_str().unwrap(),
-            ])
-            .unwrap();
-
-        // Fetch main branch to task repo
-        task_repo.run_git_command(&["fetch", "origin"]).unwrap();
-        let main_branch = main_repo.current_branch().unwrap();
-        task_repo
-            .run_git_command(&[
-                "checkout",
-                "-b",
-                &main_branch,
-                &format!("origin/{main_branch}"),
-            ])
-            .unwrap();
+        task_repo.clone_from(&main_repo).unwrap();
 
         // Create a branch in task repo with new commits
         let branch_name = "tsk/test/test-task/efgh5678";
@@ -1291,18 +1220,7 @@ mod tests {
 
         // Create main repository with a feature branch
         let main_repo = TestGitRepository::new().unwrap();
-        main_repo.init().unwrap();
-        main_repo
-            .run_git_command(&["config", "init.defaultBranch", "main"])
-            .unwrap();
-        main_repo
-            .run_git_command(&["checkout", "-b", "main"])
-            .unwrap();
-        main_repo
-            .create_file("README.md", "# Test Repository\n")
-            .unwrap();
-        main_repo.stage_all().unwrap();
-        main_repo.commit("Initial commit").unwrap();
+        main_repo.init_with_main_branch().unwrap();
 
         // Create a feature branch (this would be the source branch)
         main_repo.checkout_new_branch("feature-branch").unwrap();
@@ -1312,23 +1230,7 @@ mod tests {
 
         // Create task repository (simulating a copied repository)
         let task_repo = TestGitRepository::new().unwrap();
-        task_repo.init().unwrap();
-
-        // Set up task repo to have main repo as origin
-        task_repo
-            .run_git_command(&[
-                "remote",
-                "add",
-                "origin",
-                main_repo.path().to_str().unwrap(),
-            ])
-            .unwrap();
-
-        // Fetch and checkout feature-branch
-        task_repo.run_git_command(&["fetch", "origin"]).unwrap();
-        task_repo
-            .run_git_command(&["checkout", "-b", "feature-branch", "origin/feature-branch"])
-            .unwrap();
+        task_repo.clone_from(&main_repo).unwrap();
 
         // Create a task branch with new commits
         let branch_name = "tsk/feat/test-task/abc12345";
@@ -1359,9 +1261,14 @@ mod tests {
             .await;
 
         assert!(result.is_ok(), "Error: {result:?}");
+        let result = result.unwrap();
         assert!(
-            result.unwrap().has_changes,
+            result.has_changes,
             "Should return true when new commits exist"
+        );
+        assert!(
+            result.warnings.is_empty(),
+            "No warnings expected on happy path"
         );
 
         // Verify the branch exists in main repo
@@ -1855,20 +1762,7 @@ mod tests {
 
         // Create main repository with multiple commits
         let main_repo = TestGitRepository::new().unwrap();
-        main_repo.init().unwrap();
-        main_repo
-            .run_git_command(&["config", "init.defaultBranch", "main"])
-            .unwrap();
-        main_repo
-            .run_git_command(&["checkout", "-b", "main"])
-            .unwrap();
-
-        // Create first commit
-        main_repo
-            .create_file("README.md", "# Test Repository\n")
-            .unwrap();
-        main_repo.stage_all().unwrap();
-        let first_commit = main_repo.commit("Initial commit").unwrap();
+        let first_commit = main_repo.init_with_main_branch().unwrap();
 
         // Create second commit
         main_repo.create_file("feature.txt", "new feature").unwrap();
@@ -1944,21 +1838,9 @@ mod tests {
         let main_repo = TestGitRepository::new().unwrap();
         main_repo.init_with_commit().unwrap();
 
-        // Enable file:// protocol for submodule operations (required by newer git versions)
-        main_repo
-            .run_git_command(&["config", "protocol.file.allow", "always"])
-            .unwrap();
-
         // Add the submodule to the main repo
         main_repo
-            .run_git_command(&[
-                "-c",
-                "protocol.file.allow=always",
-                "submodule",
-                "add",
-                submodule_repo.path().to_str().unwrap(),
-                "libs/mylib",
-            ])
+            .add_submodule(&submodule_repo, "libs/mylib")
             .unwrap();
         main_repo.stage_all().unwrap();
         main_repo.commit("Add submodule").unwrap();
@@ -1998,61 +1880,24 @@ mod tests {
 
         // Document what happened with the submodule in the copy:
 
-        // 1. Check if .gitmodules was copied
+        // Check if .gitmodules was copied
         let gitmodules_copied = copied_path.join(".gitmodules").exists();
-        println!("SUBMODULE TEST: .gitmodules copied = {gitmodules_copied}");
 
-        // 2. Check if submodule directory exists
+        // Check if submodule directory exists
         let submodule_dir_copied = copied_path.join("libs/mylib").exists();
-        println!("SUBMODULE TEST: submodule directory exists = {submodule_dir_copied}");
 
-        // 3. Check if submodule files were copied
+        // Check if submodule files were copied
         let submodule_files_copied = copied_path.join("libs/mylib/lib.rs").exists();
-        println!("SUBMODULE TEST: submodule files copied = {submodule_files_copied}");
 
-        // 4. Check if submodule .git was copied (and what it looks like)
-        let copied_submodule_git = copied_path.join("libs/mylib/.git");
-        let submodule_git_state = if copied_submodule_git.exists() {
-            if copied_submodule_git.is_file() {
-                let content = std::fs::read_to_string(&copied_submodule_git).unwrap_or_default();
-                format!("file with content: {}", content.trim())
-            } else if copied_submodule_git.is_dir() {
-                "directory (full .git repo)".to_string()
-            } else {
-                "exists but unknown type".to_string()
-            }
-        } else {
-            "does not exist".to_string()
-        };
-        println!("SUBMODULE TEST: submodule .git state = {submodule_git_state}");
-
-        // 5. Check if the submodule is recognized as a valid git repo
+        // Check if the submodule is recognized as a valid git repo
         let submodule_is_git_repo =
             git_operations::is_git_repository(&copied_path.join("libs/mylib"))
                 .await
                 .unwrap_or(false);
-        println!("SUBMODULE TEST: submodule is valid git repo = {submodule_is_git_repo}");
 
-        // 6. Check .git/modules in copied repo (where git stores actual submodule data)
+        // Check .git/modules in copied repo (where git stores actual submodule data)
         let modules_dir = copied_path.join(".git/modules");
         let modules_exist = modules_dir.exists();
-        println!("SUBMODULE TEST: .git/modules exists = {modules_exist}");
-
-        // 7. Check git status in copied repo - does it see submodule changes?
-        let copied_repo = git2::Repository::open(&copied_path).unwrap();
-        let mut status_opts = git2::StatusOptions::new();
-        status_opts.include_untracked(true);
-        let statuses = copied_repo.statuses(Some(&mut status_opts)).unwrap();
-
-        println!("SUBMODULE TEST: Status entries in copied repo:");
-        for entry in statuses.iter() {
-            if let Some(path) = entry.path() {
-                println!("  - {} (status: {:?})", path, entry.status());
-            }
-        }
-
-        // Document findings in assertions that will show in test output
-        // These assertions document current behavior - they're expected to show issues
 
         // .gitmodules should be copied (it's a regular tracked file)
         assert!(
@@ -2097,46 +1942,22 @@ mod tests {
         let middle_repo = TestGitRepository::new().unwrap();
         middle_repo.init().unwrap();
         middle_repo
-            .run_git_command(&["config", "protocol.file.allow", "always"])
-            .unwrap();
-        middle_repo
             .create_file("middle.txt", "middle content")
             .unwrap();
         middle_repo.stage_all().unwrap();
         middle_repo.commit("Middle commit").unwrap();
 
         // Add inner as submodule of middle
-        middle_repo
-            .run_git_command(&[
-                "-c",
-                "protocol.file.allow=always",
-                "submodule",
-                "add",
-                inner_repo.path().to_str().unwrap(),
-                "inner",
-            ])
-            .unwrap();
+        middle_repo.add_submodule(&inner_repo, "inner").unwrap();
         middle_repo.stage_all().unwrap();
         middle_repo.commit("Add inner submodule").unwrap();
 
         // Create the main "workspace" repository with middle as a submodule
         let main_repo = TestGitRepository::new().unwrap();
         main_repo.init_with_commit().unwrap();
-        main_repo
-            .run_git_command(&["config", "protocol.file.allow", "always"])
-            .unwrap();
 
         // Add middle as submodule of main
-        main_repo
-            .run_git_command(&[
-                "-c",
-                "protocol.file.allow=always",
-                "submodule",
-                "add",
-                middle_repo.path().to_str().unwrap(),
-                "middle",
-            ])
-            .unwrap();
+        main_repo.add_submodule(&middle_repo, "middle").unwrap();
 
         // Initialize nested submodules recursively
         main_repo
@@ -2174,21 +1995,7 @@ mod tests {
         assert!(result.is_ok(), "Copy should succeed: {:?}", result);
         let (copied_path, _) = result.unwrap();
 
-        // Document what happened with nested submodules
-
         // Check each level
-        let middle_exists = copied_path.join("middle/middle.txt").exists();
-        let inner_exists = copied_path.join("middle/inner/inner.txt").exists();
-        let middle_git_exists = copied_path.join("middle/.git").exists();
-        let inner_git_exists = copied_path.join("middle/inner/.git").exists();
-
-        println!("NESTED SUBMODULE TEST:");
-        println!("  middle/middle.txt exists = {middle_exists}");
-        println!("  middle/inner/inner.txt exists = {inner_exists}");
-        println!("  middle/.git exists = {middle_git_exists}");
-        println!("  middle/inner/.git exists = {inner_git_exists}");
-
-        // Check if they're valid git repos
         let middle_is_repo = git_operations::is_git_repository(&copied_path.join("middle"))
             .await
             .unwrap_or(false);
@@ -2197,8 +2004,14 @@ mod tests {
             .unwrap_or(false);
 
         // Verify files are copied
-        assert!(middle_exists, "Middle submodule files should be copied");
-        assert!(inner_exists, "Inner submodule files should be copied");
+        assert!(
+            copied_path.join("middle/middle.txt").exists(),
+            "Middle submodule files should be copied"
+        );
+        assert!(
+            copied_path.join("middle/inner/inner.txt").exists(),
+            "Inner submodule files should be copied"
+        );
 
         // Submodule support is now implemented - nested submodules should be valid git repos
         assert!(
@@ -2219,45 +2032,18 @@ mod tests {
 
         // Create a submodule repository
         let submodule_repo = TestGitRepository::new().unwrap();
-        submodule_repo.init().unwrap();
-        submodule_repo
-            .run_git_command(&["config", "init.defaultBranch", "main"])
-            .unwrap();
-        submodule_repo
-            .run_git_command(&["checkout", "-b", "main"])
-            .unwrap();
+        submodule_repo.init_with_main_branch().unwrap();
         submodule_repo
             .create_file("lib.rs", "// original content")
             .unwrap();
         submodule_repo.stage_all().unwrap();
-        submodule_repo.commit("Initial commit").unwrap();
+        submodule_repo.commit("Add lib.rs").unwrap();
 
         // Create main repository with submodule
         let main_repo = TestGitRepository::new().unwrap();
-        main_repo.init().unwrap();
-        main_repo
-            .run_git_command(&["config", "init.defaultBranch", "main"])
-            .unwrap();
-        main_repo
-            .run_git_command(&["checkout", "-b", "main"])
-            .unwrap();
-        main_repo.create_file("README.md", "# Main Repo").unwrap();
-        main_repo.stage_all().unwrap();
-        main_repo.commit("Initial commit").unwrap();
-        main_repo
-            .run_git_command(&["config", "protocol.file.allow", "always"])
-            .unwrap();
+        main_repo.init_with_main_branch().unwrap();
 
-        main_repo
-            .run_git_command(&[
-                "-c",
-                "protocol.file.allow=always",
-                "submodule",
-                "add",
-                submodule_repo.path().to_str().unwrap(),
-                "lib",
-            ])
-            .unwrap();
+        main_repo.add_submodule(&submodule_repo, "lib").unwrap();
         main_repo.stage_all().unwrap();
         main_repo.commit("Add submodule").unwrap();
 
@@ -2348,55 +2134,19 @@ mod tests {
 
         // Create RepoB (will become a submodule)
         let repo_b = TestGitRepository::new().unwrap();
-        repo_b.init().unwrap();
-        repo_b
-            .run_git_command(&["config", "init.defaultBranch", "main"])
-            .unwrap();
-        repo_b.run_git_command(&["checkout", "-b", "main"]).unwrap();
-        repo_b.create_file("README.md", "# RepoB").unwrap();
-        repo_b.stage_all().unwrap();
-        repo_b.commit("Initial RepoB commit").unwrap();
+        repo_b.init_with_main_branch().unwrap();
 
         // Create RepoA (superproject) with RepoB as submodule
         let repo_a = TestGitRepository::new().unwrap();
-        repo_a.init().unwrap();
-        repo_a
-            .run_git_command(&["config", "init.defaultBranch", "main"])
-            .unwrap();
-        repo_a.run_git_command(&["checkout", "-b", "main"]).unwrap();
-        repo_a.create_file("README.md", "# RepoA").unwrap();
-        repo_a.stage_all().unwrap();
-        repo_a.commit("Initial RepoA commit").unwrap();
-        repo_a
-            .run_git_command(&["config", "protocol.file.allow", "always"])
-            .unwrap();
+        repo_a.init_with_main_branch().unwrap();
 
         // Add RepoB as submodule
-        repo_a
-            .run_git_command(&[
-                "-c",
-                "protocol.file.allow=always",
-                "submodule",
-                "add",
-                repo_b.path().to_str().unwrap(),
-                "RepoB",
-            ])
-            .unwrap();
+        repo_a.add_submodule(&repo_b, "RepoB").unwrap();
         repo_a.stage_all().unwrap();
         repo_a.commit("Add RepoB submodule").unwrap();
 
         // Capture source_commit before copying
         let source_commit = repo_a.get_current_commit().unwrap();
-
-        // Verify initial structure
-        assert!(
-            repo_a.path().join("README.md").exists(),
-            "RepoA README should exist"
-        );
-        assert!(
-            repo_a.path().join("RepoB/README.md").exists(),
-            "RepoB README should exist in submodule"
-        );
 
         // Step 1: Copy the repo (simulates `tsk shell` starting)
         let manager = RepoManager::new(&ctx);
@@ -2525,40 +2275,14 @@ mod tests {
 
         // Create RepoB (will become a submodule)
         let repo_b = TestGitRepository::new().unwrap();
-        repo_b.init().unwrap();
-        repo_b
-            .run_git_command(&["config", "init.defaultBranch", "main"])
-            .unwrap();
-        repo_b.run_git_command(&["checkout", "-b", "main"]).unwrap();
-        repo_b.create_file("README.md", "# RepoB").unwrap();
-        repo_b.stage_all().unwrap();
-        repo_b.commit("Initial RepoB commit").unwrap();
+        repo_b.init_with_main_branch().unwrap();
 
         // Create RepoA (superproject) with RepoB as submodule
         let repo_a = TestGitRepository::new().unwrap();
-        repo_a.init().unwrap();
-        repo_a
-            .run_git_command(&["config", "init.defaultBranch", "main"])
-            .unwrap();
-        repo_a.run_git_command(&["checkout", "-b", "main"]).unwrap();
-        repo_a.create_file("README.md", "# RepoA").unwrap();
-        repo_a.stage_all().unwrap();
-        repo_a.commit("Initial RepoA commit").unwrap();
-        repo_a
-            .run_git_command(&["config", "protocol.file.allow", "always"])
-            .unwrap();
+        repo_a.init_with_main_branch().unwrap();
 
         // Add RepoB as submodule
-        repo_a
-            .run_git_command(&[
-                "-c",
-                "protocol.file.allow=always",
-                "submodule",
-                "add",
-                repo_b.path().to_str().unwrap(),
-                "RepoB",
-            ])
-            .unwrap();
+        repo_a.add_submodule(&repo_b, "RepoB").unwrap();
         repo_a.stage_all().unwrap();
         repo_a.commit("Add RepoB submodule").unwrap();
 
@@ -2710,63 +2434,21 @@ mod tests {
 
         // Create RepoB (will become a submodule - this one WILL be modified)
         let repo_b = TestGitRepository::new().unwrap();
-        repo_b.init().unwrap();
-        repo_b
-            .run_git_command(&["config", "init.defaultBranch", "main"])
-            .unwrap();
-        repo_b.run_git_command(&["checkout", "-b", "main"]).unwrap();
-        repo_b.create_file("README.md", "# RepoB").unwrap();
-        repo_b.stage_all().unwrap();
-        repo_b.commit("Initial RepoB commit").unwrap();
+        repo_b.init_with_main_branch().unwrap();
 
         // Create RepoC (will become a submodule - this one will NOT be modified)
         let repo_c = TestGitRepository::new().unwrap();
-        repo_c.init().unwrap();
-        repo_c
-            .run_git_command(&["config", "init.defaultBranch", "main"])
-            .unwrap();
-        repo_c.run_git_command(&["checkout", "-b", "main"]).unwrap();
-        repo_c.create_file("README.md", "# RepoC").unwrap();
-        repo_c.stage_all().unwrap();
-        repo_c.commit("Initial RepoC commit").unwrap();
+        repo_c.init_with_main_branch().unwrap();
 
         // Create RepoA (superproject) with both RepoB and RepoC as submodules
         let repo_a = TestGitRepository::new().unwrap();
-        repo_a.init().unwrap();
-        repo_a
-            .run_git_command(&["config", "init.defaultBranch", "main"])
-            .unwrap();
-        repo_a.run_git_command(&["checkout", "-b", "main"]).unwrap();
-        repo_a.create_file("README.md", "# RepoA").unwrap();
-        repo_a.stage_all().unwrap();
-        repo_a.commit("Initial RepoA commit").unwrap();
-        repo_a
-            .run_git_command(&["config", "protocol.file.allow", "always"])
-            .unwrap();
+        repo_a.init_with_main_branch().unwrap();
 
         // Add RepoB as submodule
-        repo_a
-            .run_git_command(&[
-                "-c",
-                "protocol.file.allow=always",
-                "submodule",
-                "add",
-                repo_b.path().to_str().unwrap(),
-                "RepoB",
-            ])
-            .unwrap();
+        repo_a.add_submodule(&repo_b, "RepoB").unwrap();
 
         // Add RepoC as submodule
-        repo_a
-            .run_git_command(&[
-                "-c",
-                "protocol.file.allow=always",
-                "submodule",
-                "add",
-                repo_c.path().to_str().unwrap(),
-                "RepoC",
-            ])
-            .unwrap();
+        repo_a.add_submodule(&repo_c, "RepoC").unwrap();
 
         repo_a.stage_all().unwrap();
         repo_a.commit("Add RepoB and RepoC submodules").unwrap();

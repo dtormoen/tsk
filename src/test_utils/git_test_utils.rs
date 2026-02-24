@@ -261,6 +261,54 @@ impl TestGitRepository {
         Ok(())
     }
 
+    /// Initialize repo with "main" as default branch, a README, and an initial commit.
+    /// Combines init() + defaultBranch config + checkout -b main + README + commit.
+    /// Returns the initial commit SHA.
+    pub fn init_with_main_branch(&self) -> Result<String> {
+        self.init()?;
+        self.run_git_command(&["config", "init.defaultBranch", "main"])?;
+        self.run_git_command(&["checkout", "-b", "main"])?;
+        self.create_file("README.md", "# Test Repository\n")?;
+        self.stage_all()?;
+        self.commit("Initial commit")
+    }
+
+    /// Set up this repo as a task clone of another repo, tracking its current branch.
+    /// Initializes, adds the source as origin, fetches, and checks out its current branch.
+    /// Returns the current commit SHA.
+    pub fn clone_from(&self, source: &TestGitRepository) -> Result<String> {
+        self.init()?;
+        self.run_git_command(&[
+            "remote",
+            "add",
+            "origin",
+            source
+                .path()
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("Invalid source path"))?,
+        ])?;
+        self.run_git_command(&["fetch", "origin"])?;
+        let branch = source.current_branch()?;
+        self.run_git_command(&["checkout", "-b", &branch, &format!("origin/{branch}")])?;
+        self.get_current_commit()
+    }
+
+    /// Add another repository as a git submodule at the given path.
+    pub fn add_submodule(&self, source: &TestGitRepository, path: &str) -> Result<()> {
+        self.run_git_command(&[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            source
+                .path()
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("Invalid source path"))?,
+            path,
+        ])?;
+        Ok(())
+    }
+
     /// Runs a git command in the repository directory.
     pub fn run_git_command(&self, args: &[&str]) -> Result<String> {
         let output = Command::new("git")

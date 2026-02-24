@@ -117,6 +117,21 @@ impl LogLine {
         }
     }
 
+    /// Create an infrastructure message with the "tsk" tag (Info level).
+    pub fn tsk_message(message: impl Into<String>) -> Self {
+        Self::message(vec!["tsk".into()], None, message.into())
+    }
+
+    /// Create an infrastructure success message with the "tsk" tag.
+    pub fn tsk_success(message: impl Into<String>) -> Self {
+        Self::success(vec!["tsk".into()], None, message.into())
+    }
+
+    /// Create an infrastructure warning with the "tsk" tag.
+    pub fn tsk_warning(message: impl Into<String>) -> Self {
+        Self::warning(vec!["tsk".into()], None, message.into())
+    }
+
     /// Create a Todo log line.
     pub fn todo(tags: Vec<String>, items: Vec<TodoItem>) -> Self {
         LogLine::Todo { tags, items }

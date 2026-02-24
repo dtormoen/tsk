@@ -81,7 +81,7 @@ impl TaskRunner {
         }
         let event = match &log_line {
             LogLine::Message {
-                level: Level::Warning,
+                level: Level::Warning | Level::Error,
                 message,
                 ..
             } => ServerEvent::WarningMessage(message.clone()),
@@ -210,13 +210,7 @@ impl TaskRunner {
         let branch_name = task.branch_name.clone();
 
         // Create output directory and agent.log early so infrastructure messages appear
-        let output_dir = self.ctx.tsk_env().task_dir(&task.id).join("output");
-        let mut agent_log = match std::fs::create_dir_all(&output_dir).and_then(|_| {
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(output_dir.join("agent.log"))
-        }) {
+        let mut agent_log = match self.ctx.tsk_env().open_agent_log(&task.id) {
             Ok(file) => Some(file),
             Err(e) => {
                 emit_or_print(
@@ -229,14 +223,10 @@ impl TaskRunner {
 
         self.write_log(
             &mut agent_log,
-            LogLine::message(
-                vec!["tsk".into()],
-                None,
-                format!(
-                    "Building Docker image: {}/{}/{}",
-                    task.stack, task.agent, task.project
-                ),
-            ),
+            LogLine::tsk_message(format!(
+                "Building Docker image: {}/{}/{}",
+                task.stack, task.agent, task.project
+            )),
         );
 
         let task_image_manager = DockerImageManager::new(
@@ -270,17 +260,10 @@ impl TaskRunner {
             .await
             .map_err(|e| format!("Error ensuring Docker image: {e}"))?;
 
+        self.write_log(&mut agent_log, LogLine::tsk_success("Docker image ready"));
         self.write_log(
             &mut agent_log,
-            LogLine::success(vec!["tsk".into()], None, "Docker image ready".into()),
-        );
-        self.write_log(
-            &mut agent_log,
-            LogLine::message(
-                vec!["tsk".into()],
-                None,
-                format!("Launching {} agent...", agent.name()),
-            ),
+            LogLine::tsk_message(format!("Launching {} agent...", agent.name())),
         );
 
         // Run agent warmup
@@ -312,26 +295,18 @@ impl TaskRunner {
         {
             self.write_log(
                 &mut agent_log,
-                LogLine::warning(
-                    vec!["tsk".into()],
-                    None,
-                    format!("Error committing changes: {e}"),
-                ),
+                LogLine::tsk_warning(format!("Error committing changes: {e}")),
             );
         }
 
         // Fetch changes back to main repository
         self.write_log(
             &mut agent_log,
-            LogLine::message(
-                vec!["tsk".into()],
-                None,
-                format!(
-                    "Saving changes to {} (branch {})...",
-                    task.repo_root.display(),
-                    branch_name,
-                ),
-            ),
+            LogLine::tsk_message(format!(
+                "Saving changes to {} (branch {})...",
+                task.repo_root.display(),
+                branch_name,
+            )),
         );
         match self
             .repo_manager
@@ -347,39 +322,24 @@ impl TaskRunner {
         {
             Ok(result) => {
                 for warning in &result.warnings {
-                    self.write_log(
-                        &mut agent_log,
-                        LogLine::warning(vec!["tsk".into()], None, warning.clone()),
-                    );
+                    self.write_log(&mut agent_log, LogLine::tsk_warning(warning.clone()));
                 }
                 if result.has_changes {
                     self.write_log(
                         &mut agent_log,
-                        LogLine::success(
-                            vec!["tsk".into()],
-                            None,
-                            format!("Branch {branch_name} is now available"),
-                        ),
+                        LogLine::tsk_success(format!("Branch {branch_name} is now available")),
                     );
                 } else {
                     self.write_log(
                         &mut agent_log,
-                        LogLine::message(
-                            vec!["tsk".into()],
-                            None,
-                            "No changes - branch not created".into(),
-                        ),
+                        LogLine::tsk_message("No changes - branch not created"),
                     );
                 }
             }
             Err(e) => {
                 self.write_log(
                     &mut agent_log,
-                    LogLine::warning(
-                        vec!["tsk".into()],
-                        None,
-                        format!("Error fetching changes: {e}"),
-                    ),
+                    LogLine::tsk_warning(format!("Error fetching changes: {e}")),
                 );
             }
         }

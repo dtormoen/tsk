@@ -120,6 +120,18 @@ impl TskEnv {
         self.data_dir.join("tasks").join(task_id)
     }
 
+    /// Open (or create) the agent.log file for a task in append mode.
+    ///
+    /// Creates the output directory if it doesn't exist.
+    pub fn open_agent_log(&self, task_id: &str) -> Result<std::fs::File, std::io::Error> {
+        let output_dir = self.task_dir(task_id).join("output");
+        std::fs::create_dir_all(&output_dir)?;
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(output_dir.join("agent.log"))
+    }
+
     /// Get the directory for per-proxy configuration files (e.g., squid.conf)
     pub fn proxy_config_dir(&self, fingerprint: &str) -> PathBuf {
         self.data_dir.join("proxy-configs").join(fingerprint)

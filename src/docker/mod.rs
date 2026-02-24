@@ -705,25 +705,13 @@ impl DockerManager {
             }
         } else {
             // Open the log file in append mode (task_runner already created it with infrastructure logs)
-            let log_file = {
-                let log_path = self
-                    .ctx
-                    .tsk_env()
-                    .task_dir(&task.id)
-                    .join("output")
-                    .join("agent.log");
-                match std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&log_path)
-                {
-                    Ok(file) => Some(file),
-                    Err(e) => {
-                        self.emit(ServerEvent::WarningMessage(format!(
-                            "Warning: Failed to open agent log file: {e}"
-                        )));
-                        None
-                    }
+            let log_file = match self.ctx.tsk_env().open_agent_log(&task.id) {
+                Ok(file) => Some(file),
+                Err(e) => {
+                    self.emit(ServerEvent::WarningMessage(format!(
+                        "Warning: Failed to open agent log file: {e}"
+                    )));
+                    None
                 }
             };
 

@@ -82,7 +82,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - Automatic fallback to default project layer when specific layer is missing
 
 **Storage** (`src/context/`)
-- `TskEnv`: Manages directory paths (data_dir, runtime_dir, config_dir) and runtime environment settings (editor, terminal type). TSK-specific env vars (`TSK_DATA_HOME`, `TSK_RUNTIME_DIR`, `TSK_CONFIG_HOME`) take precedence over XDG vars, enabling isolated testing without affecting other XDG-aware software
+- `TskEnv`: Manages directory paths (data_dir, runtime_dir, config_dir) and runtime environment settings (editor, terminal type); also provides `open_agent_log(task_id)` to open a task's `agent.log` in append mode, centralizing the output directory creation and file-open logic used by both `TaskRunner` and `DockerManager`. TSK-specific env vars (`TSK_DATA_HOME`, `TSK_RUNTIME_DIR`, `TSK_CONFIG_HOME`) take precedence over XDG vars, enabling isolated testing without affecting other XDG-aware software
 - `TskConfig`: User configuration loaded from tsk.toml. Uses shared config shape with `[defaults]` and `[project.<name>]` sections. `TskConfig::resolve_config(project_name, project_config, project_root)` returns a `ResolvedConfig` with all layers merged: `user [project.<name>] > project .tsk/tsk.toml > user [defaults] > built-in`. Project-level config is loaded from `.tsk/tsk.toml` via `load_project_config()`. `ResolvedConfig::proxy_config()` extracts a `ResolvedProxyConfig` with host_ports and squid_conf for proxy fingerprinting.
 - Centralized task storage across all repositories
 - Runtime directory for PID file
@@ -219,7 +219,7 @@ For user-facing breaking changes, add `!` after the type (e.g., `feat!:`, `fix!:
 ### Testing Conventions
 
 - Prefer integration tests using real implementations over mocks
-- Use `TestGitRepository` from `test_utils::git_test_utils` for tests requiring git repositories
+- Use `TestGitRepository` from `test_utils::git_test_utils` for tests requiring git repositories. Use `init_with_main_branch()` to create a repo with a `main` branch and initial commit, `clone_from(source)` to set up a task-clone of another repo, and `add_submodule(source, path)` for submodule test scenarios
 - Tests should use temporary directories that are automatically cleaned up
 - Make tests thread safe so they can be run in parallel
 - Always use `AppContext::builder()` for test setup rather than creating objects contained in the `AppContext` directly

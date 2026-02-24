@@ -30,7 +30,8 @@ mod agent {
     }
 }
 
-// Include the log_line module
+// Re-included from library; not all public API is used by this binary.
+#[allow(dead_code)]
 #[path = "../agent/log_line.rs"]
 mod log_line;
 
