@@ -3,6 +3,15 @@ use crate::git_operations;
 use chrono::{DateTime, Local};
 use std::path::{Path, PathBuf};
 
+/// Result of fetching changes back to the main repository.
+#[derive(Debug)]
+pub struct FetchResult {
+    /// Whether the branch has new commits compared to the base.
+    pub has_changes: bool,
+    /// Non-fatal warnings encountered during the fetch (e.g. submodule or git-town issues).
+    pub warnings: Vec<String>,
+}
+
 /// Information about a git submodule parsed from .gitmodules
 #[derive(Debug, Clone)]
 struct SubmoduleInfo {
@@ -428,8 +437,8 @@ impl RepoManager {
         .map_err(|e| format!("Task join error: {e}"))?
     }
 
-    /// Fetch changes from the copied repository back to the main repository
-    /// Returns false if no changes were fetched (branch has no new commits)
+    /// Fetch changes from the copied repository back to the main repository.
+    /// Returns a `FetchResult` with `has_changes: false` if the branch has no new commits.
     pub async fn fetch_changes(
         &self,
         repo_path: &Path,
@@ -438,11 +447,14 @@ impl RepoManager {
         source_commit: &str,
         source_branch: Option<&str>,
         git_town_enabled: bool,
-    ) -> Result<bool, String> {
+    ) -> Result<FetchResult, String> {
         // Check if there are any changes by comparing HEAD with source commit
         let current_head = git_operations::get_current_commit(repo_path).await?;
         if current_head == source_commit {
-            return Ok(false);
+            return Ok(FetchResult {
+                has_changes: false,
+                warnings: vec![],
+            });
         }
 
         let repo_path_str = repo_path
@@ -457,10 +469,12 @@ impl RepoManager {
         let remote_name = format!("tsk-temp-{}", now.format("%Y-%m-%d-%H%M%S"));
 
         // Synchronize git operations on the main repository
-        let has_commits = self
+        let (has_commits, warnings) = self
             .ctx
             .git_sync_manager()
             .with_repo_lock(&main_repo, || async {
+                let mut warnings: Vec<String> = Vec::new();
+
                 git_operations::add_remote(&main_repo, &remote_name, repo_path_str).await?;
 
                 // Validate that the branch is accessible before attempting fetch
@@ -490,7 +504,7 @@ impl RepoManager {
                                 .set_git_town_parent(&main_repo, branch_name, parent)
                                 .await
                         {
-                            eprintln!("Warning: Failed to set git-town parent: {e}");
+                            warnings.push(format!("Failed to set git-town parent: {e}"));
                         }
                     }
                     Err(e) => {
@@ -506,7 +520,7 @@ impl RepoManager {
                     .fetch_submodule_changes(repo_path, repo_root, branch_name)
                     .await
                 {
-                    eprintln!("Warning: Failed to fetch submodule changes: {e}");
+                    warnings.push(format!("Failed to fetch submodule changes: {e}"));
                     // Don't fail - superproject changes are still valid
                 }
 
@@ -518,14 +532,17 @@ impl RepoManager {
                 if !has_commits
                     && let Err(e) = git_operations::delete_branch(&main_repo, branch_name).await
                 {
-                    eprintln!("Warning: Failed to delete branch {branch_name}: {e}");
+                    warnings.push(format!("Failed to delete branch {branch_name}: {e}"));
                 }
 
-                Ok::<bool, String>(has_commits)
+                Ok::<(bool, Vec<String>), String>((has_commits, warnings))
             })
             .await?;
 
-        Ok(has_commits)
+        Ok(FetchResult {
+            has_changes: has_commits,
+            warnings,
+        })
     }
 
     /// Fix submodule paths after copying .git/modules to the destination.
@@ -1166,7 +1183,10 @@ mod tests {
             .await;
 
         assert!(result.is_ok(), "Error: {result:?}");
-        assert!(!result.unwrap(), "Should return false when no new commits");
+        assert!(
+            !result.unwrap().has_changes,
+            "Should return false when no new commits"
+        );
 
         // Verify the branch was cleaned up in main repo
         let main_branches = main_repo.branches().unwrap();
@@ -1252,7 +1272,10 @@ mod tests {
             .await;
 
         assert!(result.is_ok(), "Error: {result:?}");
-        assert!(result.unwrap(), "Should return true when new commits exist");
+        assert!(
+            result.unwrap().has_changes,
+            "Should return true when new commits exist"
+        );
 
         // Verify the branch exists in main repo
         let main_branches = main_repo.branches().unwrap();
@@ -1336,7 +1359,10 @@ mod tests {
             .await;
 
         assert!(result.is_ok(), "Error: {result:?}");
-        assert!(result.unwrap(), "Should return true when new commits exist");
+        assert!(
+            result.unwrap().has_changes,
+            "Should return true when new commits exist"
+        );
 
         // Verify the branch exists in main repo
         let main_branches = main_repo.branches().unwrap();
@@ -1884,7 +1910,7 @@ mod tests {
             fetch_result
         );
         assert!(
-            !fetch_result.unwrap(),
+            !fetch_result.unwrap().has_changes,
             "Should return false when no new commits"
         );
 
@@ -2301,7 +2327,7 @@ mod tests {
             fetch_result
         );
         assert!(
-            fetch_result.unwrap(),
+            fetch_result.unwrap().has_changes,
             "Should return true indicating new commits were fetched"
         );
 
@@ -2612,7 +2638,7 @@ mod tests {
             fetch_result
         );
         assert!(
-            fetch_result.unwrap(),
+            fetch_result.unwrap().has_changes,
             "Fetch should return true indicating new commits"
         );
 

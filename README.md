@@ -383,7 +383,7 @@ TSK uses the following directories for storing data while running tasks:
 - **~/.local/share/tsk/tasks.db**: SQLite database for task queue and task definitions
 - **~/.local/share/tsk/tasks/**: Task directories that get mounted into sandboxes when the agent runs. They contain:
   - **<taskid>/repo**: The repo copy that the agent operates on
-  - **<taskid>/output**: Directory containing `agent.log` with structured JSON-lines output including infrastructure phases (image build, agent launch, branch creation) and processed agent output
+  - **<taskid>/output**: Directory containing `agent.log` with structured JSON-lines output including infrastructure phases (image build, agent launch, saving changes, branch result) and processed agent output
   - **<taskid>/instructions.md**: The instructions that were passed to an agent
 
 These default paths follow XDG conventions. You can override them with TSK-specific environment variables without affecting other XDG-aware software. Like XDG variables, these specify the base directory; TSK appends `/tsk` automatically:

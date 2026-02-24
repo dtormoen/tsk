@@ -211,9 +211,12 @@ impl TaskRunner {
 
         // Create output directory and agent.log early so infrastructure messages appear
         let output_dir = self.ctx.tsk_env().task_dir(&task.id).join("output");
-        let mut agent_log = match std::fs::create_dir_all(&output_dir)
-            .and_then(|_| std::fs::File::create(output_dir.join("agent.log")))
-        {
+        let mut agent_log = match std::fs::create_dir_all(&output_dir).and_then(|_| {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(output_dir.join("agent.log"))
+        }) {
             Ok(file) => Some(file),
             Err(e) => {
                 emit_or_print(
@@ -318,6 +321,18 @@ impl TaskRunner {
         }
 
         // Fetch changes back to main repository
+        self.write_log(
+            &mut agent_log,
+            LogLine::message(
+                vec!["tsk".into()],
+                None,
+                format!(
+                    "Saving changes to {} (branch {})...",
+                    task.repo_root.display(),
+                    branch_name,
+                ),
+            ),
+        );
         match self
             .repo_manager
             .fetch_changes(
@@ -330,25 +345,32 @@ impl TaskRunner {
             )
             .await
         {
-            Ok(true) => {
-                self.write_log(
-                    &mut agent_log,
-                    LogLine::success(
-                        vec!["tsk".into()],
-                        None,
-                        format!("Branch {branch_name} is now available"),
-                    ),
-                );
-            }
-            Ok(false) => {
-                self.write_log(
-                    &mut agent_log,
-                    LogLine::message(
-                        vec!["tsk".into()],
-                        None,
-                        "No changes - branch not created".into(),
-                    ),
-                );
+            Ok(result) => {
+                for warning in &result.warnings {
+                    self.write_log(
+                        &mut agent_log,
+                        LogLine::warning(vec!["tsk".into()], None, warning.clone()),
+                    );
+                }
+                if result.has_changes {
+                    self.write_log(
+                        &mut agent_log,
+                        LogLine::success(
+                            vec!["tsk".into()],
+                            None,
+                            format!("Branch {branch_name} is now available"),
+                        ),
+                    );
+                } else {
+                    self.write_log(
+                        &mut agent_log,
+                        LogLine::message(
+                            vec!["tsk".into()],
+                            None,
+                            "No changes - branch not created".into(),
+                        ),
+                    );
+                }
             }
             Err(e) => {
                 self.write_log(
