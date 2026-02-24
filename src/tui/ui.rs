@@ -1,10 +1,13 @@
 use chrono::Utc;
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Layout},
+    layout::{Alignment, Constraint, Layout, Margin},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
+    widgets::{
+        Block, Borders, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Wrap,
+    },
 };
 
 use crate::agent::log_line::{Level, LogLine, TodoStatus};
@@ -175,6 +178,21 @@ fn render_task_list(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::
     );
 
     frame.render_stateful_widget(list, area, &mut app.task_list_state);
+
+    // Render a scrollbar inside the block borders to indicate list position
+    let selected = app.task_list_state.selected().unwrap_or(0);
+    let mut scrollbar_state = ScrollbarState::new(app.tasks.len()).position(selected);
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(None)
+        .end_symbol(None);
+    frame.render_stateful_widget(
+        scrollbar,
+        area.inner(Margin {
+            vertical: 1,
+            horizontal: 0,
+        }),
+        &mut scrollbar_state,
+    );
 }
 
 /// Render the log viewer panel on the right side with styled LogLine rendering.
