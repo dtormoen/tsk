@@ -125,7 +125,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `TuiApp`: Application state (task list, log viewer content and scroll state, server status, panel focus); `render_log_viewer()` is the sole authority for scroll clamping and follow-mode positioning
 - `ui::render()`: Two-panel layout with dynamic task panel width (content-fit, min 30 cols, max 40%) and header/footer
 - `input::handle_event()`: Keyboard (vim-style + arrows) and mouse input handling
-- `run::run_tui()`: Async event loop multiplexing crossterm events, server events, and periodic timers
+- `run::run_tui()`: Async event loop multiplexing crossterm events, server events, and periodic timers; `sort_tasks_for_display()` applies display ordering (non-terminal tasks first, children grouped after parents, newest-first tiebreaker)
 - Stdout suppression: `TaskRunner`, `DockerManager`, `DockerImageManager`, `ProxyManager`, and `DockerBuildLockManager` accept an optional `ServerEventSender` to route output through the TUI event channel; `DockerManager` derives a `suppress_stdout` flag from `event_sender.is_some()` to suppress raw agent log output in TUI mode; the `emit_or_print` helper in `tui::events` routes status messages through the event channel when available, falling back to stdout/stderr when no sender is provided
 
 **Git Operations** (`src/git.rs`, `src/git_sync.rs`, `src/git_operations.rs`, `src/repo_utils.rs`)

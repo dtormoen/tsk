@@ -74,10 +74,13 @@ fn render_main(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::Rect)
             };
             // First line: " X name  STATUS"
             let first_line_len = 1 + 1 + 1 + task.name.len() + 2 + status_text.len();
-            // Second line: "   project · type duration"
-            let duration = format_duration(task);
-            let second_line_len =
-                3 + task.project.len() + 3 + task.task_type.len() + 1 + duration.len();
+            // Second line: "   ↳ parent-name" for children, or "   project · type duration"
+            let second_line_len = if let Some(parent_name) = find_parent_name(task, &app.tasks) {
+                3 + 2 + parent_name.len()
+            } else {
+                let duration = format_duration(task);
+                3 + task.project.len() + 3 + task.task_type.len() + 1 + duration.len()
+            };
             first_line_len.max(second_line_len)
         })
         .max()
@@ -151,13 +154,23 @@ fn render_task_list(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::
                 Span::styled(status_text, Style::default().fg(color)),
             ]);
 
-            let second_line = Line::from(vec![
-                Span::raw("   "),
-                Span::styled(
-                    format!("{} \u{00b7} {} {}", task.project, task.task_type, duration),
-                    Style::default().fg(Color::Rgb(140, 140, 140)),
-                ),
-            ]);
+            let second_line = if let Some(parent_name) = find_parent_name(task, &app.tasks) {
+                Line::from(vec![
+                    Span::raw("   "),
+                    Span::styled(
+                        format!("\u{21b3} {parent_name}"),
+                        Style::default().fg(Color::Rgb(140, 140, 140)),
+                    ),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::raw("   "),
+                    Span::styled(
+                        format!("{} \u{00b7} {} {}", task.project, task.task_type, duration),
+                        Style::default().fg(Color::Rgb(140, 140, 140)),
+                    ),
+                ])
+            };
 
             ListItem::new(Text::from(vec![first_line, second_line]))
         })
@@ -383,6 +396,21 @@ fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect) {
         Style::default().fg(Color::DarkGray),
     ));
     frame.render_widget(Paragraph::new(line), area);
+}
+
+/// Look up the parent task's name for a child task.
+///
+/// Returns the parent's name if the task has a `parent_ids` entry and the
+/// parent is found in the provided task list. Returns `None` for root tasks
+/// or if the parent has been cleaned up.
+fn find_parent_name<'a>(
+    task: &crate::task::Task,
+    tasks: &'a [crate::task::Task],
+) -> Option<&'a str> {
+    task.parent_ids
+        .first()
+        .and_then(|pid| tasks.iter().find(|t| t.id == *pid))
+        .map(|parent| parent.name.as_str())
 }
 
 /// Format the duration for a task based on its status and timestamps.
@@ -714,6 +742,301 @@ mod tests {
         assert!(
             app.log_wrapped_line_count > 0,
             "expected log_wrapped_line_count to be set after render"
+        );
+    }
+
+    #[test]
+    fn test_sort_tasks_terminal_below_non_terminal() {
+        use crate::tui::run::sort_tasks_for_display;
+
+        let now = chrono::Local::now();
+        let mut tasks = vec![
+            Task {
+                id: "t1".to_string(),
+                name: "complete-task".to_string(),
+                status: TaskStatus::Complete,
+                created_at: now - chrono::Duration::seconds(1),
+                branch_name: "tsk/feat/complete-task/t1".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "t2".to_string(),
+                name: "running-task".to_string(),
+                status: TaskStatus::Running,
+                created_at: now - chrono::Duration::seconds(2),
+                branch_name: "tsk/feat/running-task/t2".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "t3".to_string(),
+                name: "failed-task".to_string(),
+                status: TaskStatus::Failed,
+                created_at: now - chrono::Duration::seconds(3),
+                branch_name: "tsk/feat/failed-task/t3".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "t4".to_string(),
+                name: "queued-task".to_string(),
+                status: TaskStatus::Queued,
+                created_at: now - chrono::Duration::seconds(4),
+                branch_name: "tsk/feat/queued-task/t4".to_string(),
+                ..Task::test_default()
+            },
+        ];
+
+        sort_tasks_for_display(&mut tasks);
+
+        let ids: Vec<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+        // Non-terminal (Running, Queued) first, then terminal (Complete, Failed)
+        assert_eq!(ids, vec!["t2", "t4", "t1", "t3"]);
+    }
+
+    #[test]
+    fn test_sort_tasks_children_after_parents() {
+        use crate::tui::run::sort_tasks_for_display;
+
+        let now = chrono::Local::now();
+        let mut tasks = vec![
+            Task {
+                id: "parent".to_string(),
+                name: "parent-task".to_string(),
+                status: TaskStatus::Running,
+                created_at: now - chrono::Duration::seconds(2),
+                branch_name: "tsk/feat/parent-task/parent".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "child".to_string(),
+                name: "child-task".to_string(),
+                status: TaskStatus::Queued,
+                created_at: now - chrono::Duration::seconds(1),
+                parent_ids: vec!["parent".to_string()],
+                branch_name: "tsk/feat/child-task/child".to_string(),
+                ..Task::test_default()
+            },
+        ];
+
+        sort_tasks_for_display(&mut tasks);
+
+        let ids: Vec<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, vec!["parent", "child"]);
+    }
+
+    #[test]
+    fn test_sort_tasks_mixed_scenario() {
+        use crate::tui::run::sort_tasks_for_display;
+
+        let now = chrono::Local::now();
+        let mut tasks = vec![
+            Task {
+                id: "r1".to_string(),
+                name: "running-parent".to_string(),
+                status: TaskStatus::Running,
+                created_at: now - chrono::Duration::seconds(4),
+                branch_name: "tsk/feat/running-parent/r1".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "q1".to_string(),
+                name: "queued-child".to_string(),
+                status: TaskStatus::Queued,
+                created_at: now - chrono::Duration::seconds(3),
+                parent_ids: vec!["r1".to_string()],
+                branch_name: "tsk/feat/queued-child/q1".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "c1".to_string(),
+                name: "complete-parent".to_string(),
+                status: TaskStatus::Complete,
+                created_at: now - chrono::Duration::seconds(6),
+                branch_name: "tsk/feat/complete-parent/c1".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "c2".to_string(),
+                name: "complete-child".to_string(),
+                status: TaskStatus::Complete,
+                created_at: now - chrono::Duration::seconds(5),
+                parent_ids: vec!["c1".to_string()],
+                branch_name: "tsk/feat/complete-child/c2".to_string(),
+                ..Task::test_default()
+            },
+        ];
+
+        sort_tasks_for_display(&mut tasks);
+
+        let ids: Vec<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+        // Non-terminal first: r1 (running parent), q1 (queued child of r1)
+        // Then terminal: c1 (complete parent), c2 (complete child of c1)
+        assert_eq!(ids, vec!["r1", "q1", "c1", "c2"]);
+    }
+
+    #[test]
+    fn test_sort_tasks_reverse_chrono_tiebreaker() {
+        use crate::tui::run::sort_tasks_for_display;
+
+        let now = chrono::Local::now();
+        let mut tasks = vec![
+            Task {
+                id: "t1".to_string(),
+                name: "newest".to_string(),
+                status: TaskStatus::Running,
+                created_at: now - chrono::Duration::seconds(1),
+                branch_name: "tsk/feat/newest/t1".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "t2".to_string(),
+                name: "middle".to_string(),
+                status: TaskStatus::Running,
+                created_at: now - chrono::Duration::seconds(2),
+                branch_name: "tsk/feat/middle/t2".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "t3".to_string(),
+                name: "oldest".to_string(),
+                status: TaskStatus::Running,
+                created_at: now - chrono::Duration::seconds(3),
+                branch_name: "tsk/feat/oldest/t3".to_string(),
+                ..Task::test_default()
+            },
+        ];
+
+        sort_tasks_for_display(&mut tasks);
+
+        let ids: Vec<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+        // Reverse-chrono preserved: newest first
+        assert_eq!(ids, vec!["t1", "t2", "t3"]);
+    }
+
+    #[test]
+    fn test_sort_tasks_chain_a_b_c() {
+        use crate::tui::run::sort_tasks_for_display;
+
+        let now = chrono::Local::now();
+        let mut tasks = vec![
+            Task {
+                id: "c".to_string(),
+                name: "grandchild".to_string(),
+                status: TaskStatus::Queued,
+                created_at: now - chrono::Duration::seconds(1),
+                parent_ids: vec!["b".to_string()],
+                branch_name: "tsk/feat/grandchild/c".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "a".to_string(),
+                name: "grandparent".to_string(),
+                status: TaskStatus::Running,
+                created_at: now - chrono::Duration::seconds(3),
+                branch_name: "tsk/feat/grandparent/a".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "b".to_string(),
+                name: "parent".to_string(),
+                status: TaskStatus::Queued,
+                created_at: now - chrono::Duration::seconds(2),
+                parent_ids: vec!["a".to_string()],
+                branch_name: "tsk/feat/parent/b".to_string(),
+                ..Task::test_default()
+            },
+        ];
+
+        sort_tasks_for_display(&mut tasks);
+
+        let ids: Vec<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn test_sort_tasks_siblings_after_parent() {
+        use crate::tui::run::sort_tasks_for_display;
+
+        let now = chrono::Local::now();
+        let mut tasks = vec![
+            Task {
+                id: "child2".to_string(),
+                name: "second-child".to_string(),
+                status: TaskStatus::Queued,
+                created_at: now - chrono::Duration::seconds(1),
+                parent_ids: vec!["parent".to_string()],
+                branch_name: "tsk/feat/second-child/child2".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "child1".to_string(),
+                name: "first-child".to_string(),
+                status: TaskStatus::Queued,
+                created_at: now - chrono::Duration::seconds(2),
+                parent_ids: vec!["parent".to_string()],
+                branch_name: "tsk/feat/first-child/child1".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "parent".to_string(),
+                name: "parent-task".to_string(),
+                status: TaskStatus::Running,
+                created_at: now - chrono::Duration::seconds(3),
+                branch_name: "tsk/feat/parent-task/parent".to_string(),
+                ..Task::test_default()
+            },
+        ];
+
+        sort_tasks_for_display(&mut tasks);
+
+        let ids: Vec<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+        // Parent first, then both children in reverse-chrono order
+        assert_eq!(ids, vec!["parent", "child2", "child1"]);
+    }
+
+    #[test]
+    fn test_render_child_task_shows_parent_name() {
+        let backend = TestBackend::new(100, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = TuiApp::new(1);
+
+        app.tasks = vec![
+            Task {
+                id: "parent-id".to_string(),
+                name: "parent-task".to_string(),
+                status: TaskStatus::Running,
+                branch_name: "tsk/feat/parent-task/parent-id".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "child-id".to_string(),
+                name: "child-task".to_string(),
+                status: TaskStatus::Queued,
+                parent_ids: vec!["parent-id".to_string()],
+                branch_name: "tsk/feat/child-task/child-id".to_string(),
+                ..Task::test_default()
+            },
+        ];
+
+        terminal
+            .draw(|frame| {
+                render(&mut app, frame);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        let mut found_parent_ref = false;
+        for y in 0..20 {
+            let line: String = (0..50)
+                .map(|x| buffer[(x, y)].symbol().to_string())
+                .collect();
+            if line.contains("\u{21b3}") && line.contains("parent-task") {
+                found_parent_ref = true;
+                break;
+            }
+        }
+        assert!(
+            found_parent_ref,
+            "expected child task to show parent name with arrow"
         );
     }
 }
