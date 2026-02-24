@@ -180,6 +180,7 @@ Create, manage, and monitor tasks assigned to AI agents.
 - `tsk shell` - Start a sandbox container with an interactive shell
 - `tsk add` - Queue a task (supports `--parent <taskid>` for task chaining)
 - `tsk list` - View task status and branches
+- `tsk cancel <task-id>...` - Cancel one or more running or queued tasks
 - `tsk clean` - Clean up completed tasks
 - `tsk delete <task-id>...` - Delete one or more tasks
 - `tsk retry <task-id>...` - Retry one or more tasks
@@ -307,7 +308,7 @@ Volume mounts are particularly useful for:
 
 Environment variables (`env`) let you pass configuration to task containers, such as database URLs or API keys. To connect to host services forwarded through the proxy, use the `TSK_PROXY_HOST` environment variable (set automatically by TSK) as the hostname.
 
-The container engine can also be set per-command with the `--container-engine` flag (available on `run`, `shell`, `retry`, `server start`, and `docker build`).
+The container engine can also be set per-command with the `--container-engine` flag (available on `run`, `shell`, `retry`, `cancel`, `server start`, and `docker build`).
 
 Host ports (`host_ports`) expose host services to task containers. Agents connect to `$TSK_PROXY_HOST:<port>` to reach services running on your host machine (e.g., local databases or dev servers). The `TSK_PROXY_HOST` environment variable is automatically set by TSK to the correct proxy container hostname.
 

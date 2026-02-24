@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use std::error::Error;
 
 pub mod add;
+pub mod cancel;
 pub mod clean;
 pub mod delete;
 pub mod docker;
@@ -15,6 +16,7 @@ pub mod task_args;
 pub mod template;
 
 pub use add::AddCommand;
+pub use cancel::CancelCommand;
 pub use clean::CleanCommand;
 pub use delete::DeleteCommand;
 pub use list::ListCommand;

@@ -25,8 +25,8 @@ mod tui;
 mod utils;
 
 use commands::{
-    AddCommand, CleanCommand, Command, DeleteCommand, ListCommand, RetryCommand, RunCommand,
-    ShellCommand,
+    AddCommand, CancelCommand, CleanCommand, Command, DeleteCommand, ListCommand, RetryCommand,
+    RunCommand, ShellCommand,
     docker::DockerBuildCommand,
     server::{ServerStartCommand, ServerStopCommand},
     task_args::TaskArgs,
@@ -211,6 +211,14 @@ enum Commands {
     Server(ServerArgs),
     /// List all queued tasks
     List,
+    /// Cancel one or more running or queued tasks by ID
+    Cancel {
+        #[command(flatten)]
+        engine: ContainerEngineArgs,
+
+        /// Task IDs to cancel
+        task_ids: Vec<String>,
+    },
     /// Delete all completed tasks
     Clean,
     /// Delete one or more tasks by ID
@@ -276,6 +284,7 @@ impl Commands {
             Commands::Docker(args) => match &args.command {
                 DockerCommands::Build { engine, .. } => engine.container_engine.clone(),
             },
+            Commands::Cancel { engine, .. } => engine.container_engine.clone(),
             Commands::List | Commands::Clean | Commands::Delete { .. } | Commands::Template(_) => {
                 None
             }
@@ -475,6 +484,13 @@ async fn main() {
                 no_network_isolation,
                 dind,
             },
+        }),
+        Commands::Cancel {
+            engine: _,
+            task_ids,
+        } => Box::new(CancelCommand {
+            task_ids,
+            docker_client_override: None,
         }),
         Commands::List => Box::new(ListCommand),
         Commands::Clean => Box::new(CleanCommand),

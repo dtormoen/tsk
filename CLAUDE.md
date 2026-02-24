@@ -19,9 +19,10 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `shell`: Launch sandbox container with agent for interactive use (tracked in DB, supports piped input via stdin for descriptions, supports `--no-network-isolation`, supports `--dind`)
 - `add`: Queue tasks with descriptions and templates (supports piped input via stdin for descriptions, supports `--parent <taskid>` for task chaining, supports `--no-network-isolation`, supports `--dind`)
 - `list`: Display task status and results (shows parent task information)
+- `cancel <task-id>...`: Cancel running or queued tasks (marks as CANCELLED, kills containers for running tasks)
 - `clean`: Delete completed tasks (skips parents with queued/running children)
-- `delete <task-id>`: Delete a specific task
-- `retry <task-id>`: Retry a previous task
+- `delete <task-id>...`: Delete one or more tasks
+- `retry <task-id>...`: Retry one or more previous tasks
 
 *Subcommand Groups:*
 - `server start`: Start the TSK server daemon (supports `-w/--workers`, `-q/--quit`, `-s/--sound`)
@@ -60,7 +61,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - If parent task fails, children are marked as Failed; if cancelled, children are marked as Cancelled
 
 **Docker Integration** (`src/docker/`)
-- **Container engine**: Supports Docker (default) and Podman via `--container-engine` flag on container-related subcommands (`run`, `shell`, `retry`, `server start`, `docker build`) or top-level `container_engine` in tsk.toml. Podman uses host network mode for builds and case-insensitive error matching.
+- **Container engine**: Supports Docker (default) and Podman via `--container-engine` flag on container-related subcommands (`run`, `shell`, `retry`, `cancel`, `server start`, `docker build`) or top-level `container_engine` in tsk.toml. Podman uses host network mode for builds and case-insensitive error matching.
 - `DockerImageManager`: Centralized Docker image management with intelligent layering
 - `ProxyManager`: Dedicated proxy lifecycle management with automatic cleanup and network isolation
   - Per-configuration proxy instances: tasks with different proxy configs (host_ports, squid_conf) get separate proxy containers named `tsk-proxy-{fingerprint}`
@@ -155,7 +156,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 
 **Dependency Injection** (`src/context/`)
 - `AppContext` provides centralized resource management with builder pattern
-- Docker client is NOT part of AppContext; it is constructed at command entry points and injected into `DockerManager`/`TaskRunner` via constructors. This ensures commands that don't need Docker (add, list, clean, delete) work without a Docker daemon
+- Docker client is NOT part of AppContext; it is constructed at command entry points and injected into `DockerManager`/`TaskRunner` via constructors. This ensures commands that don't need Docker (add, list, clean, delete) work without a Docker daemon. Commands that interact with containers (run, shell, retry, cancel) construct a Docker client at their entry point
 - Factory pattern prevents accidental operations in tests
 - `TskEnv` provides XDG-compliant directory paths and runtime environment settings (editor, terminal type)
 - `TskConfig` provides user configuration loaded from tsk.toml
