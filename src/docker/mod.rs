@@ -704,23 +704,25 @@ impl DockerManager {
                 }
             }
         } else {
-            // Open a log file to persist processed agent output
+            // Open the log file in append mode (task_runner already created it with infrastructure logs)
             let log_file = {
-                let output_dir = self.ctx.tsk_env().task_dir(&task.id).join("output");
-                if let Err(e) = std::fs::create_dir_all(&output_dir) {
-                    self.emit(ServerEvent::WarningMessage(format!(
-                        "Warning: Failed to create output directory: {e}"
-                    )));
-                    None
-                } else {
-                    match std::fs::File::create(output_dir.join("agent.log")) {
-                        Ok(file) => Some(file),
-                        Err(e) => {
-                            self.emit(ServerEvent::WarningMessage(format!(
-                                "Warning: Failed to create agent log file: {e}"
-                            )));
-                            None
-                        }
+                let log_path = self
+                    .ctx
+                    .tsk_env()
+                    .task_dir(&task.id)
+                    .join("output")
+                    .join("agent.log");
+                match std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&log_path)
+                {
+                    Ok(file) => Some(file),
+                    Err(e) => {
+                        self.emit(ServerEvent::WarningMessage(format!(
+                            "Warning: Failed to open agent log file: {e}"
+                        )));
+                        None
                     }
                 }
             };

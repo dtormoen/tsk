@@ -1,10 +1,12 @@
 use crate::agent::AgentProvider;
+use crate::agent::log_line::{Level, LogLine};
 use crate::context::AppContext;
 use crate::context::TaskStorage;
 use crate::docker::{DockerManager, image_manager::DockerImageManager};
 use crate::git::RepoManager;
 use crate::task::{Task, TaskStatus};
 use crate::tui::events::{ServerEvent, ServerEventSender, emit_or_print};
+use std::io::Write;
 use std::sync::Arc;
 
 /// Result of executing a task
@@ -68,6 +70,25 @@ impl TaskRunner {
             docker_manager,
             event_sender,
         }
+    }
+
+    /// Write a LogLine to the agent.log file and emit for global header/stdout.
+    fn write_log(&self, file: &mut Option<std::fs::File>, log_line: LogLine) {
+        if let Some(f) = file.as_mut()
+            && let Ok(json) = serde_json::to_string(&log_line)
+        {
+            let _ = writeln!(f, "{json}");
+        }
+        let event = match &log_line {
+            LogLine::Message {
+                level: Level::Warning,
+                message,
+                ..
+            } => ServerEvent::WarningMessage(message.clone()),
+            LogLine::Message { message, .. } => ServerEvent::StatusMessage(message.clone()),
+            _ => return,
+        };
+        emit_or_print(&self.event_sender, event);
     }
 
     /// Stores and executes a task inline, for use by `run` and `shell` commands.
@@ -188,14 +209,31 @@ impl TaskRunner {
         })?;
         let branch_name = task.branch_name.clone();
 
-        // Launch Docker container
-        emit_or_print(
-            &self.event_sender,
-            ServerEvent::StatusMessage(format!("Launching {} agent...", agent.name())),
-        );
-        emit_or_print(
-            &self.event_sender,
-            ServerEvent::StatusMessage("=".repeat(60)),
+        // Create output directory and agent.log early so infrastructure messages appear
+        let output_dir = self.ctx.tsk_env().task_dir(&task.id).join("output");
+        let mut agent_log = match std::fs::create_dir_all(&output_dir)
+            .and_then(|_| std::fs::File::create(output_dir.join("agent.log")))
+        {
+            Ok(file) => Some(file),
+            Err(e) => {
+                emit_or_print(
+                    &self.event_sender,
+                    ServerEvent::WarningMessage(format!("Failed to create agent log: {e}")),
+                );
+                None
+            }
+        };
+
+        self.write_log(
+            &mut agent_log,
+            LogLine::message(
+                vec!["tsk".into()],
+                None,
+                format!(
+                    "Building Docker image: {}/{}/{}",
+                    task.stack, task.agent, task.project
+                ),
+            ),
         );
 
         let task_image_manager = DockerImageManager::new(
@@ -229,6 +267,19 @@ impl TaskRunner {
             .await
             .map_err(|e| format!("Error ensuring Docker image: {e}"))?;
 
+        self.write_log(
+            &mut agent_log,
+            LogLine::success(vec!["tsk".into()], None, "Docker image ready".into()),
+        );
+        self.write_log(
+            &mut agent_log,
+            LogLine::message(
+                vec!["tsk".into()],
+                None,
+                format!("Launching {} agent...", agent.name()),
+            ),
+        );
+
         // Run agent warmup
         if let Err(e) = agent.warmup().await {
             return Err(TaskExecutionError {
@@ -249,11 +300,6 @@ impl TaskRunner {
             }
         };
 
-        emit_or_print(
-            &self.event_sender,
-            ServerEvent::StatusMessage("=".repeat(60)),
-        );
-
         // Commit any changes made by the container
         let commit_message = format!("TSK automated changes for task: {}", task.name);
         if let Err(e) = self
@@ -261,9 +307,13 @@ impl TaskRunner {
             .commit_changes(repo_path, &commit_message)
             .await
         {
-            emit_or_print(
-                &self.event_sender,
-                ServerEvent::WarningMessage(format!("Error committing changes: {e}")),
+            self.write_log(
+                &mut agent_log,
+                LogLine::warning(
+                    vec!["tsk".into()],
+                    None,
+                    format!("Error committing changes: {e}"),
+                ),
             );
         }
 
@@ -276,27 +326,38 @@ impl TaskRunner {
                 &task.repo_root,
                 &task.source_commit,
                 task.source_branch.as_deref(),
-                crate::docker::resolve_config_from_task(task, &self.ctx, &self.event_sender)
-                    .git_town,
+                resolved_config.git_town,
             )
             .await
         {
             Ok(true) => {
-                emit_or_print(
-                    &self.event_sender,
-                    ServerEvent::StatusMessage(format!("Branch {branch_name} is now available")),
+                self.write_log(
+                    &mut agent_log,
+                    LogLine::success(
+                        vec!["tsk".into()],
+                        None,
+                        format!("Branch {branch_name} is now available"),
+                    ),
                 );
             }
             Ok(false) => {
-                emit_or_print(
-                    &self.event_sender,
-                    ServerEvent::StatusMessage("No changes - branch not created".to_string()),
+                self.write_log(
+                    &mut agent_log,
+                    LogLine::message(
+                        vec!["tsk".into()],
+                        None,
+                        "No changes - branch not created".into(),
+                    ),
                 );
             }
             Err(e) => {
-                emit_or_print(
-                    &self.event_sender,
-                    ServerEvent::WarningMessage(format!("Error fetching changes: {e}")),
+                self.write_log(
+                    &mut agent_log,
+                    LogLine::warning(
+                        vec!["tsk".into()],
+                        None,
+                        format!("Error fetching changes: {e}"),
+                    ),
                 );
             }
         }
