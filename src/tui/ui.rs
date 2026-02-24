@@ -61,17 +61,7 @@ fn render_main(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::Rect)
         .tasks
         .iter()
         .map(|task| {
-            let is_waiting = !task.parent_ids.is_empty() && task.status == TaskStatus::Queued;
-            let status_text = if is_waiting {
-                "WAITING"
-            } else {
-                match task.status {
-                    TaskStatus::Complete => "COMPLETE",
-                    TaskStatus::Running => "RUNNING",
-                    TaskStatus::Queued => "QUEUED",
-                    TaskStatus::Failed => "FAILED",
-                }
-            };
+            let status_text = status_text(task);
             // First line: " X name  STATUS"
             let first_line_len = 1 + 1 + 1 + task.name.len() + 2 + status_text.len();
             // Second line: "   project · type · id duration"
@@ -126,9 +116,7 @@ fn render_task_list(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::
         .tasks
         .iter()
         .map(|task| {
-            let is_waiting = !task.parent_ids.is_empty() && task.status == TaskStatus::Queued;
-
-            let (icon, color) = if is_waiting {
+            let (icon, color) = if is_waiting(task) {
                 ("\u{25ce}", Color::DarkGray)
             } else {
                 match task.status {
@@ -139,16 +127,7 @@ fn render_task_list(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::
                 }
             };
 
-            let status_text = if is_waiting {
-                "WAITING"
-            } else {
-                match task.status {
-                    TaskStatus::Complete => "COMPLETE",
-                    TaskStatus::Running => "RUNNING",
-                    TaskStatus::Queued => "QUEUED",
-                    TaskStatus::Failed => "FAILED",
-                }
-            };
+            let status_text = status_text(task);
 
             let duration = format_duration(task);
 
@@ -415,7 +394,7 @@ fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect) {
 /// Returns the parent's name if the task has a `parent_ids` entry and the
 /// parent is found in the provided task list. Returns `None` for root tasks
 /// or if the parent has been cleaned up.
-fn find_parent_name<'a>(
+pub(super) fn find_parent_name<'a>(
     task: &crate::task::Task,
     tasks: &'a [crate::task::Task],
 ) -> Option<&'a str> {
@@ -423,6 +402,39 @@ fn find_parent_name<'a>(
         .first()
         .and_then(|pid| tasks.iter().find(|t| t.id == *pid))
         .map(|parent| parent.name.as_str())
+}
+
+/// Number of display rows a task occupies in the task list.
+///
+/// Returns 3 for child tasks whose parent is visible in the list
+/// (name/status + project/type/id + parent reference), 2 otherwise.
+pub(super) fn task_display_height(task: &crate::task::Task, tasks: &[crate::task::Task]) -> u16 {
+    if find_parent_name(task, tasks).is_some() {
+        3
+    } else {
+        2
+    }
+}
+
+/// Whether a task is in waiting state (queued child with a parent).
+fn is_waiting(task: &crate::task::Task) -> bool {
+    !task.parent_ids.is_empty() && task.status == TaskStatus::Queued
+}
+
+/// Compute the display status text for a task.
+///
+/// Returns "WAITING" for queued child tasks, otherwise the uppercase status name.
+pub(super) fn status_text(task: &crate::task::Task) -> &'static str {
+    if is_waiting(task) {
+        "WAITING"
+    } else {
+        match task.status {
+            TaskStatus::Complete => "COMPLETE",
+            TaskStatus::Running => "RUNNING",
+            TaskStatus::Queued => "QUEUED",
+            TaskStatus::Failed => "FAILED",
+        }
+    }
 }
 
 /// Format the duration for a task based on its status and timestamps.

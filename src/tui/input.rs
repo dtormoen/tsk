@@ -1,4 +1,5 @@
 use super::app::{Panel, TuiApp};
+use super::ui::task_display_height;
 use crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 use std::path::Path;
 
@@ -69,8 +70,19 @@ pub fn handle_event(app: &mut TuiApp, event: &Event, data_dir: &Path) {
                     if in_task_panel {
                         app.focus = Panel::Tasks;
                         if let Some(inner_row) = mouse.row.checked_sub(app.task_list_top) {
-                            let task_index = inner_row as usize / 2 + app.task_list_state.offset();
-                            if task_index < app.tasks.len() {
+                            let click_row = inner_row as usize;
+                            let offset = app.task_list_state.offset();
+                            let mut accumulated = 0;
+                            let mut task_index = None;
+                            for (i, task) in app.tasks.iter().enumerate().skip(offset) {
+                                let height = task_display_height(task, &app.tasks) as usize;
+                                if click_row < accumulated + height {
+                                    task_index = Some(i);
+                                    break;
+                                }
+                                accumulated += height;
+                            }
+                            if let Some(task_index) = task_index {
                                 app.select_task(task_index);
                                 app.load_logs_for_selected_task(data_dir);
                             }
@@ -393,6 +405,73 @@ mod tests {
         // Click on task panel focuses it back
         handle_event(&mut app, &make_mouse_click(5, 2), tmp.path());
         assert_eq!(app.focus, Panel::Tasks);
+    }
+
+    #[test]
+    fn test_mouse_click_selects_task_with_mixed_heights() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = TuiApp::new(2);
+        app.task_panel_width = 40;
+        app.task_list_top = 2;
+
+        // parent (2 lines), child (3 lines), standalone (2 lines)
+        app.tasks = vec![
+            Task {
+                id: "parent".to_string(),
+                name: "parent-task".to_string(),
+                status: crate::task::TaskStatus::Running,
+                branch_name: "tsk/feat/parent-task/parent".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "child".to_string(),
+                name: "child-task".to_string(),
+                status: crate::task::TaskStatus::Queued,
+                parent_ids: vec!["parent".to_string()],
+                branch_name: "tsk/feat/child-task/child".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "standalone".to_string(),
+                name: "standalone-task".to_string(),
+                status: crate::task::TaskStatus::Running,
+                branch_name: "tsk/feat/standalone-task/standalone".to_string(),
+                ..Task::test_default()
+            },
+        ];
+
+        // Row layout (task_list_top=2):
+        // Row 2-3: parent (2 lines, inner rows 0-1)
+        // Row 4-6: child  (3 lines, inner rows 2-4)
+        // Row 7-8: standalone (2 lines, inner rows 5-6)
+
+        // Click on parent (inner row 0)
+        handle_event(&mut app, &make_mouse_click(5, 2), tmp.path());
+        assert_eq!(app.task_list_state.selected(), Some(0));
+
+        // Click on parent second line (inner row 1)
+        handle_event(&mut app, &make_mouse_click(5, 3), tmp.path());
+        assert_eq!(app.task_list_state.selected(), Some(0));
+
+        // Click on child first line (inner row 2)
+        handle_event(&mut app, &make_mouse_click(5, 4), tmp.path());
+        assert_eq!(app.task_list_state.selected(), Some(1));
+
+        // Click on child second line (inner row 3)
+        handle_event(&mut app, &make_mouse_click(5, 5), tmp.path());
+        assert_eq!(app.task_list_state.selected(), Some(1));
+
+        // Click on child third line (inner row 4)
+        handle_event(&mut app, &make_mouse_click(5, 6), tmp.path());
+        assert_eq!(app.task_list_state.selected(), Some(1));
+
+        // Click on standalone first line (inner row 5)
+        handle_event(&mut app, &make_mouse_click(5, 7), tmp.path());
+        assert_eq!(app.task_list_state.selected(), Some(2));
+
+        // Click on standalone second line (inner row 6)
+        handle_event(&mut app, &make_mouse_click(5, 8), tmp.path());
+        assert_eq!(app.task_list_state.selected(), Some(2));
     }
 
     #[test]
