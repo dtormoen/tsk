@@ -1106,4 +1106,94 @@ mod tests {
             "expected child task to show task ID on second line"
         );
     }
+
+    /// Verify that ratatui doesn't override offset=0 after scroll_task_list_to_offset
+    /// clamps the selection based on actual item heights.
+    #[test]
+    fn test_render_preserves_offset_zero_with_mixed_heights() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = TuiApp::new(1);
+
+        // 6 tasks: alternating parent (2 rows) and child (3 rows)
+        // Heights from offset 0: 2+3+2+3+2+3 = 15
+        app.tasks = vec![
+            Task {
+                id: "p1".to_string(),
+                name: "parent-1".to_string(),
+                status: TaskStatus::Running,
+                branch_name: "tsk/feat/parent-1/p1".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "c1".to_string(),
+                name: "child-1".to_string(),
+                status: TaskStatus::Queued,
+                parent_ids: vec!["p1".to_string()],
+                branch_name: "tsk/feat/child-1/c1".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "p2".to_string(),
+                name: "parent-2".to_string(),
+                status: TaskStatus::Running,
+                branch_name: "tsk/feat/parent-2/p2".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "c2".to_string(),
+                name: "child-2".to_string(),
+                status: TaskStatus::Queued,
+                parent_ids: vec!["p2".to_string()],
+                branch_name: "tsk/feat/child-2/c2".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "p3".to_string(),
+                name: "parent-3".to_string(),
+                status: TaskStatus::Running,
+                branch_name: "tsk/feat/parent-3/p3".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "c3".to_string(),
+                name: "child-3".to_string(),
+                status: TaskStatus::Queued,
+                parent_ids: vec!["p3".to_string()],
+                branch_name: "tsk/feat/child-3/c3".to_string(),
+                ..Task::test_default()
+            },
+        ];
+
+        // First render to establish task_list_height
+        terminal
+            .draw(|frame| {
+                render(&mut app, frame);
+            })
+            .unwrap();
+
+        let height = app.task_list_height;
+        assert!(height > 0, "task_list_height should be set after render");
+
+        // Simulate the bug scenario: select a task beyond what fits at offset 0
+        // and scroll down, then scroll to top via scrollbar
+        app.task_list_state.select(Some(4));
+        *app.task_list_state.offset_mut() = 2;
+
+        // Scroll to offset 0 — selection should be clamped to what actually fits
+        app.scroll_task_list_to_offset(0);
+
+        // Render again — ratatui should NOT override offset because selection fits
+        terminal
+            .draw(|frame| {
+                render(&mut app, frame);
+            })
+            .unwrap();
+
+        assert_eq!(
+            app.task_list_state.offset(),
+            0,
+            "ratatui should not override offset=0 when selection is properly clamped"
+        );
+    }
 }

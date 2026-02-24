@@ -649,4 +649,77 @@ mod tests {
         handle_event(&mut app, &make_mouse_up(29, 5), tmp.path());
         assert!(!app.task_scrollbar_drag);
     }
+
+    #[test]
+    fn test_scrollbar_to_top_with_mixed_height_tasks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = TuiApp::new(2);
+
+        // Create tasks with mixed heights: parents (2 rows) and children (3 rows).
+        // The child tasks have visible parents so they display at 3 rows each.
+        app.tasks = vec![
+            Task {
+                id: "p1".to_string(),
+                name: "parent-1".to_string(),
+                branch_name: "tsk/feat/parent-1/p1".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "c1".to_string(),
+                name: "child-1".to_string(),
+                parent_ids: vec!["p1".to_string()],
+                branch_name: "tsk/feat/child-1/c1".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "p2".to_string(),
+                name: "parent-2".to_string(),
+                branch_name: "tsk/feat/parent-2/p2".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "c2".to_string(),
+                name: "child-2".to_string(),
+                parent_ids: vec!["p2".to_string()],
+                branch_name: "tsk/feat/child-2/c2".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "p3".to_string(),
+                name: "parent-3".to_string(),
+                branch_name: "tsk/feat/parent-3/p3".to_string(),
+                ..Task::test_default()
+            },
+            Task {
+                id: "c3".to_string(),
+                name: "child-3".to_string(),
+                parent_ids: vec!["p3".to_string()],
+                branch_name: "tsk/feat/child-3/c3".to_string(),
+                ..Task::test_default()
+            },
+        ];
+
+        // task_list_height=10 with mixed items: p1(2)+c1(3)+p2(2)+c2(3)=10
+        // So 4 items fit, not task_list_height/2=5.
+        app.task_panel_width = 30;
+        app.task_list_top = 2;
+        app.task_list_height = 10;
+
+        // Start scrolled down with bottom visible task selected
+        app.task_list_state.select(Some(3)); // c2 — last item that fits from offset 0
+        *app.task_list_state.offset_mut() = 2;
+
+        // Drag scrollbar to the very top (row = task_list_top)
+        handle_event(&mut app, &make_mouse_click(29, 2), tmp.path());
+        assert_eq!(
+            app.task_list_state.offset(),
+            0,
+            "offset should be 0 after scrollbar click at top"
+        );
+        // Selection should be clamped to the last item that actually fits (index 3)
+        assert!(
+            app.task_list_state.selected().unwrap() <= 3,
+            "selected task should fit in viewport from offset 0"
+        );
+    }
 }

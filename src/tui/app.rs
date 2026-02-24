@@ -3,6 +3,8 @@ use crate::task::Task;
 use ratatui::widgets::ListState;
 use std::path::Path;
 
+use super::ui::task_display_height;
+
 /// Identifies which panel currently has focus in the TUI
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum Panel {
@@ -104,23 +106,51 @@ impl TuiApp {
         self.task_list_state.select(Some(prev));
     }
 
-    /// Number of task items visible in the viewport (2 rows per task)
+    /// Estimated number of task items visible in the viewport (assumes 2 rows per task).
+    ///
+    /// This is an approximation used for scrollbar rendering. For accurate
+    /// visibility calculations with mixed-height items, use `last_visible_task_from`.
     pub fn task_viewport_items(&self) -> usize {
         self.task_list_height as usize / 2
     }
 
-    /// Set the task list scroll offset and clamp the selection to the visible range
+    /// Set the task list scroll offset and clamp the selection to the visible range.
+    ///
+    /// Uses actual item display heights (2 rows for normal tasks, 3 for children
+    /// with a visible parent) so ratatui's List renderer won't override the offset
+    /// to keep a partially-offscreen selected item visible.
     pub fn scroll_task_list_to_offset(&mut self, offset: usize) {
         *self.task_list_state.offset_mut() = offset;
-        let viewport_items = self.task_viewport_items();
+        let last_visible = self.last_visible_task_from(offset);
         if let Some(selected) = self.task_list_state.selected() {
             if selected < offset {
                 self.task_list_state.select(Some(offset));
-            } else if viewport_items > 0 && selected >= offset + viewport_items {
-                self.task_list_state
-                    .select(Some(offset + viewport_items - 1));
+            } else if let Some(last) = last_visible
+                && selected > last
+            {
+                self.task_list_state.select(Some(last));
             }
         }
+    }
+
+    /// Index of the last task that fully fits in the viewport starting from `offset`.
+    ///
+    /// Walks items from `offset`, summing their display heights, and returns
+    /// the index of the last item that fits entirely within `task_list_height`.
+    /// Returns `None` if no items fit (empty list or zero height).
+    fn last_visible_task_from(&self, offset: usize) -> Option<usize> {
+        let height = self.task_list_height as usize;
+        let mut accumulated = 0;
+        let mut last = None;
+        for (i, task) in self.tasks.iter().enumerate().skip(offset) {
+            let h = task_display_height(task, &self.tasks) as usize;
+            if accumulated + h > height {
+                break;
+            }
+            accumulated += h;
+            last = Some(i);
+        }
+        last
     }
 
     pub fn max_log_scroll(&self) -> usize {
