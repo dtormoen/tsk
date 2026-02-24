@@ -124,19 +124,27 @@ pub fn handle_event(app: &mut TuiApp, event: &Event, data_dir: &Path) {
 
 /// Map a mouse row on the scrollbar track to a task list scroll offset.
 ///
-/// Uses proportional mapping: the click position within the track maps
-/// linearly to the range of possible offsets.
+/// Inverts ratatui's scrollbar thumb position formula so the thumb tracks the
+/// mouse exactly during click and drag. ratatui renders the thumb at:
+///   `thumb_start = round(position * track / (max_offset + viewport_items))`
+/// so the inverse is:
+///   `position = round(click * (max_offset + viewport_items) / track)`
 fn scrollbar_row_to_offset(row: u16, app: &TuiApp) -> usize {
     let track_height = app.task_list_height as usize;
-    if track_height <= 1 || app.tasks.is_empty() {
+    if track_height == 0 || app.tasks.is_empty() {
         return 0;
     }
     let viewport_items = app.task_viewport_items();
     let max_offset = app.tasks.len().saturating_sub(viewport_items);
+    if max_offset == 0 {
+        return 0;
+    }
     let click_offset = row.saturating_sub(app.task_list_top) as usize;
     let click_offset = click_offset.min(track_height.saturating_sub(1));
-    // Proportional: click_offset / (track_height - 1) = target_offset / max_offset
-    max_offset * click_offset / (track_height.saturating_sub(1))
+    // Inverse of ratatui's thumb position formula (see ScrollbarState config in ui.rs)
+    let max_viewport_position = max_offset + viewport_items;
+    let offset = (click_offset * max_viewport_position + track_height / 2) / track_height;
+    offset.min(max_offset)
 }
 
 #[cfg(test)]
@@ -582,16 +590,16 @@ mod tests {
         assert_eq!(app.focus, Panel::Tasks);
 
         // Click at the bottom of the track (row 7 = task_list_top + task_list_height - 1)
-        // click_offset = 7 - 2 = 5, max_offset * 5 / 5 = 17
+        // click_offset = 7 - 2 = 5, round(5 * 20 / 6) = 17
         handle_event(&mut app, &make_mouse_click(29, 7), tmp.path());
         assert_eq!(app.task_list_state.offset(), 17);
         // Selection should be clamped to visible range [17..19]
         let selected = app.task_list_state.selected().unwrap();
         assert!((17..20).contains(&selected));
 
-        // Click at midpoint (row 4) -> click_offset = 2, 17 * 2 / 5 = 6
+        // Click at midpoint (row 4) -> click_offset = 2, round(2 * 20 / 6) = 7
         handle_event(&mut app, &make_mouse_click(29, 4), tmp.path());
-        assert_eq!(app.task_list_state.offset(), 6);
+        assert_eq!(app.task_list_state.offset(), 7);
     }
 
     #[test]
@@ -604,9 +612,9 @@ mod tests {
         assert!(app.task_scrollbar_drag);
         assert_eq!(app.task_list_state.offset(), 0);
 
-        // Drag to middle of track (row 4) -> offset 6
+        // Drag to middle of track (row 4) -> offset 7
         handle_event(&mut app, &make_mouse_drag(29, 4), tmp.path());
-        assert_eq!(app.task_list_state.offset(), 6);
+        assert_eq!(app.task_list_state.offset(), 7);
 
         // Drag to bottom (row 7) -> offset 17
         handle_event(&mut app, &make_mouse_drag(29, 7), tmp.path());

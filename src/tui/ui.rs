@@ -182,9 +182,12 @@ fn render_task_list(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::
     // Store inner height for scrollbar click/drag calculations
     app.task_list_height = area.height.saturating_sub(2); // subtract top+bottom borders
 
-    // Render a scrollbar inside the block borders to indicate viewport position
+    // Render a scrollbar inside the block borders to indicate viewport position.
+    // Use max_offset+1 as content_length so ratatui treats our max scroll offset
+    // as its max position, making the thumb reach the bottom at max scroll.
     let viewport_items = app.task_viewport_items();
-    let mut scrollbar_state = ScrollbarState::new(app.tasks.len())
+    let max_offset = app.tasks.len().saturating_sub(viewport_items);
+    let mut scrollbar_state = ScrollbarState::new(max_offset + 1)
         .position(app.task_list_state.offset())
         .viewport_content_length(viewport_items);
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
