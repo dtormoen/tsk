@@ -190,7 +190,7 @@ impl TskServer {
                 let proxy_config = resolved.proxy_config();
                 let fp = proxy_config.fingerprint();
                 if stopped_fingerprints.insert(fp)
-                    && let Err(e) = proxy_manager.maybe_stop_proxy(&proxy_config).await
+                    && let Err(e) = proxy_manager.force_stop_proxy(&proxy_config).await
                 {
                     self.emit(ServerEvent::WarningMessage(format!(
                         "Warning: Failed to stop proxy during shutdown: {e}"

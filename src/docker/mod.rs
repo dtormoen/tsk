@@ -542,26 +542,25 @@ impl DockerManager {
         task: &crate::task::Task,
         agent: &dyn Agent,
     ) -> Result<(String, crate::agent::TaskResult), String> {
-        // --- Setup: conditionally create network and connect proxy ---
+        // --- Setup: atomically acquire proxy session ---
         // When nested inside a TSK container, skip proxy/network setup since the
         // outer container already provides network isolation.
         let resolved = resolve_config_from_task(task, &self.ctx, &self.event_sender);
         let proxy_config = resolved.proxy_config();
 
-        let mut proxy_ip: Option<String> = None;
-        let (network_name, proxy_container_name) = if task.network_isolation && !self.is_nested() {
+        let proxy_session = if task.network_isolation && !self.is_nested() {
             let proxy_build_log_path = self
                 .ctx
                 .tsk_env()
                 .task_dir(&task.id)
                 .join("output")
                 .join("proxy-build.log");
-            let pcn = match self
+            match self
                 .proxy_manager
-                .ensure_proxy(&proxy_config, Some(&proxy_build_log_path))
+                .acquire_proxy(&task.id, &proxy_config, Some(&proxy_build_log_path))
                 .await
             {
-                Ok(name) => name,
+                Ok(session) => Some(session),
                 Err(e) => {
                     return Err(format!(
                         "Failed to ensure proxy is running and healthy: {e}. \
@@ -569,50 +568,20 @@ impl DockerManager {
                         Check the status in Docker."
                     ));
                 }
-            };
-
-            let name = self
-                .proxy_manager
-                .create_agent_network(&task.id)
-                .await
-                .map_err(|e| format!("Failed to create agent network: {e}"))?;
-
-            if let Err(e) = self
-                .proxy_manager
-                .connect_proxy_to_network(&pcn, &name)
-                .await
-            {
-                self.proxy_manager.cleanup_agent_network(&pcn, &name).await;
-                return Err(format!("Failed to connect proxy to agent network: {e}"));
             }
-
-            // Resolve the proxy IP on the agent network (not the external network)
-            // so the extra_hosts entry points to an IP routable from the container.
-            proxy_ip = match self.proxy_manager.resolve_proxy_ip(&pcn, &name).await {
-                Ok(ip) => Some(ip),
-                Err(e) => {
-                    self.emit(ServerEvent::WarningMessage(format!(
-                        "Warning: Could not resolve proxy IP for extra_hosts: {e}"
-                    )));
-                    None
-                }
-            };
-
-            (Some(name), Some(pcn))
         } else {
-            (None, None)
+            None
         };
 
         // --- Execute: run the container, capturing its ID for cleanup ---
-        let use_proxy = network_name.is_some();
         let (container_id, result) = self
             .run_container_inner(
                 docker_image_tag,
                 task,
                 agent,
-                network_name.as_deref(),
-                if use_proxy { Some(&proxy_config) } else { None },
-                proxy_ip.as_deref(),
+                proxy_session.as_ref().map(|s| s.network_name.as_str()),
+                proxy_session.as_ref().map(|_| &proxy_config),
+                proxy_session.as_ref().and_then(|s| s.proxy_ip.as_deref()),
             )
             .await;
 
@@ -620,13 +589,8 @@ impl DockerManager {
         if let Some(ref id) = container_id {
             let _ = self.remove_container(id).await;
         }
-        if let (Some(name), Some(pcn)) = (&network_name, &proxy_container_name) {
-            self.proxy_manager.cleanup_agent_network(pcn, name).await;
-        }
-        if use_proxy && let Err(e) = self.proxy_manager.maybe_stop_proxy(&proxy_config).await {
-            self.emit(ServerEvent::WarningMessage(format!(
-                "Warning: Failed to check/stop idle proxy: {e}"
-            )));
+        if let Some(ref session) = proxy_session {
+            self.proxy_manager.release_proxy(session).await;
         }
 
         result

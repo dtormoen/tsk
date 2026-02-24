@@ -221,7 +221,6 @@ impl TaskRunner {
             }
         };
 
-
         let task_image_manager = DockerImageManager::new(
             &self.ctx,
             self.docker_manager.client(),

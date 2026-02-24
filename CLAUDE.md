@@ -67,9 +67,11 @@ TSK implements a command pattern with dependency injection for testability. The 
   - Per-configuration proxy instances: tasks with different proxy configs (host_ports, squid_conf) get separate proxy containers named `tsk-proxy-{fingerprint}`
   - Fingerprint derived from sorted host_ports + squid.conf content (SHA256, first 8 hex chars)
   - Custom squid.conf mounted at runtime via bind mount (not baked into image)
-  - Skips proxy build if proxy is already running (faster startup)
-  - Automatically stops proxy when no agents are connected
-  - Uses Docker network inspection to count connected agent containers per proxy
+  - `ProxySyncManager`: Per-fingerprint dual-lock (in-process `tokio::Mutex` + cross-process `flock(2)`) prevents TOCTOU races between concurrent proxy startup/shutdown. Lock files at `<runtime_dir>/proxy-{fingerprint}.lock`
+  - `acquire_proxy` atomically ensures proxy is running, creates agent network, and connects proxy (under lock)
+  - `release_proxy` atomically disconnects agent network and stops idle proxy (under lock)
+  - `force_stop_proxy` stops idle proxy without lock — used during shutdown after workers are drained
+  - Uses Docker container inspection to count connected agent networks per proxy
 - `DockerManager`: Container execution with unified support for interactive and non-interactive modes
 - Security-first containers with dropped capabilities
 - **Docker-in-Docker (DIND) support**: Opt-in via `--dind` flag or config (`dind = true` in `[defaults]` or `[project.<name>]`). When enabled, applies a custom seccomp profile allowing nested container operations, disables AppArmor confinement, and keeps SETUID/SETGID capabilities for rootless Podman user-namespace setup. When disabled (default), security_opt is left at Docker/Podman defaults and SETUID/SETGID are dropped. Resolution order: CLI flag > `[project.<name>]` > `[defaults]` > default (false).
@@ -86,7 +88,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 - `TskEnv`: Manages directory paths (data_dir, runtime_dir, config_dir) and runtime environment settings (editor, terminal type); also provides `open_agent_log(task_id)` to open a task's `agent.log` in append mode, centralizing the output directory creation and file-open logic used by both `TaskRunner` and `DockerManager`. TSK-specific env vars (`TSK_DATA_HOME`, `TSK_RUNTIME_DIR`, `TSK_CONFIG_HOME`) take precedence over XDG vars, enabling isolated testing without affecting other XDG-aware software
 - `TskConfig`: User configuration loaded from tsk.toml. Uses shared config shape with `[defaults]` and `[project.<name>]` sections. `TskConfig::resolve_config(project_name, project_config, project_root)` returns a `ResolvedConfig` with all layers merged: `user [project.<name>] > project .tsk/tsk.toml > user [defaults] > built-in`. Project-level config is loaded from `.tsk/tsk.toml` via `load_project_config()`. `ResolvedConfig::proxy_config()` extracts a `ResolvedProxyConfig` with host_ports and squid_conf for proxy fingerprinting.
 - Centralized task storage across all repositories
-- Runtime directory for PID file
+- Runtime directory for PID file and proxy lock files (`proxy-{fingerprint}.lock`)
 
 **Configuration File** (`$XDG_CONFIG_HOME/tsk/tsk.toml` and `.tsk/tsk.toml`)
 - User config loaded at startup from `~/.config/tsk/tsk.toml`, accessible via `AppContext::tsk_config()`

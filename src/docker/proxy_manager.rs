@@ -16,8 +16,11 @@ use anyhow::{Context, Result};
 use bollard::models::{ContainerCreateBody, HostConfig};
 use bollard::query_parameters::RemoveContainerOptions;
 use std::collections::HashMap;
-use std::path::Path;
+use std::fs::{File, OpenOptions};
+use std::os::unix::io::AsRawFd;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
 
 /// Network name prefix for agent isolated networks
 const TSK_AGENT_NETWORK_PREFIX: &str = "tsk-agent-";
@@ -25,6 +28,116 @@ const TSK_AGENT_NETWORK_PREFIX: &str = "tsk-agent-";
 const PROXY_IMAGE: &str = "tsk/proxy";
 /// Proxy port
 const PROXY_PORT: &str = "3128/tcp";
+
+/// Per-fingerprint synchronization for proxy acquire/release operations.
+///
+/// Uses a dual-lock architecture (modeled on `GitSyncManager`):
+/// 1. In-process `tokio::Mutex` prevents thundering herd within one process
+/// 2. Cross-process `flock(2)` protects against multiple TSK processes
+#[derive(Clone)]
+pub struct ProxySyncManager {
+    fingerprint_locks: Arc<RwLock<HashMap<String, Arc<Mutex<()>>>>>,
+    runtime_dir: PathBuf,
+}
+
+impl ProxySyncManager {
+    /// Creates a new ProxySyncManager that stores lock files under `runtime_dir`.
+    fn new(runtime_dir: &Path) -> Self {
+        Self {
+            fingerprint_locks: Arc::new(RwLock::new(HashMap::new())),
+            runtime_dir: runtime_dir.to_path_buf(),
+        }
+    }
+
+    /// Execute an operation while holding both in-process and cross-process locks
+    /// for the given proxy fingerprint.
+    async fn with_lock<F, Fut, T>(&self, fingerprint: &str, operation: F) -> T
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = T>,
+    {
+        let lock = self.get_or_create_lock(fingerprint).await;
+        let _guard = lock.lock().await;
+
+        let lock_path = self.lock_path(fingerprint);
+        if let Some(parent) = lock_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _flock_file = acquire_flock(lock_path.clone()).await.unwrap_or_else(|e| {
+            panic!(
+                "Failed to acquire proxy file lock at {}: {}",
+                lock_path.display(),
+                e
+            )
+        });
+
+        operation().await
+    }
+
+    /// Get or create an in-process lock for a proxy fingerprint.
+    async fn get_or_create_lock(&self, fingerprint: &str) -> Arc<Mutex<()>> {
+        {
+            let locks = self.fingerprint_locks.read().await;
+            if let Some(lock) = locks.get(fingerprint) {
+                return Arc::clone(lock);
+            }
+        }
+
+        let mut locks = self.fingerprint_locks.write().await;
+
+        // Double-check: another task may have inserted while we waited for the write lock
+        if let Some(lock) = locks.get(fingerprint) {
+            return Arc::clone(lock);
+        }
+
+        let new_lock = Arc::new(Mutex::new(()));
+        locks.insert(fingerprint.to_string(), Arc::clone(&new_lock));
+        new_lock
+    }
+
+    fn lock_path(&self, fingerprint: &str) -> PathBuf {
+        self.runtime_dir.join(format!("proxy-{fingerprint}.lock"))
+    }
+}
+
+/// Acquires an exclusive `flock(2)` on the given lock file path.
+///
+/// Opens (or creates) the lock file and calls `flock(LOCK_EX)` in a blocking
+/// context. Returns the open `File` whose lifetime controls the lock duration --
+/// dropping the file closes the fd and releases the lock.
+async fn acquire_flock(lock_path: PathBuf) -> std::io::Result<File> {
+    tokio::task::spawn_blocking(move || {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)?;
+
+        // SAFETY: `file.as_raw_fd()` returns a valid fd from the open File above.
+        // `libc::flock` is a well-defined POSIX syscall that takes a valid fd.
+        let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
+        if ret != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+
+        Ok(file)
+    })
+    .await
+    .expect("flock spawn_blocking task panicked")
+}
+
+/// Represents an active proxy session for a single task.
+///
+/// Created by `ProxyManager::acquire_proxy` and consumed by `release_proxy`.
+/// Holds all the identifiers needed to tear down the proxy resources when
+/// the task completes.
+pub struct ProxySession {
+    pub proxy_container_name: String,
+    pub network_name: String,
+    pub proxy_ip: Option<String>,
+    fingerprint: String,
+}
 
 /// Manages TSK proxy container lifecycle with per-configuration instances.
 ///
@@ -36,6 +149,7 @@ pub struct ProxyManager {
     tsk_env: Arc<TskEnv>,
     container_engine: ContainerEngine,
     event_sender: Option<ServerEventSender>,
+    sync_manager: ProxySyncManager,
 }
 
 impl ProxyManager {
@@ -49,11 +163,13 @@ impl ProxyManager {
         container_engine: ContainerEngine,
         event_sender: Option<ServerEventSender>,
     ) -> Self {
+        let sync_manager = ProxySyncManager::new(tsk_env.runtime_dir());
         Self {
             docker_client: client,
             tsk_env,
             container_engine,
             event_sender,
+            sync_manager,
         }
     }
 
@@ -74,7 +190,7 @@ impl ProxyManager {
     /// # Returns
     /// * `Ok(container_name)` - the proxy container name on success
     /// * `Err` if proxy cannot be started or becomes unhealthy
-    pub async fn ensure_proxy(
+    pub(crate) async fn ensure_proxy(
         &self,
         proxy_config: &ResolvedProxyConfig,
         build_log_path: Option<&std::path::Path>,
@@ -117,7 +233,7 @@ impl ProxyManager {
     ///
     /// Callers should pass the **agent network** name so the returned IP is
     /// routable from the agent container.
-    pub async fn resolve_proxy_ip(
+    pub(crate) async fn resolve_proxy_ip(
         &self,
         container_name: &str,
         network_name: &str,
@@ -308,20 +424,97 @@ impl ProxyManager {
         }
     }
 
-    /// Conditionally stops the proxy for the given config if no agents are connected.
+    /// Atomically acquires a proxy session for a task.
     ///
-    /// # Returns
-    /// * `Ok(true)` if proxy was stopped
-    /// * `Ok(false)` if proxy is still in use or was not running
-    pub async fn maybe_stop_proxy(&self, proxy_config: &ResolvedProxyConfig) -> Result<bool> {
+    /// Under a per-fingerprint lock, this method:
+    /// 1. Ensures the proxy container is running and healthy
+    /// 2. Creates an isolated agent network
+    /// 3. Connects the proxy to the agent network
+    /// 4. Resolves the proxy IP on the agent network
+    ///
+    /// This prevents the TOCTOU race between proxy shutdown and startup that can
+    /// occur when multiple tasks share the same proxy container.
+    pub async fn acquire_proxy(
+        &self,
+        task_id: &str,
+        proxy_config: &ResolvedProxyConfig,
+        build_log_path: Option<&Path>,
+    ) -> Result<ProxySession> {
+        let fingerprint = proxy_config.fingerprint();
+        // Clone values needed inside the closure (proxy_config fields are used by reference)
+        let task_id = task_id.to_string();
+        let proxy_config = proxy_config.clone();
+        let build_log_path = build_log_path.map(|p| p.to_path_buf());
+
+        self.sync_manager
+            .with_lock(&fingerprint, || async {
+                let proxy_container_name = self
+                    .ensure_proxy(&proxy_config, build_log_path.as_deref())
+                    .await?;
+
+                let network_name = self.create_agent_network(&task_id).await?;
+
+                if let Err(e) = self
+                    .connect_proxy_to_network(&proxy_container_name, &network_name)
+                    .await
+                {
+                    // Clean up the network we just created before returning error
+                    self.cleanup_agent_network(&proxy_container_name, &network_name)
+                        .await;
+                    return Err(e);
+                }
+
+                let proxy_ip = match self
+                    .resolve_proxy_ip(&proxy_container_name, &network_name)
+                    .await
+                {
+                    Ok(ip) => Some(ip),
+                    Err(e) => {
+                        self.emit(ServerEvent::WarningMessage(format!(
+                            "Warning: Could not resolve proxy IP for extra_hosts: {e}"
+                        )));
+                        None
+                    }
+                };
+
+                Ok(ProxySession {
+                    proxy_container_name,
+                    network_name,
+                    proxy_ip,
+                    fingerprint: fingerprint.clone(),
+                })
+            })
+            .await
+    }
+
+    /// Atomically releases a proxy session for a task.
+    ///
+    /// Under a per-fingerprint lock, this method:
+    /// 1. Cleans up the agent network (disconnect + remove)
+    /// 2. Stops the proxy if no other agents are connected
+    pub async fn release_proxy(&self, session: &ProxySession) {
+        self.sync_manager
+            .with_lock(&session.fingerprint, || async {
+                self.cleanup_agent_network(&session.proxy_container_name, &session.network_name)
+                    .await;
+                self.maybe_stop_proxy_by_name(&session.proxy_container_name)
+                    .await;
+            })
+            .await;
+    }
+
+    /// Stops the proxy if no agents are connected, without acquiring the lock.
+    ///
+    /// This is safe to call during shutdown when all workers have been drained
+    /// and no new tasks can start. Skipping the lock avoids potential deadlocks
+    /// during the shutdown sequence.
+    pub async fn force_stop_proxy(&self, proxy_config: &ResolvedProxyConfig) -> Result<bool> {
         let container_name = proxy_config.proxy_container_name();
 
-        // Check if proxy is even running
         if !self.is_proxy_running(&container_name).await? {
             return Ok(false);
         }
 
-        // Count connected agents
         let agent_count = self.count_connected_agents(&container_name).await?;
 
         if agent_count == 0 {
@@ -329,6 +522,22 @@ impl ProxyManager {
             Ok(true)
         } else {
             Ok(false)
+        }
+    }
+
+    /// Conditionally stops the proxy by container name if no agents are connected.
+    async fn maybe_stop_proxy_by_name(&self, container_name: &str) {
+        match self.is_proxy_running(container_name).await {
+            Ok(true) => {}
+            _ => return,
+        }
+
+        if let Ok(0) = self.count_connected_agents(container_name).await
+            && let Err(e) = self.stop_proxy(container_name).await
+        {
+            self.emit(ServerEvent::WarningMessage(format!(
+                "Warning: Failed to stop idle proxy {container_name}: {e}"
+            )));
         }
     }
 
@@ -548,7 +757,7 @@ impl ProxyManager {
     ///
     /// # Returns
     /// The network name on success
-    pub async fn create_agent_network(&self, task_id: &str) -> Result<String> {
+    pub(crate) async fn create_agent_network(&self, task_id: &str) -> Result<String> {
         let network_name = Self::agent_network_name(task_id);
 
         self.docker_client
@@ -563,7 +772,7 @@ impl ProxyManager {
     ///
     /// This must be called BEFORE starting the agent container so the agent
     /// can reach the proxy.
-    pub async fn connect_proxy_to_network(
+    pub(crate) async fn connect_proxy_to_network(
         &self,
         proxy_container_name: &str,
         network_name: &str,
@@ -578,7 +787,11 @@ impl ProxyManager {
     ///
     /// Disconnects the proxy from the network and removes it.
     /// Logs warnings on failure but does not return errors (cleanup is best-effort).
-    pub async fn cleanup_agent_network(&self, proxy_container_name: &str, network_name: &str) {
+    pub(crate) async fn cleanup_agent_network(
+        &self,
+        proxy_container_name: &str,
+        network_name: &str,
+    ) {
         // Disconnect proxy from network
         if let Err(e) = self
             .docker_client
@@ -1196,7 +1409,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_maybe_stop_proxy_no_agents() {
+    async fn test_force_stop_proxy_no_agents() {
         use serde_json::json;
 
         let mock_client = Arc::new(TrackedDockerClient {
@@ -1223,7 +1436,7 @@ mod tests {
             None,
         );
         let proxy_config = default_proxy_config();
-        let result = manager.maybe_stop_proxy(&proxy_config).await;
+        let result = manager.force_stop_proxy(&proxy_config).await;
 
         assert!(result.is_ok());
         assert!(result.unwrap()); // Should have stopped
@@ -1234,7 +1447,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_maybe_stop_proxy_with_agents() {
+    async fn test_force_stop_proxy_with_agents() {
         use serde_json::json;
 
         let mock_client = Arc::new(TrackedDockerClient {
@@ -1263,7 +1476,7 @@ mod tests {
             None,
         );
         let proxy_config = default_proxy_config();
-        let result = manager.maybe_stop_proxy(&proxy_config).await;
+        let result = manager.force_stop_proxy(&proxy_config).await;
 
         assert!(result.is_ok());
         assert!(!result.unwrap()); // Should NOT have stopped
@@ -1344,5 +1557,128 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "172.18.0.2");
+    }
+
+    #[tokio::test]
+    async fn test_acquire_proxy_creates_network_and_connects() {
+        use serde_json::json;
+
+        let mock_client = Arc::new(TrackedDockerClient {
+            inspect_container_response: json!({
+                "State": {
+                    "Health": {
+                        "Status": "healthy"
+                    }
+                },
+                "NetworkSettings": {
+                    "Networks": {
+                        "tsk-agent-test-task": {
+                            "IPAddress": "172.18.0.5"
+                        }
+                    }
+                }
+            })
+            .to_string(),
+            ..Default::default()
+        });
+        let ctx = AppContext::builder().build();
+
+        let manager = ProxyManager::new(
+            mock_client.clone(),
+            ctx.tsk_env(),
+            ContainerEngine::Docker,
+            None,
+        );
+        let proxy_config = default_proxy_config();
+        let session = manager
+            .acquire_proxy("test-task", &proxy_config, None)
+            .await;
+
+        assert!(session.is_ok());
+        let session = session.unwrap();
+        assert_eq!(
+            session.proxy_container_name,
+            proxy_config.proxy_container_name()
+        );
+        assert_eq!(session.network_name, "tsk-agent-test-task");
+        assert_eq!(session.proxy_ip, Some("172.18.0.5".to_string()));
+
+        // Verify the internal network was created
+        let internal_calls = mock_client.create_internal_network_calls.lock().unwrap();
+        assert_eq!(internal_calls.len(), 1);
+        assert_eq!(internal_calls[0], "tsk-agent-test-task");
+
+        // Verify proxy was connected to the agent network
+        let connect_calls = mock_client.connect_network_calls.lock().unwrap();
+        assert_eq!(connect_calls.len(), 1);
+        assert_eq!(
+            connect_calls[0],
+            (
+                proxy_config.proxy_container_name(),
+                "tsk-agent-test-task".to_string()
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn test_release_proxy_cleans_up_network_and_stops_idle_proxy() {
+        use serde_json::json;
+
+        let mock_client = Arc::new(TrackedDockerClient {
+            inspect_container_response: json!({
+                "State": {
+                    "Running": true
+                },
+                "NetworkSettings": {
+                    "Networks": {
+                        "tsk-external": {}
+                    }
+                }
+            })
+            .to_string(),
+            ..Default::default()
+        });
+        let ctx = AppContext::builder().build();
+
+        let proxy_config = default_proxy_config();
+        let manager = ProxyManager::new(
+            mock_client.clone(),
+            ctx.tsk_env(),
+            ContainerEngine::Docker,
+            None,
+        );
+
+        let session = ProxySession {
+            proxy_container_name: proxy_config.proxy_container_name(),
+            network_name: "tsk-agent-test-task".to_string(),
+            proxy_ip: Some("172.18.0.5".to_string()),
+            fingerprint: proxy_config.fingerprint(),
+        };
+
+        manager.release_proxy(&session).await;
+
+        // Verify disconnect was called
+        let disconnect_calls = mock_client.disconnect_network_calls.lock().unwrap();
+        assert_eq!(disconnect_calls.len(), 1);
+        assert_eq!(
+            disconnect_calls[0],
+            (
+                proxy_config.proxy_container_name(),
+                "tsk-agent-test-task".to_string()
+            )
+        );
+
+        // Verify network was removed
+        let remove_network_calls = mock_client.remove_network_calls.lock().unwrap();
+        assert_eq!(remove_network_calls.len(), 1);
+        assert_eq!(remove_network_calls[0], "tsk-agent-test-task");
+
+        // Verify proxy was stopped (no agent networks remaining)
+        let remove_container_calls = mock_client.remove_container_calls.lock().unwrap();
+        assert_eq!(remove_container_calls.len(), 1);
+        assert_eq!(
+            remove_container_calls[0].0,
+            proxy_config.proxy_container_name()
+        );
     }
 }

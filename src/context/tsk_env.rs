@@ -74,8 +74,7 @@ impl TskEnv {
         &self.data_dir
     }
 
-    /// Get the runtime directory path (for sockets, pid files)
-    #[cfg(test)]
+    /// Get the runtime directory path (for sockets, pid files, lock files)
     pub fn runtime_dir(&self) -> &Path {
         &self.runtime_dir
     }
