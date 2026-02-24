@@ -840,7 +840,7 @@ mod tests {
         sort_tasks_for_display(&mut tasks);
 
         let ids: Vec<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
-        // Non-terminal (Running, Queued) first, then terminal (Complete, Failed)
+        // Non-terminal (Running, Queued) first, then terminal (Complete, Failed, Cancelled)
         assert_eq!(ids, vec!["t2", "t4", "t1", "t3"]);
     }
 

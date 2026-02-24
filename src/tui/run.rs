@@ -62,12 +62,8 @@ pub async fn run_tui(
     let mut app = TuiApp::new(workers_total);
 
     // Load initial task list and sort for display
-    if let Ok(tasks) = storage.list_tasks().await {
-        let mut tasks: Vec<_> = tasks.into_iter().rev().collect();
-        sort_tasks_for_display(&mut tasks);
-        app.update_tasks(tasks);
-        app.load_logs_for_selected_task(&data_dir);
-    }
+    refresh_task_list(&mut app, &storage).await;
+    app.load_logs_for_selected_task(&data_dir);
 
     // Tick interval for periodic refreshes (task list + log content)
     let mut tick = interval(Duration::from_secs(1));
@@ -124,10 +120,7 @@ pub async fn run_tui(
                                     app.server_messages.push((chrono::Local::now(), format!("Failed to cancel {task_id}: {e}")));
                                 }
                             }
-                            if let Ok(tasks) = storage.list_tasks().await {
-                                let tasks: Vec<_> = tasks.into_iter().rev().collect();
-                                app.update_tasks(tasks);
-                            }
+                            refresh_task_list(&mut app, &storage).await;
                         }
                         TuiAction::DeleteTask { task_id, task_dir } => {
                             match storage.delete_task(&task_id).await {
@@ -144,10 +137,7 @@ pub async fn run_tui(
                                     app.server_messages.push((chrono::Local::now(), format!("Failed to delete {task_id}: {e}")));
                                 }
                             }
-                            if let Ok(tasks) = storage.list_tasks().await {
-                                let tasks: Vec<_> = tasks.into_iter().rev().collect();
-                                app.update_tasks(tasks);
-                            }
+                            refresh_task_list(&mut app, &storage).await;
                         }
                     }
                 }
@@ -166,11 +156,7 @@ pub async fn run_tui(
             }
             // Periodic tick for refreshing task list and logs
             _ = tick.tick() => {
-                if let Ok(tasks) = storage.list_tasks().await {
-                    let mut tasks: Vec<_> = tasks.into_iter().rev().collect();
-                    sort_tasks_for_display(&mut tasks);
-                    app.update_tasks(tasks);
-                }
+                refresh_task_list(&mut app, &storage).await;
                 // Also update worker counts from task data
                 app.workers_active = app.tasks.iter()
                     .filter(|t| t.status == crate::task::TaskStatus::Running)
@@ -187,6 +173,15 @@ pub async fn run_tui(
 
     // Guard's Drop handles terminal cleanup
     Ok(())
+}
+
+/// Reload tasks from storage, sort for display, and update the TUI.
+async fn refresh_task_list(app: &mut TuiApp, storage: &TaskStorage) {
+    if let Ok(tasks) = storage.list_tasks().await {
+        let mut tasks: Vec<_> = tasks.into_iter().rev().collect();
+        sort_tasks_for_display(&mut tasks);
+        app.update_tasks(tasks);
+    }
 }
 
 /// Process a server event, updating app state accordingly.
@@ -232,11 +227,7 @@ async fn process_server_event(app: &mut TuiApp, event: &ServerEvent, storage: &T
     }
 
     // Refresh task list after any server event
-    if let Ok(tasks) = storage.list_tasks().await {
-        let mut tasks: Vec<_> = tasks.into_iter().rev().collect();
-        sort_tasks_for_display(&mut tasks);
-        app.update_tasks(tasks);
-    }
+    refresh_task_list(app, storage).await;
 }
 
 /// Sort tasks for TUI display: non-terminal tasks first, then terminal tasks,
@@ -245,7 +236,12 @@ async fn process_server_event(app: &mut TuiApp, event: &ServerEvent, storage: &T
 /// Within each group, tasks without a parent-child relationship preserve their
 /// reverse-chronological order (newest first).
 pub(crate) fn sort_tasks_for_display(tasks: &mut Vec<Task>) {
-    let is_terminal = |t: &Task| matches!(t.status, TaskStatus::Complete | TaskStatus::Failed);
+    let is_terminal = |t: &Task| {
+        matches!(
+            t.status,
+            TaskStatus::Complete | TaskStatus::Failed | TaskStatus::Cancelled
+        )
+    };
 
     // Split into non-terminal and terminal, preserving reverse-chrono order
     let (non_terminal, terminal): (Vec<_>, Vec<_>) = tasks.drain(..).partition(|t| !is_terminal(t));
@@ -313,4 +309,81 @@ fn arrange_with_parents(group: Vec<Task>) -> Vec<Task> {
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn task(id: &str, status: TaskStatus, parent_ids: Vec<&str>) -> Task {
+        Task {
+            id: id.to_string(),
+            status,
+            parent_ids: parent_ids.into_iter().map(String::from).collect(),
+            ..Task::test_default()
+        }
+    }
+
+    fn ids(tasks: &[Task]) -> Vec<&str> {
+        tasks.iter().map(|t| t.id.as_str()).collect()
+    }
+
+    #[test]
+    fn cancelled_tasks_are_terminal() {
+        let mut tasks = vec![
+            task("running", TaskStatus::Running, vec![]),
+            task("cancelled", TaskStatus::Cancelled, vec![]),
+            task("queued", TaskStatus::Queued, vec![]),
+            task("complete", TaskStatus::Complete, vec![]),
+        ];
+        sort_tasks_for_display(&mut tasks);
+        assert_eq!(
+            ids(&tasks),
+            vec!["running", "queued", "cancelled", "complete"]
+        );
+    }
+
+    #[test]
+    fn sort_is_idempotent() {
+        let mut tasks = vec![
+            task("running", TaskStatus::Running, vec![]),
+            task("complete1", TaskStatus::Complete, vec![]),
+            task("queued", TaskStatus::Queued, vec![]),
+            task("failed", TaskStatus::Failed, vec![]),
+            task("cancelled", TaskStatus::Cancelled, vec![]),
+        ];
+        sort_tasks_for_display(&mut tasks);
+        let first_pass: Vec<String> = tasks.iter().map(|t| t.id.clone()).collect();
+
+        sort_tasks_for_display(&mut tasks);
+        let second_pass: Vec<String> = tasks.iter().map(|t| t.id.clone()).collect();
+
+        assert_eq!(first_pass, second_pass);
+    }
+
+    #[test]
+    fn parent_child_grouping_with_mixed_statuses() {
+        let mut tasks = vec![
+            task("parent-run", TaskStatus::Running, vec![]),
+            task("child-run", TaskStatus::Running, vec!["parent-run"]),
+            task("parent-done", TaskStatus::Complete, vec![]),
+            task("child-done", TaskStatus::Complete, vec!["parent-done"]),
+        ];
+        sort_tasks_for_display(&mut tasks);
+        assert_eq!(
+            ids(&tasks),
+            vec!["parent-run", "child-run", "parent-done", "child-done"]
+        );
+    }
+
+    #[test]
+    fn cancelled_parent_with_cancelled_children() {
+        let mut tasks = vec![
+            task("parent", TaskStatus::Cancelled, vec![]),
+            task("child", TaskStatus::Cancelled, vec!["parent"]),
+            task("running", TaskStatus::Running, vec![]),
+        ];
+        sort_tasks_for_display(&mut tasks);
+        assert_eq!(ids(&tasks), vec!["running", "parent", "child"]);
+    }
 }
