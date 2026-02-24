@@ -293,22 +293,26 @@ fn render_log_line(log_line: &LogLine, lines: &mut Vec<Line<'static>>) {
             }
         }
         LogLine::Todo { tags, items } => {
-            // Render each item as a checkbox line
-            for (i, item) in items.iter().enumerate() {
-                let mut spans: Vec<Span> = Vec::new();
+            // Header line: [tags] TodoWrite:
+            let mut header_spans: Vec<Span> = Vec::new();
+            for tag in tags {
+                header_spans.push(Span::styled(
+                    format!("[{tag}]"),
+                    Style::default().fg(Color::Rgb(100, 100, 100)),
+                ));
+            }
+            if !tags.is_empty() {
+                header_spans.push(Span::raw(" "));
+            }
+            header_spans.push(Span::styled(
+                "TodoWrite:",
+                Style::default().add_modifier(Modifier::BOLD),
+            ));
+            lines.push(Line::from(header_spans));
 
-                // Tags prefix on first item only
-                if i == 0 {
-                    for tag in tags {
-                        spans.push(Span::styled(
-                            format!("[{tag}]"),
-                            Style::default().fg(Color::Rgb(100, 100, 100)),
-                        ));
-                    }
-                    if !tags.is_empty() {
-                        spans.push(Span::raw(" "));
-                    }
-                }
+            // Render each item as a checkbox line
+            for item in items.iter() {
+                let mut spans: Vec<Span> = Vec::new();
 
                 match item.status {
                     TodoStatus::Completed => {

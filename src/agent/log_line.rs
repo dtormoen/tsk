@@ -167,7 +167,7 @@ impl fmt::Display for LogLine {
                 if !tags.is_empty() {
                     write!(f, " ")?;
                 }
-                write!(f, "Todo:")?;
+                write!(f, "TodoWrite:")?;
                 let completed = items
                     .iter()
                     .filter(|i| i.status == TodoStatus::Completed)
@@ -352,6 +352,7 @@ mod tests {
         ];
         let line = LogLine::todo(vec![], items);
         let display = line.to_string();
+        assert!(display.contains("TodoWrite:"));
         assert!(display.contains("[x] Done task,"));
         assert!(display.contains("[~] Working on it,"));
         assert!(display.contains("[ ] Not started,"));
