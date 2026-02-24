@@ -74,14 +74,15 @@ fn render_main(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::Rect)
             };
             // First line: " X name  STATUS"
             let first_line_len = 1 + 1 + 1 + task.name.len() + 2 + status_text.len();
-            // Second line: "   ↳ parent-name" for children, or "   project · type duration"
-            let second_line_len = if let Some(parent_name) = find_parent_name(task, &app.tasks) {
-                3 + 2 + parent_name.len()
-            } else {
-                let duration = format_duration(task);
-                3 + task.project.len() + 3 + task.task_type.len() + 1 + duration.len()
-            };
-            first_line_len.max(second_line_len)
+            // Second line: "   project · type duration"
+            let duration = format_duration(task);
+            let second_line_len =
+                3 + task.project.len() + 3 + task.task_type.len() + 1 + duration.len();
+            // Third line (children only): "   ↳ parent-name"
+            let third_line_len = find_parent_name(task, &app.tasks)
+                .map(|name| 3 + 2 + name.len())
+                .unwrap_or(0);
+            first_line_len.max(second_line_len).max(third_line_len)
         })
         .max()
         .unwrap_or(0) as u16;
@@ -154,25 +155,27 @@ fn render_task_list(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::
                 Span::styled(status_text, Style::default().fg(color)),
             ]);
 
-            let second_line = if let Some(parent_name) = find_parent_name(task, &app.tasks) {
-                Line::from(vec![
+            let second_line = Line::from(vec![
+                Span::raw("   "),
+                Span::styled(
+                    format!("{} \u{00b7} {} {}", task.project, task.task_type, duration),
+                    Style::default().fg(Color::Rgb(140, 140, 140)),
+                ),
+            ]);
+
+            let mut lines = vec![first_line, second_line];
+
+            if let Some(parent_name) = find_parent_name(task, &app.tasks) {
+                lines.push(Line::from(vec![
                     Span::raw("   "),
                     Span::styled(
                         format!("\u{21b3} {parent_name}"),
-                        Style::default().fg(Color::Rgb(140, 140, 140)),
+                        Style::default().fg(Color::Cyan),
                     ),
-                ])
-            } else {
-                Line::from(vec![
-                    Span::raw("   "),
-                    Span::styled(
-                        format!("{} \u{00b7} {} {}", task.project, task.task_type, duration),
-                        Style::default().fg(Color::Rgb(140, 140, 140)),
-                    ),
-                ])
-            };
+                ]));
+            }
 
-            ListItem::new(Text::from(vec![first_line, second_line]))
+            ListItem::new(Text::from(lines))
         })
         .collect();
 
@@ -994,7 +997,7 @@ mod tests {
     }
 
     #[test]
-    fn test_render_child_task_shows_parent_name() {
+    fn test_render_child_task_shows_parent_name_and_project_info() {
         let backend = TestBackend::new(100, 20);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = TuiApp::new(1);
@@ -1013,6 +1016,8 @@ mod tests {
                 status: TaskStatus::Queued,
                 parent_ids: vec!["parent-id".to_string()],
                 branch_name: "tsk/feat/child-task/child-id".to_string(),
+                project: "my-project".to_string(),
+                task_type: "feat".to_string(),
                 ..Task::test_default()
             },
         ];
@@ -1025,18 +1030,25 @@ mod tests {
 
         let buffer = terminal.backend().buffer().clone();
         let mut found_parent_ref = false;
+        let mut found_project_info = false;
         for y in 0..20 {
             let line: String = (0..50)
                 .map(|x| buffer[(x, y)].symbol().to_string())
                 .collect();
             if line.contains("\u{21b3}") && line.contains("parent-task") {
                 found_parent_ref = true;
-                break;
+            }
+            if line.contains("my-project") && line.contains("feat") {
+                found_project_info = true;
             }
         }
         assert!(
             found_parent_ref,
             "expected child task to show parent name with arrow"
+        );
+        assert!(
+            found_project_info,
+            "expected child task to still show project and type info"
         );
     }
 }
