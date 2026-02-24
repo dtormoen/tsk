@@ -98,14 +98,6 @@ impl TuiApp {
         self.task_list_state.select(Some(prev));
     }
 
-    /// Unwrapped visual line count across all log entries (rough estimate).
-    ///
-    /// Does not account for word-wrapping; used only as an initial estimate
-    /// in `reload_logs`. The accurate count is set by `render_log_viewer`.
-    pub fn visual_line_count(&self) -> usize {
-        self.log_content.iter().map(visual_lines_for).sum()
-    }
-
     pub fn max_log_scroll(&self) -> usize {
         self.log_wrapped_line_count
             .saturating_sub(self.log_viewport_height)
@@ -128,26 +120,22 @@ impl TuiApp {
         self.log_follow = self.log_scroll >= self.max_log_scroll();
     }
 
-    /// Load the agent log file for the currently selected task, scrolling to the bottom.
+    /// Load the agent log file for the currently selected task with follow mode enabled.
     ///
     /// Use this when the user explicitly changes task selection.
+    /// Sets `log_follow = true` so `render_log_viewer()` will scroll to the bottom.
     /// Reads from `{data_dir}/tasks/{task_id}/output/agent.log`.
     pub fn load_logs_for_selected_task(&mut self, data_dir: &Path) {
         self.reload_logs(data_dir);
-        self.log_scroll = self.max_log_scroll();
         self.log_follow = true;
     }
 
     /// Refresh the log file content for the currently selected task without resetting scroll.
     ///
-    /// Use this for periodic live-tailing refreshes that should not disrupt the
-    /// user's scroll position. When follow mode is active, auto-scrolls to the bottom.
+    /// Use this for periodic live-tailing refreshes. Scroll adjustment (follow-mode
+    /// and clamping) is handled by `render_log_viewer()` on the next frame.
     pub fn refresh_logs(&mut self, data_dir: &Path) {
         self.reload_logs(data_dir);
-        if self.log_follow {
-            self.log_scroll = self.max_log_scroll();
-        }
-        self.clamp_log_scroll();
     }
 
     /// Internal helper that reads the agent.log for the selected task.
@@ -182,11 +170,9 @@ impl TuiApp {
                         })
                     })
                     .collect();
-                self.log_wrapped_line_count = self.visual_line_count();
             }
             Err(_) => {
                 self.log_content.clear();
-                self.log_wrapped_line_count = 0;
             }
         }
     }
@@ -215,28 +201,10 @@ impl TuiApp {
     }
 }
 
-/// Count the number of visual lines a LogLine occupies without wrapping.
-///
-/// Used as a rough initial estimate before render computes the accurate
-/// wrapped count via `Paragraph::line_count`.
-pub fn visual_lines_for(log_line: &LogLine) -> usize {
-    match log_line {
-        LogLine::Message { message, .. } => {
-            // Count newlines in message text
-            message.lines().count().max(1)
-        }
-        LogLine::Todo { items, .. } => {
-            // One line per item + summary count line
-            items.len() + 1
-        }
-        LogLine::Summary { .. } => 1,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::log_line::{LogLine, TodoItem, TodoStatus};
+    use crate::agent::log_line::LogLine;
     use crate::task::Task;
     use std::fs;
 
@@ -422,15 +390,12 @@ mod tests {
             ..Task::test_default()
         }];
 
-        // Set a non-bottom scroll position to verify load overrides it
-        app.log_scroll = 0;
         app.log_follow = false;
 
         app.load_logs_for_selected_task(data_dir);
 
         assert_eq!(app.log_content.len(), 3);
-        // Scroll starts at bottom: 3 lines - 2 viewport = 1
-        assert_eq!(app.log_scroll, 1);
+        // Follow mode enabled; render will scroll to bottom on next frame
         assert!(app.log_follow);
 
         // Loading with no selection clears content
@@ -441,34 +406,15 @@ mod tests {
 
     #[test]
     fn test_follow_mode() {
-        let tmp_dir = tempfile::tempdir().unwrap();
-        let data_dir = tmp_dir.path();
-
-        let task_id = "follow-task";
-        let log_dir = data_dir.join("tasks").join(task_id).join("output");
-        fs::create_dir_all(&log_dir).unwrap();
-
-        // Write 20 JSON-lines
-        let lines: Vec<String> = (0..20)
-            .map(|i| {
-                serde_json::to_string(&LogLine::message(vec![], None, format!("line {i}"))).unwrap()
-            })
-            .collect();
-        fs::write(log_dir.join("agent.log"), lines.join("\n")).unwrap();
-
         let mut app = TuiApp::new(1);
+        app.log_content = make_log_lines(20);
         app.log_viewport_height = 10;
-        app.tasks = vec![Task {
-            id: task_id.to_string(),
-            name: "follow-task".to_string(),
-            branch_name: "tsk/feat/follow-task/follow-task".to_string(),
-            ..Task::test_default()
-        }];
+        app.log_wrapped_line_count = 20;
 
-        // Load logs - should be at bottom with follow enabled
-        app.load_logs_for_selected_task(data_dir);
-        assert!(app.log_follow);
-        assert_eq!(app.log_scroll, 10); // 20 lines - 10 viewport
+        // Simulate render having scrolled to bottom with follow enabled
+        app.log_scroll = app.max_log_scroll();
+        app.log_follow = true;
+        assert_eq!(app.log_scroll, 10); // 20 - 10
 
         // Scroll up disables follow
         app.scroll_logs_up(5);
@@ -479,24 +425,6 @@ mod tests {
         app.scroll_logs_down(5);
         assert!(app.log_follow);
         assert_eq!(app.log_scroll, 10);
-
-        // Scroll up again, then refresh - should NOT auto-scroll
-        app.scroll_logs_up(3);
-        assert!(!app.log_follow);
-        let scroll_before = app.log_scroll;
-        app.refresh_logs(data_dir);
-        assert_eq!(app.log_scroll, scroll_before);
-
-        // Re-enable follow and refresh with more content - should auto-scroll
-        app.log_follow = true;
-        let lines: Vec<String> = (0..30)
-            .map(|i| {
-                serde_json::to_string(&LogLine::message(vec![], None, format!("line {i}"))).unwrap()
-            })
-            .collect();
-        fs::write(log_dir.join("agent.log"), lines.join("\n")).unwrap();
-        app.refresh_logs(data_dir);
-        assert_eq!(app.log_scroll, 20); // 30 lines - 10 viewport
     }
 
     #[test]
@@ -533,44 +461,6 @@ mod tests {
         app.log_content.clear();
         app.log_wrapped_line_count = 0;
         assert_eq!(app.max_log_scroll(), 0);
-    }
-
-    #[test]
-    fn test_visual_lines_message() {
-        // Single line message
-        let line = LogLine::message(vec![], None, "hello".into());
-        assert_eq!(visual_lines_for(&line), 1);
-
-        // Multi-line message
-        let line = LogLine::message(vec![], None, "line1\nline2\nline3".into());
-        assert_eq!(visual_lines_for(&line), 3);
-    }
-
-    #[test]
-    fn test_visual_lines_todo() {
-        let items = vec![
-            TodoItem {
-                content: "a".into(),
-                status: TodoStatus::Pending,
-                active_form: None,
-                priority: None,
-            },
-            TodoItem {
-                content: "b".into(),
-                status: TodoStatus::Completed,
-                active_form: None,
-                priority: None,
-            },
-        ];
-        let line = LogLine::todo(vec![], items);
-        // 2 items + 1 summary = 3
-        assert_eq!(visual_lines_for(&line), 3);
-    }
-
-    #[test]
-    fn test_visual_lines_summary() {
-        let line = LogLine::summary(true, "done".into(), None, None, None);
-        assert_eq!(visual_lines_for(&line), 1);
     }
 
     #[test]
