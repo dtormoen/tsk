@@ -67,7 +67,18 @@ pub fn handle_event(app: &mut TuiApp, event: &Event, data_dir: &Path) {
                     }
                 }
                 MouseEventKind::Down(MouseButton::Left) => {
-                    if in_task_panel {
+                    if in_task_panel
+                        && mouse.column == app.task_panel_width.saturating_sub(1)
+                        && mouse.row >= app.task_list_top
+                        && mouse.row < app.task_list_top + app.task_list_height
+                    {
+                        // Click on the scrollbar track column
+                        app.task_scrollbar_drag = true;
+                        app.focus = Panel::Tasks;
+                        let offset = scrollbar_row_to_offset(mouse.row, app);
+                        app.scroll_task_list_to_offset(offset);
+                        app.load_logs_for_selected_task(data_dir);
+                    } else if in_task_panel {
                         app.focus = Panel::Tasks;
                         if let Some(inner_row) = mouse.row.checked_sub(app.task_list_top) {
                             let click_row = inner_row as usize;
@@ -91,11 +102,41 @@ pub fn handle_event(app: &mut TuiApp, event: &Event, data_dir: &Path) {
                         app.focus = Panel::Logs;
                     }
                 }
+                MouseEventKind::Drag(MouseButton::Left) => {
+                    if app.task_scrollbar_drag {
+                        let prev_selected = app.task_list_state.selected();
+                        let offset = scrollbar_row_to_offset(mouse.row, app);
+                        app.scroll_task_list_to_offset(offset);
+                        if app.task_list_state.selected() != prev_selected {
+                            app.load_logs_for_selected_task(data_dir);
+                        }
+                    }
+                }
+                MouseEventKind::Up(MouseButton::Left) => {
+                    app.task_scrollbar_drag = false;
+                }
                 _ => {}
             }
         }
         _ => {}
     }
+}
+
+/// Map a mouse row on the scrollbar track to a task list scroll offset.
+///
+/// Uses proportional mapping: the click position within the track maps
+/// linearly to the range of possible offsets.
+fn scrollbar_row_to_offset(row: u16, app: &TuiApp) -> usize {
+    let track_height = app.task_list_height as usize;
+    if track_height <= 1 || app.tasks.is_empty() {
+        return 0;
+    }
+    let viewport_items = app.task_viewport_items();
+    let max_offset = app.tasks.len().saturating_sub(viewport_items);
+    let click_offset = row.saturating_sub(app.task_list_top) as usize;
+    let click_offset = click_offset.min(track_height.saturating_sub(1));
+    // Proportional: click_offset / (track_height - 1) = target_offset / max_offset
+    max_offset * click_offset / (track_height.saturating_sub(1))
 }
 
 #[cfg(test)]
@@ -133,6 +174,44 @@ mod tests {
             row,
             modifiers: KeyModifiers::NONE,
         })
+    }
+
+    fn make_mouse_drag(column: u16, row: u16) -> Event {
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Drag(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    fn make_mouse_up(column: u16, row: u16) -> Event {
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    /// Create a TuiApp with many tasks for scrollbar testing.
+    ///
+    /// Sets up 20 tasks with task_panel_width=30, task_list_top=2,
+    /// and task_list_height=6 (viewport_items=3).
+    fn app_with_many_tasks() -> TuiApp {
+        let mut app = TuiApp::new(2);
+        app.tasks = (0..20)
+            .map(|i| Task {
+                id: format!("t{i}"),
+                name: format!("task-{i}"),
+                branch_name: format!("tsk/feat/task-{i}/t{i}"),
+                ..Task::test_default()
+            })
+            .collect();
+        app.task_panel_width = 30;
+        app.task_list_top = 2;
+        app.task_list_height = 6; // viewport_items = 6/2 = 3
+        app
     }
 
     fn app_with_tasks() -> TuiApp {
@@ -487,5 +566,79 @@ mod tests {
         });
         handle_event(&mut app, &release_event, tmp.path());
         assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn test_scrollbar_click_scrolls_to_position() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with_many_tasks();
+        // scrollbar column = task_panel_width - 1 = 29
+        // task_list_top = 2, task_list_height = 6, so valid rows: 2..8
+        // viewport_items = 3, max_offset = 20 - 3 = 17
+
+        // Click at the top of the scrollbar track (row 2) -> offset 0
+        handle_event(&mut app, &make_mouse_click(29, 2), tmp.path());
+        assert_eq!(app.task_list_state.offset(), 0);
+        assert_eq!(app.focus, Panel::Tasks);
+
+        // Click at the bottom of the track (row 7 = task_list_top + task_list_height - 1)
+        // click_offset = 7 - 2 = 5, max_offset * 5 / 5 = 17
+        handle_event(&mut app, &make_mouse_click(29, 7), tmp.path());
+        assert_eq!(app.task_list_state.offset(), 17);
+        // Selection should be clamped to visible range [17..19]
+        let selected = app.task_list_state.selected().unwrap();
+        assert!((17..20).contains(&selected));
+
+        // Click at midpoint (row 4) -> click_offset = 2, 17 * 2 / 5 = 6
+        handle_event(&mut app, &make_mouse_click(29, 4), tmp.path());
+        assert_eq!(app.task_list_state.offset(), 6);
+    }
+
+    #[test]
+    fn test_scrollbar_drag_updates_offset() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with_many_tasks();
+
+        // Start drag by clicking on scrollbar column
+        handle_event(&mut app, &make_mouse_click(29, 2), tmp.path());
+        assert!(app.task_scrollbar_drag);
+        assert_eq!(app.task_list_state.offset(), 0);
+
+        // Drag to middle of track (row 4) -> offset 6
+        handle_event(&mut app, &make_mouse_drag(29, 4), tmp.path());
+        assert_eq!(app.task_list_state.offset(), 6);
+
+        // Drag to bottom (row 7) -> offset 17
+        handle_event(&mut app, &make_mouse_drag(29, 7), tmp.path());
+        assert_eq!(app.task_list_state.offset(), 17);
+
+        // Drag state is still active
+        assert!(app.task_scrollbar_drag);
+    }
+
+    #[test]
+    fn test_scrollbar_click_does_not_affect_non_scrollbar_clicks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with_many_tasks();
+
+        // Click on column 5 (not the scrollbar column 29) in the task area
+        handle_event(&mut app, &make_mouse_click(5, 4), tmp.path());
+        // Should do normal task selection (row 4, inner_row=2, task_index=1)
+        assert_eq!(app.task_list_state.selected(), Some(1));
+        assert!(!app.task_scrollbar_drag);
+    }
+
+    #[test]
+    fn test_scrollbar_up_clears_drag() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with_many_tasks();
+
+        // Start drag
+        handle_event(&mut app, &make_mouse_click(29, 3), tmp.path());
+        assert!(app.task_scrollbar_drag);
+
+        // Release mouse
+        handle_event(&mut app, &make_mouse_up(29, 5), tmp.path());
+        assert!(!app.task_scrollbar_drag);
     }
 }

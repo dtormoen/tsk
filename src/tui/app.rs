@@ -45,6 +45,10 @@ pub struct TuiApp {
     pub task_panel_width: u16,
     /// Y coordinate of the first task row in the task list (set during render)
     pub task_list_top: u16,
+    /// Whether the user is currently dragging the task list scrollbar
+    pub task_scrollbar_drag: bool,
+    /// Inner viewport height in rows for the task list (set during render)
+    pub task_list_height: u16,
 }
 
 impl TuiApp {
@@ -68,6 +72,8 @@ impl TuiApp {
             should_quit: false,
             task_panel_width: 0,
             task_list_top: 0,
+            task_scrollbar_drag: false,
+            task_list_height: 0,
         }
     }
 
@@ -96,6 +102,25 @@ impl TuiApp {
         let current = self.task_list_state.selected().unwrap_or(0);
         let prev = current.saturating_sub(1);
         self.task_list_state.select(Some(prev));
+    }
+
+    /// Number of task items visible in the viewport (2 rows per task)
+    pub fn task_viewport_items(&self) -> usize {
+        self.task_list_height as usize / 2
+    }
+
+    /// Set the task list scroll offset and clamp the selection to the visible range
+    pub fn scroll_task_list_to_offset(&mut self, offset: usize) {
+        *self.task_list_state.offset_mut() = offset;
+        let viewport_items = self.task_viewport_items();
+        if let Some(selected) = self.task_list_state.selected() {
+            if selected < offset {
+                self.task_list_state.select(Some(offset));
+            } else if viewport_items > 0 && selected >= offset + viewport_items {
+                self.task_list_state
+                    .select(Some(offset + viewport_items - 1));
+            }
+        }
     }
 
     pub fn max_log_scroll(&self) -> usize {

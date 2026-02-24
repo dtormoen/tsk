@@ -179,9 +179,14 @@ fn render_task_list(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::
 
     frame.render_stateful_widget(list, area, &mut app.task_list_state);
 
-    // Render a scrollbar inside the block borders to indicate list position
-    let selected = app.task_list_state.selected().unwrap_or(0);
-    let mut scrollbar_state = ScrollbarState::new(app.tasks.len()).position(selected);
+    // Store inner height for scrollbar click/drag calculations
+    app.task_list_height = area.height.saturating_sub(2); // subtract top+bottom borders
+
+    // Render a scrollbar inside the block borders to indicate viewport position
+    let viewport_items = app.task_viewport_items();
+    let mut scrollbar_state = ScrollbarState::new(app.tasks.len())
+        .position(app.task_list_state.offset())
+        .viewport_content_length(viewport_items);
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
         .begin_symbol(None)
         .end_symbol(None);

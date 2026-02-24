@@ -200,6 +200,7 @@ When running in an interactive terminal, `tsk server start` shows a TUI dashboar
 - `Page Up` / `Page Down`: Jump scroll in log viewer
 - Click: Select a task or focus a panel
 - Mouse scroll: scroll tasks or logs
+- Scrollbar click/drag: Jump or scrub through the task list
 - `Shift+click` / `Shift+drag`: Select text (bypasses mouse capture for clipboard use)
 - `q`: Quit the server (graceful shutdown)
 
