@@ -410,7 +410,7 @@ fn render_log_line(log_line: &LogLine, lines: &mut Vec<Line<'static>>) {
 /// Render the footer line with key binding hints.
 fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect) {
     let line = Line::from(Span::styled(
-        " \u{2190}\u{2192} focus \u{2502} \u{2191}\u{2193} navigate \u{2502} click select \u{2502} PgUp/PgDn scroll \u{2502} Shift+click text \u{2502} q quit",
+        " \u{2190}\u{2192} focus \u{2502} \u{2191}\u{2193} navigate \u{2502} click select \u{2502} PgUp/PgDn scroll \u{2502} Shift+click text \u{2502} c cancel \u{2502} d delete \u{2502} q quit",
         Style::default().fg(Color::DarkGray),
     ));
     frame.render_widget(Paragraph::new(line), area);
@@ -575,7 +575,7 @@ mod tests {
 
     #[test]
     fn test_render_with_tasks() {
-        let backend = TestBackend::new(100, 30);
+        let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = TuiApp::new(2);
         app.workers_active = 1;
@@ -614,14 +614,14 @@ mod tests {
         let buffer = terminal.backend().buffer().clone();
 
         // Check header shows active workers
-        let header_line: String = (0..100)
+        let header_line: String = (0..120)
             .map(|x| buffer[(x, 0)].symbol().to_string())
             .collect();
         assert!(header_line.contains("Workers: 1/2"));
 
         // Check footer has key hints
         let footer_y = 29;
-        let footer_line: String = (0..100)
+        let footer_line: String = (0..120)
             .map(|x| buffer[(x, footer_y)].symbol().to_string())
             .collect();
         assert!(footer_line.contains("quit"));

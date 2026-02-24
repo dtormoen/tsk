@@ -235,19 +235,21 @@ impl TuiApp {
     /// Replace the task list with new data, preserving the current selection
     /// if the previously selected task still exists in the new list.
     pub fn update_tasks(&mut self, tasks: Vec<Task>) {
-        let previously_selected_id = self
+        let prev_selected = self
             .task_list_state
             .selected()
-            .and_then(|idx| self.tasks.get(idx))
-            .map(|t| t.id.clone());
+            .and_then(|idx| self.tasks.get(idx).map(|t| (idx, t.id.clone())));
 
         self.tasks = tasks;
 
-        if let Some(prev_id) = previously_selected_id {
+        if let Some((prev_idx, prev_id)) = prev_selected {
             let new_idx = self.tasks.iter().position(|t| t.id == prev_id);
             match new_idx {
                 Some(idx) => self.task_list_state.select(Some(idx)),
-                None if !self.tasks.is_empty() => self.task_list_state.select(Some(0)),
+                None if !self.tasks.is_empty() => {
+                    self.task_list_state
+                        .select(Some(prev_idx.min(self.tasks.len() - 1)));
+                }
                 None => self.task_list_state.select(None),
             }
         } else if !self.tasks.is_empty() {
