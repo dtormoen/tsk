@@ -205,6 +205,7 @@ fn render_log_viewer(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout:
         .border_style(border_style);
 
     if app.log_content.is_empty() {
+        app.log_wrapped_line_count = 0;
         let placeholder = Paragraph::new(Line::from(Span::styled(
             "No logs available",
             Style::default().fg(Color::DarkGray),
@@ -220,17 +221,28 @@ fn render_log_viewer(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout:
         }
 
         let text = Text::from(lines);
-        let paragraph = Paragraph::new(text)
+        let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
+
+        // Compute accurate wrapped line count for scroll clamping
+        app.log_wrapped_line_count = paragraph.line_count(inner.width);
+        app.clamp_log_scroll();
+        if app.log_follow {
+            app.log_scroll = app.max_log_scroll();
+        }
+
+        // ratatui's Paragraph::scroll takes (u16, u16); clamp for logs > 65535 lines
+        let paragraph = paragraph
             .block(block)
-            .wrap(Wrap { trim: false })
-            // ratatui's Paragraph::scroll takes (u16, u16); clamp for logs > 65535 lines
             .scroll((app.log_scroll.min(u16::MAX as usize) as u16, 0));
         frame.render_widget(paragraph, area);
     }
 }
 
 /// Render a single LogLine into one or more styled ratatui Lines.
-fn render_log_line<'a>(log_line: &'a LogLine, lines: &mut Vec<Line<'a>>) {
+///
+/// All spans use owned strings, so the output lines have `'static` lifetime
+/// and do not borrow from the input LogLine.
+fn render_log_line(log_line: &LogLine, lines: &mut Vec<Line<'static>>) {
     match log_line {
         LogLine::Message {
             level,
@@ -245,7 +257,6 @@ fn render_log_line<'a>(log_line: &'a LogLine, lines: &mut Vec<Line<'a>>) {
                 Level::Error => Color::Red,
             };
 
-            // Build prefix spans: tags + tool
             let mut prefix_spans: Vec<Span> = Vec::new();
 
             for tag in tags {
@@ -265,7 +276,6 @@ fn render_log_line<'a>(log_line: &'a LogLine, lines: &mut Vec<Line<'a>>) {
                 ));
             }
 
-            // Render message lines; ratatui Wrap handles long-line wrapping
             if message.is_empty() {
                 lines.push(Line::from(prefix_spans));
             } else {
@@ -695,5 +705,11 @@ mod tests {
         assert!(found_bash, "expected Bash tool line in rendered output");
         assert!(found_done, "expected completed todo in rendered output");
         assert!(found_success, "expected summary line in rendered output");
+
+        // Verify render computed the accurate wrapped line count
+        assert!(
+            app.log_wrapped_line_count > 0,
+            "expected log_wrapped_line_count to be set after render"
+        );
     }
 }

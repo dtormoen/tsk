@@ -31,6 +31,8 @@ pub struct TuiApp {
     pub log_viewport_height: usize,
     /// Whether the log viewer auto-scrolls to follow new content
     pub log_follow: bool,
+    /// Accurate wrapped line count (set during render via Paragraph::line_count)
+    pub log_wrapped_line_count: usize,
     /// Timestamped server messages (status, warnings, events)
     pub server_messages: Vec<(chrono::DateTime<chrono::Local>, String)>,
     /// Number of currently active workers
@@ -59,6 +61,7 @@ impl TuiApp {
             log_scroll: 0,
             log_viewport_height: 0,
             log_follow: true,
+            log_wrapped_line_count: 0,
             server_messages: Vec::new(),
             workers_active: 0,
             workers_total,
@@ -95,23 +98,19 @@ impl TuiApp {
         self.task_list_state.select(Some(prev));
     }
 
-    /// Count the total number of visual lines across all log entries.
+    /// Unwrapped visual line count across all log entries (rough estimate).
     ///
-    /// Each LogLine maps to visual lines as follows:
-    /// - Message: 1 line per newline-separated segment
-    /// - Todo: 1 line per item + 1 summary line
-    /// - Summary: 1 line
+    /// Does not account for word-wrapping; used only as an initial estimate
+    /// in `reload_logs`. The accurate count is set by `render_log_viewer`.
     pub fn visual_line_count(&self) -> usize {
         self.log_content.iter().map(visual_lines_for).sum()
     }
 
-    /// Maximum scroll offset for the log viewer, based on content and viewport size
     pub fn max_log_scroll(&self) -> usize {
-        self.visual_line_count()
+        self.log_wrapped_line_count
             .saturating_sub(self.log_viewport_height)
     }
 
-    /// Clamp the scroll offset so it does not exceed the maximum
     pub fn clamp_log_scroll(&mut self) {
         self.log_scroll = self.log_scroll.min(self.max_log_scroll());
     }
@@ -183,9 +182,11 @@ impl TuiApp {
                         })
                     })
                     .collect();
+                self.log_wrapped_line_count = self.visual_line_count();
             }
             Err(_) => {
                 self.log_content.clear();
+                self.log_wrapped_line_count = 0;
             }
         }
     }
@@ -214,10 +215,10 @@ impl TuiApp {
     }
 }
 
-/// Count the number of visual lines a LogLine occupies when rendered.
+/// Count the number of visual lines a LogLine occupies without wrapping.
 ///
-/// Does not account for ratatui word-wrapping, so the count is an
-/// underestimate for lines wider than the viewport.
+/// Used as a rough initial estimate before render computes the accurate
+/// wrapped count via `Paragraph::line_count`.
 pub fn visual_lines_for(log_line: &LogLine) -> usize {
     match log_line {
         LogLine::Message { message, .. } => {
@@ -258,6 +259,7 @@ mod tests {
         assert!(app.tasks.is_empty());
         assert_eq!(app.log_viewport_height, 0);
         assert!(app.log_follow);
+        assert_eq!(app.log_wrapped_line_count, 0);
 
         // Panel::Logs variant is available for focus switching
         let mut app = app;
@@ -323,6 +325,7 @@ mod tests {
         // 20 lines of content, viewport of 10 -> max scroll = 10
         app.log_content = make_log_lines(20);
         app.log_viewport_height = 10;
+        app.log_wrapped_line_count = 20;
 
         // Start at 0
         assert_eq!(app.log_scroll, 0);
@@ -502,6 +505,7 @@ mod tests {
         // Viewport bigger than content
         app.log_content = make_log_lines(5);
         app.log_viewport_height = 10;
+        app.log_wrapped_line_count = 5;
 
         assert_eq!(app.max_log_scroll(), 0);
 
@@ -517,14 +521,17 @@ mod tests {
         // 20 lines, viewport 10
         app.log_content = make_log_lines(20);
         app.log_viewport_height = 10;
+        app.log_wrapped_line_count = 20;
         assert_eq!(app.max_log_scroll(), 10);
 
         // 5 lines, viewport 10
         app.log_content = make_log_lines(5);
+        app.log_wrapped_line_count = 5;
         assert_eq!(app.max_log_scroll(), 0);
 
         // 0 lines, viewport 10
         app.log_content.clear();
+        app.log_wrapped_line_count = 0;
         assert_eq!(app.max_log_scroll(), 0);
     }
 

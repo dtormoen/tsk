@@ -212,6 +212,7 @@ mod tests {
             .map(|i| crate::agent::log_line::LogLine::message(vec![], None, format!("line {i}")))
             .collect();
         app.log_viewport_height = 10;
+        app.log_wrapped_line_count = 100;
 
         handle_event(&mut app, &make_key_event(KeyCode::Char('j')), tmp.path());
         assert_eq!(app.log_scroll, 1);
@@ -278,6 +279,7 @@ mod tests {
             .map(|i| crate::agent::log_line::LogLine::message(vec![], None, format!("line {i}")))
             .collect();
         app.log_viewport_height = 10;
+        app.log_wrapped_line_count = 100;
 
         // Column 79 is well past the task panel boundary
         let scroll_down = make_mouse_scroll(MouseEventKind::ScrollDown, 79);
