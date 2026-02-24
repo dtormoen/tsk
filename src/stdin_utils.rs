@@ -1,19 +1,34 @@
-use is_terminal::IsTerminal;
 use std::io::{self, Read};
+use std::os::unix::io::AsRawFd;
 
-/// Reads from stdin if data is piped, returns None if stdin is a TTY
+/// Returns true if stdin is a pipe (FIFO) or regular file redirect.
 ///
-/// This function detects whether stdin is connected to a terminal or has data piped to it.
-/// If data is piped, it reads all the data and returns it as a trimmed string.
-/// If stdin is a TTY (normal terminal), it returns None without blocking.
+/// This is more precise than `!is_terminal()` because it correctly returns false
+/// for unix sockets (e.g. when run from Claude Code's Bash tool), which would
+/// block forever on read since they never send EOF.
+fn stdin_is_pipe_or_file() -> bool {
+    let fd = io::stdin().as_raw_fd();
+    let mut stat_buf: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe { libc::fstat(fd, &mut stat_buf) } != 0 {
+        return false;
+    }
+    let mode = stat_buf.st_mode & libc::S_IFMT;
+    mode == libc::S_IFIFO || mode == libc::S_IFREG
+}
+
+/// Reads from stdin if data is piped, returns None otherwise
+///
+/// This function checks whether stdin is a pipe or file redirect. If so, it reads
+/// all the data and returns it as a trimmed string. For terminals, sockets, and
+/// other file descriptor types, it returns None without blocking.
 ///
 /// # Returns
 ///
 /// - `Ok(Some(String))` - Data was piped and successfully read
-/// - `Ok(None)` - No data piped (stdin is a TTY) or piped data was empty after trimming
+/// - `Ok(None)` - Stdin is not a pipe/file, or piped data was empty after trimming
 /// - `Err(io::Error)` - Error reading from stdin
 pub fn read_piped_input() -> Result<Option<String>, io::Error> {
-    if !io::stdin().is_terminal() {
+    if stdin_is_pipe_or_file() {
         // Show feedback when reading from stdin
         eprintln!("Reading task description from stdin...");
 
