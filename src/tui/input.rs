@@ -208,6 +208,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut app = TuiApp::new(1);
         app.focus = Panel::Logs;
+        app.log_content = (0..100).map(|i| format!("line {i}")).collect();
+        app.log_viewport_height = 10;
 
         handle_event(&mut app, &make_key_event(KeyCode::Char('j')), tmp.path());
         assert_eq!(app.log_scroll, 1);
@@ -260,6 +262,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut app = TuiApp::new(1);
         app.task_panel_width = 30;
+        app.log_content = (0..100).map(|i| format!("line {i}")).collect();
+        app.log_viewport_height = 10;
 
         // Column 79 is well past the task panel boundary
         let scroll_down = make_mouse_scroll(MouseEventKind::ScrollDown, 79);

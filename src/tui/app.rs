@@ -25,7 +25,11 @@ pub struct TuiApp {
     /// Lines of log content for the selected task
     pub log_content: Vec<String>,
     /// Vertical scroll offset for the log viewer
-    pub log_scroll: u16,
+    pub log_scroll: usize,
+    /// Height of the log viewer viewport in rows (set during render)
+    pub log_viewport_height: usize,
+    /// Whether the log viewer auto-scrolls to follow new content
+    pub log_follow: bool,
     /// Timestamped server messages (status, warnings, events)
     pub server_messages: Vec<(chrono::DateTime<chrono::Local>, String)>,
     /// Number of currently active workers
@@ -52,6 +56,8 @@ impl TuiApp {
             tasks: Vec::new(),
             log_content: Vec::new(),
             log_scroll: 0,
+            log_viewport_height: 0,
+            log_follow: true,
             server_messages: Vec::new(),
             workers_active: 0,
             workers_total,
@@ -88,31 +94,51 @@ impl TuiApp {
         self.task_list_state.select(Some(prev));
     }
 
+    /// Maximum scroll offset for the log viewer, based on content and viewport size
+    pub fn max_log_scroll(&self) -> usize {
+        self.log_content
+            .len()
+            .saturating_sub(self.log_viewport_height)
+    }
+
+    /// Clamp the scroll offset so it does not exceed the maximum
+    pub fn clamp_log_scroll(&mut self) {
+        self.log_scroll = self.log_scroll.min(self.max_log_scroll());
+    }
+
     /// Scroll the log viewer up by the given amount, clamping at 0
-    pub fn scroll_logs_up(&mut self, amount: u16) {
+    pub fn scroll_logs_up(&mut self, amount: usize) {
         self.log_scroll = self.log_scroll.saturating_sub(amount);
+        self.log_follow = self.log_scroll >= self.max_log_scroll();
     }
 
-    /// Scroll the log viewer down by the given amount
-    pub fn scroll_logs_down(&mut self, amount: u16) {
+    /// Scroll the log viewer down by the given amount, clamping at the bottom
+    pub fn scroll_logs_down(&mut self, amount: usize) {
         self.log_scroll = self.log_scroll.saturating_add(amount);
+        self.clamp_log_scroll();
+        self.log_follow = self.log_scroll >= self.max_log_scroll();
     }
 
-    /// Load the agent log file for the currently selected task, resetting scroll to the top.
+    /// Load the agent log file for the currently selected task, scrolling to the bottom.
     ///
     /// Use this when the user explicitly changes task selection.
     /// Reads from `{data_dir}/tasks/{task_id}/output/agent.log`.
     pub fn load_logs_for_selected_task(&mut self, data_dir: &Path) {
-        self.log_scroll = 0;
         self.reload_logs(data_dir);
+        self.log_scroll = self.max_log_scroll();
+        self.log_follow = true;
     }
 
     /// Refresh the log file content for the currently selected task without resetting scroll.
     ///
     /// Use this for periodic live-tailing refreshes that should not disrupt the
-    /// user's scroll position.
+    /// user's scroll position. When follow mode is active, auto-scrolls to the bottom.
     pub fn refresh_logs(&mut self, data_dir: &Path) {
         self.reload_logs(data_dir);
+        if self.log_follow {
+            self.log_scroll = self.max_log_scroll();
+        }
+        self.clamp_log_scroll();
     }
 
     /// Internal helper that reads the agent.log for the selected task.
@@ -182,6 +208,8 @@ mod tests {
         assert!(!app.should_quit);
         assert!(app.server_messages.is_empty());
         assert!(app.tasks.is_empty());
+        assert_eq!(app.log_viewport_height, 0);
+        assert!(app.log_follow);
 
         // Panel::Logs variant is available for focus switching
         let mut app = app;
@@ -244,6 +272,9 @@ mod tests {
     #[test]
     fn test_scroll_logs() {
         let mut app = TuiApp::new(1);
+        // 20 lines of content, viewport of 10 -> max scroll = 10
+        app.log_content = (0..20).map(|i| format!("line {i}")).collect();
+        app.log_viewport_height = 10;
 
         // Start at 0
         assert_eq!(app.log_scroll, 0);
@@ -263,6 +294,10 @@ mod tests {
         // Scroll up past 0 clamps at 0
         app.scroll_logs_up(10);
         assert_eq!(app.log_scroll, 0);
+
+        // Scroll down past max clamps at max
+        app.scroll_logs_down(100);
+        assert_eq!(app.log_scroll, 10);
     }
 
     #[test]
@@ -322,6 +357,7 @@ mod tests {
         fs::write(log_dir.join("agent.log"), "line 1\nline 2\nline 3\n").unwrap();
 
         let mut app = TuiApp::new(1);
+        app.log_viewport_height = 2;
         app.tasks = vec![Task {
             id: task_id.to_string(),
             name: "test-task".to_string(),
@@ -329,17 +365,114 @@ mod tests {
             ..Task::test_default()
         }];
 
-        // Set some scroll offset to verify it resets
-        app.log_scroll = 10;
+        // Set a non-bottom scroll position to verify load overrides it
+        app.log_scroll = 0;
+        app.log_follow = false;
 
         app.load_logs_for_selected_task(data_dir);
 
         assert_eq!(app.log_content, vec!["line 1", "line 2", "line 3"]);
-        assert_eq!(app.log_scroll, 0);
+        // Scroll starts at bottom: 3 lines - 2 viewport = 1
+        assert_eq!(app.log_scroll, 1);
+        assert!(app.log_follow);
 
         // Loading with no selection clears content
         app.task_list_state.select(None);
         app.load_logs_for_selected_task(data_dir);
         assert!(app.log_content.is_empty());
+    }
+
+    #[test]
+    fn test_follow_mode() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let data_dir = tmp_dir.path();
+
+        let task_id = "follow-task";
+        let log_dir = data_dir.join("tasks").join(task_id).join("output");
+        fs::create_dir_all(&log_dir).unwrap();
+        fs::write(
+            log_dir.join("agent.log"),
+            (0..20)
+                .map(|i| format!("line {i}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+
+        let mut app = TuiApp::new(1);
+        app.log_viewport_height = 10;
+        app.tasks = vec![Task {
+            id: task_id.to_string(),
+            name: "follow-task".to_string(),
+            branch_name: "tsk/feat/follow-task/follow-task".to_string(),
+            ..Task::test_default()
+        }];
+
+        // Load logs - should be at bottom with follow enabled
+        app.load_logs_for_selected_task(data_dir);
+        assert!(app.log_follow);
+        assert_eq!(app.log_scroll, 10); // 20 lines - 10 viewport
+
+        // Scroll up disables follow
+        app.scroll_logs_up(5);
+        assert!(!app.log_follow);
+        assert_eq!(app.log_scroll, 5);
+
+        // Scroll back to bottom re-enables follow
+        app.scroll_logs_down(5);
+        assert!(app.log_follow);
+        assert_eq!(app.log_scroll, 10);
+
+        // Scroll up again, then refresh - should NOT auto-scroll
+        app.scroll_logs_up(3);
+        assert!(!app.log_follow);
+        let scroll_before = app.log_scroll;
+        app.refresh_logs(data_dir);
+        assert_eq!(app.log_scroll, scroll_before);
+
+        // Re-enable follow and refresh with more content - should auto-scroll
+        app.log_follow = true;
+        fs::write(
+            log_dir.join("agent.log"),
+            (0..30)
+                .map(|i| format!("line {i}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        app.refresh_logs(data_dir);
+        assert_eq!(app.log_scroll, 20); // 30 lines - 10 viewport
+    }
+
+    #[test]
+    fn test_scroll_clamping() {
+        let mut app = TuiApp::new(1);
+        // Viewport bigger than content
+        app.log_content = (0..5).map(|i| format!("line {i}")).collect();
+        app.log_viewport_height = 10;
+
+        assert_eq!(app.max_log_scroll(), 0);
+
+        app.scroll_logs_down(100);
+        assert_eq!(app.log_scroll, 0);
+        assert!(app.log_follow);
+    }
+
+    #[test]
+    fn test_max_log_scroll() {
+        let mut app = TuiApp::new(1);
+
+        // 20 lines, viewport 10
+        app.log_content = (0..20).map(|i| format!("line {i}")).collect();
+        app.log_viewport_height = 10;
+        assert_eq!(app.max_log_scroll(), 10);
+
+        // 5 lines, viewport 10
+        app.log_content = (0..5).map(|i| format!("line {i}")).collect();
+        assert_eq!(app.max_log_scroll(), 0);
+
+        // 0 lines, viewport 10
+        app.log_content.clear();
+        assert_eq!(app.max_log_scroll(), 0);
     }
 }

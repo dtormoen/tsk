@@ -122,7 +122,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 **TUI Module** (`src/tui/`)
 - Interactive terminal dashboard for `tsk server start` using ratatui/crossterm; auto-enabled when stdout is a terminal, falls back to plain text when piped
 - `ServerEvent` / `ServerEventSender`: Structured event channel from scheduler to TUI
-- `TuiApp`: Application state (task list, log viewer, server status, panel focus)
+- `TuiApp`: Application state (task list, log viewer with follow mode and bounded scroll, server status, panel focus)
 - `ui::render()`: Two-panel layout with dynamic task panel width (content-fit, min 30 cols, max 40%) and header/footer
 - `input::handle_event()`: Keyboard (vim-style + arrows) and mouse input handling
 - `run::run_tui()`: Async event loop multiplexing crossterm events, server events, and periodic timers

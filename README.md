@@ -191,7 +191,7 @@ Manage the TSK server daemon for parallel task execution. The server automatical
 - `tsk server start` - Start the TSK server daemon
 - `tsk server stop` - Stop the running TSK server
 
-When running in an interactive terminal, `tsk server start` shows a TUI dashboard with a split-pane view: task list on the left, log viewer on the right. When stdout is piped or non-interactive (e.g. `tsk server start | cat`), plain text output is used instead.
+When running in an interactive terminal, `tsk server start` shows a TUI dashboard with a split-pane view: task list on the left, log viewer on the right. The log viewer starts at the bottom of the selected task's output and auto-follows new content. Scrolling up pauses follow mode; scrolling back to the bottom resumes it. When stdout is piped or non-interactive (e.g. `tsk server start | cat`), plain text output is used instead.
 
 **TUI Controls:**
 - `Left` / `h`: Focus the task list panel
@@ -200,6 +200,7 @@ When running in an interactive terminal, `tsk server start` shows a TUI dashboar
 - `Page Up` / `Page Down`: Jump scroll in log viewer
 - Click: Select a task or focus a panel
 - Mouse scroll: scroll tasks or logs
+- `Shift+click` / `Shift+drag`: Select text (bypasses mouse capture for clipboard use)
 - `q`: Quit the server (graceful shutdown)
 
 ### Configuration Commands

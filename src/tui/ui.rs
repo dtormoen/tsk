@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 
 use crate::task::TaskStatus;
@@ -173,13 +173,17 @@ fn render_task_list(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::
 }
 
 /// Render the log viewer panel on the right side.
-fn render_log_viewer(app: &TuiApp, frame: &mut Frame, area: ratatui::layout::Rect) {
+fn render_log_viewer(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::Rect) {
     let focused = app.focus == Panel::Logs;
     let border_style = if focused {
         Style::default().fg(Color::Cyan)
     } else {
         Style::default()
     };
+
+    // Track viewport height (excluding borders) for scroll clamping
+    let inner = Block::default().borders(Borders::ALL).inner(area);
+    app.log_viewport_height = inner.height as usize;
 
     let selected_task_name = app
         .task_list_state
@@ -216,8 +220,8 @@ fn render_log_viewer(app: &TuiApp, frame: &mut Frame, area: ratatui::layout::Rec
         );
         let paragraph = Paragraph::new(text)
             .block(block)
-            .scroll((app.log_scroll, 0))
-            .wrap(Wrap { trim: false });
+            // ratatui's Paragraph::scroll takes (u16, u16); clamp for logs > 65535 lines
+            .scroll((app.log_scroll.min(u16::MAX as usize) as u16, 0));
         frame.render_widget(paragraph, area);
     }
 }
