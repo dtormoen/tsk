@@ -221,13 +221,6 @@ impl TaskRunner {
             }
         };
 
-        self.write_log(
-            &mut agent_log,
-            LogLine::tsk_message(format!(
-                "Building Docker image: {}/{}/{}",
-                task.stack, task.agent, task.project
-            )),
-        );
 
         let task_image_manager = DockerImageManager::new(
             &self.ctx,
