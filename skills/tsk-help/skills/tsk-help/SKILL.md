@@ -14,13 +14,13 @@ TSK delegates development tasks to AI agents (Claude Code, Codex) running in iso
 ### Run a task immediately
 
 ```bash
-tsk run --type feat --name add-auth --description "Add JWT authentication to the API"
+tsk run --type feat --name add-auth --prompt "Add JWT authentication to the API"
 ```
 
 Key flags:
 - `--type` (`-t`): Task template (feat, fix, doc, refactor, or custom templates)
 - `--name` (`-n`): Human-readable name used in the git branch
-- `--description` (`-d`): Task description (replaces `{{DESCRIPTION}}` in templates)
+- `--prompt` (`-p`): Task prompt (replaces `{{PROMPT}}` in templates)
 - `--agent`: Agent to use (claude, codex). Default: claude
 - `--edit`: Open the full prompt in your editor before sending
 
@@ -39,8 +39,8 @@ Drops you into a container with your repo copy and agent installed. Work interac
 tsk server start --workers 4
 
 # Queue tasks
-tsk add -t feat -n user-api -d "Add REST API for user management"
-tsk add -t fix -n login-bug -d "Fix session timeout on login page"
+tsk add -t feat -n user-api -p "Add REST API for user management"
+tsk add -t fix -n login-bug -p "Fix session timeout on login page"
 
 # Check status
 tsk list
@@ -51,9 +51,9 @@ tsk list
 Child tasks start from where the parent left off:
 
 ```bash
-tsk add -t feat -n add-api -d "Add users API endpoint"
+tsk add -t feat -n add-api -p "Add users API endpoint"
 tsk list  # get the task ID
-tsk add -t feat -n add-tests -d "Add tests for users API" --parent <taskid>
+tsk add -t feat -n add-tests -p "Add tests for users API" --parent <taskid>
 ```
 
 ### Other commands
@@ -75,7 +75,7 @@ This is the output of `tsk help`
 Run the same task with multiple agents to compare results:
 
 ```bash
-tsk add -t feat -n greeting --agent codex,claude -d "Add a greeting feature"
+tsk add -t feat -n greeting --agent codex,claude -p "Add a greeting feature"
 ```
 
 ## Custom templates
@@ -87,7 +87,7 @@ mkdir -p ~/.config/tsk/templates
 cat > ~/.config/tsk/templates/issue-bot.md << 'EOF'
 Solve the GitHub issue below. Write tests and a descriptive commit message.
 
-{{DESCRIPTION}}
+{{PROMPT}}
 EOF
 
 # Use it

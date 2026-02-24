@@ -174,7 +174,7 @@ mod tests {
             task_args: TaskArgs {
                 name: Some("test-multi".to_string()),
                 r#type: "generic".to_string(),
-                description: Some("Test description".to_string()),
+                prompt: Some("Test description".to_string()),
                 agent: Some("codex,claude".to_string()),
                 repo: Some(test_repo.path().to_string_lossy().to_string()),
                 ..Default::default()

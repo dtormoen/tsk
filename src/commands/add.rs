@@ -76,7 +76,7 @@ impl Command for AddCommand {
                     // Disable edit mode — instructions are already finalized from the first task
                     let task = builder
                         .edit(false)
-                        .prompt_file(Some(temp_instructions.clone()))
+                        .existing_instructions_file(Some(temp_instructions.clone()))
                         .build(ctx)
                         .await?;
 
@@ -173,7 +173,7 @@ mod tests {
             task_args: TaskArgs {
                 name: Some("test".to_string()),
                 r#type: "nonexistent".to_string(),
-                description: Some("test description".to_string()),
+                prompt: Some("test description".to_string()),
                 repo: Some(".".to_string()),
                 ..Default::default()
             },
@@ -239,7 +239,7 @@ mod tests {
             task_args: TaskArgs {
                 name: Some("test-repo-path".to_string()),
                 r#type: "generic".to_string(),
-                description: Some("Test with repo path".to_string()),
+                prompt: Some("Test with repo path".to_string()),
                 repo: Some(test_repo.path().to_string_lossy().to_string()),
                 ..Default::default()
             },
@@ -275,7 +275,7 @@ mod tests {
             task_args: TaskArgs {
                 name: Some("test-multi".to_string()),
                 r#type: "generic".to_string(),
-                description: Some("Test with multiple agents".to_string()),
+                prompt: Some("Test with multiple agents".to_string()),
                 agent: Some("codex,claude".to_string()),
                 repo: Some(test_repo.path().to_string_lossy().to_string()),
                 ..Default::default()
@@ -311,7 +311,7 @@ mod tests {
             task_args: TaskArgs {
                 name: Some("test-invalid".to_string()),
                 r#type: "generic".to_string(),
-                description: Some("Test description".to_string()),
+                prompt: Some("Test description".to_string()),
                 agent: Some("claude,invalid-agent,codex".to_string()),
                 repo: Some(test_repo.path().to_string_lossy().to_string()),
                 ..Default::default()
@@ -340,7 +340,7 @@ mod tests {
             task_args: TaskArgs {
                 name: Some("test-duplicate".to_string()),
                 r#type: "generic".to_string(),
-                description: Some("Test with duplicate agents".to_string()),
+                prompt: Some("Test with duplicate agents".to_string()),
                 agent: Some("codex,codex".to_string()),
                 repo: Some(test_repo.path().to_string_lossy().to_string()),
                 ..Default::default()
@@ -376,7 +376,7 @@ mod tests {
         let cmd = AddCommand {
             task_args: TaskArgs {
                 r#type: "generic".to_string(),
-                description: Some("Test description".to_string()),
+                prompt: Some("Test description".to_string()),
                 repo: Some(test_repo.path().to_string_lossy().to_string()),
                 ..Default::default()
             },
@@ -442,7 +442,7 @@ mod tests {
             task_args: TaskArgs {
                 name: Some("test-multi-edit".to_string()),
                 r#type: "generic".to_string(),
-                description: Some("Test with multiple agents in edit mode".to_string()),
+                prompt: Some("Test with multiple agents in edit mode".to_string()),
                 edit: true,
                 agent: Some("codex,claude".to_string()),
                 repo: Some(test_repo.path().to_string_lossy().to_string()),

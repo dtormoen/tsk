@@ -27,8 +27,10 @@ pub struct TaskBuilder {
     name: Option<String>,
     task_type: Option<String>,
     prompt: Option<String>,
-    /// Path to a file containing the task prompt
+    /// Path to a file containing the task prompt (contents injected into template)
     prompt_file_path: Option<PathBuf>,
+    /// Path to an existing instructions file to use as-is (for retry)
+    existing_instructions_file: Option<PathBuf>,
     edit: bool,
     agent: Option<String>,
     stack: Option<String>,
@@ -51,6 +53,7 @@ impl TaskBuilder {
             task_type: None,
             prompt: None,
             prompt_file_path: None,
+            existing_instructions_file: None,
             edit: false,
             agent: None,
             stack: None,
@@ -80,8 +83,8 @@ impl TaskBuilder {
         // Note: We intentionally don't copy parent_id when retrying a task.
         // The retry creates a fresh task from the current repository state.
 
-        // Copy the prompt file path from the existing task's instructions file
-        builder.prompt_file_path = Some(PathBuf::from(&task.instructions_file));
+        // Use existing instructions as-is for retry (bypasses template rendering)
+        builder.existing_instructions_file = Some(PathBuf::from(&task.instructions_file));
 
         builder
     }
@@ -110,9 +113,15 @@ impl TaskBuilder {
         self
     }
 
-    /// Sets the path to a file containing the task prompt
+    /// Sets the path to a file containing the task prompt (contents injected into template)
     pub fn prompt_file(mut self, path: Option<PathBuf>) -> Self {
         self.prompt_file_path = path;
+        self
+    }
+
+    /// Sets an existing instructions file to copy as-is (bypasses template rendering)
+    pub fn existing_instructions_file(mut self, path: Option<PathBuf>) -> Self {
+        self.existing_instructions_file = path;
         self
     }
 
@@ -205,6 +214,7 @@ impl TaskBuilder {
         if template_needs_prompt
             && self.prompt.is_none()
             && self.prompt_file_path.is_none()
+            && self.existing_instructions_file.is_none()
             && !self.edit
         {
             return Err("Either prompt or prompt file must be provided, or use edit mode".into());
@@ -481,67 +491,86 @@ impl TaskBuilder {
         task_type: &str,
         ctx: &AppContext,
     ) -> Result<String, Box<dyn Error>> {
-        if let Some(ref file_path) = self.prompt_file_path {
-            // File path provided - read and copy content
+        if let Some(ref file_path) = self.existing_instructions_file {
+            // Existing instructions file (retry) - copy content as-is
             let content = crate::file_system::read_file(file_path).await?;
             crate::file_system::write_file(dest_path, &content).await?;
-        } else if let Some(ref desc) = self.prompt {
-            // Check if a template exists for this task type
-            let content = if task_type != "generic" {
-                match find_template(task_type, self.repo_root.as_deref(), &ctx.tsk_env()) {
-                    Ok(template_content) => {
-                        let body = strip_frontmatter(&template_content);
-                        let mut content = body.replace("{{PROMPT}}", desc);
-                        if body.contains("{{DESCRIPTION}}") {
-                            eprintln!(
-                                "Warning: {{{{DESCRIPTION}}}} placeholder is deprecated. Use {{{{PROMPT}}}} instead."
-                            );
-                            content = content.replace("{{DESCRIPTION}}", desc);
-                        }
-                        content
-                    }
-                    Err(e) => {
-                        eprintln!("Warning: Failed to read template: {e}");
-                        desc.clone()
-                    }
+        } else {
+            // Resolve prompt: prefer explicit prompt, fall back to file contents
+            let effective_prompt = if let Some(ref prompt_text) = self.prompt {
+                Some(prompt_text.clone())
+            } else if let Some(ref file_path) = self.prompt_file_path {
+                let content = crate::file_system::read_file(file_path).await?;
+                let trimmed = content.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
                 }
             } else {
-                desc.clone()
+                None
             };
 
-            crate::file_system::write_file(dest_path, &content).await?;
-        } else {
-            // No prompt provided - use template as-is or create empty file
-            let initial_content = if task_type != "generic" {
-                match find_template(task_type, self.repo_root.as_deref(), &ctx.tsk_env()) {
-                    Ok(template_content) => {
-                        let body = strip_frontmatter(&template_content);
-                        if self.edit
-                            && (body.contains("{{PROMPT}}") || body.contains("{{DESCRIPTION}}"))
-                        {
-                            let content = body
-                                .replace("{{PROMPT}}", "<!-- TODO: Add your task prompt here -->");
+            if let Some(ref prompt_text) = effective_prompt {
+                // Check if a template exists for this task type
+                let content = if task_type != "generic" {
+                    match find_template(task_type, self.repo_root.as_deref(), &ctx.tsk_env()) {
+                        Ok(template_content) => {
+                            let body = strip_frontmatter(&template_content);
+                            let mut content = body.replace("{{PROMPT}}", prompt_text);
                             if body.contains("{{DESCRIPTION}}") {
                                 eprintln!(
                                     "Warning: {{{{DESCRIPTION}}}} placeholder is deprecated. Use {{{{PROMPT}}}} instead."
                                 );
+                                content = content.replace("{{DESCRIPTION}}", prompt_text);
                             }
-                            content.replace(
-                                "{{DESCRIPTION}}",
-                                "<!-- TODO: Add your task prompt here -->",
-                            )
-                        } else {
-                            // Use template as-is (for templates without prompt placeholder)
-                            body.to_string()
+                            content
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: Failed to read template: {e}");
+                            prompt_text.clone()
                         }
                     }
-                    Err(_) => String::new(),
-                }
-            } else {
-                String::new()
-            };
+                } else {
+                    prompt_text.clone()
+                };
 
-            crate::file_system::write_file(dest_path, &initial_content).await?;
+                crate::file_system::write_file(dest_path, &content).await?;
+            } else {
+                // No prompt provided - use template as-is or create empty file
+                let initial_content = if task_type != "generic" {
+                    match find_template(task_type, self.repo_root.as_deref(), &ctx.tsk_env()) {
+                        Ok(template_content) => {
+                            let body = strip_frontmatter(&template_content);
+                            if self.edit
+                                && (body.contains("{{PROMPT}}") || body.contains("{{DESCRIPTION}}"))
+                            {
+                                let content = body.replace(
+                                    "{{PROMPT}}",
+                                    "<!-- TODO: Add your task prompt here -->",
+                                );
+                                if body.contains("{{DESCRIPTION}}") {
+                                    eprintln!(
+                                        "Warning: {{{{DESCRIPTION}}}} placeholder is deprecated. Use {{{{PROMPT}}}} instead."
+                                    );
+                                }
+                                content.replace(
+                                    "{{DESCRIPTION}}",
+                                    "<!-- TODO: Add your task prompt here -->",
+                                )
+                            } else {
+                                // Use template as-is (for templates without prompt placeholder)
+                                body.to_string()
+                            }
+                        }
+                        Err(_) => String::new(),
+                    }
+                } else {
+                    String::new()
+                };
+
+                crate::file_system::write_file(dest_path, &initial_content).await?;
+            }
         }
 
         Ok(dest_path.to_string_lossy().to_string())
@@ -792,7 +821,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_task_builder_with_instructions_file() {
+    async fn test_task_builder_with_prompt_file() {
         let (test_repo, ctx) = create_test_context().await;
         let current_dir = test_repo.path().to_path_buf();
 

@@ -4,6 +4,28 @@ use crate::task::TaskBuilder;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
+/// Resolves the deprecated `--description` flag into the `--prompt` value.
+///
+/// Errors if both `--prompt` and `--description` are provided.
+/// Prints a deprecation warning if `--description` is used.
+pub fn resolve_deprecation(
+    prompt: Option<String>,
+    description: Option<String>,
+) -> Result<Option<String>, Box<dyn Error>> {
+    match (prompt, description) {
+        (Some(_), Some(_)) => {
+            Err("Cannot use both --prompt and --description flags. Use --prompt/-p instead.".into())
+        }
+        (None, Some(desc)) => {
+            eprintln!(
+                "Warning: --description/-d is deprecated. Use --prompt/-p instead. This flag will be removed in a future release."
+            );
+            Ok(Some(desc))
+        }
+        (prompt, None) => Ok(prompt),
+    }
+}
+
 /// Shared task creation arguments extracted from CLI commands.
 ///
 /// Holds the common fields across Add, Run, and Shell commands and provides
@@ -13,8 +35,8 @@ use std::path::{Path, PathBuf};
 pub struct TaskArgs {
     pub name: Option<String>,
     pub r#type: String,
-    pub description: Option<String>,
     pub prompt: Option<String>,
+    pub prompt_file: Option<String>,
     pub edit: bool,
     pub agent: Option<String>,
     pub stack: Option<String>,
@@ -53,10 +75,7 @@ impl TaskArgs {
     /// Reads piped stdin and merges with the CLI prompt.
     pub fn resolve_prompt(&self) -> Result<Option<String>, Box<dyn Error>> {
         let piped_input = read_piped_input()?;
-        Ok(merge_prompt_with_stdin(
-            self.description.clone(),
-            piped_input,
-        ))
+        Ok(merge_prompt_with_stdin(self.prompt.clone(), piped_input))
     }
 
     /// Finds the repository root from `--repo` or current directory.
@@ -83,7 +102,7 @@ impl TaskArgs {
             .name(name)
             .task_type(self.r#type.clone())
             .prompt(prompt)
-            .prompt_file(self.prompt.as_ref().map(PathBuf::from))
+            .prompt_file(self.prompt_file.as_ref().map(PathBuf::from))
             .edit(self.edit)
             .agent(agent)
             .stack(self.stack.clone())

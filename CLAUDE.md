@@ -15,9 +15,9 @@ TSK implements a command pattern with dependency injection for testability. The 
 **CLI Commands** (`src/commands/`)
 
 *Task Commands (implicit "task" noun):*
-- `run`: Immediately execute single tasks (tracked in DB, supports piped input via stdin for descriptions, supports `--no-network-isolation`, supports `--dind`; Ctrl+C marks task as CANCELLED)
-- `shell`: Launch sandbox container with agent for interactive use (tracked in DB, supports piped input via stdin for descriptions, supports `--no-network-isolation`, supports `--dind`; SIGTERM marks task as CANCELLED)
-- `add`: Queue tasks with descriptions and templates (supports piped input via stdin for descriptions, supports `--parent <taskid>` for task chaining, supports `--no-network-isolation`, supports `--dind`)
+- `run`: Immediately execute single tasks (tracked in DB, supports piped input via stdin for prompts, supports `--no-network-isolation`, supports `--dind`; Ctrl+C marks task as CANCELLED)
+- `shell`: Launch sandbox container with agent for interactive use (tracked in DB, supports piped input via stdin for prompts, supports `--no-network-isolation`, supports `--dind`; SIGTERM marks task as CANCELLED)
+- `add`: Queue tasks with prompts and templates (supports piped input via stdin for prompts, supports `--parent <taskid>` for task chaining, supports `--no-network-isolation`, supports `--dind`)
 - `list`: Display task status and results (shows parent task information)
 - `cancel <task-id>...`: Cancel running or queued tasks (marks as CANCELLED, kills containers for running tasks)
 - `clean`: Delete completed tasks (skips parents with queued/running children)
@@ -51,7 +51,7 @@ TSK implements a command pattern with dependency injection for testability. The 
   - **Server-scheduled**: `add` stores tasks as `Queued`, server scheduler picks them up and transitions to `Running`
   - **Inline**: `run`/`shell` store tasks as `Running` (via `TaskRunner::store_and_execute_task`) and execute immediately; the `Running` status prevents the scheduler from picking them up
 - Branch naming: `tsk/{task-type}/{task-name}/{task-id}` (human-readable format with task type, sanitized task name, and 8-character unique identifier)
-- **Task Chaining**: Tasks can specify a parent task via `--parent <taskid>` (short: `-p`)
+- **Task Chaining**: Tasks can specify a parent task via `--parent <taskid>`
   - Database schema supports multiple parents (`parent_ids` stored as JSON array in TEXT column), but CLI currently accepts only one
   - Child tasks wait until their parent task completes before starting
   - Repository is copied from the completed parent task's folder (not user's working directory)

@@ -78,13 +78,13 @@ This workflow is really powerful when used with terminal multiplexers like `tmux
 TSK has flags that help you avoid repetitive instructions like "make sure unit tests pass", "update documentation", or "write a descriptive commit message". Consider this command which immediately kicks off an autonomous agent in a sandbox to implement a new feature:
 
 ```bash
-tsk run --type feat --name greeting --description "Add a greeting to all TSK commands."
+tsk run --type feat --name greeting --prompt "Add a greeting to all TSK commands."
 ```
 
 Some important parts of the command:
 - `--type` specifies the type of task the agent is working on. Using TSK built-in tasks or writing your own can save a lot of boilerplate. Check out [feat.md](./templates/feat.md) for the `feat` type and [templates](./templates) for all task types.
 - `--name` will be used in the final git branch to help you remember what task the branch contains.
-- `--description` is used to fill in the `{{description}}` placeholder in [feat.md](./templates/feat.md).
+- `--prompt` is used to fill in the `{{PROMPT}}` placeholder in [feat.md](./templates/feat.md).
 
 Similar to `tsk shell`, the agent will run in a sandbox so it will not interfere with any ongoing work and will create a new branch in your repository in the background once it is done working.
 
@@ -105,13 +105,13 @@ Now, in another terminal window, we can quickly queue up multiple tasks:
 
 ```bash
 # Add a task. Notice the similarity to the `tsk run` command
-tsk add --type doc --name tsk-architecture --description "Tell me how TSK works"
+tsk add --type doc --name tsk-architecture --prompt "Tell me how TSK works"
 
 # Look at the task queue. Your task `tsk-architecture` should be present in the list
 tsk list
 
 # Add another task. Notice the short flag names
-tsk add -t feat -n greeting -d "Add a silly robot greeting to every TSK command"
+tsk add -t feat -n greeting -p "Add a silly robot greeting to every TSK command"
 
 # Now there should be two running tasks
 tsk list
@@ -129,17 +129,17 @@ After you try this command out, try these next steps:
 
 ### Task Chaining
 
-Chain tasks together with `--parent` (`-p`) so a child task starts from where its parent left off:
+Chain tasks together with `--parent` so a child task starts from where its parent left off:
 
 ```bash
 # First task: set up the foundation
-tsk add -t feat -n add-api -d "Add a REST API endpoint for users"
+tsk add -t feat -n add-api -p "Add a REST API endpoint for users"
 
 # Check the task list to get the task ID
 tsk list
 
 # Second task: chain it to the first (replace <taskid> with the parent's ID)
-tsk add -t feat -n add-tests -d "Add integration tests for the users API" --parent <taskid>
+tsk add -t feat -n add-tests -p "Add integration tests for the users API" --parent <taskid>
 ```
 
 Child tasks wait for their parent to complete, then start from the parent's final commit. `tsk list` shows these tasks as `WAITING`. If a parent fails, its children are automatically marked as `FAILED`; if a parent is cancelled, its children are marked as `CANCELLED`. Chains of any length (A → B → C) are supported.
@@ -152,19 +152,19 @@ Let's create a very basic way to automate working on GitHub issues:
 # First create the tsk template configuration directory
 mkdir -p ~/.config/tsk/templates
 
-# Create a very simple template. Notice the use of the "{{DESCRIPTION}}" placeholder
+# Create a very simple template. Notice the use of the "{{PROMPT}}" placeholder
 cat > ~/.config/tsk/templates/issue-bot.md << 'EOF'
 Solve the GitHub issue below. Make sure it is tested and write a descriptive commit
 message describing the changes after you are done.
 
-{{DESCRIPTION}}
+{{PROMPT}}
 EOF
 
 # Make sure tsk sees the new `issue-bot` task template
 tsk template list
 
 # Pipe in some input to start the task
-# Piped input automatically replaces the {{DESCRIPTION}} placeholder
+# Piped input automatically replaces the {{PROMPT}} placeholder
 gh issue view <issue-number> | tsk add -t issue-bot -n fix-my-issue
 ```
 
@@ -349,7 +349,7 @@ I'm working on improving this part of `tsk` to be as seamless and easy to set up
 
 ### Creating Templates
 
-Templates are simply markdown files that get passed to agents. TSK additionally adds a convenience `{{description}}` placeholder that will get replaced by anything you pipe into tsk or pass in via the `-d/--description` flag.
+Templates are simply markdown files that get passed to agents. TSK additionally adds a convenience `{{PROMPT}}` placeholder that will get replaced by anything you pipe into tsk or pass in via the `-p/--prompt` flag.
 
 To inspect an existing template, run `tsk template show <template>`. To customize a built-in template, run `tsk template edit <template>` — TSK will copy it to `~/.config/tsk/templates/` and open it in your `$EDITOR`.
 

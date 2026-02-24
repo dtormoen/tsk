@@ -50,12 +50,12 @@ pub fn read_piped_input() -> Result<Option<String>, io::Error> {
 
 /// Merges piped input with existing prompt, warning if both exist
 ///
-/// This function handles the priority logic for combining CLI --description/--prompt
+/// This function handles the priority logic for combining a CLI --prompt
 /// flag with piped stdin input. Piped input takes precedence over the CLI flag.
 ///
 /// # Arguments
 ///
-/// - `cli_prompt` - Prompt provided via --description or --prompt flag
+/// - `cli_prompt` - Prompt provided via --prompt flag
 /// - `piped_input` - Prompt read from stdin pipe
 pub fn merge_prompt_with_stdin(
     cli_prompt: Option<String>,
@@ -63,9 +63,7 @@ pub fn merge_prompt_with_stdin(
 ) -> Option<String> {
     match (cli_prompt, piped_input) {
         (Some(_), Some(piped)) => {
-            eprintln!(
-                "Warning: Both --description flag and piped input provided. Using piped input."
-            );
+            eprintln!("Warning: Both --prompt flag and piped input provided. Using piped input.");
             Some(piped)
         }
         (None, Some(piped)) => Some(piped),
@@ -139,7 +137,7 @@ mod tests {
             task_args: TaskArgs {
                 name: Some("test-with-desc".to_string()),
                 r#type: "generic".to_string(),
-                description: Some("CLI description".to_string()),
+                prompt: Some("CLI description".to_string()),
                 repo: Some(test_repo.path().to_string_lossy().to_string()),
                 ..Default::default()
             },
@@ -202,7 +200,7 @@ mod tests {
             task_args: TaskArgs {
                 name: Some("test-shell".to_string()),
                 r#type: "generic".to_string(),
-                description: Some("Test description".to_string()),
+                prompt: Some("Test description".to_string()),
                 agent: Some("claude".to_string()),
                 ..Default::default()
             },
@@ -211,8 +209,8 @@ mod tests {
         let args = &cmd.task_args;
         assert_eq!(args.resolved_name(), "test-shell");
         assert_eq!(args.r#type, "generic");
-        assert_eq!(args.description, Some("Test description".to_string()));
-        assert_eq!(args.prompt, None);
+        assert_eq!(args.prompt, Some("Test description".to_string()));
+        assert_eq!(args.prompt_file, None);
         assert!(!args.edit);
         assert_eq!(args.agent, Some("claude".to_string()));
         assert_eq!(args.stack, None);

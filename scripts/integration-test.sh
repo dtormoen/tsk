@@ -120,7 +120,7 @@ run_stack_tests() {
             --stack "$stack" \
             --name "integ-$stack" \
             --type feat \
-            --description "Integration test for $stack stack" \
+            --prompt "Integration test for $stack stack" \
             --repo "$work_dir" \
             < /dev/null 2>&1 | tee "$LOG_DIR/${stack}-${engine}-add.log"; then
             echo -e "  ${RED}ERROR${NC}: Failed to queue $stack"
@@ -288,7 +288,7 @@ EOF
         --stack rust \
         --name "nested-${engine}" \
         --type feat \
-        --description "Nested integration test for ${engine}" \
+        --prompt "Nested integration test for ${engine}" \
         --repo "$TSK_ROOT" \
         < /dev/null 2>&1 | tee "$LOG_DIR/nested-${engine}.log"; then
         echo -e "  ${GREEN}PASSED${NC}: nested-${engine}"

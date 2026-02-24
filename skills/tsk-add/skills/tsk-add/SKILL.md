@@ -23,7 +23,7 @@ These are the task templates available for use with `tsk add -t <template>`:
 !`tsk template list`
 ```
 
-To see the full content of a template, run `tsk template show <template>`. When a task is created, the `{{DESCRIPTION}}` placeholder in the template is replaced with whatever you pipe in via heredoc or pass via the `-d` flag, and any YAML frontmatter is stripped. The result is what gets sent to the agent.
+To see the full content of a template, run `tsk template show <template>`. When a task is created, the `{{PROMPT}}` placeholder in the template is replaced with whatever you pipe in via heredoc or pass via the `-p` flag, and any YAML frontmatter is stripped. The result is what gets sent to the agent.
 
 ## Your Job
 
@@ -59,7 +59,7 @@ EOF
 - Reference specific files, functions, or architectural patterns discussed in the conversation
 - If the user provided additional context via $ARGUMENTS, incorporate that as well
 - Keep the description concise but complete - the agent can explore the codebase for details
-- Either pipe in input using HEREDOC format OR use the `-d` flag. They do not work together.
+- Either pipe in input using HEREDOC format OR use the `-p` flag. They do not work together.
 
 ## Example Output
 

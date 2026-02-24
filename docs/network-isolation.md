@@ -135,10 +135,10 @@ Network isolation can be disabled on a per-task basis using the `--no-network-is
 
 ```bash
 # Run a task without network isolation
-tsk run --no-network-isolation -d "Install dependencies requiring custom registry"
+tsk run --no-network-isolation -p "Install dependencies requiring custom registry"
 
 # Add a queued task without network isolation
-tsk add --no-network-isolation -d "Task needing unrestricted network access"
+tsk add --no-network-isolation -p "Task needing unrestricted network access"
 
 # Launch an interactive shell without network isolation
 tsk shell --no-network-isolation

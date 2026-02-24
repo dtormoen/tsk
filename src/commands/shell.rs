@@ -91,7 +91,7 @@ mod tests {
             task_args: TaskArgs {
                 name: Some("test-shell".to_string()),
                 r#type: "shell".to_string(),
-                description: Some("Test description".to_string()),
+                prompt: Some("Test description".to_string()),
                 agent: Some("claude".to_string()),
                 ..Default::default()
             },
@@ -100,8 +100,8 @@ mod tests {
         let args = &cmd.task_args;
         assert_eq!(args.resolved_name(), "test-shell");
         assert_eq!(args.r#type, "shell");
-        assert_eq!(args.description, Some("Test description".to_string()));
-        assert_eq!(args.prompt, None);
+        assert_eq!(args.prompt, Some("Test description".to_string()));
+        assert_eq!(args.prompt_file, None);
         assert!(!args.edit);
         assert_eq!(args.agent, Some("claude".to_string()));
         assert_eq!(args.stack, None);

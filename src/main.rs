@@ -29,7 +29,7 @@ use commands::{
     RunCommand, ShellCommand,
     docker::DockerBuildCommand,
     server::{ServerStartCommand, ServerStopCommand},
-    task_args::TaskArgs,
+    task_args::{self, TaskArgs},
     template::{TemplateEditCommand, TemplateListCommand, TemplateShowCommand},
 };
 use context::{AppContext, ContainerEngine};
@@ -72,13 +72,22 @@ enum Commands {
         #[arg(short = 't', long, default_value = "generic")]
         r#type: String,
 
-        /// Detailed description of what needs to be accomplished (can also be piped via stdin)
-        #[arg(short, long, conflicts_with = "prompt")]
+        /// Task prompt describing what needs to be accomplished (can also be piped via stdin)
+        #[arg(short = 'p', long = "prompt", conflicts_with = "prompt_file")]
+        prompt: Option<String>,
+
+        /// [deprecated: use --prompt/-p] Task prompt (deprecated alias)
+        #[arg(
+            short = 'd',
+            long = "description",
+            hide = true,
+            conflicts_with = "prompt_file"
+        )]
         description: Option<String>,
 
-        /// Path to prompt file to pass to the agent
-        #[arg(long, conflicts_with = "description")]
-        prompt: Option<String>,
+        /// Path to a file containing the task prompt (contents are injected into the template)
+        #[arg(long = "prompt-file")]
+        prompt_file: Option<String>,
 
         /// Open the prompt file in $EDITOR after creation
         #[arg(short, long)]
@@ -121,13 +130,22 @@ enum Commands {
         #[arg(short = 't', long, default_value = "shell")]
         r#type: String,
 
-        /// Detailed description of what needs to be accomplished (can also be piped via stdin)
-        #[arg(short, long, conflicts_with = "prompt")]
+        /// Task prompt describing what needs to be accomplished (can also be piped via stdin)
+        #[arg(short = 'p', long = "prompt", conflicts_with = "prompt_file")]
+        prompt: Option<String>,
+
+        /// [deprecated: use --prompt/-p] Task prompt (deprecated alias)
+        #[arg(
+            short = 'd',
+            long = "description",
+            hide = true,
+            conflicts_with = "prompt_file"
+        )]
         description: Option<String>,
 
-        /// Path to prompt file to pass to the agent
-        #[arg(long, conflicts_with = "description")]
-        prompt: Option<String>,
+        /// Path to a file containing the task prompt (contents are injected into the template)
+        #[arg(long = "prompt-file")]
+        prompt_file: Option<String>,
 
         /// Open the prompt file in $EDITOR after creation
         #[arg(short, long)]
@@ -167,13 +185,22 @@ enum Commands {
         #[arg(short = 't', long, default_value = "generic")]
         r#type: String,
 
-        /// Detailed description of what needs to be accomplished (can also be piped via stdin)
-        #[arg(short, long, conflicts_with = "prompt")]
+        /// Task prompt describing what needs to be accomplished (can also be piped via stdin)
+        #[arg(short = 'p', long = "prompt", conflicts_with = "prompt_file")]
+        prompt: Option<String>,
+
+        /// [deprecated: use --prompt/-p] Task prompt (deprecated alias)
+        #[arg(
+            short = 'd',
+            long = "description",
+            hide = true,
+            conflicts_with = "prompt_file"
+        )]
         description: Option<String>,
 
-        /// Path to prompt file to pass to the agent
-        #[arg(long, conflicts_with = "description")]
-        prompt: Option<String>,
+        /// Path to a file containing the task prompt (contents are injected into the template)
+        #[arg(long = "prompt-file")]
+        prompt_file: Option<String>,
 
         /// Open the prompt file in $EDITOR after creation
         #[arg(short, long)]
@@ -196,7 +223,7 @@ enum Commands {
         repo: Option<String>,
 
         /// Parent task ID (task will wait for parent to complete before starting)
-        #[arg(short = 'p', long = "parent")]
+        #[arg(long = "parent")]
         parent_id: Option<String>,
 
         /// Disable per-container network isolation (allows direct internet access)
@@ -249,7 +276,7 @@ enum Commands {
         #[arg(long)]
         project: Option<String>,
         /// Parent task ID (task will wait for parent to complete before starting)
-        #[arg(short = 'p', long = "parent")]
+        #[arg(long = "parent")]
         parent_id: Option<String>,
 
         /// Enable Docker-in-Docker support (relaxes container security for nested builds)
@@ -404,6 +431,7 @@ async fn main() {
             r#type,
             description,
             prompt,
+            prompt_file,
             edit,
             agent,
             stack,
@@ -412,28 +440,35 @@ async fn main() {
             parent_id,
             no_network_isolation,
             dind,
-        } => Box::new(AddCommand {
-            task_args: TaskArgs {
-                name,
-                r#type,
-                description,
-                prompt,
-                edit,
-                agent,
-                stack,
-                project,
-                repo,
-                no_network_isolation,
-                dind,
-            },
-            parent_id,
-        }),
+        } => {
+            let prompt = task_args::resolve_deprecation(prompt, description).unwrap_or_else(|e| {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            });
+            Box::new(AddCommand {
+                task_args: TaskArgs {
+                    name,
+                    r#type,
+                    prompt,
+                    prompt_file,
+                    edit,
+                    agent,
+                    stack,
+                    project,
+                    repo,
+                    no_network_isolation,
+                    dind,
+                },
+                parent_id,
+            })
+        }
         Commands::Run {
             engine: _,
             name,
             r#type,
             description,
             prompt,
+            prompt_file,
             edit,
             agent,
             stack,
@@ -441,28 +476,35 @@ async fn main() {
             repo,
             no_network_isolation,
             dind,
-        } => Box::new(RunCommand {
-            task_args: TaskArgs {
-                name,
-                r#type,
-                description,
-                prompt,
-                edit,
-                agent,
-                stack,
-                project,
-                repo,
-                no_network_isolation,
-                dind,
-            },
-            docker_client_override: None,
-        }),
+        } => {
+            let prompt = task_args::resolve_deprecation(prompt, description).unwrap_or_else(|e| {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            });
+            Box::new(RunCommand {
+                task_args: TaskArgs {
+                    name,
+                    r#type,
+                    prompt,
+                    prompt_file,
+                    edit,
+                    agent,
+                    stack,
+                    project,
+                    repo,
+                    no_network_isolation,
+                    dind,
+                },
+                docker_client_override: None,
+            })
+        }
         Commands::Shell {
             engine: _,
             name,
             r#type,
             description,
             prompt,
+            prompt_file,
             edit,
             agent,
             stack,
@@ -470,21 +512,27 @@ async fn main() {
             repo,
             no_network_isolation,
             dind,
-        } => Box::new(ShellCommand {
-            task_args: TaskArgs {
-                name: Some(name),
-                r#type,
-                description,
-                prompt,
-                edit,
-                agent,
-                stack,
-                project,
-                repo,
-                no_network_isolation,
-                dind,
-            },
-        }),
+        } => {
+            let prompt = task_args::resolve_deprecation(prompt, description).unwrap_or_else(|e| {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            });
+            Box::new(ShellCommand {
+                task_args: TaskArgs {
+                    name: Some(name),
+                    r#type,
+                    prompt,
+                    prompt_file,
+                    edit,
+                    agent,
+                    stack,
+                    project,
+                    repo,
+                    no_network_isolation,
+                    dind,
+                },
+            })
+        }
         Commands::Cancel {
             engine: _,
             task_ids,
