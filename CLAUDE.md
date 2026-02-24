@@ -15,8 +15,8 @@ TSK implements a command pattern with dependency injection for testability. The 
 **CLI Commands** (`src/commands/`)
 
 *Task Commands (implicit "task" noun):*
-- `run`: Immediately execute single tasks (tracked in DB, supports piped input via stdin for descriptions, supports `--no-network-isolation`, supports `--dind`)
-- `shell`: Launch sandbox container with agent for interactive use (tracked in DB, supports piped input via stdin for descriptions, supports `--no-network-isolation`, supports `--dind`)
+- `run`: Immediately execute single tasks (tracked in DB, supports piped input via stdin for descriptions, supports `--no-network-isolation`, supports `--dind`; Ctrl+C marks task as CANCELLED)
+- `shell`: Launch sandbox container with agent for interactive use (tracked in DB, supports piped input via stdin for descriptions, supports `--no-network-isolation`, supports `--dind`; SIGTERM marks task as CANCELLED)
 - `add`: Queue tasks with descriptions and templates (supports piped input via stdin for descriptions, supports `--parent <taskid>` for task chaining, supports `--no-network-isolation`, supports `--dind`)
 - `list`: Display task status and results (shows parent task information)
 - `cancel <task-id>...`: Cancel running or queued tasks (marks as CANCELLED, kills containers for running tasks)
@@ -99,7 +99,7 @@ TSK implements a command pattern with dependency injection for testability. The 
 
 **Server Mode** (`src/server/`)
 - `TskServer`: Continuous task execution daemon
-- Signal-based lifecycle: SIGTERM/SIGINT for graceful shutdown (kills managed containers, marks tasks as Failed, stops idle proxy, cleans up PID file); second signal forces immediate exit
+- Signal-based lifecycle: SIGTERM/SIGINT for graceful shutdown (kills managed containers, marks tasks as Cancelled, stops idle proxy, cleans up PID file); second signal forces immediate exit
 - Parallel task execution with configurable workers (default: 1)
 - Quit-when-done mode (`-q/--quit`): Exits automatically when queue is empty
 - Sound notifications (`-s/--sound`): Play sound on task completion (platform-specific)

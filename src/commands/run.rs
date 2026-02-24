@@ -7,6 +7,7 @@ use crate::task_runner::TaskRunner;
 use async_trait::async_trait;
 use std::error::Error;
 use std::sync::Arc;
+use tokio::signal::unix::{SignalKind, signal};
 
 pub struct RunCommand {
     pub task_args: TaskArgs,
@@ -60,8 +61,27 @@ impl Command for RunCommand {
                         .map_err(|e| -> Box<dyn Error> { e.into() })?,
                 ),
             };
-        let docker_manager = DockerManager::new(ctx, docker_client, None);
+        let docker_manager = DockerManager::new(ctx, docker_client.clone(), None);
         let task_runner = TaskRunner::new(ctx, docker_manager, None);
+
+        // Set up signal handler for Ctrl+C cancellation
+        let storage = ctx.task_storage();
+        let task_id = task.id.clone();
+        let container_name = format!("tsk-{}", task.id);
+        let cancel_client = docker_client.clone();
+        let cancel_storage = storage.clone();
+
+        tokio::spawn(async move {
+            let mut sigterm =
+                signal(SignalKind::terminate()).expect("Failed to listen for SIGTERM");
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {},
+                _ = sigterm.recv() => {},
+            }
+            let _ = cancel_storage.mark_cancelled(&task_id).await;
+            let _ = cancel_client.kill_container(&container_name).await;
+        });
+
         let result = task_runner
             .store_and_run(&task)
             .await

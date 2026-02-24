@@ -129,12 +129,12 @@ impl TskServer {
         Ok(())
     }
 
-    /// Perform graceful shutdown: kill managed containers, drain pool, mark tasks failed, cleanup.
+    /// Perform graceful shutdown: kill managed containers, drain pool, mark tasks cancelled, cleanup.
     ///
     /// This is called when the server receives a shutdown signal (SIGINT/SIGTERM).
     /// It stops the scheduler, kills any running containers managed by the server,
     /// waits for the worker pool to drain (workers handle their own network cleanup
-    /// as part of their normal exit path), marks remaining running tasks as failed,
+    /// as part of their normal exit path), marks remaining running tasks as cancelled,
     /// conditionally stops the proxy, and cleans up server resources.
     ///
     /// Uses pre-extracted Arc handles to avoid acquiring the scheduler mutex, which
@@ -179,7 +179,7 @@ impl TskServer {
         for task_id in &task_ids {
             if let Ok(Some(task)) = storage.get_task(task_id).await {
                 if task.status == TaskStatus::Running {
-                    let _ = storage.mark_failed(task_id, "Server shutdown").await;
+                    let _ = storage.mark_cancelled(task_id).await;
                 }
                 // Collect unique proxy configs and stop idle proxies
                 let resolved = crate::docker::resolve_config_from_task(
@@ -216,7 +216,7 @@ mod tests {
     use crate::test_utils::TrackedDockerClient;
 
     #[tokio::test]
-    async fn test_graceful_shutdown_kills_containers_and_marks_tasks_failed() {
+    async fn test_graceful_shutdown_kills_containers_and_marks_tasks_cancelled() {
         let mock_client = Arc::new(TrackedDockerClient::default());
         let ctx = Arc::new(AppContext::builder().build());
         let server = TskServer::with_workers(ctx.clone(), mock_client.clone(), 1, false, None);
@@ -273,14 +273,12 @@ mod tests {
             assert_eq!(remove_calls.len(), 0);
         }
 
-        // Verify both tasks are now marked as Failed
+        // Verify both tasks are now marked as Cancelled
         let t1 = storage.get_task("task-1").await.unwrap().unwrap();
-        assert_eq!(t1.status, TaskStatus::Failed);
-        assert_eq!(t1.error_message.as_deref(), Some("Server shutdown"));
+        assert_eq!(t1.status, TaskStatus::Cancelled);
 
         let t2 = storage.get_task("task-2").await.unwrap().unwrap();
-        assert_eq!(t2.status, TaskStatus::Failed);
-        assert_eq!(t2.error_message.as_deref(), Some("Server shutdown"));
+        assert_eq!(t2.status, TaskStatus::Cancelled);
     }
 
     #[tokio::test]

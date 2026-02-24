@@ -176,7 +176,7 @@ Now it's easy to solve GitHub issues with a simple task template. Try this with 
 
 Create, manage, and monitor tasks assigned to AI agents.
 
-- `tsk run` - Execute a task immediately
+- `tsk run` - Execute a task immediately (Ctrl+C marks task as CANCELLED)
 - `tsk shell` - Start a sandbox container with an interactive shell
 - `tsk add` - Queue a task (supports `--parent <taskid>` for task chaining)
 - `tsk list` - View task status and branches
@@ -191,6 +191,8 @@ Manage the TSK server daemon for parallel task execution. The server automatical
 
 - `tsk server start` - Start the TSK server daemon
 - `tsk server stop` - Stop the running TSK server
+
+Graceful shutdown (via `q`, Ctrl+C, or `tsk server stop`) marks any in-progress tasks as CANCELLED.
 
 When running in an interactive terminal, `tsk server start` shows a TUI dashboard with a split-pane view: task list on the left, log viewer on the right. In the task list, active tasks (Running, Queued, Waiting) appear above completed or failed tasks, and child tasks are grouped directly below their parent. The log viewer starts at the bottom of the selected task's output and auto-follows new content. Scrolling up pauses follow mode; scrolling back to the bottom resumes it. When stdout is piped or non-interactive (e.g. `tsk server start | cat`), plain text output is used instead.
 
