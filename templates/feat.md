@@ -3,7 +3,7 @@ description: Implement a new feature or change
 ---
 
 # Feature Request
-You need to implement a new feature or change. The description of the feature is:
+You need to implement a new feature or change. The details of the feature are:
 
 {{PROMPT}}
 

@@ -39,7 +39,7 @@ To see the full content of a template, run `tsk template show <template>`. When 
 
 3. **Pick the best template**: Based on the nature of the task, choose the template from the list above that best matches the work to be done (e.g., `feat` for new features, `fix` for bug fixes, `refactor` for restructuring, `doc` for documentation).
 
-4. **Write the task description**: Create a clear, self-contained description that includes:
+4. **Write the task prompt**: Create a clear, self-contained prompt that includes:
    - The goal of the change
    - Key design decisions from the conversation
    - Specific files or areas to focus on (if discussed)
@@ -49,7 +49,7 @@ To see the full content of a template, run `tsk template show <template>`. When 
 
 ```bash
 tsk add -t <template> -n "<task-name>" <<'EOF'
-<task description>
+<task prompt>
 EOF
 ```
 
@@ -58,7 +58,7 @@ EOF
 - Include enough context that an agent without access to this conversation can understand and execute the task
 - Reference specific files, functions, or architectural patterns discussed in the conversation
 - If the user provided additional context via $ARGUMENTS, incorporate that as well
-- Keep the description concise but complete - the agent can explore the codebase for details
+- Keep the prompt concise but complete - the agent can explore the codebase for details
 - Either pipe in input using HEREDOC format OR use the `-p` flag. They do not work together.
 
 ## Example Output

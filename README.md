@@ -349,7 +349,7 @@ I'm working on improving this part of `tsk` to be as seamless and easy to set up
 
 ### Creating Templates
 
-Templates are simply markdown files that get passed to agents. TSK additionally adds a convenience `{{PROMPT}}` placeholder that will get replaced by anything you pipe into tsk or pass in via the `-p/--prompt` flag.
+Templates are simply markdown files that get passed to agents. TSK additionally adds a convenience `{{PROMPT}}` placeholder that will get replaced by anything you pipe into tsk or pass in via the `-p/--prompt` flag, or by using `--prompt-file <path>` to read from a file. The legacy `{{DESCRIPTION}}` placeholder is still supported but deprecated.
 
 To inspect an existing template, run `tsk template show <template>`. To customize a built-in template, run `tsk template edit <template>` — TSK will copy it to `~/.config/tsk/templates/` and open it in your `$EDITOR`.
 

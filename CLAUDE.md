@@ -242,7 +242,7 @@ For user-facing breaking changes, add `!` after the type (e.g., `feat!:`, `fix!:
 ### Branch and Task Conventions
 
 - Tasks create branches with human-readable names: `tsk/{task-type}/{task-name}/{task-id}` (e.g., `tsk/feat/add-user-auth/a1b2c3d4`)
-- Template-based task descriptions encourage structured problem statements.
+- Template-based task prompts encourage structured problem statements.
 - Templates support YAML-style frontmatter (`---` delimited) with a `description` field shown in `tsk template list`. Frontmatter is stripped before template content reaches agents.
 
 ### Docker Infrastructure
