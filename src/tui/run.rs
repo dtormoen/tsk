@@ -11,7 +11,6 @@ use crossterm::terminal::{
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use std::collections::{HashMap, HashSet};
 use std::io::Stdout;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -230,11 +229,8 @@ async fn process_server_event(app: &mut TuiApp, event: &ServerEvent, storage: &T
     refresh_task_list(app, storage).await;
 }
 
-/// Sort tasks for TUI display: non-terminal tasks first, then terminal tasks,
-/// with children placed directly after their parent within each group.
-///
-/// Within each group, tasks without a parent-child relationship preserve their
-/// reverse-chronological order (newest first).
+/// Sort tasks for TUI display: non-terminal tasks first, then terminal tasks.
+/// Input order (reverse-chronological, newest first) is preserved within each group.
 pub(crate) fn sort_tasks_for_display(tasks: &mut Vec<Task>) {
     let is_terminal = |t: &Task| {
         matches!(
@@ -243,72 +239,11 @@ pub(crate) fn sort_tasks_for_display(tasks: &mut Vec<Task>) {
         )
     };
 
-    // Split into non-terminal and terminal, preserving reverse-chrono order
+    // Stable partition: non-terminal before terminal, preserving reverse-chrono order
     let (non_terminal, terminal): (Vec<_>, Vec<_>) = tasks.drain(..).partition(|t| !is_terminal(t));
-
-    let non_terminal = arrange_with_parents(non_terminal);
-    let terminal = arrange_with_parents(terminal);
 
     tasks.extend(non_terminal);
     tasks.extend(terminal);
-}
-
-/// Arrange tasks so children appear directly after their parent via DFS traversal.
-///
-/// Builds a parent→children map, identifies root tasks (no parent in this group),
-/// then performs a depth-first pre-order traversal. Input order (reverse-chrono)
-/// is preserved among roots and among siblings of the same parent.
-fn arrange_with_parents(group: Vec<Task>) -> Vec<Task> {
-    let group_ids: HashSet<String> = group.iter().map(|t| t.id.clone()).collect();
-
-    // Map from parent ID → child indices (preserves input order = reverse-chrono)
-    let mut children_map: HashMap<String, Vec<usize>> = HashMap::new();
-    let mut root_indices: Vec<usize> = Vec::new();
-
-    for (i, task) in group.iter().enumerate() {
-        if let Some(parent_id) = task.parent_ids.first()
-            && group_ids.contains(parent_id)
-        {
-            children_map.entry(parent_id.clone()).or_default().push(i);
-        } else {
-            root_indices.push(i);
-        }
-    }
-
-    let mut slots: Vec<Option<Task>> = group.into_iter().map(Some).collect();
-    let mut result: Vec<Task> = Vec::with_capacity(slots.len());
-
-    fn dfs(
-        idx: usize,
-        slots: &mut [Option<Task>],
-        children_map: &HashMap<String, Vec<usize>>,
-        result: &mut Vec<Task>,
-    ) {
-        if let Some(task) = slots[idx].take() {
-            if let Some(children) = children_map.get(&task.id) {
-                let child_indices: Vec<usize> = children.clone();
-                result.push(task);
-                for child_idx in child_indices {
-                    dfs(child_idx, slots, children_map, result);
-                }
-            } else {
-                result.push(task);
-            }
-        }
-    }
-
-    for root_idx in root_indices {
-        dfs(root_idx, &mut slots, &children_map, &mut result);
-    }
-
-    // Append orphans whose parent was in a different group
-    for slot in &mut slots {
-        if let Some(task) = slot.take() {
-            result.push(task);
-        }
-    }
-
-    result
 }
 
 #[cfg(test)]
@@ -362,7 +297,7 @@ mod tests {
     }
 
     #[test]
-    fn parent_child_grouping_with_mixed_statuses() {
+    fn parent_child_sorted_same_as_other_tasks() {
         let mut tasks = vec![
             task("parent-run", TaskStatus::Running, vec![]),
             task("child-run", TaskStatus::Running, vec!["parent-run"]),

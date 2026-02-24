@@ -845,7 +845,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sort_tasks_children_after_parents() {
+    fn test_sort_tasks_parent_child_no_special_grouping() {
         use crate::tui::run::sort_tasks_for_display;
 
         let now = chrono::Local::now();
@@ -965,7 +965,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sort_tasks_chain_a_b_c() {
+    fn test_sort_tasks_chain_preserves_input_order() {
         use crate::tui::run::sort_tasks_for_display;
 
         let now = chrono::Local::now();
@@ -1001,11 +1001,11 @@ mod tests {
         sort_tasks_for_display(&mut tasks);
 
         let ids: Vec<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
-        assert_eq!(ids, vec!["a", "b", "c"]);
+        assert_eq!(ids, vec!["c", "a", "b"]);
     }
 
     #[test]
-    fn test_sort_tasks_siblings_after_parent() {
+    fn test_sort_tasks_siblings_preserve_input_order() {
         use crate::tui::run::sort_tasks_for_display;
 
         let now = chrono::Local::now();
@@ -1041,8 +1041,7 @@ mod tests {
         sort_tasks_for_display(&mut tasks);
 
         let ids: Vec<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
-        // Parent first, then both children in reverse-chrono order
-        assert_eq!(ids, vec!["parent", "child2", "child1"]);
+        assert_eq!(ids, vec!["child2", "child1", "parent"]);
     }
 
     #[test]
