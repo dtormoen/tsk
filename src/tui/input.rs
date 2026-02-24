@@ -1,14 +1,31 @@
 use super::app::{Panel, TuiApp};
 use super::ui::task_display_height;
+use crate::task::TaskStatus;
 use crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Action returned by handle_event for the async event loop to execute.
+pub enum TuiAction {
+    CancelTask {
+        task_id: String,
+        was_running: bool,
+        is_interactive: bool,
+    },
+    DeleteTask {
+        task_id: String,
+        task_dir: Option<PathBuf>,
+    },
+}
 
 /// Handle a crossterm event, updating TUI application state accordingly.
 ///
 /// Processes keyboard navigation (vim-style and arrow keys) for panel
 /// switching, task selection, and log scrolling. Also handles mouse
 /// scroll events, routing to the appropriate panel based on cursor position.
-pub fn handle_event(app: &mut TuiApp, event: &Event, data_dir: &Path) {
+///
+/// Returns a [`TuiAction`] when the event triggers an async operation
+/// (cancel or delete) that the caller must execute.
+pub fn handle_event(app: &mut TuiApp, event: &Event, data_dir: &Path) -> Option<TuiAction> {
     match event {
         Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
             KeyCode::Char('q') => {
@@ -43,6 +60,44 @@ pub fn handle_event(app: &mut TuiApp, event: &Event, data_dir: &Path) {
             }
             KeyCode::PageUp if app.focus == Panel::Logs => {
                 app.scroll_logs_up(20);
+            }
+            KeyCode::Char('c') => {
+                if app.focus == Panel::Tasks
+                    && let Some(idx) = app.task_list_state.selected()
+                    && let Some(task) = app.tasks.get(idx)
+                {
+                    match task.status {
+                        TaskStatus::Queued | TaskStatus::Running => {
+                            return Some(TuiAction::CancelTask {
+                                task_id: task.id.clone(),
+                                was_running: task.status == TaskStatus::Running,
+                                is_interactive: task.is_interactive,
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            KeyCode::Char('d') => {
+                if app.focus == Panel::Tasks
+                    && let Some(idx) = app.task_list_state.selected()
+                    && let Some(task) = app.tasks.get(idx)
+                {
+                    match task.status {
+                        TaskStatus::Complete | TaskStatus::Failed | TaskStatus::Cancelled => {
+                            let task_dir = task
+                                .copied_repo_path
+                                .as_ref()
+                                .and_then(|p| p.parent())
+                                .map(|p| p.to_path_buf());
+                            return Some(TuiAction::DeleteTask {
+                                task_id: task.id.clone(),
+                                task_dir,
+                            });
+                        }
+                        _ => {}
+                    }
+                }
             }
             _ => {}
         },
@@ -120,6 +175,7 @@ pub fn handle_event(app: &mut TuiApp, event: &Event, data_dir: &Path) {
         }
         _ => {}
     }
+    None
 }
 
 /// Map a mouse row on the scrollbar track to a task list scroll offset.
@@ -721,5 +777,103 @@ mod tests {
             app.task_list_state.selected().unwrap() <= 3,
             "selected task should fit in viewport from offset 0"
         );
+    }
+
+    #[test]
+    fn test_cancel_running_task() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with_tasks();
+        app.tasks[0].status = TaskStatus::Running;
+        app.focus = Panel::Tasks;
+
+        let action = handle_event(&mut app, &make_key_event(KeyCode::Char('c')), tmp.path());
+        match action {
+            Some(TuiAction::CancelTask {
+                task_id,
+                was_running,
+                is_interactive,
+            }) => {
+                assert_eq!(task_id, "t1");
+                assert!(was_running);
+                assert!(!is_interactive);
+            }
+            _ => panic!("Expected CancelTask action"),
+        }
+    }
+
+    #[test]
+    fn test_cancel_queued_task() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with_tasks();
+        app.tasks[0].status = TaskStatus::Queued;
+        app.focus = Panel::Tasks;
+
+        let action = handle_event(&mut app, &make_key_event(KeyCode::Char('c')), tmp.path());
+        match action {
+            Some(TuiAction::CancelTask { was_running, .. }) => {
+                assert!(!was_running);
+            }
+            _ => panic!("Expected CancelTask action"),
+        }
+    }
+
+    #[test]
+    fn test_cancel_ignored_for_terminal_status() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with_tasks();
+        app.tasks[0].status = TaskStatus::Complete;
+        app.focus = Panel::Tasks;
+
+        let action = handle_event(&mut app, &make_key_event(KeyCode::Char('c')), tmp.path());
+        assert!(action.is_none());
+    }
+
+    #[test]
+    fn test_cancel_ignored_in_logs_panel() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with_tasks();
+        app.tasks[0].status = TaskStatus::Running;
+        app.focus = Panel::Logs;
+
+        let action = handle_event(&mut app, &make_key_event(KeyCode::Char('c')), tmp.path());
+        assert!(action.is_none());
+    }
+
+    #[test]
+    fn test_delete_completed_task() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with_tasks();
+        app.tasks[0].status = TaskStatus::Complete;
+        app.focus = Panel::Tasks;
+
+        let action = handle_event(&mut app, &make_key_event(KeyCode::Char('d')), tmp.path());
+        match action {
+            Some(TuiAction::DeleteTask { task_id, .. }) => {
+                assert_eq!(task_id, "t1");
+            }
+            _ => panic!("Expected DeleteTask action"),
+        }
+    }
+
+    #[test]
+    fn test_delete_ignored_for_running_task() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with_tasks();
+        app.tasks[0].status = TaskStatus::Running;
+        app.focus = Panel::Tasks;
+
+        let action = handle_event(&mut app, &make_key_event(KeyCode::Char('d')), tmp.path());
+        assert!(action.is_none());
+    }
+
+    #[test]
+    fn test_delete_ignored_in_logs_panel() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = app_with_tasks();
+        app.tasks[0].status = TaskStatus::Failed;
+        app.focus = Panel::Logs;
+
+        let action = handle_event(&mut app, &make_key_event(KeyCode::Char('d')), tmp.path());
+        assert!(action.is_none());
     }
 }

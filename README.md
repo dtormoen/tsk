@@ -205,6 +205,8 @@ When running in an interactive terminal, `tsk server start` shows a TUI dashboar
 - Mouse scroll: scroll tasks or logs
 - Scrollbar click/drag: Jump or scrub through the task list
 - `Shift+click` / `Shift+drag`: Select text (bypasses mouse capture for clipboard use)
+- `c`: Cancel the selected task (when task panel is focused, only RUNNING/QUEUED tasks)
+- `d`: Delete the selected task (when task panel is focused, only terminal-state tasks)
 - `q`: Quit the server (graceful shutdown)
 
 ### Configuration Commands

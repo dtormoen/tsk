@@ -1,8 +1,9 @@
 use crate::context::TaskStorage;
+use crate::context::docker_client::DockerClient;
 use crate::task::{Task, TaskStatus};
 use crate::tui::app::TuiApp;
 use crate::tui::events::ServerEvent;
-use crate::tui::input::handle_event;
+use crate::tui::input::{TuiAction, handle_event};
 use crate::tui::ui::render;
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::terminal::{
@@ -45,6 +46,7 @@ impl Drop for TerminalGuard {
 pub async fn run_tui(
     mut event_receiver: UnboundedReceiver<ServerEvent>,
     storage: Arc<TaskStorage>,
+    docker_client: Arc<dyn DockerClient>,
     data_dir: PathBuf,
     workers_total: usize,
     shutdown_notify: Arc<tokio::sync::Notify>,
@@ -101,7 +103,54 @@ pub async fn run_tui(
         tokio::select! {
             // Crossterm input events
             Some(event) = input_rx.recv() => {
-                handle_event(&mut app, &event, &data_dir);
+                if let Some(action) = handle_event(&mut app, &event, &data_dir) {
+                    match action {
+                        TuiAction::CancelTask { task_id, was_running, is_interactive } => {
+                            match storage.mark_cancelled(&task_id).await {
+                                Ok(_) => {
+                                    app.server_messages.push((chrono::Local::now(), format!("Cancelled {task_id}")));
+                                    if was_running {
+                                        let container_name = if is_interactive {
+                                            format!("tsk-interactive-{task_id}")
+                                        } else {
+                                            format!("tsk-{task_id}")
+                                        };
+                                        if let Err(e) = docker_client.kill_container(&container_name).await {
+                                            app.server_messages.push((chrono::Local::now(), format!("Warning: could not kill container: {e}")));
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    app.server_messages.push((chrono::Local::now(), format!("Failed to cancel {task_id}: {e}")));
+                                }
+                            }
+                            if let Ok(tasks) = storage.list_tasks().await {
+                                let tasks: Vec<_> = tasks.into_iter().rev().collect();
+                                app.update_tasks(tasks);
+                            }
+                        }
+                        TuiAction::DeleteTask { task_id, task_dir } => {
+                            match storage.delete_task(&task_id).await {
+                                Ok(_) => {
+                                    if let Some(dir) = task_dir
+                                        && crate::file_system::exists(&dir).await.unwrap_or(false)
+                                        && let Err(e) = crate::file_system::remove_dir(&dir).await
+                                    {
+                                        app.server_messages.push((chrono::Local::now(), format!("Failed to delete task directory: {e}")));
+                                    }
+                                    app.server_messages.push((chrono::Local::now(), format!("Deleted {task_id}")));
+                                }
+                                Err(e) => {
+                                    app.server_messages.push((chrono::Local::now(), format!("Failed to delete {task_id}: {e}")));
+                                }
+                            }
+                            if let Ok(tasks) = storage.list_tasks().await {
+                                let tasks: Vec<_> = tasks.into_iter().rev().collect();
+                                app.update_tasks(tasks);
+                            }
+                        }
+                    }
+                }
             }
             // Server events from the scheduler
             event = event_receiver.recv() => {

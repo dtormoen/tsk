@@ -55,6 +55,7 @@ impl Command for ServerStartCommand {
             (None, None)
         };
 
+        let docker_client_for_tui = docker_client.clone();
         let server = TskServer::with_workers(
             Arc::new(ctx.clone()),
             docker_client,
@@ -94,7 +95,7 @@ impl Command for ServerStartCommand {
                         }
                     }
                 }
-                tui_result = run_tui(event_receiver, storage, data_dir, workers_total, tui_shutdown) => {
+                tui_result = run_tui(event_receiver, storage, docker_client_for_tui, data_dir, workers_total, tui_shutdown) => {
                     if let Err(e) = tui_result {
                         eprintln!("TUI error: {e}");
                     }
