@@ -215,6 +215,9 @@ impl TuiApp {
 }
 
 /// Count the number of visual lines a LogLine occupies when rendered.
+///
+/// Does not account for ratatui word-wrapping, so the count is an
+/// underestimate for lines wider than the viewport.
 pub fn visual_lines_for(log_line: &LogLine) -> usize {
     match log_line {
         LogLine::Message { message, .. } => {

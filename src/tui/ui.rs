@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
 };
 
 use crate::agent::log_line::{Level, LogLine, TodoStatus};
@@ -222,6 +222,7 @@ fn render_log_viewer(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout:
         let text = Text::from(lines);
         let paragraph = Paragraph::new(text)
             .block(block)
+            .wrap(Wrap { trim: false })
             // ratatui's Paragraph::scroll takes (u16, u16); clamp for logs > 65535 lines
             .scroll((app.log_scroll.min(u16::MAX as usize) as u16, 0));
         frame.render_widget(paragraph, area);
@@ -246,69 +247,57 @@ fn render_log_line<'a>(log_line: &'a LogLine, lines: &mut Vec<Line<'a>>) {
 
             // Build prefix spans: tags + tool
             let mut prefix_spans: Vec<Span> = Vec::new();
-            let mut prefix_width = 0;
 
             for tag in tags {
-                let tag_text = format!("[{tag}]");
-                prefix_width += tag_text.len();
                 prefix_spans.push(Span::styled(
-                    tag_text,
+                    format!("[{tag}]"),
                     Style::default().fg(Color::Rgb(100, 100, 100)),
                 ));
             }
             if !tags.is_empty() {
                 prefix_spans.push(Span::raw(" "));
-                prefix_width += 1;
             }
 
             if let Some(tool_name) = tool {
-                let tool_text = format!("{tool_name}: ");
-                prefix_width += tool_text.len();
                 prefix_spans.push(Span::styled(
-                    tool_text,
+                    format!("{tool_name}: "),
                     Style::default().add_modifier(Modifier::BOLD),
                 ));
             }
 
-            // Render message lines
-            let msg_lines: Vec<&str> = message.lines().collect();
-            for (i, msg_line) in msg_lines.iter().enumerate() {
-                let mut spans = Vec::new();
-                if i == 0 {
-                    // First line gets the prefix
-                    spans.extend(prefix_spans.clone());
-                } else {
-                    // Subsequent lines indented to align with message start
-                    spans.push(Span::raw(" ".repeat(prefix_width)));
+            // Render message lines; ratatui Wrap handles long-line wrapping
+            if message.is_empty() {
+                lines.push(Line::from(prefix_spans));
+            } else {
+                for (i, msg_line) in message.lines().enumerate() {
+                    let mut spans = Vec::new();
+                    if i == 0 {
+                        spans.extend(prefix_spans.clone());
+                    }
+                    spans.push(Span::styled(
+                        msg_line.to_string(),
+                        Style::default().fg(level_color),
+                    ));
+                    lines.push(Line::from(spans));
                 }
-                spans.push(Span::styled(
-                    msg_line.to_string(),
-                    Style::default().fg(level_color),
-                ));
-                lines.push(Line::from(spans));
-            }
-
-            // Handle empty message (shouldn't happen normally, but be safe)
-            if msg_lines.is_empty() {
-                let mut spans = Vec::new();
-                spans.extend(prefix_spans);
-                lines.push(Line::from(spans));
             }
         }
         LogLine::Todo { tags, items } => {
             // Render each item as a checkbox line
-            for item in items {
+            for (i, item) in items.iter().enumerate() {
                 let mut spans: Vec<Span> = Vec::new();
 
-                // Tags prefix (only on first item)
-                for tag in tags {
-                    spans.push(Span::styled(
-                        format!("[{tag}]"),
-                        Style::default().fg(Color::Rgb(100, 100, 100)),
-                    ));
-                }
-                if !tags.is_empty() {
-                    spans.push(Span::raw(" "));
+                // Tags prefix on first item only
+                if i == 0 {
+                    for tag in tags {
+                        spans.push(Span::styled(
+                            format!("[{tag}]"),
+                            Style::default().fg(Color::Rgb(100, 100, 100)),
+                        ));
+                    }
+                    if !tags.is_empty() {
+                        spans.push(Span::raw(" "));
+                    }
                 }
 
                 match item.status {
