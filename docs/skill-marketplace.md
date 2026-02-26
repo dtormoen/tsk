@@ -1,15 +1,15 @@
-# TSK Skills Marketplace
+# `tsk` Skills Marketplace
 
-This repository serves as a Claude Code skills marketplace, providing installable skills that teach Claude how to work with TSK. Skills follow the [Agent Skills](https://agentskills.io) open standard.
+This repository serves as a Claude Code skills marketplace, providing installable skills that teach Claude how to work with `tsk`. Skills follow the [Agent Skills](https://agentskills.io) open standard.
 
 ## Installing Skills
 
 ### Add the marketplace
 
-In Claude Code, add the TSK repository as a plugin marketplace:
+In Claude Code, add the `tsk` repository as a plugin marketplace:
 
 ```
-/plugin marketplace add dtormoen/tsk
+/plugin marketplace add dtormoen/tsk-tsk
 ```
 
 ### Install a skill
@@ -17,7 +17,7 @@ In Claude Code, add the TSK repository as a plugin marketplace:
 Browse and install individual skills:
 
 ```
-/plugin install tsk-help@dtormoen/tsk
+/plugin install tsk-help@dtormoen/tsk-tsk
 ```
 
 ### Manual installation
@@ -36,8 +36,8 @@ cp -r skills/tsk-help/skills/tsk-help .claude/skills/
 
 | Skill | Description |
 |-------|-------------|
-| `tsk-help` | Teaches Claude core TSK commands for delegating tasks to AI agents |
-| `tsk-config` | Guides users through configuring TSK Docker container images |
+| `tsk-help` | Teaches Claude core `tsk` commands for delegating tasks to AI agents |
+| `tsk-config` | Guides users through configuring `tsk` Docker container images |
 | `tsk-add` | Queues a development task from the current conversation using tsk add |
 
 ## Contributing a New Skill

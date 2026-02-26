@@ -1,20 +1,24 @@
-# TSK - AI Agent Task Manager
+# tsk-tsk: keeping your agents out of trouble
 
-A Rust CLI tool that lets you delegate development tasks to AI agents running in sandboxed Docker or Podman environments. Get back git branches for human review.
+Delegate development `tsk` tasks to YOLO mode AI agents running in sandbox containers. `tsk` auto-detects your toolchain and builds container images for you, so most projects require very little setup. Agents work asynchronously and in parallel so you can review their work on your own schedule, respecting your time and attention.
 
-Currently Claude Code and Codex coding agents are supported.
+1. **Assign tasks** using templates that automate prompt boilerplate
+2. **`tsk` copies your repo** and builds containers with your toolchain automatically
+3. **Agents work in YOLO mode** in parallel filesystem and network isolated containers
+4. **`tsk` fetches branches** back to your repo for review
+5. **Review and merge** on your own schedule
 
-![TSK Demo](./docs/images/tsk-demo.gif)
+Each agent gets what it needs and nothing more:
+- Agent configuration (e.g. `~/.claude` or `~/.codex`)
+- A copy of your repo excluding gitignored files (no accidental API key sharing)
+- An isolated filesystem (no accidental `rm -rf .git`)
+- A configurable domain allowlist (Agents can't share your code on MoltBook)
 
-## Overview
+Each agent runs in an isolated network where all traffic routes through a proxy sidecar, enforcing the domain allowlist. Beyond network restrictions, agents have full control within their container.
 
-TSK enables a "lead engineer + AI team" workflow:
-1. **Assign tasks** to AI agents using task type templates to automate prompt boilerplate and enable powerful multi-agent workflows
-2. **Agents work autonomously** in parallel isolated containers with file system and network isolation
-3. **Get git branches** back with their changes for review
-4. **Review and merge** using your normal git workflow
+Supports Claude Code and Codex coding agents. Docker and Podman container runtimes.
 
-Think of it as having a team of engineers who work independently and submit pull requests for review.
+![tsk demo](./docs/images/tsk-demo.gif)
 
 ## Installation
 
@@ -28,31 +32,31 @@ Think of it as having a team of engineers who work independently and submit pull
   - [Codex](https://openai.com/codex/)
   - Help us support more!
 
-### Install TSK
+### Install `tsk`
 
 ```bash
 # Install using cargo
 cargo install tsk-ai
 # Or build from source!
-gh repo clone dtormoen/tsk
-cd tsk
+gh repo clone dtormoen/tsk-tsk
+cd tsk-tsk
 cargo install --path .
 ```
 
-**Claude Code users:** Install TSK skills to teach Claude how to use TSK commands directly in your conversations and help you configure your projects for use with TSK:
+**Claude Code users:** Install `tsk` skills to teach Claude how to use `tsk` commands directly in your conversations and help you configure your projects for use with `tsk`:
 
 ```bash
-/plugin marketplace add dtormoen/tsk
-/plugin install tsk-help@dtormoen/tsk
-/plugin install tsk-config@dtormoen/tsk
-/plugin install tsk-add@dtormoen/tsk
+/plugin marketplace add dtormoen/tsk-tsk
+/plugin install tsk-help@dtormoen/tsk-tsk
+/plugin install tsk-config@dtormoen/tsk-tsk
+/plugin install tsk-add@dtormoen/tsk-tsk
 ```
 
 See [Claude Code Skills Marketplace](#claude-code-skills-marketplace) for more details.
 
 ## Quick Start Guide
 
-TSK can be used in multiple ways. Here are some of the main workflows to get started. Try testing these in the TSK repository!
+`tsk` can be used in multiple ways. Here are some of the main workflows to get started. Try testing these in the `tsk` repository!
 
 ### Interactive Sandboxes
 
@@ -69,20 +73,20 @@ The `tsk shell` command will:
 - Build and start a container with your stack (go, python, rust, etc.) and agent (default: claude) installed
 - Drop you into an interactive shell
 
-After you exit the interactive shell (ctrl-d or `exit`), TSK will save any work you've done as a new branch in your original repo.
+After you exit the interactive shell (ctrl-d or `exit`), `tsk` will save any work you've done as a new branch in your original repo.
 
 This workflow is really powerful when used with terminal multiplexers like `tmux` or `zellij`. It allows you to start multiple agents that are working on completely isolated copies of your repository with no opportunity to interfere with each other or access resources outside of the container.
 
 ### One-off Fully Autonomous Agent Sandboxes
 
-TSK has flags that help you avoid repetitive instructions like "make sure unit tests pass", "update documentation", or "write a descriptive commit message". Consider this command which immediately kicks off an autonomous agent in a sandbox to implement a new feature:
+`tsk` has flags that help you avoid repetitive instructions like "make sure unit tests pass", "update documentation", or "write a descriptive commit message". Consider this command which immediately kicks off an autonomous agent in a sandbox to implement a new feature:
 
 ```bash
-tsk run --type feat --name greeting --prompt "Add a greeting to all TSK commands."
+tsk run --type feat --name greeting --prompt "Add a greeting to all tsk commands."
 ```
 
 Some important parts of the command:
-- `--type` specifies the type of task the agent is working on. Using TSK built-in tasks or writing your own can save a lot of boilerplate. Check out [feat.md](./templates/feat.md) for the `feat` type and [templates](./templates) for all task types.
+- `--type` specifies the type of task the agent is working on. Using `tsk` built-in tasks or writing your own can save a lot of boilerplate. Check out [feat.md](./templates/feat.md) for the `feat` type and [templates](./templates) for all task types.
 - `--name` will be used in the final git branch to help you remember what task the branch contains.
 - `--prompt` is used to fill in the `{{PROMPT}}` placeholder in [feat.md](./templates/feat.md).
 
@@ -91,11 +95,11 @@ Similar to `tsk shell`, the agent will run in a sandbox so it will not interfere
 After you try this command out, try out these next steps:
 - Add the `--edit` flag to edit the full prompt that is sent to the agent.
 - Add a custom task type. Use `tsk template list` to see existing task templates and where you can add your own custom tasks.
-  - See the [custom templates used by TSK](./.tsk/templates) for inspiration.
+  - See the [custom templates used by `tsk`](./.tsk/templates) for inspiration.
 
 ### Queuing Tasks for Parallel Execution
 
-The TSK server allows you to have a single process that manages parallel task execution so you can easily background agents working. First, we start the server set up to handle up to 4 tasks in parallel:
+The `tsk` server allows you to have a single process that manages parallel task execution so you can easily background agents working. First, we start the server set up to handle up to 4 tasks in parallel:
 
 ```bash
 tsk server start --workers 4
@@ -105,13 +109,13 @@ Now, in another terminal window, we can quickly queue up multiple tasks:
 
 ```bash
 # Add a task. Notice the similarity to the `tsk run` command
-tsk add --type doc --name tsk-architecture --prompt "Tell me how TSK works"
+tsk add --type doc --name tsk-architecture --prompt "Tell me how tsk works"
 
 # Look at the task queue. Your task `tsk-architecture` should be present in the list
 tsk list
 
 # Add another task. Notice the short flag names
-tsk add -t feat -n greeting -p "Add a silly robot greeting to every TSK command"
+tsk add -t feat -n greeting -p "Add a silly robot greeting to every tsk command"
 
 # Now there should be two running tasks
 tsk list
@@ -187,10 +191,10 @@ Create, manage, and monitor tasks assigned to AI agents.
 
 ### Server Commands
 
-Manage the TSK server daemon for parallel task execution. The server automatically cleans up completed, failed, and cancelled tasks older than 7 days.
+Manage the `tsk` server daemon for parallel task execution. The server automatically cleans up completed, failed, and cancelled tasks older than 7 days.
 
-- `tsk server start` - Start the TSK server daemon
-- `tsk server stop` - Stop the running TSK server
+- `tsk server start` - Start the `tsk` server daemon
+- `tsk server stop` - Stop the running `tsk` server
 
 Graceful shutdown (via `q`, Ctrl+C, or `tsk server stop`) marks any in-progress tasks as CANCELLED.
 
@@ -220,9 +224,9 @@ Build container images and manage task templates.
 
 Run `tsk help` or `tsk help <command>` for detailed options.
 
-## Configuring TSK
+## Configuring `tsk`
 
-TSK has 3 levels of configuration in priority order:
+`tsk` has 3 levels of configuration in priority order:
 - Project level in the `.tsk` folder local to your project
 - User level in `~/.config/tsk`
 - Built-in configurations
@@ -232,7 +236,7 @@ Each configuration directory can contain:
 
 ### Configuration File
 
-TSK can be configured at two levels:
+`tsk` can be configured at two levels:
 
 1. **User-level**: `~/.config/tsk/tsk.toml` — global settings, defaults, and per-project overrides
 2. **Project-level**: `.tsk/tsk.toml` in your project root — shared project defaults (checked into version control)
@@ -310,21 +314,21 @@ Volume mounts are particularly useful for:
 - **Persistent state**: Use named volumes for build caches that persist across tasks
 - **Read-only artifacts**: Mount debugging artifacts, config files, or other resources without risk of modification
 
-Environment variables (`env`) let you pass configuration to task containers, such as database URLs or API keys. To connect to host services forwarded through the proxy, use the `TSK_PROXY_HOST` environment variable (set automatically by TSK) as the hostname.
+Environment variables (`env`) let you pass configuration to task containers, such as database URLs or API keys. To connect to host services forwarded through the proxy, use the `TSK_PROXY_HOST` environment variable (set automatically by `tsk`) as the hostname.
 
 The container engine can also be set per-command with the `--container-engine` flag (available on `run`, `shell`, `retry`, `cancel`, `server start`, and `docker build`).
 
-Host ports (`host_ports`) expose host services to task containers. Agents connect to `$TSK_PROXY_HOST:<port>` to reach services running on your host machine (e.g., local databases or dev servers). The `TSK_PROXY_HOST` environment variable is automatically set by TSK to the correct proxy container hostname.
+Host ports (`host_ports`) expose host services to task containers. Agents connect to `$TSK_PROXY_HOST:<port>` to reach services running on your host machine (e.g., local databases or dev servers). The `TSK_PROXY_HOST` environment variable is automatically set by `tsk` to the correct proxy container hostname.
 
-When `git_town` is enabled, TSK integrates with [git-town](https://www.git-town.com/) by setting the parent branch metadata on task branches, allowing git-town commands like `git town sync` to work correctly with TSK-created branches.
+When `git_town` is enabled, `tsk` integrates with [git-town](https://www.git-town.com/) by setting the parent branch metadata on task branches, allowing git-town commands like `git town sync` to work correctly with `tsk`-created branches.
 
 Configuration priority: CLI flags > user `[project.<name>]` > project `.tsk/tsk.toml` > user `[defaults]` > auto-detection > built-in defaults
 
 Settings in `[defaults]`, `[project.<name>]`, and `.tsk/tsk.toml` share the same shape. Scalars use first-set in priority order. Lists (`volumes`, `env`, `host_ports`) combine across layers, with higher-priority winning on conflicts (same container path, same env var name, same port). `stack_config`/`agent_config` maps combine all names; for the same name, higher-priority replaces the entire config.
 
-### Customizing the TSK Sandbox Environment
+### Customizing the `tsk` Sandbox Environment
 
-Each TSK sandbox container image has 4 main parts:
+Each `tsk` sandbox container image has 4 main parts:
 - A [base dockerfile](./dockerfiles/base/default.dockerfile) that includes the OS and a set of basic development tools e.g. `git`
 - A `stack` snippet that defines language specific build steps. See:
   - [default](./dockerfiles/stack/default.dockerfile) - minimal fallback stack
@@ -337,27 +341,27 @@ Each TSK sandbox container image has 4 main parts:
 - An `agent` snippet that installs an agent, e.g. `claude` or `codex`.
 - A `project` snippet that defines project specific build steps (applied last for project-specific customizations). This does nothing by default, but can be used to add extra build steps for your project.
 
-It is very difficult to make these images general purpose enough to cover all repositories. You may need some special customization. If you use Claude Code, the `tsk-config` skill can walk you through configuring TSK's Docker layers for your project (see [Claude Code Skills Marketplace](#claude-code-skills-marketplace) for installation). Otherwise, the recommended approach is to use `setup`, `stack_config`, and `agent_config` fields in your `tsk.toml` to inject custom Dockerfile commands (see [Configuration File](#configuration-file) above).
+It is very difficult to make these images general purpose enough to cover all repositories. You may need some special customization. If you use Claude Code, the `tsk-config` skill can walk you through configuring `tsk`'s Docker layers for your project (see [Claude Code Skills Marketplace](#claude-code-skills-marketplace) for installation). Otherwise, the recommended approach is to use `setup`, `stack_config`, and `agent_config` fields in your `tsk.toml` to inject custom Dockerfile commands (see [Configuration File](#configuration-file) above).
 
 See [dockerfiles](./dockerfiles) for the built-in dockerfiles.
 
 You can run `tsk docker build --dry-run` to see the dockerfile that `tsk` will dynamically generate for your repository.
 
-See the [Docker Builds Guide](docs/docker-builds.md) for a more in-depth walk through, and the [Network Isolation Guide](docs/network-isolation.md) for details on how TSK secures agent network access.
+See the [Docker Builds Guide](docs/docker-builds.md) for a more in-depth walk through, and the [Network Isolation Guide](docs/network-isolation.md) for details on how `tsk` secures agent network access.
 
 I'm working on improving this part of `tsk` to be as seamless and easy to set up as possible, but it's still a work in progress. I welcome all feedback on how to make this easier and more intuitive!
 
 ### Creating Templates
 
-Templates are simply markdown files that get passed to agents. TSK additionally adds a convenience `{{PROMPT}}` placeholder that will get replaced by anything you pipe into tsk or pass in via the `-p/--prompt` flag, or by using `--prompt-file <path>` to read from a file. The legacy `{{DESCRIPTION}}` placeholder is still supported but deprecated.
+Templates are simply markdown files that get passed to agents. `tsk` additionally adds a convenience `{{PROMPT}}` placeholder that will get replaced by anything you pipe into tsk or pass in via the `-p/--prompt` flag, or by using `--prompt-file <path>` to read from a file. The legacy `{{DESCRIPTION}}` placeholder is still supported but deprecated.
 
-To inspect an existing template, run `tsk template show <template>`. To customize a built-in template, run `tsk template edit <template>` — TSK will copy it to `~/.config/tsk/templates/` and open it in your `$EDITOR`.
+To inspect an existing template, run `tsk template show <template>`. To customize a built-in template, run `tsk template edit <template>` — `tsk` will copy it to `~/.config/tsk/templates/` and open it in your `$EDITOR`.
 
 To create good templates, I would recommend thinking about repetitive tasks that you need agents to do within your codebase like "make sure the unit tests pass", "write a commit message", etc. and encode those in a template file. There are many great prompting guides out there so I'll spare the details here.
 
 ### Custom Proxy Configuration
 
-TSK uses Squid as a forward proxy to control network access from task containers. You can customize the proxy configuration to allow access to specific services or URLs needed by your project.
+`tsk` uses Squid as a forward proxy to control network access from task containers. You can customize the proxy configuration to allow access to specific services or URLs needed by your project.
 
 **Inline configuration** in tsk.toml (recommended):
 ```toml
@@ -379,34 +383,34 @@ squid_conf_path = "~/.config/tsk/squid.conf"
 # squid_conf_path = ".tsk/squid.conf"
 ```
 
-Inline `squid_conf` takes priority over `squid_conf_path`. See the default [TSK squid.conf](./dockerfiles/tsk-proxy/squid.conf) as a starting point.
+Inline `squid_conf` takes priority over `squid_conf_path`. See the default [`tsk` squid.conf](./dockerfiles/tsk-proxy/squid.conf) as a starting point.
 
 **Per-configuration proxy instances:** Tasks with different proxy configurations (different `host_ports` or `squid_conf`) automatically get separate proxy containers. Tasks with identical proxy config share the same proxy. Proxy containers are named `tsk-proxy-{fingerprint}` where the fingerprint is derived from the proxy configuration.
 
-## TSK Data Directory
+## `tsk` Data Directory
 
-TSK uses the following directories for storing data while running tasks:
+`tsk` uses the following directories for storing data while running tasks:
 - **~/.local/share/tsk/tasks.db**: SQLite database for task queue and task definitions
 - **~/.local/share/tsk/tasks/**: Task directories that get mounted into sandboxes when the agent runs. They contain:
   - **<taskid>/repo**: The repo copy that the agent operates on
   - **<taskid>/output**: Directory containing `agent.log` with structured JSON-lines output including infrastructure phases (image build, agent launch, saving changes, branch result) and processed agent output
   - **<taskid>/instructions.md**: The instructions that were passed to an agent
 
-These default paths follow XDG conventions. You can override them with TSK-specific environment variables without affecting other XDG-aware software. Like XDG variables, these specify the base directory; TSK appends `/tsk` automatically:
-- `TSK_DATA_HOME` - overrides `XDG_DATA_HOME` for TSK (default: `~/.local/share`)
-- `TSK_RUNTIME_DIR` - overrides `XDG_RUNTIME_DIR` for TSK (default: `/tmp`)
-- `TSK_CONFIG_HOME` - overrides `XDG_CONFIG_HOME` for TSK (default: `~/.config`)
+These default paths follow XDG conventions. You can override them with `tsk`-specific environment variables without affecting other XDG-aware software. Like XDG variables, these specify the base directory; `tsk` appends `/tsk` automatically:
+- `TSK_DATA_HOME` - overrides `XDG_DATA_HOME` for `tsk` (default: `~/.local/share`)
+- `TSK_RUNTIME_DIR` - overrides `XDG_RUNTIME_DIR` for `tsk` (default: `/tmp`)
+- `TSK_CONFIG_HOME` - overrides `XDG_CONFIG_HOME` for `tsk` (default: `~/.config`)
 
 ## Claude Code Skills Marketplace
 
-This repository includes a Claude Code skills marketplace with TSK-specific skills that teach Claude how to use TSK commands. To install:
+This repository includes a Claude Code skills marketplace with `tsk`-specific skills that teach Claude how to use `tsk` commands. To install:
 
 ```bash
 # Add the marketplace in Claude Code
-/plugin marketplace add dtormoen/tsk
+/plugin marketplace add dtormoen/tsk-tsk
 
 # Install a skill (e.g. tsk-help, tsk-config, tsk-add)
-/plugin install tsk-help@dtormoen/tsk
+/plugin install tsk-help@dtormoen/tsk-tsk
 ```
 
 Skills follow the [Agent Skills](https://agentskills.io) open standard. See the [Skills Marketplace Guide](docs/skill-marketplace.md) for details on available skills, manual installation, and contributing new skills.

@@ -1,13 +1,13 @@
 ---
 name: tsk-help
-description: Use this skill when the user asks about TSK commands, delegating development tasks to AI agents, managing sandboxed task execution, or working with the TSK task queue and server.
+description: Use this skill when the user asks about tsk commands, delegating development tasks to AI agents, managing sandboxed task execution, or working with the tsk task queue and server.
 allowed-tools:
   - Bash(tsk help)
 ---
 
-# TSK - AI Agent Task Manager
+# tsk
 
-TSK delegates development tasks to AI agents (Claude Code, Codex) running in isolated Docker/Podman containers. Agents work autonomously and produce git branches for review.
+`tsk` delegates development tasks to AI agents (Claude Code, Codex) running in isolated Docker/Podman containers. Agents work autonomously and produce git branches for review.
 
 ## Core Commands
 
@@ -64,7 +64,7 @@ This is the output of `tsk help`
 
 ## How it works
 
-1. TSK copies your repository (including uncommitted changes) into an isolated directory
+1. `tsk` copies your repository (including uncommitted changes) into an isolated directory
 2. A Docker/Podman container is started with your language stack and agent installed
 3. Network access is restricted to approved API domains via a Squid proxy
 4. The agent executes the task autonomously
@@ -96,7 +96,7 @@ gh issue view 42 | tsk add -t issue-bot -n fix-issue-42
 
 ## Configuration
 
-TSK is configured via `~/.config/tsk/tsk.toml`. Key settings:
+`tsk` is configured via `~/.config/tsk/tsk.toml`. Key settings:
 
 ```toml
 container_engine = "docker"  # or "podman"

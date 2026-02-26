@@ -36,7 +36,7 @@ use context::{AppContext, ContainerEngine};
 
 #[derive(Parser)]
 #[command(name = "tsk")]
-#[command(author, version, about = "TSK - Task delegation to AI agents", long_about = None)]
+#[command(author, version, about = "tsk-tsk: keeping your agents out of trouble with sandboxed development workflows", long_about = None)]
 #[command(help_template = r#"{name} {version}
 {author-with-newline}
 {about-with-newline}
@@ -320,7 +320,7 @@ impl Commands {
 }
 
 #[derive(Args)]
-#[command(about = "Manage the TSK server daemon")]
+#[command(about = "Manage the tsk server daemon")]
 struct ServerArgs {
     #[command(subcommand)]
     command: ServerCommands,
@@ -328,7 +328,7 @@ struct ServerArgs {
 
 #[derive(Subcommand)]
 enum ServerCommands {
-    /// Start the TSK server daemon
+    /// Start the tsk server daemon
     Start {
         #[command(flatten)]
         engine: ContainerEngineArgs,
@@ -345,12 +345,12 @@ enum ServerCommands {
         #[arg(short, long)]
         sound: bool,
     },
-    /// Stop the running TSK server
+    /// Stop the running tsk server
     Stop,
 }
 
 #[derive(Args)]
-#[command(about = "Build and manage TSK Docker images")]
+#[command(about = "Build and manage tsk Docker images")]
 struct DockerArgs {
     #[command(subcommand)]
     command: DockerCommands,

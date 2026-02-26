@@ -1,6 +1,6 @@
-# Docker Builds in TSK
+# Docker Builds in `tsk`
 
-TSK uses a sophisticated Docker-based execution environment to run AI agents in isolated, secure containers. This document explains how the Docker build system works, how to customize it, and how to debug common issues.
+`tsk` uses a sophisticated Docker-based execution environment to run AI agents in isolated, secure containers. This document explains how the Docker build system works, how to customize it, and how to debug common issues.
 
 ## Table of Contents
 
@@ -16,7 +16,7 @@ TSK uses a sophisticated Docker-based execution environment to run AI agents in 
 
 ## Overview
 
-TSK's Docker infrastructure provides:
+`tsk`'s Docker infrastructure provides:
 - **Layered architecture** for efficient image building and caching
 - **Automatic tech stack detection** based on repository files
 - **Multiple customization points** at project and user levels
@@ -25,10 +25,10 @@ TSK's Docker infrastructure provides:
 
 ## The Four-Layer Architecture
 
-TSK composes Docker images from four distinct layers, each serving a specific purpose. All base dockerfiles are embedded as assets within the TSK binary and are automatically extracted when needed, ensuring TSK works out-of-the-box without requiring separate configuration files.
+`tsk` composes Docker images from four distinct layers, each serving a specific purpose. All base dockerfiles are embedded as assets within the `tsk` binary and are automatically extracted when needed, ensuring `tsk` works out-of-the-box without requiring separate configuration files.
 
 ### 1. Base Layer
-The foundation of all TSK containers (`base/default.dockerfile`):
+The foundation of all `tsk` containers (`base/default.dockerfile`):
 - Ubuntu 25.10 base operating system
 - Essential development tools (git, curl, build-essential, ripgrep, etc.)
 - Non-root `agent` user (created by renaming the default `ubuntu` user) for security
@@ -61,7 +61,7 @@ Project-specific dependencies and optimizations:
 
 ## Docker Image Naming
 
-TSK uses a hierarchical naming convention for Docker images:
+`tsk` uses a hierarchical naming convention for Docker images:
 
 ```
 tsk/{stack}/{agent}/{project}
@@ -72,7 +72,7 @@ For example:
 - `tsk/python/claude/default`
 - `tsk/node/codex/web-app`
 
-If a specific project layer doesn't exist, TSK automatically falls back to the `default` project layer.
+If a specific project layer doesn't exist, `tsk` automatically falls back to the `default` project layer.
 
 ## Customizing Docker Images
 
@@ -133,12 +133,12 @@ User-level customizations are useful for:
 
 ### Configuration Priority
 
-TSK resolves Docker layer configuration in this order:
+`tsk` resolves Docker layer configuration in this order:
 1. **CLI flags**: Command-line arguments take highest priority
 2. **User project overrides**: `[project.<name>]` in `~/.config/tsk/tsk.toml`
 3. **Project config**: `.tsk/tsk.toml` in the repository
 4. **User defaults**: `[defaults]` in `~/.config/tsk/tsk.toml`
-5. **Embedded**: Built into the TSK binary
+5. **Embedded**: Built into the `tsk` binary
 
 Config-defined layers (`setup`, `stack_config`, `agent_config`) take priority over embedded assets.
 
@@ -170,14 +170,14 @@ tsk docker build --dry-run
 
 ### Automatic Building
 
-TSK automatically builds missing images when:
+`tsk` automatically builds missing images when:
 - Running a task (`tsk run`)
 - Starting an interactive shell (`tsk shell`)
 - Adding tasks to the queue (`tsk add`)
 
 ## Tech Stack Auto-Detection
 
-TSK automatically detects your project's technology stack based on repository files:
+`tsk` automatically detects your project's technology stack based on repository files:
 
 | Stack | Detection Files |
 |-------|-----------------|
@@ -193,7 +193,7 @@ Auto-detection is used when the `--stack` flag is not provided.
 
 ## Security and Isolation
 
-TSK implements multiple security layers:
+`tsk` implements multiple security layers:
 
 ### Non-Root Execution
 - Containers run as the `agent` user (created by renaming the default `ubuntu` user)
@@ -256,7 +256,7 @@ git config --global user.email "your@email.com"
 # Preview the composed Dockerfile to see what layers are resolved
 tsk docker build --dry-run
 
-# Embedded stacks (built into TSK): rust, python, node, go, java, lua, default
+# Embedded stacks (built into tsk): rust, python, node, go, java, lua, default
 # You can define custom stacks via stack_config in tsk.toml:
 # [defaults.stack_config.xyz]
 # setup = '''
@@ -388,12 +388,12 @@ When encountering issues:
 4. ✓ Verify file permissions in `.tsk/` directory
 5. ✓ Use `--dry-run` to inspect Dockerfile composition
 6. ✓ Try building with `--no-cache`
-7. ✓ Check TSK logs with `RUST_LOG=debug tsk <command>`
+7. ✓ Check `tsk` logs with `RUST_LOG=debug tsk <command>`
 8. ✓ Test with `tsk shell` for interactive debugging
 
 ## Further Resources
 
-- [TSK README](../README.md) - General TSK documentation
+- [`tsk` README](../README.md) - General `tsk` documentation
 - [CLAUDE.md](../CLAUDE.md) - Project conventions and development guide
 - Docker documentation - For advanced Docker concepts
-- TSK GitHub Issues - For reporting bugs or requesting features
+- `tsk` GitHub Issues - For reporting bugs or requesting features

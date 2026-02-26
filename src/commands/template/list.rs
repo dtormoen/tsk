@@ -46,7 +46,7 @@ impl Command for TemplateListCommand {
             "  2. User: {}/templates/",
             ctx.tsk_env().config_dir().display()
         );
-        println!("  3. Built-in: Embedded in TSK binary");
+        println!("  3. Built-in: Embedded in tsk binary");
 
         Ok(())
     }

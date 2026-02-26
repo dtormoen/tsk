@@ -276,7 +276,7 @@ impl DockerImageManager {
             match layer.layer_type {
                 DockerLayerType::Base => {
                     return Err(anyhow::anyhow!(
-                        "Base layer is missing. This is a critical error - please reinstall TSK."
+                        "Base layer is missing. This is a critical error - please reinstall tsk."
                     ));
                 }
                 DockerLayerType::Stack => {

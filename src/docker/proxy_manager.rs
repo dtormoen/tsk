@@ -344,7 +344,7 @@ impl ProxyManager {
     /// Stops and removes the specified proxy container.
     pub async fn stop_proxy(&self, container_name: &str) -> Result<()> {
         self.emit(ServerEvent::StatusMessage(format!(
-            "Stopping TSK proxy container {container_name}..."
+            "Stopping tsk proxy container {container_name}..."
         )));
 
         match self

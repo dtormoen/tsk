@@ -91,7 +91,7 @@ impl TskServer {
         self.lifecycle.write_pid()?;
 
         self.emit(ServerEvent::StatusMessage(format!(
-            "TSK Server started (PID {})",
+            "tsk server started (PID {})",
             std::process::id()
         )));
 

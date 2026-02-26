@@ -279,7 +279,7 @@ impl TaskRunner {
         };
 
         // Commit any changes made by the container
-        let commit_message = format!("TSK automated changes for task: {}", task.name);
+        let commit_message = format!("tsk automated changes for task: {}", task.name);
         if let Err(e) = self
             .repo_manager
             .commit_changes(repo_path, &commit_message)

@@ -1,6 +1,6 @@
-# Network Isolation in TSK
+# Network Isolation in `tsk`
 
-TSK uses a multi-layered network isolation strategy to ensure AI agents can only access approved external services. This document explains how the network architecture works and the security properties it provides.
+`tsk` uses a multi-layered network isolation strategy to ensure AI agents can only access approved external services. This document explains how the network architecture works and the security properties it provides.
 
 ## Architecture Overview
 
@@ -75,7 +75,7 @@ sequenceDiagram
 
 ## Security Layers
 
-TSK implements defense-in-depth with multiple independent security boundaries:
+`tsk` implements defense-in-depth with multiple independent security boundaries:
 
 | Layer           | Mechanism                  | What It Prevents                     |
 |-----------------|----------------------------|--------------------------------------|
@@ -120,7 +120,7 @@ Agent containers run with dropped capabilities:
 
 ## Why Internal Networks Over iptables?
 
-TSK uses Docker internal networks rather than iptables rules in agent containers because:
+`tsk` uses Docker internal networks rather than iptables rules in agent containers because:
 
 1. **Secure by construction**: No route to external networks exists, rather than relying on firewall rules to block it
 2. **No capability grants needed**: Agents don't need `CAP_NET_ADMIN` to set up firewall rules

@@ -1,18 +1,18 @@
 ---
 name: tsk-config
-description: Use this skill when the user wants to set up or configure TSK Docker container images, customize their tsk.toml for Docker builds, configure stack/agent/project layers, or troubleshoot TSK container build issues.
+description: Use this skill when the user wants to set up or configure tsk Docker container images, customize their tsk.toml for Docker builds, configure stack/agent/project layers, or troubleshoot tsk container build issues.
 user-invocable: true
 disable-model-invocation: true
 allowed-tools: Bash Read Write Edit Glob Grep AskUserQuestion
 ---
 
-# TSK Docker Configuration Guide
+# `tsk` Docker Configuration Guide
 
-You are helping a user configure TSK Docker container images for their project. Follow these steps in order.
+You are helping a user configure `tsk` Docker container images for their project. Follow these steps in order.
 
 ## Step 1: Gather Project Information
 
-Detect the project's technology stack by checking for these files in the project root. These are TSK's built-in stacks with auto-detection — custom stacks for any language can be defined via `stack_config` in `tsk.toml` (covered in Step 5).
+Detect the project's technology stack by checking for these files in the project root. These are `tsk`'s built-in stacks with auto-detection — custom stacks for any language can be defined via `stack_config` in `tsk.toml` (covered in Step 5).
 
 | File | Stack |
 |------|-------|
@@ -32,7 +32,7 @@ Tell the user what you detected and ask them to confirm or override. If their st
 
 Check if `.tsk/dockerfiles/` exists. If it does, warn the user:
 
-> **Deprecated**: TSK no longer supports filesystem-based dockerfiles in `.tsk/dockerfiles/`. Docker customization is now done via `setup` fields in `tsk.toml`. This guide will help you migrate to the new format.
+> **Deprecated**: `tsk` no longer supports filesystem-based dockerfiles in `.tsk/dockerfiles/`. Docker customization is now done via `setup` fields in `tsk.toml`. This guide will help you migrate to the new format.
 
 List any files found in `.tsk/dockerfiles/` and note their contents — you will use them to populate the new config.
 
@@ -53,15 +53,15 @@ Run this command and show the output to the user:
 tsk docker build --dry-run
 ```
 
-Explain to the user: this shows the complete Dockerfile that TSK generates with all layers resolved. Look for comments like `# Stack layer`, `# Project layer`, and `# Agent layer` to see where each `setup` field injects content. The next step will help them add the right customizations.
+Explain to the user: this shows the complete Dockerfile that `tsk` generates with all layers resolved. Look for comments like `# Stack layer`, `# Project layer`, and `# Agent layer` to see where each `setup` field injects content. The next step will help them add the right customizations.
 
 ## Step 5: Populate Configuration
 
 Based on the project analysis, write the `tsk.toml` configuration. Use the layer reference below to decide what goes where.
 
-### TSK Docker Layer Architecture
+### `tsk` Docker Layer Architecture
 
-TSK builds container images using 4 layers, assembled in this order:
+`tsk` builds container images using 4 layers, assembled in this order:
 
 ```
 1. Base layer    — Ubuntu 25.10, git, build-essential, ripgrep, Python 3, uv, podman
@@ -82,7 +82,7 @@ Each `setup` field contains raw Dockerfile commands (`RUN`, `ENV`, `COPY`, etc.)
 
 ### Built-in Stacks (What's Already Included)
 
-TSK has built-in stack layers. You only need `stack_config` if the built-in is insufficient.
+`tsk` has built-in stack layers. You only need `stack_config` if the built-in is insufficient.
 
 **rust**: Rust stable via rustup, `CARGO_TARGET_DIR=/home/agent/.cargo/target`
 
@@ -92,7 +92,7 @@ TSK has built-in stack layers. You only need `stack_config` if the built-in is i
 
 **python**: uv venv at `/home/agent/.venv`, pytest, pip, black, ruff, ty, mypy, poetry
 
-**java**: OpenJDK 17, Maven, Gradle. Maven `settings.xml` and Gradle `gradle.properties` are pre-configured to route through the TSK proxy
+**java**: OpenJDK 17, Maven, Gradle. Maven `settings.xml` and Gradle `gradle.properties` are pre-configured to route through the `tsk` proxy
 
 **lua**: LuaJIT, Lua 5.1 dev libs, Neovim, stylua, LuaRocks with luacheck/busted/luassert/luafilesystem/nlua
 
@@ -200,7 +200,7 @@ ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 '''
 ```
 
-**Adding a stack not built into TSK (e.g., Scala):**
+**Adding a stack not built into `tsk` (e.g., Scala):**
 ```toml
 stack = "scala"
 
@@ -254,7 +254,7 @@ This creates a minimal task that just says "ack" and exits. If it completes succ
 
 If the build fails, help the user fix the configuration and re-run `tsk run -t ack`.
 
-If the user is stuck and cannot get their project working after multiple attempts, ask if they'd like to file a bug report against TSK. If they agree:
+If the user is stuck and cannot get their project working after multiple attempts, ask if they'd like to file a bug report against `tsk`. If they agree:
 
 1. Capture the output of `tsk docker build --dry-run`
 2. Capture the error message from the failing build or run
@@ -262,7 +262,7 @@ If the user is stuck and cannot get their project working after multiple attempt
 4. File the issue using `gh`:
 
 ```bash
-gh issue create --repo dtormoen/tsk \
+gh issue create --repo dtormoen/tsk-tsk \
   --title "Docker build failure: <short description>" \
   --body "$(cat <<'EOF'
 ## Problem
@@ -311,4 +311,4 @@ cpu = 8
 dind = true
 ```
 
-Note: To connect to host services via forwarded ports, use the `TSK_PROXY_HOST` environment variable (set automatically by TSK) as the hostname, not `localhost`.
+Note: To connect to host services via forwarded ports, use the `TSK_PROXY_HOST` environment variable (set automatically by `tsk`) as the hostname, not `localhost`.

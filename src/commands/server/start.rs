@@ -34,7 +34,7 @@ impl Command for ServerStartCommand {
         let is_interactive = std::io::stdout().is_terminal();
 
         if !is_interactive {
-            println!("Starting TSK server with {} worker(s)...", self.workers);
+            println!("Starting tsk server with {} worker(s)...", self.workers);
         }
         ctx.notification_client().set_sound_enabled(self.sound);
         let docker_client: Arc<dyn DockerClient> = Arc::new(
@@ -128,7 +128,7 @@ impl Command for ServerStartCommand {
                 }
             }
 
-            println!("TSK server stopped");
+            println!("tsk server stopped");
         }
 
         Ok(())

@@ -9,7 +9,7 @@ pub struct ServerStopCommand;
 #[async_trait]
 impl Command for ServerStopCommand {
     async fn execute(&self, ctx: &AppContext) -> Result<(), Box<dyn Error>> {
-        println!("Stopping TSK server...");
+        println!("Stopping tsk server...");
 
         let lifecycle = ServerLifecycle::new(ctx.tsk_env());
 

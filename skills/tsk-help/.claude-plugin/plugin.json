@@ -1,7 +1,7 @@
 {
   "name": "tsk-help",
-  "description": "Teaches Claude core TSK commands for delegating development tasks to AI agents in sandboxed containers.",
+  "description": "Teaches Claude core tsk commands for delegating development tasks to AI agents in sandboxed containers.",
   "author": {
-    "name": "TSK Contributors"
+    "name": "tsk-tsk contributors"
   }
 }
