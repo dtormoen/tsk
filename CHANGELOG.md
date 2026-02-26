@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/dtormoen/tsk-tsk/compare/v0.9.1...v0.10.0) - 2026-02-26
+
+This release switches to using `--prompt`/`-p` to pass in a prompt to create a task which is more intuitive
+and commonly used in other tools than `--description`/`-d`. The GitHub repo was also renamed to `tsk-tsk`
+which is just a cosmetic change.
+
+`--description`/`-d` will still work for `tsk add`, just with a deprecation warning. The breaking changes are:
+- `-p` used to be the short form of `--parent`. Now you must use `--parent`
+- `--prompt` used to allow you to pass a prompt file bypassing the task template which was a confusing behavior.
+  Now you can use `--prompt-file` either without specifying a task template to get the old behavior or with a
+  task template to inject into a task template. Injecting into a task template is very useful if you use Claude
+  Code's plan mode to interactively craft a plan and then tell Claude Code to pass the plan file to `tsk`.
+
+### Added
+
+- [**breaking**] restructure CLI flags: --prompt/-p replaces --description/-d
+
+### Documentation
+
+- update name to tsk-tsk
+- update documentation and templates for --prompt/-p rename
+
 ## [0.9.1](https://github.com/dtormoen/tsk/compare/v0.9.0...v0.9.1) - 2026-02-24
 
 This release adds an interactive TUI dashboard to `tsk server start` and a `tsk cancel`
