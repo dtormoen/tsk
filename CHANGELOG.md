@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/dtormoen/tsk-tsk/compare/v0.9.1...v0.10.0) - 2026-02-26
+
+### Added
+
+- [**breaking**] restructure CLI flags: --prompt/-p replaces --description/-d
+
+### Documentation
+
+- update name to tsk-tsk
+- update documentation and templates for --prompt/-p rename
+
 ## [0.9.1](https://github.com/dtormoen/tsk/compare/v0.9.0...v0.9.1) - 2026-02-24
 
 This release adds an interactive TUI dashboard to `tsk server start` and a `tsk cancel`
