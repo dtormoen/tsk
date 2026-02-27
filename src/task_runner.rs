@@ -239,7 +239,7 @@ impl TaskRunner {
             .task_dir(&task.id)
             .join("output")
             .join("docker-build.log");
-        let docker_image_tag = task_image_manager
+        let docker_image_tag = match task_image_manager
             .ensure_image(&crate::docker::image_manager::EnsureImageOptions {
                 stack: &task.stack,
                 agent: &task.agent,
@@ -250,7 +250,14 @@ impl TaskRunner {
                 resolved_config: Some(&resolved_config),
             })
             .await
-            .map_err(|e| format!("Error ensuring Docker image: {e}"))?;
+        {
+            Ok(tag) => tag,
+            Err(e) => {
+                let msg = format!("Error ensuring Docker image: {e}");
+                self.write_log(&mut agent_log, LogLine::tsk_error(&msg));
+                return Err(msg.into());
+            }
+        };
 
         self.write_log(&mut agent_log, LogLine::tsk_success("Docker image ready"));
         self.write_log(

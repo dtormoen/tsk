@@ -332,7 +332,10 @@ impl ProxyManager {
                     if let Some(log_path) = build_log_path {
                         super::save_build_log(log_path, &build_output, &self.event_sender);
                     }
-                    eprint!("{build_output}");
+                    // In TUI mode, build output is saved to log file instead.
+                    if self.event_sender.is_none() {
+                        eprint!("{build_output}");
+                    }
                     return Err(anyhow::anyhow!("Failed to build proxy image: {e}"));
                 }
             }
