@@ -8,6 +8,7 @@ mod log_processor;
 mod no_op;
 mod no_op_log_processor;
 mod provider;
+pub mod task_logger;
 mod task_result;
 
 pub use self::log_processor::LogProcessor;

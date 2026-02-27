@@ -1,3 +1,4 @@
+use crate::agent::task_logger::TaskLogger;
 use crate::commands::Command;
 use crate::context::AppContext;
 use crate::context::docker_client::DefaultDockerClient;
@@ -41,7 +42,9 @@ impl Command for DockerBuildCommand {
                 ctx.tsk_config().container_engine.clone(),
                 None,
             );
-            proxy_manager.build_proxy(self.no_cache, None).await?;
+            proxy_manager
+                .build_proxy(self.no_cache, &TaskLogger::no_file())
+                .await?;
             println!("Successfully built Docker image: tsk/proxy");
             return Ok(());
         }
@@ -99,7 +102,7 @@ impl Command for DockerBuildCommand {
         );
 
         // Create image manager with AppContext
-        let image_manager = DockerImageManager::new(ctx, docker_client.clone(), None, None);
+        let image_manager = DockerImageManager::new(ctx, docker_client.clone(), None);
 
         // Build the main image (with dry_run flag)
         let image_tag = image_manager
@@ -111,7 +114,7 @@ impl Command for DockerBuildCommand {
                     no_cache: self.no_cache,
                     dry_run: self.dry_run,
                     build_root: project_root.as_deref(),
-                    build_log_path: None,
+                    logger: &TaskLogger::no_file(),
                 },
                 Some(&resolved_config),
             )
@@ -129,7 +132,9 @@ impl Command for DockerBuildCommand {
                 ctx.tsk_config().container_engine.clone(),
                 None,
             );
-            proxy_manager.build_proxy(self.no_cache, None).await?;
+            proxy_manager
+                .build_proxy(self.no_cache, &TaskLogger::no_file())
+                .await?;
             println!("Successfully built Docker image: tsk/proxy");
 
             println!("\nAll Docker images built successfully!");

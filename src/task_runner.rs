@@ -1,12 +1,12 @@
 use crate::agent::AgentProvider;
-use crate::agent::log_line::{Level, LogLine};
+use crate::agent::log_line::LogLine;
+use crate::agent::task_logger::TaskLogger;
 use crate::context::AppContext;
 use crate::context::TaskStorage;
 use crate::docker::{DockerManager, image_manager::DockerImageManager};
 use crate::git::RepoManager;
 use crate::task::{Task, TaskStatus};
 use crate::tui::events::{ServerEvent, ServerEventSender, emit_or_print};
-use std::io::Write;
 use std::sync::Arc;
 
 /// Result of executing a task
@@ -70,25 +70,6 @@ impl TaskRunner {
             docker_manager,
             event_sender,
         }
-    }
-
-    /// Write a LogLine to the agent.log file and emit for global header/stdout.
-    fn write_log(&self, file: &mut Option<std::fs::File>, log_line: LogLine) {
-        if let Some(f) = file.as_mut()
-            && let Ok(json) = serde_json::to_string(&log_line)
-        {
-            let _ = writeln!(f, "{json}");
-        }
-        let event = match &log_line {
-            LogLine::Message {
-                level: Level::Warning | Level::Error,
-                message,
-                ..
-            } => ServerEvent::WarningMessage(message.clone()),
-            LogLine::Message { message, .. } => ServerEvent::StatusMessage(message.clone()),
-            _ => return,
-        };
-        emit_or_print(&self.event_sender, event);
     }
 
     /// Stores and executes a task inline, for use by `run` and `shell` commands.
@@ -210,53 +191,50 @@ impl TaskRunner {
         let branch_name = task.branch_name.clone();
 
         // Create output directory and agent.log early so infrastructure messages appear
-        let mut agent_log = match self.ctx.tsk_env().open_agent_log(&task.id) {
-            Ok(file) => Some(file),
+        let task_logger = match self.ctx.tsk_env().open_agent_log(&task.id) {
+            Ok(file) => TaskLogger::new(file, self.event_sender.is_some()),
             Err(e) => {
                 emit_or_print(
                     &self.event_sender,
                     ServerEvent::WarningMessage(format!("Failed to create agent log: {e}")),
                 );
-                None
+                TaskLogger::no_file()
             }
         };
 
-        let task_image_manager = DockerImageManager::new(
-            &self.ctx,
-            self.docker_manager.client(),
-            None,
-            self.event_sender.clone(),
-        );
+        let task_image_manager =
+            DockerImageManager::new(&self.ctx, self.docker_manager.client(), None);
 
         // Resolve config for this task to provide inline layer overrides
         let resolved_config =
             crate::docker::resolve_config_from_task(task, &self.ctx, &self.event_sender);
 
         // Ensure the Docker image exists - always rebuild to pick up any changes
-        let build_log_path = self
-            .ctx
-            .tsk_env()
-            .task_dir(&task.id)
-            .join("output")
-            .join("docker-build.log");
-        let docker_image_tag = task_image_manager
+        let docker_image_tag = match task_image_manager
             .ensure_image(&crate::docker::image_manager::EnsureImageOptions {
                 stack: &task.stack,
                 agent: &task.agent,
                 project: Some(&task.project),
                 build_root: Some(repo_path.as_path()),
                 force_rebuild: true,
-                build_log_path: Some(&build_log_path),
+                logger: &task_logger,
                 resolved_config: Some(&resolved_config),
             })
             .await
-            .map_err(|e| format!("Error ensuring Docker image: {e}"))?;
+        {
+            Ok(tag) => tag,
+            Err(e) => {
+                let msg = format!("Error ensuring Docker image: {e}");
+                task_logger.log(LogLine::tsk_error(&msg));
+                return Err(msg.into());
+            }
+        };
 
-        self.write_log(&mut agent_log, LogLine::tsk_success("Docker image ready"));
-        self.write_log(
-            &mut agent_log,
-            LogLine::tsk_message(format!("Launching {} agent...", agent.name())),
-        );
+        task_logger.log(LogLine::tsk_success("Docker image ready"));
+        task_logger.log(LogLine::tsk_message(format!(
+            "Launching {} agent...",
+            agent.name()
+        )));
 
         // Run agent warmup
         if let Err(e) = agent.warmup().await {
@@ -285,21 +263,17 @@ impl TaskRunner {
             .commit_changes(repo_path, &commit_message)
             .await
         {
-            self.write_log(
-                &mut agent_log,
-                LogLine::tsk_warning(format!("Error committing changes: {e}")),
-            );
+            task_logger.log(LogLine::tsk_warning(format!(
+                "Error committing changes: {e}"
+            )));
         }
 
         // Fetch changes back to main repository
-        self.write_log(
-            &mut agent_log,
-            LogLine::tsk_message(format!(
-                "Saving changes to {} (branch {})...",
-                task.repo_root.display(),
-                branch_name,
-            )),
-        );
+        task_logger.log(LogLine::tsk_message(format!(
+            "Saving changes to {} (branch {})...",
+            task.repo_root.display(),
+            branch_name,
+        )));
         match self
             .repo_manager
             .fetch_changes(
@@ -314,25 +288,18 @@ impl TaskRunner {
         {
             Ok(result) => {
                 for warning in &result.warnings {
-                    self.write_log(&mut agent_log, LogLine::tsk_warning(warning.clone()));
+                    task_logger.log(LogLine::tsk_warning(warning.clone()));
                 }
                 if result.has_changes {
-                    self.write_log(
-                        &mut agent_log,
-                        LogLine::tsk_success(format!("Branch {branch_name} is now available")),
-                    );
+                    task_logger.log(LogLine::tsk_success(format!(
+                        "Branch {branch_name} is now available"
+                    )));
                 } else {
-                    self.write_log(
-                        &mut agent_log,
-                        LogLine::tsk_message("No changes - branch not created"),
-                    );
+                    task_logger.log(LogLine::tsk_message("No changes - branch not created"));
                 }
             }
             Err(e) => {
-                self.write_log(
-                    &mut agent_log,
-                    LogLine::tsk_warning(format!("Error fetching changes: {e}")),
-                );
+                task_logger.log(LogLine::tsk_warning(format!("Error fetching changes: {e}")));
             }
         }
 

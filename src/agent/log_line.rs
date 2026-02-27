@@ -132,6 +132,11 @@ impl LogLine {
         Self::warning(vec!["tsk".into()], None, message.into())
     }
 
+    /// Create an infrastructure error with the "tsk" tag.
+    pub fn tsk_error(message: impl Into<String>) -> Self {
+        Self::error(vec!["tsk".into()], None, message.into())
+    }
+
     /// Create a Todo log line.
     pub fn todo(tags: Vec<String>, items: Vec<TodoItem>) -> Self {
         LogLine::Todo { tags, items }

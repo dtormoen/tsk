@@ -4,7 +4,8 @@
 //! for the same image tag, ensuring builds are serialized while allowing different
 //! images to build in parallel.
 
-use crate::tui::events::{ServerEvent, ServerEventSender, emit_or_print};
+use crate::agent::log_line::LogLine;
+use crate::agent::task_logger::TaskLogger;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -87,7 +88,7 @@ impl DockerBuildLockManager {
     pub async fn acquire_build_lock(
         self: &Arc<Self>,
         image_tag: &str,
-        event_sender: &Option<ServerEventSender>,
+        logger: &TaskLogger,
     ) -> BuildLockGuard {
         // Get or create the lock for this image
         let semaphore = {
@@ -102,13 +103,10 @@ impl DockerBuildLockManager {
 
                 // Log that we're waiting
                 let waiting_position = lock.waiting_count;
-                emit_or_print(
-                    event_sender,
-                    ServerEvent::StatusMessage(format!(
-                        "Waiting for Docker build lock for image '{}' (position {} in queue)",
-                        image_tag, waiting_position
-                    )),
-                );
+                logger.log(LogLine::tsk_message(format!(
+                    "Waiting for Docker build lock for image '{}' (position {} in queue)",
+                    image_tag, waiting_position
+                )));
             }
 
             Arc::clone(&lock.semaphore)
@@ -153,14 +151,17 @@ mod tests {
         let manager = Arc::new(DockerBuildLockManager::new());
 
         // Acquire first lock
-        let _guard1 = manager.acquire_build_lock("test-image", &None).await;
+        let _guard1 = manager
+            .acquire_build_lock("test-image", &TaskLogger::no_file())
+            .await;
 
         // Try to acquire second lock for same image (should wait)
         let manager_clone = Arc::clone(&manager);
-        let acquire_task =
-            tokio::spawn(
-                async move { manager_clone.acquire_build_lock("test-image", &None).await },
-            );
+        let acquire_task = tokio::spawn(async move {
+            manager_clone
+                .acquire_build_lock("test-image", &TaskLogger::no_file())
+                .await
+        });
 
         // Give the task a moment to start waiting
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -181,9 +182,11 @@ mod tests {
         let manager1 = Arc::clone(&manager);
         let manager2 = Arc::clone(&manager);
 
+        let logger1 = TaskLogger::no_file();
+        let logger2 = TaskLogger::no_file();
         let (guard1, guard2) = tokio::join!(
-            manager1.acquire_build_lock("image1", &None),
-            manager2.acquire_build_lock("image2", &None)
+            manager1.acquire_build_lock("image1", &logger1),
+            manager2.acquire_build_lock("image2", &logger2)
         );
 
         // Both should succeed without waiting
@@ -196,7 +199,9 @@ mod tests {
         let manager = Arc::new(DockerBuildLockManager::new());
 
         // Acquire lock - should transition to Building
-        let guard = manager.acquire_build_lock("test-image", &None).await;
+        let guard = manager
+            .acquire_build_lock("test-image", &TaskLogger::no_file())
+            .await;
 
         // Check that state is Building
         {

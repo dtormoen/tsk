@@ -4,6 +4,7 @@ pub mod image_manager;
 pub mod layers;
 pub mod proxy_manager;
 pub mod template_engine;
+use crate::agent::task_logger::TaskLogger;
 use crate::agent::{Agent, LogProcessor};
 use crate::context::AppContext;
 use crate::context::ContainerEngine;
@@ -69,32 +70,6 @@ pub(crate) fn resolve_config_from_task(
         project_config.as_ref(),
         Some(&task.repo_root),
     )
-}
-
-/// Write build output to a log file on failure, printing warnings on error.
-pub(crate) fn save_build_log(
-    log_path: &std::path::Path,
-    build_output: &str,
-    event_sender: &Option<crate::tui::events::ServerEventSender>,
-) {
-    use crate::tui::events::{ServerEvent, emit_or_print};
-    if let Some(parent) = log_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Err(write_err) = std::fs::write(log_path, build_output) {
-        emit_or_print(
-            event_sender,
-            ServerEvent::WarningMessage(format!(
-                "Warning: Failed to write build log to {}: {write_err}",
-                log_path.display()
-            )),
-        );
-    } else {
-        emit_or_print(
-            event_sender,
-            ServerEvent::StatusMessage(format!("Build log saved to: {}", log_path.display())),
-        );
-    }
 }
 
 /// Manages Docker container execution for TSK tasks.
@@ -549,15 +524,19 @@ impl DockerManager {
         let proxy_config = resolved.proxy_config();
 
         let proxy_session = if task.network_isolation && !self.is_nested() {
-            let proxy_build_log_path = self
-                .ctx
-                .tsk_env()
-                .task_dir(&task.id)
-                .join("output")
-                .join("proxy-build.log");
+            let suppress_stdout = self.event_sender.is_some();
+            let proxy_logger = TaskLogger::from_path(
+                &self
+                    .ctx
+                    .tsk_env()
+                    .task_dir(&task.id)
+                    .join("output")
+                    .join("agent.log"),
+                suppress_stdout,
+            );
             match self
                 .proxy_manager
-                .acquire_proxy(&task.id, &proxy_config, Some(&proxy_build_log_path))
+                .acquire_proxy(&task.id, &proxy_config, &proxy_logger)
                 .await
             {
                 Ok(session) => Some(session),
@@ -1842,18 +1821,5 @@ mod tests {
             !env.contains(&"BUILDAH_ISOLATION=chroot".to_string()),
             "BUILDAH_ISOLATION should not be set when dind is disabled"
         );
-    }
-
-    #[test]
-    fn test_save_build_log_writes_output() {
-        let temp_dir = tempfile::TempDir::new().unwrap();
-        let log_path = temp_dir.path().join("output").join("docker-build.log");
-        let build_output = "Step 1/5: FROM ubuntu\nStep 2/5: RUN apt-get update\n";
-
-        super::save_build_log(&log_path, build_output, &None);
-
-        assert!(log_path.exists());
-        let content = std::fs::read_to_string(&log_path).unwrap();
-        assert_eq!(content, build_output);
     }
 }

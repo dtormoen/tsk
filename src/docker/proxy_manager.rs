@@ -7,6 +7,8 @@
 //! squid_conf content). Tasks with identical proxy configurations share a proxy
 //! container, while tasks with different configurations get separate instances.
 
+use crate::agent::log_line::LogLine;
+use crate::agent::task_logger::TaskLogger;
 use crate::context::ContainerEngine;
 use crate::context::ResolvedProxyConfig;
 use crate::context::docker_client::DockerClient;
@@ -193,14 +195,14 @@ impl ProxyManager {
     pub(crate) async fn ensure_proxy(
         &self,
         proxy_config: &ResolvedProxyConfig,
-        build_log_path: Option<&std::path::Path>,
+        logger: &TaskLogger,
     ) -> Result<String> {
         let container_name = proxy_config.proxy_container_name();
 
         // Skip build if proxy is already running - config changes will be
         // picked up when the proxy is stopped and restarted
         if !self.is_proxy_running(&container_name).await? {
-            self.build_proxy(false, build_log_path)
+            self.build_proxy(false, logger)
                 .await
                 .context("Failed to build proxy image")?;
         }
@@ -217,7 +219,7 @@ impl ProxyManager {
             .context("Failed to ensure proxy container is running")?;
 
         // Wait for proxy to be healthy
-        self.wait_for_proxy_health(&container_name)
+        self.wait_for_proxy_health(&container_name, logger)
             .await
             .context("Failed to wait for proxy health")?;
 
@@ -270,13 +272,9 @@ impl ProxyManager {
     ///
     /// # Arguments
     /// * `no_cache` - Whether to build without using Docker's cache
-    /// * `build_log_path` - Optional path to save build output on failure
-    pub async fn build_proxy(
-        &self,
-        no_cache: bool,
-        build_log_path: Option<&std::path::Path>,
-    ) -> Result<()> {
-        self.emit(ServerEvent::StatusMessage(format!(
+    /// * `logger` - Task logger for build output
+    pub async fn build_proxy(&self, no_cache: bool, logger: &TaskLogger) -> Result<()> {
+        logger.log(LogLine::tsk_message(format!(
             "Building proxy image: {PROXY_IMAGE}"
         )));
 
@@ -285,7 +283,7 @@ impl ProxyManager {
         // Warn about deprecated legacy squid.conf file
         let legacy_squid_conf = self.tsk_env.config_dir().join("squid.conf");
         if legacy_squid_conf.exists() {
-            self.emit(ServerEvent::WarningMessage(format!(
+            logger.log(LogLine::tsk_warning(format!(
                 "Warning: {} is deprecated. Use squid_conf or squid_conf_path in tsk.toml instead.",
                 legacy_squid_conf.display()
             )));
@@ -329,10 +327,7 @@ impl ProxyManager {
                     build_output.push_str(&line);
                 }
                 Err(e) => {
-                    if let Some(log_path) = build_log_path {
-                        super::save_build_log(log_path, &build_output, &self.event_sender);
-                    }
-                    eprint!("{build_output}");
+                    logger.log(LogLine::tsk_message(&build_output));
                     return Err(anyhow::anyhow!("Failed to build proxy image: {e}"));
                 }
             }
@@ -438,19 +433,16 @@ impl ProxyManager {
         &self,
         task_id: &str,
         proxy_config: &ResolvedProxyConfig,
-        build_log_path: Option<&Path>,
+        logger: &TaskLogger,
     ) -> Result<ProxySession> {
         let fingerprint = proxy_config.fingerprint();
         // Clone values needed inside the closure (proxy_config fields are used by reference)
         let task_id = task_id.to_string();
         let proxy_config = proxy_config.clone();
-        let build_log_path = build_log_path.map(|p| p.to_path_buf());
 
         self.sync_manager
             .with_lock(&fingerprint, || async {
-                let proxy_container_name = self
-                    .ensure_proxy(&proxy_config, build_log_path.as_deref())
-                    .await?;
+                let proxy_container_name = self.ensure_proxy(&proxy_config, logger).await?;
 
                 let network_name = self.create_agent_network(&task_id).await?;
 
@@ -470,7 +462,7 @@ impl ProxyManager {
                 {
                     Ok(ip) => Some(ip),
                     Err(e) => {
-                        self.emit(ServerEvent::WarningMessage(format!(
+                        logger.log(LogLine::tsk_warning(format!(
                             "Warning: Could not resolve proxy IP for extra_hosts: {e}"
                         )));
                         None
@@ -655,7 +647,7 @@ impl ProxyManager {
     }
 
     /// Waits for the specified proxy container to become healthy.
-    async fn wait_for_proxy_health(&self, container_name: &str) -> Result<()> {
+    async fn wait_for_proxy_health(&self, container_name: &str, logger: &TaskLogger) -> Result<()> {
         const MAX_RETRIES: u32 = 30; // 30 retries with 1 second delay = 30 seconds max wait
         const RETRY_DELAY_MS: u64 = 1000;
 
@@ -679,8 +671,8 @@ impl ProxyManager {
                                 {
                                     match status {
                                         "healthy" => {
-                                            self.emit(ServerEvent::StatusMessage(
-                                                "Proxy container is healthy".to_string(),
+                                            logger.log(LogLine::tsk_message(
+                                                "Proxy container is healthy",
                                             ));
                                             return Ok(());
                                         }
@@ -692,8 +684,8 @@ impl ProxyManager {
                                         "starting" => {
                                             // Still starting, continue waiting
                                             if attempt == 1 {
-                                                self.emit(ServerEvent::StatusMessage(
-                                                    "Waiting for proxy container to become healthy...".to_string(),
+                                                logger.log(LogLine::tsk_message(
+                                                    "Waiting for proxy container to become healthy...",
                                                 ));
                                             }
                                         }
@@ -705,9 +697,8 @@ impl ProxyManager {
                             } else {
                                 // No health check configured, just verify it's running
                                 // This is for backward compatibility
-                                self.emit(ServerEvent::StatusMessage(
-                                    "Proxy container is running (no health check configured)"
-                                        .to_string(),
+                                logger.log(LogLine::tsk_message(
+                                    "Proxy container is running (no health check configured)",
                                 ));
                                 return Ok(());
                             }
@@ -823,6 +814,7 @@ impl ProxyManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::task_logger::TaskLogger;
     use crate::context::AppContext;
     use crate::test_utils::TrackedDockerClient;
 
@@ -845,7 +837,9 @@ mod tests {
             None,
         );
         let proxy_config = default_proxy_config();
-        let result = manager.ensure_proxy(&proxy_config, None).await;
+        let result = manager
+            .ensure_proxy(&proxy_config, &TaskLogger::no_file())
+            .await;
 
         assert!(result.is_ok());
         let container_name = result.unwrap();
@@ -889,7 +883,9 @@ mod tests {
             host_ports: vec![5432, 6379],
             squid_conf: None,
         };
-        let result = manager.ensure_proxy(&proxy_config, None).await;
+        let result = manager
+            .ensure_proxy(&proxy_config, &TaskLogger::no_file())
+            .await;
 
         assert!(result.is_ok());
 
@@ -1090,7 +1086,9 @@ mod tests {
             ContainerEngine::Docker,
             None,
         );
-        let result = manager.wait_for_proxy_health("tsk-proxy-test").await;
+        let result = manager
+            .wait_for_proxy_health("tsk-proxy-test", &TaskLogger::no_file())
+            .await;
 
         assert!(result.is_ok());
     }
@@ -1120,7 +1118,9 @@ mod tests {
             ContainerEngine::Docker,
             None,
         );
-        let result = manager.wait_for_proxy_health("tsk-proxy-test").await;
+        let result = manager
+            .wait_for_proxy_health("tsk-proxy-test", &TaskLogger::no_file())
+            .await;
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("unhealthy"));
@@ -1148,7 +1148,9 @@ mod tests {
             ContainerEngine::Docker,
             None,
         );
-        let result = manager.wait_for_proxy_health("tsk-proxy-test").await;
+        let result = manager
+            .wait_for_proxy_health("tsk-proxy-test", &TaskLogger::no_file())
+            .await;
 
         assert!(result.is_ok());
     }
@@ -1175,7 +1177,9 @@ mod tests {
             ContainerEngine::Docker,
             None,
         );
-        let result = manager.wait_for_proxy_health("tsk-proxy-test").await;
+        let result = manager
+            .wait_for_proxy_health("tsk-proxy-test", &TaskLogger::no_file())
+            .await;
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not running"));
@@ -1330,7 +1334,7 @@ mod tests {
             None,
         );
 
-        let result = manager.build_proxy(false, None).await;
+        let result = manager.build_proxy(false, &TaskLogger::no_file()).await;
         assert!(result.is_ok());
     }
 
@@ -1500,7 +1504,9 @@ mod tests {
             host_ports: vec![],
             squid_conf: Some("http_port 3128\nacl custom src all".to_string()),
         };
-        let result = manager.ensure_proxy(&proxy_config, None).await;
+        let result = manager
+            .ensure_proxy(&proxy_config, &TaskLogger::no_file())
+            .await;
 
         assert!(result.is_ok());
 
@@ -1591,7 +1597,7 @@ mod tests {
         );
         let proxy_config = default_proxy_config();
         let session = manager
-            .acquire_proxy("test-task", &proxy_config, None)
+            .acquire_proxy("test-task", &proxy_config, &TaskLogger::no_file())
             .await;
 
         assert!(session.is_ok());
