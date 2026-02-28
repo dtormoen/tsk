@@ -24,6 +24,17 @@ struct ClaudeMessage {
     tool_use_result: Option<Value>,
     summary: Option<String>,
     parent_tool_use_id: Option<String>,
+    rate_limit_info: Option<RateLimitInfo>,
+}
+
+/// Rate limit information from Claude's rate_limit_event
+#[derive(Debug, Deserialize, Serialize)]
+struct RateLimitInfo {
+    status: Option<String>,
+    #[serde(rename = "rateLimitType")]
+    rate_limit_type: Option<String>,
+    #[serde(rename = "resetsAt")]
+    resets_at: Option<i64>,
 }
 
 /// Message content structure from Claude
@@ -153,6 +164,44 @@ impl ClaudeLogProcessor {
                     Some(LogLine::success(tags, None, summary_text))
                 } else {
                     Some(LogLine::success(tags, None, "Task Complete".into()))
+                }
+            }
+            "system" => match msg.subtype.as_deref() {
+                Some("task_started") => None,
+                _ => Some(LogLine::message(vec![], None, "[system]".into())),
+            },
+            "rate_limit_event" => {
+                if let Some(info) = &msg.rate_limit_info {
+                    if info.status.as_deref() != Some("allowed") {
+                        let rate_type = info.rate_limit_type.as_deref().unwrap_or("unknown");
+                        let resets_at = info
+                            .resets_at
+                            .map(|ts| {
+                                let secs_remaining = ts - chrono::Utc::now().timestamp();
+                                if secs_remaining > 0 {
+                                    let mins = secs_remaining / 60;
+                                    let hours = mins / 60;
+                                    if hours > 0 {
+                                        format!("resets in {}h {}m", hours, mins % 60)
+                                    } else {
+                                        format!("resets in {}m", mins)
+                                    }
+                                } else {
+                                    "reset time passed".to_string()
+                                }
+                            })
+                            .unwrap_or_default();
+                        let message = if resets_at.is_empty() {
+                            format!("Rate limited ({rate_type})")
+                        } else {
+                            format!("Rate limited ({rate_type}) - {resets_at}")
+                        };
+                        Some(LogLine::warning(vec![], None, message))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
                 }
             }
             other_type => {
@@ -320,7 +369,7 @@ impl ClaudeLogProcessor {
                 let processed_content = content.replace("\\n", "\n");
                 return LogLine::message(
                     tags,
-                    Some("Task".into()),
+                    Some("Agent".into()),
                     format!(
                         "Complete: {} ({})\n\nSub-agent Output:\n{}",
                         task_info.description, task_info.subagent_type, processed_content
@@ -330,7 +379,7 @@ impl ClaudeLogProcessor {
 
             return LogLine::message(
                 tags,
-                Some("Task".into()),
+                Some("Agent".into()),
                 format!(
                     "Complete: {} ({})",
                     task_info.description, task_info.subagent_type
@@ -437,7 +486,7 @@ impl ClaudeLogProcessor {
             let processed_content = content.replace("\\n", "\n");
             return LogLine::message(
                 tags,
-                Some("Task".into()),
+                Some("Agent".into()),
                 format!(
                     "Complete: {} ({})\n\nSub-agent Output:\n{}",
                     task_info.description, task_info.subagent_type, processed_content
@@ -448,7 +497,7 @@ impl ClaudeLogProcessor {
         // Fallback for empty or missing content
         LogLine::message(
             tags,
-            Some("Task".into()),
+            Some("Agent".into()),
             format!(
                 "Complete: {} ({})",
                 task_info.description, task_info.subagent_type
@@ -471,8 +520,8 @@ impl ClaudeLogProcessor {
                             if let Some("tool_use") = item.get("type").and_then(|t| t.as_str())
                                 && let Some(tool_name) = item.get("name").and_then(|n| n.as_str())
                             {
-                                // Store Task tool invocations for later matching with results
-                                if tool_name == "Task"
+                                // Store Task/Agent tool invocations for later matching with results
+                                if matches!(tool_name, "Task" | "Agent")
                                     && let Some(tool_use_id) =
                                         item.get("id").and_then(|id| id.as_str())
                                     && let Some(input) = item.get("input")
@@ -566,7 +615,7 @@ impl ClaudeLogProcessor {
         let tags = self.build_tags(model, None, parent_tool_use_id);
 
         match tool_name {
-            "Task" => {
+            "Task" | "Agent" => {
                 if let Some(input) = item.get("input") {
                     let subagent_type = input
                         .get("subagent_type")
@@ -581,7 +630,7 @@ impl ClaudeLogProcessor {
                     if !prompt.is_empty() {
                         Some(LogLine::message(
                             tags,
-                            Some("Task".into()),
+                            Some("Agent".into()),
                             format!(
                                 "Starting: {} ({})\n\nPrompt: {}",
                                 description, subagent_type, prompt
@@ -590,14 +639,14 @@ impl ClaudeLogProcessor {
                     } else {
                         Some(LogLine::message(
                             tags,
-                            Some("Task".into()),
+                            Some("Agent".into()),
                             format!("Starting: {} ({})", description, subagent_type),
                         ))
                     }
                 } else {
                     Some(LogLine::message(
                         tags,
-                        Some("Task".into()),
+                        Some("Agent".into()),
                         "Starting".into(),
                     ))
                 }
@@ -1461,5 +1510,165 @@ mod tests {
         }
 
         assert!(processor.process_line("Bad line 2").is_none());
+    }
+
+    // --- Agent tool tests (new format, replacing Task) ---
+
+    fn agent_msg(id: &str, agent: &str, desc: &str, prompt: Option<&str>) -> String {
+        let input = if let Some(p) = prompt {
+            json!({"subagent_type": agent, "description": desc, "prompt": p})
+        } else {
+            json!({"subagent_type": agent, "description": desc})
+        };
+        json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": id, "name": "Agent", "input": input}]}}).to_string()
+    }
+
+    fn agent_result(id: &str, content: &str, parent_id: Option<&str>) -> String {
+        let mut result = json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": id, "content": content}]}});
+        if let Some(pid) = parent_id {
+            result["parent_tool_use_id"] = json!(pid);
+        }
+        result.to_string()
+    }
+
+    #[test]
+    fn test_agent_tool_invocation_with_prompt() {
+        let mut processor = ClaudeLogProcessor::new();
+
+        let msg = agent_msg(
+            "toolu_123",
+            "software-architect",
+            "Review architecture",
+            Some("Check patterns"),
+        );
+        let output = processor.process_line(&msg).unwrap();
+        let text = get_message_text(&output);
+        assert!(text.contains("Starting: Review architecture (software-architect)"));
+        assert!(text.contains("Prompt: Check patterns"));
+        assert_message_tool(&output, Some("Agent"));
+    }
+
+    #[test]
+    fn test_agent_tool_invocation_without_prompt() {
+        let mut processor = ClaudeLogProcessor::new();
+
+        let msg = agent_msg("toolu_456", "code-implementer", "Implement feature", None);
+        let output = processor.process_line(&msg).unwrap();
+        let text = get_message_text(&output);
+        assert!(text.contains("Starting: Implement feature (code-implementer)"));
+        assert!(!text.contains("Prompt:"));
+        assert_message_tool(&output, Some("Agent"));
+    }
+
+    #[test]
+    fn test_agent_tool_result_with_output() {
+        let mut processor = ClaudeLogProcessor::new();
+
+        // Register the Agent tool invocation
+        let msg = agent_msg("toolu_789", "software-architect", "Analyze code", None);
+        processor.process_line(&msg);
+
+        // Agent tool result
+        let result = agent_result("toolu_789", "Analysis complete: found 3 issues", None);
+        let output = processor.process_line(&result).unwrap();
+        let text = get_message_text(&output);
+        assert!(text.contains("Complete: Analyze code (software-architect)"));
+        assert!(text.contains("Sub-agent Output:"));
+        assert!(text.contains("Analysis complete: found 3 issues"));
+        has_tag(&output, "software-architect");
+    }
+
+    #[test]
+    fn test_agent_tool_result_empty() {
+        let mut processor = ClaudeLogProcessor::new();
+
+        let msg = agent_msg("toolu_abc", "test-agent", "Test task", None);
+        processor.process_line(&msg);
+
+        let result = agent_result("toolu_abc", "", None);
+        let output = processor.process_line(&result).unwrap();
+        let text = get_message_text(&output);
+        assert!(text.contains("Complete: Test task (test-agent)"));
+        assert!(!text.contains("Sub-agent Output:"));
+    }
+
+    #[test]
+    fn test_agent_sub_agent_tagging() {
+        let mut processor = ClaudeLogProcessor::new();
+
+        // Register the Agent tool invocation
+        let msg = agent_msg("toolu_tag", "code-reviewer", "Review PR", None);
+        processor.process_line(&msg);
+
+        // Messages with parent_tool_use_id should have sub-agent tag
+        let msg = tool_use_msg("Bash", r#"{"command": "cargo test"}"#, None, Some("toolu_tag"));
+        let output = processor.process_line(&msg).unwrap();
+        has_tag(&output, "code-reviewer");
+
+        let msg = assistant_text("Running tests now", None, Some("toolu_tag"));
+        let output = processor.process_line(&msg).unwrap();
+        has_tag(&output, "code-reviewer");
+    }
+
+    #[test]
+    fn test_system_task_started_suppressed() {
+        let mut processor = ClaudeLogProcessor::new();
+
+        let json = r#"{"type": "system", "subtype": "task_started", "task_id": "abc123", "tool_use_id": "toolu_123", "description": "Review architecture"}"#;
+        let result = processor.process_line(json);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_system_init_preserved() {
+        let mut processor = ClaudeLogProcessor::new();
+
+        let json = r#"{"type": "system", "subtype": "init", "cwd": "/workspace"}"#;
+        let result = processor.process_line(json).unwrap();
+        assert_eq!(get_message_text(&result), "[system]");
+    }
+
+    #[test]
+    fn test_rate_limit_allowed_suppressed() {
+        let mut processor = ClaudeLogProcessor::new();
+
+        let json = r#"{"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "rateLimitType": "five_hour", "resetsAt": 1772330400}}"#;
+        let result = processor.process_line(json);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_rate_limit_not_allowed_shows_warning() {
+        let mut processor = ClaudeLogProcessor::new();
+
+        let json = r#"{"type": "rate_limit_event", "rate_limit_info": {"status": "rate_limited", "rateLimitType": "five_hour", "resetsAt": 9999999999}}"#;
+        let result = processor.process_line(json).unwrap();
+        if let LogLine::Message { level, message, .. } = &result {
+            assert_eq!(*level, Level::Warning);
+            assert!(message.contains("Rate limited"));
+            assert!(message.contains("five_hour"));
+        } else {
+            panic!("Expected Message variant");
+        }
+    }
+
+    #[test]
+    fn test_legacy_task_tool_still_works() {
+        // Verify backward compatibility with the old Task tool name
+        let mut processor = ClaudeLogProcessor::new();
+
+        let msg = task_msg("toolu_old", "explorer", "Explore codebase", Some("Find patterns"));
+        let output = processor.process_line(&msg).unwrap();
+        let text = get_message_text(&output);
+        assert!(text.contains("Starting: Explore codebase (explorer)"));
+        assert!(text.contains("Prompt: Find patterns"));
+        assert_message_tool(&output, Some("Agent"));
+
+        // Result should also work
+        let result = task_result("toolu_old", "Found 10 patterns", None);
+        let output = processor.process_line(&result).unwrap();
+        let text = get_message_text(&output);
+        assert!(text.contains("Complete: Explore codebase (explorer)"));
+        has_tag(&output, "explorer");
     }
 }
