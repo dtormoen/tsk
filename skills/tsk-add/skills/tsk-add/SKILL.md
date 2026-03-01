@@ -46,11 +46,17 @@ To see the full content of a template, run `tsk template show <template>`. When 
    - Acceptance criteria
 
 5. **Queue the task**: Use `tsk add` to create the task:
+   - If you have already written a plan markdown file, prefer using `--prompt-file`
+   - If you do not already have a plan in a file, prefer piping in the input
 
 ```bash
 tsk add -t <template> -n "<task-name>" <<'EOF'
-<task prompt>
+<task description>
 EOF
+
+# Alternatively:
+
+tsk add -t <template> --prompt-file <path_to_the_plan>
 ```
 
 ## Guidelines
@@ -61,7 +67,7 @@ EOF
 - Keep the prompt concise but complete - the agent can explore the codebase for details
 - Either pipe in input using HEREDOC format OR use the `-p` flag. They do not work together.
 
-## Example Output
+## Example Output When There Is Not a Plan File
 
 ```bash
 tsk add -t feat -n "add-rate-limiting" <<'EOF'
