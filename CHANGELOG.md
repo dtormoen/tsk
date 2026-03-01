@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.2](https://github.com/dtormoen/tsk-tsk/compare/v0.10.1...v0.10.2) - 2026-03-01
+
+### Added
+
+- update tsk-add skill to use `--prompt-file`
+
+### Fixed
+
+- support Claude Code Agent tool in log processor
+
 ## [0.10.1](https://github.com/dtormoen/tsk-tsk/compare/v0.10.0...v0.10.1) - 2026-02-27
 
 ### Fixed
