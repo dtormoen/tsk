@@ -1601,7 +1601,12 @@ mod tests {
         processor.process_line(&msg);
 
         // Messages with parent_tool_use_id should have sub-agent tag
-        let msg = tool_use_msg("Bash", r#"{"command": "cargo test"}"#, None, Some("toolu_tag"));
+        let msg = tool_use_msg(
+            "Bash",
+            r#"{"command": "cargo test"}"#,
+            None,
+            Some("toolu_tag"),
+        );
         let output = processor.process_line(&msg).unwrap();
         has_tag(&output, "code-reviewer");
 
@@ -1657,7 +1662,12 @@ mod tests {
         // Verify backward compatibility with the old Task tool name
         let mut processor = ClaudeLogProcessor::new();
 
-        let msg = task_msg("toolu_old", "explorer", "Explore codebase", Some("Find patterns"));
+        let msg = task_msg(
+            "toolu_old",
+            "explorer",
+            "Explore codebase",
+            Some("Find patterns"),
+        );
         let output = processor.process_line(&msg).unwrap();
         let text = get_message_text(&output);
         assert!(text.contains("Starting: Explore codebase (explorer)"));

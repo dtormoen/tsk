@@ -27,6 +27,43 @@ pub struct RepoManager {
     ctx: AppContext,
 }
 
+/// Recursively copy LFS objects from source to destination, skipping files that already exist.
+/// LFS objects are content-addressed, so existing files are guaranteed to have identical content.
+async fn copy_lfs_objects(src: &Path, dst: &Path) -> Result<(), String> {
+    if !src.exists() {
+        return Ok(());
+    }
+
+    let mut entries = tokio::fs::read_dir(src)
+        .await
+        .map_err(|e| format!("Failed to read LFS objects dir: {e}"))?;
+
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let src_path = entry.path();
+        let file_name = entry.file_name();
+        let dst_path = dst.join(&file_name);
+
+        let meta = tokio::fs::symlink_metadata(&src_path)
+            .await
+            .map_err(|e| format!("Failed to stat {}: {e}", src_path.display()))?;
+
+        if meta.is_dir() {
+            Box::pin(copy_lfs_objects(&src_path, &dst_path)).await?;
+        } else if meta.is_file() && !dst_path.exists() {
+            if let Some(parent) = dst_path.parent() {
+                crate::file_system::create_dir(parent)
+                    .await
+                    .map_err(|e| format!("Failed to create LFS dir: {e}"))?;
+            }
+            crate::file_system::copy_file(&src_path, &dst_path)
+                .await
+                .map_err(|e| format!("Failed to copy LFS object: {e}"))?;
+        }
+    }
+
+    Ok(())
+}
+
 impl RepoManager {
     /// Creates a new RepoManager from the application context.
     ///
@@ -107,6 +144,34 @@ impl RepoManager {
         {
             eprintln!(
                 "Warning: Failed to copy .git/modules: {e}. Submodules may not work correctly."
+            );
+        }
+
+        // Copy .git/lfs from source to preserve LFS objects
+        // This avoids re-hashing large files when the clean filter runs
+        let src_lfs = src_git_common.join("lfs");
+        let dst_lfs = repo_path.join(".git/lfs");
+
+        if crate::file_system::exists(&src_lfs).await.unwrap_or(false)
+            && let Err(e) = crate::file_system::copy_dir(&src_lfs, &dst_lfs).await
+        {
+            eprintln!("Warning: Failed to copy .git/lfs: {e}. LFS files may need to be re-hashed.");
+        }
+
+        // Warn if repo uses LFS but git-lfs is not available on the host
+        let gitattributes_path = current_dir.join(".gitattributes");
+        if let Ok(content) = tokio::fs::read_to_string(&gitattributes_path).await
+            && content.contains("filter=lfs")
+            && tokio::process::Command::new("git")
+                .args(["lfs", "version"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .await
+                .map_or(true, |s| !s.success())
+        {
+            eprintln!(
+                "Warning: Repository uses git-lfs but git-lfs is not installed. LFS files may not be handled correctly."
             );
         }
 
@@ -521,6 +586,23 @@ impl RepoManager {
                     .await
                 {
                     warnings.push(format!("Failed to fetch submodule changes: {e}"));
+                }
+
+                // Copy LFS objects from task repo to main repo
+                // When an agent modifies LFS-tracked files, new LFS objects are created
+                // in the task repo. Without copying them, checking out the tsk branch
+                // in the main repo would fail because git-lfs can't find the objects.
+                {
+                    let task_lfs_objects = repo_path.join(".git/lfs/objects");
+                    if task_lfs_objects.exists() {
+                        let main_git_common = crate::repo_utils::resolve_git_common_dir(&main_repo)
+                            .unwrap_or_else(|_| main_repo.join(".git"));
+                        let main_lfs_objects = main_git_common.join("lfs/objects");
+                        if let Err(e) = copy_lfs_objects(&task_lfs_objects, &main_lfs_objects).await
+                        {
+                            warnings.push(format!("Failed to copy LFS objects: {e}"));
+                        }
+                    }
                 }
 
                 // Check if the fetched branch has any commits not in main
@@ -2537,6 +2619,176 @@ mod tests {
             "Branch '{}' should NOT exist in RepoC (which has NO changes). This is the bug! Available branches:\n{}",
             branch_name,
             branches_c_str
+        );
+    }
+
+    #[tokio::test]
+    async fn test_commit_changes_preserves_lfs_pointers() {
+        // Skip if git-lfs is not available
+        if std::process::Command::new("git")
+            .args(["lfs", "version"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map_or(true, |s| !s.success())
+        {
+            eprintln!("Skipping test: git-lfs not installed");
+            return;
+        }
+
+        let ctx = AppContext::builder().build();
+        let repo_manager = RepoManager::new(&ctx);
+
+        // Create source repo with LFS tracking
+        let source = TestGitRepository::new().unwrap();
+        source.init_with_main_branch().unwrap();
+        source
+            .run_git_command(&["lfs", "install", "--local"])
+            .unwrap();
+        source
+            .create_file(
+                ".gitattributes",
+                "*.bin filter=lfs diff=lfs merge=lfs -text\n",
+            )
+            .unwrap();
+        source
+            .create_file("data.bin", "original binary content\n")
+            .unwrap();
+        source.stage_all().unwrap();
+        source.commit("Add LFS tracked file").unwrap();
+        let source_commit = source.get_head_commit().unwrap();
+
+        // Copy repo (this overlays working dir content over the clone)
+        let branch_name = "tsk/test/lfs-preserve/abcd1234";
+        let (repo_path, _) = repo_manager
+            .copy_repo(
+                "lfs-test-preserve",
+                source.path(),
+                Some(&source_commit),
+                branch_name,
+            )
+            .await
+            .unwrap();
+
+        // Configure git user in the task repo for commits
+        let task_repo = ExistingGitRepository::new(&repo_path).unwrap();
+        task_repo.configure_test_user().unwrap();
+
+        // The working directory has raw file content (from overlay), but nothing was modified.
+        // commit_changes should either produce no commit (since LFS re-cleans to identical pointers)
+        // or produce a commit where the .bin file is still an LFS pointer
+        let head_before = task_repo.get_current_commit().unwrap();
+        repo_manager
+            .commit_changes(&repo_path, "test commit")
+            .await
+            .unwrap();
+        let head_after = task_repo.get_current_commit().unwrap();
+
+        if head_before != head_after {
+            // A commit was made - verify the .bin blob is an LFS pointer
+            let blob_content = task_repo
+                .run_git_command(&["cat-file", "-p", "HEAD:data.bin"])
+                .unwrap();
+            assert!(
+                blob_content.starts_with("version https://git-lfs.github.com/spec/v1"),
+                "LFS file should be stored as pointer, but got: {}",
+                blob_content
+            );
+        }
+        // If no commit was made, that's also correct - the clean filter re-created identical pointers
+    }
+
+    #[tokio::test]
+    async fn test_commit_changes_with_modified_lfs_file() {
+        // Skip if git-lfs is not available
+        if std::process::Command::new("git")
+            .args(["lfs", "version"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map_or(true, |s| !s.success())
+        {
+            eprintln!("Skipping test: git-lfs not installed");
+            return;
+        }
+
+        let ctx = AppContext::builder().build();
+        let repo_manager = RepoManager::new(&ctx);
+
+        // Create source repo with LFS tracking
+        let source = TestGitRepository::new().unwrap();
+        source.init_with_main_branch().unwrap();
+        source
+            .run_git_command(&["lfs", "install", "--local"])
+            .unwrap();
+        source
+            .create_file(
+                ".gitattributes",
+                "*.bin filter=lfs diff=lfs merge=lfs -text\n",
+            )
+            .unwrap();
+        source
+            .create_file("data.bin", "original binary content\n")
+            .unwrap();
+        source.stage_all().unwrap();
+        source.commit("Add LFS tracked file").unwrap();
+        let source_commit = source.get_head_commit().unwrap();
+
+        // Copy repo
+        let branch_name = "tsk/test/lfs-modified/efgh5678";
+        let (repo_path, _) = repo_manager
+            .copy_repo(
+                "lfs-test-modified",
+                source.path(),
+                Some(&source_commit),
+                branch_name,
+            )
+            .await
+            .unwrap();
+
+        // Configure git user in the task repo
+        let task_repo = ExistingGitRepository::new(&repo_path).unwrap();
+        task_repo.configure_test_user().unwrap();
+
+        // Modify the LFS-tracked file
+        std::fs::write(repo_path.join("data.bin"), "modified binary content\n").unwrap();
+
+        // Commit changes - should create a commit with a new LFS pointer
+        repo_manager
+            .commit_changes(&repo_path, "modify lfs file")
+            .await
+            .unwrap();
+
+        // Verify the committed blob is an LFS pointer
+        let blob_content = task_repo
+            .run_git_command(&["cat-file", "-p", "HEAD:data.bin"])
+            .unwrap();
+        assert!(
+            blob_content.starts_with("version https://git-lfs.github.com/spec/v1"),
+            "Modified LFS file should be stored as pointer, but got: {}",
+            blob_content
+        );
+
+        // Fetch changes back to the source repo
+        let result = repo_manager
+            .fetch_changes(
+                &repo_path,
+                branch_name,
+                source.path(),
+                &source_commit,
+                Some("main"),
+                false,
+            )
+            .await
+            .unwrap();
+
+        assert!(result.has_changes, "Branch should have changes");
+
+        // Verify LFS objects were copied to the source repo
+        let source_lfs_dir = source.path().join(".git/lfs/objects");
+        assert!(
+            source_lfs_dir.exists(),
+            "LFS objects should have been copied to source repo"
         );
     }
 }

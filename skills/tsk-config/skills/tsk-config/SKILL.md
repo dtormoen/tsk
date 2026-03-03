@@ -100,7 +100,7 @@ Each `setup` field contains raw Dockerfile commands (`RUN`, `ENV`, `COPY`, etc.)
 
 ### Base Layer (Always Present)
 
-Every container includes: Ubuntu 25.10, git, build-essential, curl, jq, just, ripgrep, sudo, Python 3, uv, podman (for DIND), and an `agent` user (UID 1000).
+Every container includes: Ubuntu 25.10, git, git-lfs, build-essential, curl, jq, just, ripgrep, sudo, Python 3, uv, podman (for DIND), and an `agent` user (UID 1000).
 
 ### Configuration Format
 

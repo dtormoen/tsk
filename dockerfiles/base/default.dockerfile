@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     dnsutils \
     git \
+    git-lfs \
     gnupg \
     iputils-ping \
     jq \
@@ -100,7 +101,8 @@ ARG GIT_USER_EMAIL
 # Configure git with the settings from build arguments
 USER agent
 RUN git config --global user.name "$GIT_USER_NAME" && \
-    git config --global user.email "$GIT_USER_EMAIL"
+    git config --global user.email "$GIT_USER_EMAIL" && \
+    git lfs install
 
 # Agent version ARG to invalidate cache when agent updates
 ARG TSK_AGENT_VERSION
