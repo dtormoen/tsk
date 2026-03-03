@@ -30,7 +30,7 @@
 ### 1. Base Layer
 The foundation of all `tsk` containers (`base/default.dockerfile`):
 - Ubuntu 25.10 base operating system
-- Essential development tools (git, curl, build-essential, ripgrep, etc.)
+- Essential development tools (git, git-lfs, curl, build-essential, ripgrep, etc.)
 - Non-root `agent` user (created by renaming the default `ubuntu` user) for security
 - Git configuration inherited from host user via build arguments
 - Build-time working directory set to `/workspace` (at runtime, `/workspace/{project_name}`)

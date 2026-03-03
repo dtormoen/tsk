@@ -137,7 +137,7 @@ Important files:
 - Repository cloning to centralized task directories using `CloneLocal::NoLinks` for optimized pack files
 - Working directory overlay preserves uncommitted/unstaged changes from source
 - Isolated branch creation and result integration
-- Automatic commit and fetch operations
+- Automatic commit and fetch operations using git CLI (not libgit2) to ensure clean/smudge filters run correctly
 - `resolve_git_dir` / `resolve_git_common_dir` (`src/repo_utils.rs`): Helpers that handle both normal repos (`.git` is a directory) and git worktrees (`.git` is a file with `gitdir:` pointer). Used by lock file placement, project name detection, and submodule path resolution
 - `GitSyncManager`: Repository-level synchronization for concurrent git operations
   - Prevents concurrent fetch operations to the same repository
@@ -150,6 +150,10 @@ Important files:
   - Commits made in submodules are fetched back with the same branch name as the superproject task
   - Only repositories (base and submodules) with actual changes get branches created
   - Graceful fallback: if submodule setup fails, contents are treated as regular files
+- **Git LFS Support**: Repositories using git-lfs are handled correctly
+  - `get_status`, `add_all`, and `commit` in `git_operations.rs` use git CLI so LFS clean/smudge filters run
+  - `.git/lfs` is copied forward during `copy_repo` and `.git/lfs/objects` is copied back during `fetch_changes`
+  - A warning is emitted if the repo uses LFS but `git-lfs` is not installed on the host
 - **Git-Town Integration**: Optional parent branch tracking for git-town users
   - Enable with `git_town = true` in `[defaults]` or `[project.<name>]` in tsk.toml
   - When enabled, task branches automatically record their parent branch
@@ -239,6 +243,9 @@ For user-facing breaking changes, add `!` after the type (e.g., `feat!:`, `fix!:
 - Each project has a `tsk-integ-test.sh` script that validates the stack works
 - Run with `just integration-test` (requires Docker/Podman and internet access for image builds)
 - To add a new test: create a directory in `tests/integration/projects/` with project files and a `tsk-integ-test.sh`
+  - Optional `tsk-integ-setup.sh`: runs before the initial commit (e.g., for `git lfs install --local`)
+  - Optional `tsk-integ-verify.sh`: runs on the task branch after completion to verify results
+  - Optional `tsk-integ-stack.txt`: overrides the auto-detected stack name (e.g., `git-lfs` project uses `default` stack)
 
 ### Branch and Task Conventions
 

@@ -54,45 +54,21 @@ pub async fn get_status(repo_path: &Path) -> Result<String, String> {
     tokio::task::spawn_blocking({
         let repo_path = repo_path.to_owned();
         move || -> Result<String, String> {
-            let repo = Repository::open(&repo_path)
-                .map_err(|e| format!("Failed to open repository: {e}"))?;
+            let output = std::process::Command::new("git")
+                .current_dir(&repo_path)
+                .arg("status")
+                .arg("--porcelain")
+                .output()
+                .map_err(|e| format!("Failed to execute git status: {e}"))?;
 
-            let statuses = repo
-                .statuses(None)
-                .map_err(|e| format!("Failed to get repository status: {e}"))?;
-
-            let mut result = String::new();
-
-            for entry in statuses.iter() {
-                let status = entry.status();
-                if let Some(path) = entry.path() {
-                    let status_char = if status.is_wt_new() {
-                        "??"
-                    } else if status.contains(git2::Status::INDEX_NEW) {
-                        "A"
-                    } else if status.contains(git2::Status::INDEX_MODIFIED)
-                        || status.contains(git2::Status::WT_MODIFIED)
-                    {
-                        "M"
-                    } else if status.contains(git2::Status::INDEX_DELETED)
-                        || status.contains(git2::Status::WT_DELETED)
-                    {
-                        "D"
-                    } else if status.contains(git2::Status::INDEX_RENAMED)
-                        || status.contains(git2::Status::WT_RENAMED)
-                    {
-                        "R"
-                    } else if status.contains(git2::Status::CONFLICTED) {
-                        "C"
-                    } else {
-                        continue;
-                    };
-
-                    result.push_str(&format!("{status_char} {path}\n"));
-                }
+            if !output.status.success() {
+                return Err(format!(
+                    "Failed to get repository status: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
 
-            Ok(result)
+            Ok(String::from_utf8_lossy(&output.stdout).to_string())
         }
     })
     .await
@@ -103,20 +79,19 @@ pub async fn add_all(repo_path: &Path) -> Result<(), String> {
     tokio::task::spawn_blocking({
         let repo_path = repo_path.to_owned();
         move || -> Result<(), String> {
-            let repo = Repository::open(&repo_path)
-                .map_err(|e| format!("Failed to open repository: {e}"))?;
+            let output = std::process::Command::new("git")
+                .current_dir(&repo_path)
+                .arg("add")
+                .arg("-A")
+                .output()
+                .map_err(|e| format!("Failed to execute git add: {e}"))?;
 
-            let mut index = repo
-                .index()
-                .map_err(|e| format!("Failed to get repository index: {e}"))?;
-
-            index
-                .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
-                .map_err(|e| format!("Failed to add files to index: {e}"))?;
-
-            index
-                .write()
-                .map_err(|e| format!("Failed to write index: {e}"))?;
+            if !output.status.success() {
+                return Err(format!(
+                    "Failed to add files to index: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
 
             Ok(())
         }
@@ -130,48 +105,26 @@ pub async fn commit(repo_path: &Path, message: &str) -> Result<(), String> {
         let repo_path = repo_path.to_owned();
         let message = message.to_owned();
         move || -> Result<(), String> {
-            let repo = Repository::open(&repo_path)
-                .map_err(|e| format!("Failed to open repository: {e}"))?;
+            let output = std::process::Command::new("git")
+                .current_dir(&repo_path)
+                .arg("commit")
+                .arg("--no-verify")
+                .arg("-m")
+                .arg(&message)
+                .output()
+                .map_err(|e| format!("Failed to execute git commit: {e}"))?;
 
-            let mut index = repo
-                .index()
-                .map_err(|e| format!("Failed to get repository index: {e}"))?;
-
-            let tree_id = index
-                .write_tree()
-                .map_err(|e| format!("Failed to write tree: {e}"))?;
-
-            let tree = repo
-                .find_tree(tree_id)
-                .map_err(|e| format!("Failed to find tree: {e}"))?;
-
-            let signature = repo
-                .signature()
-                .map_err(|e| format!("Failed to get signature: {e}"))?;
-
-            let parent_commit = match repo.head() {
-                Ok(head) => Some(
-                    head.peel_to_commit()
-                        .map_err(|e| format!("Failed to get parent commit: {e}"))?,
-                ),
-                Err(_) => None,
-            };
-
-            let parents = if let Some(ref parent) = parent_commit {
-                vec![parent]
-            } else {
-                vec![]
-            };
-
-            repo.commit(
-                Some("HEAD"),
-                &signature,
-                &signature,
-                &message,
-                &tree,
-                &parents,
-            )
-            .map_err(|e| format!("Failed to create commit: {e}"))?;
+            if !output.status.success() {
+                let combined = format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                if combined.contains("nothing to commit") {
+                    return Ok(());
+                }
+                return Err(format!("Failed to create commit: {combined}"));
+            }
 
             Ok(())
         }
@@ -619,7 +572,7 @@ mod integration_tests {
 
         // Test get_status after add
         let status = get_status(repo_path).await.unwrap();
-        assert!(status.contains("A test.txt"));
+        assert!(status.contains("A  test.txt"));
 
         // Test commit
         commit(repo_path, "Add test file").await.unwrap();

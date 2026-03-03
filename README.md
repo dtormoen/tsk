@@ -329,7 +329,7 @@ Settings in `[defaults]`, `[project.<name>]`, and `.tsk/tsk.toml` share the same
 ### Customizing the `tsk` Sandbox Environment
 
 Each `tsk` sandbox container image has 4 main parts:
-- A [base dockerfile](./dockerfiles/base/default.dockerfile) that includes the OS and a set of basic development tools e.g. `git`
+- A [base dockerfile](./dockerfiles/base/default.dockerfile) that includes the OS and a set of basic development tools e.g. `git`, `git-lfs`
 - A `stack` snippet that defines language specific build steps. See:
   - [default](./dockerfiles/stack/default.dockerfile) - minimal fallback stack
   - [go](./dockerfiles/stack/go.dockerfile)

@@ -1,0 +1,1 @@
+tests/integration/projects/git-lfs/data.bin filter=lfs diff=lfs merge=lfs -text

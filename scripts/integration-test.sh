@@ -96,6 +96,13 @@ run_stack_tests() {
     for project_dir in "$PROJECTS_DIR"/*/; do
         local stack
         stack=$(basename "$project_dir")
+
+        # Skip git-lfs project if git-lfs is not installed on the host
+        if [ "$stack" = "git-lfs" ] && ! command -v git-lfs &>/dev/null; then
+            echo -e "  ${YELLOW}SKIP${NC}: git-lfs (git-lfs not installed)"
+            continue
+        fi
+
         stacks+=("$stack")
         stack_project_dirs[$stack]="$project_dir"
 
@@ -111,13 +118,25 @@ run_stack_tests() {
 
         # Copy project files (including hidden files, excluding . and ..)
         cp -r "$project_dir". "$work_dir/"
+
+        # Run project-specific setup if it exists (e.g., git-lfs initialization)
+        if [ -f "$work_dir/tsk-integ-setup.sh" ]; then
+            (cd "$work_dir" && bash tsk-integ-setup.sh)
+        fi
+
         git -C "$work_dir" add -A
         git -C "$work_dir" commit -q -m "Initial commit for $stack integration test"
+
+        # Allow projects to override the stack (e.g., git-lfs uses "default" stack)
+        local stack_arg="$stack"
+        if [ -f "$project_dir/tsk-integ-stack.txt" ]; then
+            stack_arg=$(cat "$project_dir/tsk-integ-stack.txt")
+        fi
 
         echo -e "  Queueing: ${YELLOW}${stack}${NC}"
         if ! cargo run --manifest-path "$MANIFEST" -- add \
             --agent integ \
-            --stack "$stack" \
+            --stack "$stack_arg" \
             --name "integ-$stack" \
             --type feat \
             --prompt "Integration test for $stack stack" \
