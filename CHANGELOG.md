@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.3](https://github.com/dtormoen/tsk-tsk/compare/v0.10.2...v0.10.3) - 2026-03-04
+
+### Documentation
+
+- simplify CLAUDE.md by removing redundancy with README and implementation details
+
+### Fixed
+
+- support git-lfs repositories by replacing libgit2 with git CLI for commits
+
 ## [0.10.2](https://github.com/dtormoen/tsk-tsk/compare/v0.10.1...v0.10.2) - 2026-03-01
 
 ### Added
