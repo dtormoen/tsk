@@ -12,6 +12,15 @@ pub struct FetchResult {
     pub warnings: Vec<String>,
 }
 
+/// Result of copying a repository for a task.
+#[derive(Debug)]
+pub struct CopyResult {
+    /// Path to the copied repository.
+    pub repo_path: PathBuf,
+    /// Non-fatal warnings encountered during the copy (e.g. submodule or LFS issues).
+    pub warnings: Vec<String>,
+}
+
 /// Information about a git submodule parsed from .gitmodules
 #[derive(Debug, Clone)]
 struct SubmoduleInfo {
@@ -87,17 +96,18 @@ impl RepoManager {
     /// while the file overlay ensures the complete state of the repository as shown
     /// by `git status` is preserved.
     ///
-    /// Returns the path to the copied repository and the branch name
+    /// Returns a [`CopyResult`] with the path and any non-fatal warnings.
     pub async fn copy_repo(
         &self,
         task_id: &str,
         repo_root: &Path,
         source_commit: Option<&str>,
         branch_name: &str,
-    ) -> Result<(PathBuf, String), String> {
+    ) -> Result<CopyResult, String> {
         // Use the task ID directly for the directory name
         let task_dir_name = task_id;
         let branch_name = branch_name.to_string();
+        let mut warnings = Vec::new();
 
         // Create the task directory structure in centralized location
         let task_dir = self.ctx.tsk_env().task_dir(task_dir_name);
@@ -142,9 +152,9 @@ impl RepoManager {
             .unwrap_or(false)
             && let Err(e) = crate::file_system::copy_dir(&src_modules, &dst_modules).await
         {
-            eprintln!(
-                "Warning: Failed to copy .git/modules: {e}. Submodules may not work correctly."
-            );
+            warnings.push(format!(
+                "Failed to copy .git/modules: {e}. Submodules may not work correctly."
+            ));
         }
 
         // Copy .git/lfs from source to preserve LFS objects
@@ -155,7 +165,9 @@ impl RepoManager {
         if crate::file_system::exists(&src_lfs).await.unwrap_or(false)
             && let Err(e) = crate::file_system::copy_dir(&src_lfs, &dst_lfs).await
         {
-            eprintln!("Warning: Failed to copy .git/lfs: {e}. LFS files may need to be re-hashed.");
+            warnings.push(format!(
+                "Failed to copy .git/lfs: {e}. LFS files may need to be re-hashed."
+            ));
         }
 
         // Warn if repo uses LFS but git-lfs is not available on the host
@@ -170,8 +182,8 @@ impl RepoManager {
                 .await
                 .map_or(true, |s| !s.success())
         {
-            eprintln!(
-                "Warning: Repository uses git-lfs but git-lfs is not installed. LFS files may not be handled correctly."
+            warnings.push(
+                "Repository uses git-lfs but git-lfs is not installed. LFS files may not be handled correctly.".to_string()
             );
         }
 
@@ -191,7 +203,7 @@ impl RepoManager {
         // Fix submodule paths after copying .git/modules
         // This must happen BEFORE the file overlay so that when submodule .git files
         // are overlaid, they point to valid locations in .git/modules
-        self.fix_submodule_paths(&repo_path).await;
+        warnings.extend(self.fix_submodule_paths(&repo_path).await);
 
         // Overlay all non-ignored files from the source working directory
         // This happens AFTER branch creation to preserve unstaged changes over the cloned state
@@ -367,24 +379,28 @@ impl RepoManager {
                 .map_err(|e| format!("Failed to copy .tsk directory: {e}"))?;
         }
 
-        Ok((repo_path, branch_name))
+        Ok(CopyResult {
+            repo_path,
+            warnings,
+        })
     }
 
     /// Commit any uncommitted changes in submodules before the superproject commit.
     /// This ensures submodule changes are captured and the superproject pointer is updated.
-    /// Returns a list of submodule paths that had changes committed.
+    /// Returns a tuple of (committed submodule paths, non-fatal warnings).
     async fn commit_submodule_changes(
         &self,
         repo_path: &Path,
         message: &str,
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<(Vec<String>, Vec<String>), String> {
         let submodules = self.parse_gitmodules(repo_path).await?;
 
         if submodules.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
 
         let mut committed_submodules = Vec::new();
+        let mut warnings = Vec::new();
 
         for submodule in submodules {
             let submodule_path = repo_path.join(&submodule.path);
@@ -401,10 +417,10 @@ impl RepoManager {
             let status_output = match git_operations::get_status(&submodule_path).await {
                 Ok(output) => output,
                 Err(e) => {
-                    eprintln!(
-                        "Warning: Failed to get status for submodule '{}': {}",
+                    warnings.push(format!(
+                        "Failed to get status for submodule '{}': {}",
                         submodule.path, e
-                    );
+                    ));
                     continue;
                 }
             };
@@ -415,42 +431,52 @@ impl RepoManager {
 
             // Add and commit changes in the submodule
             if let Err(e) = git_operations::add_all(&submodule_path).await {
-                eprintln!(
-                    "Warning: Failed to stage changes in submodule '{}': {}",
+                warnings.push(format!(
+                    "Failed to stage changes in submodule '{}': {}",
                     submodule.path, e
-                );
+                ));
                 continue;
             }
 
             if let Err(e) = git_operations::commit(&submodule_path, message).await {
-                eprintln!(
-                    "Warning: Failed to commit changes in submodule '{}': {}",
+                warnings.push(format!(
+                    "Failed to commit changes in submodule '{}': {}",
                     submodule.path, e
-                );
+                ));
                 continue;
             }
 
             committed_submodules.push(submodule.path);
         }
 
-        Ok(committed_submodules)
+        Ok((committed_submodules, warnings))
     }
 
     /// Commit any uncommitted changes in the repository.
     /// This first commits changes in any submodules, then commits in the superproject.
-    pub async fn commit_changes(&self, repo_path: &Path, message: &str) -> Result<(), String> {
+    /// Returns any non-fatal warnings encountered during the commit process.
+    pub async fn commit_changes(
+        &self,
+        repo_path: &Path,
+        message: &str,
+    ) -> Result<Vec<String>, String> {
+        let mut warnings = Vec::new();
+
         // First commit any uncommitted changes in submodules
         // This must happen before the superproject commit so the submodule pointers are updated
-        if let Err(e) = self.commit_submodule_changes(repo_path, message).await {
-            eprintln!("Warning: Failed to commit submodule changes: {e}");
-            // Continue with superproject commit even if submodule commits fail
+        match self.commit_submodule_changes(repo_path, message).await {
+            Ok((_committed, sub_warnings)) => warnings.extend(sub_warnings),
+            Err(e) => {
+                warnings.push(format!("Failed to commit submodule changes: {e}"));
+                // Continue with superproject commit even if submodule commits fail
+            }
         }
 
         // Check if there are any changes to commit
         let status_output = git_operations::get_status(repo_path).await?;
 
         if status_output.trim().is_empty() {
-            return Ok(());
+            return Ok(warnings);
         }
 
         // Add all changes
@@ -459,7 +485,7 @@ impl RepoManager {
         // Commit changes
         git_operations::commit(repo_path, message).await?;
 
-        Ok(())
+        Ok(warnings)
     }
 
     /// Set git-town parent branch configuration
@@ -581,11 +607,14 @@ impl RepoManager {
 
                 // Fetch submodule changes back to original submodules
                 // This ensures commits made by agents in submodules are available in the original repo
-                if let Err(e) = self
+                match self
                     .fetch_submodule_changes(repo_path, repo_root, branch_name)
                     .await
                 {
-                    warnings.push(format!("Failed to fetch submodule changes: {e}"));
+                    Ok(sub_warnings) => warnings.extend(sub_warnings),
+                    Err(e) => {
+                        warnings.push(format!("Failed to fetch submodule changes: {e}"));
+                    }
                 }
 
                 // Copy LFS objects from task repo to main repo
@@ -629,26 +658,34 @@ impl RepoManager {
     /// Fix submodule paths after copying .git/modules to the destination.
     /// This finds all .git files (submodule indicators) and fixes their gitdir paths,
     /// then fixes worktree paths in .git/modules/*/config files.
-    async fn fix_submodule_paths(&self, repo_path: &Path) {
+    /// Returns any non-fatal warnings encountered during the fix.
+    async fn fix_submodule_paths(&self, repo_path: &Path) -> Vec<String> {
+        let mut warnings = Vec::new();
+
         // Find all .git files that indicate submodules
         let git_files = self.find_submodule_git_files(repo_path).await;
 
         for git_file in git_files {
             if let Err(e) = self.fix_submodule_gitdir_path(&git_file, repo_path).await {
-                eprintln!(
-                    "Warning: Failed to fix gitdir path in {}: {}. Removing broken .git file.",
+                warnings.push(format!(
+                    "Failed to fix gitdir path in {}: {}. Removing broken .git file.",
                     git_file.display(),
                     e
-                );
+                ));
                 // Remove the broken .git file so the submodule is treated as regular files
                 let _ = tokio::fs::remove_file(&git_file).await;
             }
         }
 
         // Fix worktree paths in .git/modules/*/config files
-        if let Err(e) = self.fix_module_worktree_paths(repo_path).await {
-            eprintln!("Warning: Failed to fix module worktree paths: {e}");
+        match self.fix_module_worktree_paths(repo_path).await {
+            Ok(w) => warnings.extend(w),
+            Err(e) => {
+                warnings.push(format!("Failed to fix module worktree paths: {e}"));
+            }
         }
+
+        warnings
     }
 
     /// Find all .git files (not directories) in the repository that contain gitdir:.
@@ -755,24 +792,28 @@ impl RepoManager {
     }
 
     /// Fix worktree paths in .git/modules/*/config files if they use absolute paths.
-    async fn fix_module_worktree_paths(&self, repo_path: &Path) -> Result<(), String> {
+    /// Returns any warnings encountered during the fix.
+    async fn fix_module_worktree_paths(&self, repo_path: &Path) -> Result<Vec<String>, String> {
         let modules_dir = repo_path.join(".git/modules");
         if !modules_dir.exists() {
-            return Ok(());
+            return Ok(Vec::new());
         }
 
         self.fix_worktree_recursive(&modules_dir, repo_path).await
     }
 
     /// Recursively fix worktree paths in module config files.
+    /// Returns any warnings encountered during the fix.
     async fn fix_worktree_recursive(
         &self,
         modules_dir: &Path,
         repo_path: &Path,
-    ) -> Result<(), String> {
+    ) -> Result<Vec<String>, String> {
         let mut entries = tokio::fs::read_dir(modules_dir)
             .await
             .map_err(|e| format!("Failed to read {}: {}", modules_dir.display(), e))?;
+
+        let mut warnings = Vec::new();
 
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
@@ -787,38 +828,47 @@ impl RepoManager {
             }
 
             let config_path = path.join("config");
-            if config_path.exists()
-                && let Err(e) = self
+            if config_path.exists() {
+                match self
                     .fix_single_worktree_config(&config_path, repo_path)
                     .await
-            {
-                eprintln!(
-                    "Warning: Failed to fix worktree in {}: {}",
-                    config_path.display(),
-                    e
-                );
+                {
+                    Ok(w) => warnings.extend(w),
+                    Err(e) => {
+                        warnings.push(format!(
+                            "Failed to fix worktree in {}: {}",
+                            config_path.display(),
+                            e
+                        ));
+                    }
+                }
             }
 
             // Handle nested modules (sub-submodules)
             let nested_modules = path.join("modules");
             if nested_modules.exists() {
                 // Use Box::pin for recursive async call
-                Box::pin(self.fix_worktree_recursive(&nested_modules, repo_path)).await?;
+                let nested_warnings =
+                    Box::pin(self.fix_worktree_recursive(&nested_modules, repo_path)).await?;
+                warnings.extend(nested_warnings);
             }
         }
 
-        Ok(())
+        Ok(warnings)
     }
 
     /// Fix a single module config file's worktree path if it uses an absolute path.
+    /// Returns any warnings about absolute paths that could not be automatically fixed.
     async fn fix_single_worktree_config(
         &self,
         config_path: &Path,
         _repo_path: &Path,
-    ) -> Result<(), String> {
+    ) -> Result<Vec<String>, String> {
         let content = tokio::fs::read_to_string(config_path)
             .await
             .map_err(|e| format!("Read error: {}", e))?;
+
+        let mut warnings = Vec::new();
 
         for line in content.lines() {
             let trimmed = line.trim_start();
@@ -826,50 +876,53 @@ impl RepoManager {
                 let worktree_value = trimmed.strip_prefix("worktree = ").unwrap_or("").trim();
                 // Check if absolute path
                 if worktree_value.starts_with('/') || worktree_value.contains(':') {
-                    // Absolute path found - log warning
+                    // Absolute path found - collect warning
                     // Fixing this is complex without knowing the original structure,
                     // so we just warn for now
-                    eprintln!(
-                        "Warning: Absolute worktree path found in {}: {}. Manual fixing may be required.",
+                    warnings.push(format!(
+                        "Absolute worktree path found in {}: {}. Manual fixing may be required.",
                         config_path.display(),
                         worktree_value
-                    );
+                    ));
                 }
             }
         }
 
-        Ok(())
+        Ok(warnings)
     }
 
     /// Fetch submodule changes from the copied repository back to the original repository.
     /// This ensures that commits made by the agent in submodules are available in the original repo.
     /// The branch_name is used to create matching branch names in the submodule.
+    /// Returns any non-fatal warnings encountered during the fetch.
     async fn fetch_submodule_changes(
         &self,
         copied_repo: &Path,
         original_repo: &Path,
         branch_name: &str,
-    ) -> Result<(), String> {
+    ) -> Result<Vec<String>, String> {
         let submodules = self.parse_gitmodules(copied_repo).await?;
 
         if submodules.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
 
+        let mut warnings = Vec::new();
+
         for submodule in submodules {
-            // Wrap each submodule fetch in error handling - log warnings but don't fail overall
+            // Wrap each submodule fetch in error handling - collect warnings but don't fail overall
             if let Err(e) = self
                 .fetch_single_submodule_changes(copied_repo, original_repo, &submodule, branch_name)
                 .await
             {
-                eprintln!(
-                    "Warning: Failed to fetch changes for submodule '{}': {}",
+                warnings.push(format!(
+                    "Failed to fetch changes for submodule '{}': {}",
                     submodule.path, e
-                );
+                ));
             }
         }
 
-        Ok(())
+        Ok(warnings)
     }
 
     /// Fetch changes for a single submodule from copied repo to original repo.
@@ -1402,9 +1455,8 @@ mod tests {
             .await;
 
         assert!(result.is_ok());
-        let (copied_path, returned_branch_name) = result.unwrap();
+        let copied_path = result.unwrap().repo_path;
 
-        assert_eq!(returned_branch_name, branch_name);
         assert!(copied_path.exists());
 
         // Verify the working directory contains all current files (preserving working directory state)
@@ -1460,9 +1512,8 @@ mod tests {
             .await;
 
         assert!(result.is_ok());
-        let (copied_path, returned_branch_name) = result.unwrap();
+        let copied_path = result.unwrap().repo_path;
 
-        assert_eq!(returned_branch_name, branch_name);
         assert!(copied_path.exists());
 
         // Verify the copied repo has all files from HEAD
@@ -1491,7 +1542,7 @@ mod tests {
             .await;
 
         assert!(result.is_ok());
-        let (copied_path, _) = result.unwrap();
+        let copied_path = result.unwrap().repo_path;
 
         // Verify tracked files are copied
         assert!(
@@ -1623,7 +1674,7 @@ mod tests {
             "Failed to copy repo with symlinks: {:?}",
             result
         );
-        let (copied_path, _) = result.unwrap();
+        let copied_path = result.unwrap().repo_path;
 
         // Verify regular files were copied
         assert!(copied_path.join("README.md").exists());
@@ -1744,7 +1795,7 @@ mod tests {
             .await;
 
         assert!(result.is_ok());
-        let (copied_path, _) = result.unwrap();
+        let copied_path = result.unwrap().repo_path;
 
         // Verify .tsk directory and all its contents are copied
         assert!(
@@ -1806,7 +1857,7 @@ mod tests {
             .await;
 
         assert!(result.is_ok());
-        let (copied_path, _) = result.unwrap();
+        let copied_path = result.unwrap().repo_path;
 
         // Verify the unstaged changes are included (working directory version)
         let tracked_content = std::fs::read_to_string(copied_path.join("tracked.txt")).unwrap();
@@ -1858,7 +1909,7 @@ mod tests {
             .await;
 
         assert!(result.is_ok(), "Failed to copy repo: {:?}", result);
-        let (copied_repo_path, _) = result.unwrap();
+        let copied_repo_path = result.unwrap().repo_path;
 
         // Don't make any commits in the copied repo - just like the error scenario
         // The branch exists and points to first_commit, but we haven't added any new work
@@ -1955,7 +2006,7 @@ mod tests {
             .await;
 
         assert!(result.is_ok(), "Copy should succeed: {:?}", result);
-        let (copied_path, _) = result.unwrap();
+        let copied_path = result.unwrap().repo_path;
 
         // Document what happened with the submodule in the copy:
 
@@ -2072,7 +2123,7 @@ mod tests {
             .await;
 
         assert!(result.is_ok(), "Copy should succeed: {:?}", result);
-        let (copied_path, _) = result.unwrap();
+        let copied_path = result.unwrap().repo_path;
 
         // Check each level
         let middle_is_repo = git_operations::is_git_repository(&copied_path.join("middle"))
@@ -2138,7 +2189,7 @@ mod tests {
             .await;
 
         assert!(result.is_ok(), "Failed to copy repo: {:?}", result);
-        let (copied_path, _) = result.unwrap();
+        let copied_path = result.unwrap().repo_path;
 
         // Verify the submodule is a valid git repository in the copied repo
         let copied_submodule_is_repo = git_operations::is_git_repository(&copied_path.join("lib"))
@@ -2231,10 +2282,11 @@ mod tests {
         let manager = RepoManager::new(&ctx);
         let task_id = "submodvisible";
         let branch_name = "tsk/test/submod-visible/submodvisible";
-        let (copied_path, _) = manager
+        let copied_path = manager
             .copy_repo(task_id, repo_a.path(), None, branch_name)
             .await
-            .expect("Copy should succeed");
+            .expect("Copy should succeed")
+            .repo_path;
 
         // Step 2: Modify both READMEs (simulates user editing files)
         std::fs::write(copied_path.join("README.md"), "# RepoA\nhi").unwrap();
@@ -2372,10 +2424,11 @@ mod tests {
         let manager = RepoManager::new(&ctx);
         let task_id = "uncommittedsub";
         let branch_name = "tsk/test/uncommitted-submodule/uncommittedsub";
-        let (copied_path, _) = manager
+        let copied_path = manager
             .copy_repo(task_id, repo_a.path(), None, branch_name)
             .await
-            .expect("Copy should succeed");
+            .expect("Copy should succeed")
+            .repo_path;
 
         // Step 2: Modify both READMEs WITHOUT committing (simulates user editing files)
         // This is the key difference - no manual commits in either repo
@@ -2549,10 +2602,11 @@ mod tests {
         let manager = RepoManager::new(&ctx);
         let task_id = "unchanged";
         let branch_name = "tsk/test/unchanged-submod/unchanged";
-        let (copied_path, _) = manager
+        let copied_path = manager
             .copy_repo(task_id, repo_a.path(), None, branch_name)
             .await
-            .expect("Copy should succeed");
+            .expect("Copy should succeed")
+            .repo_path;
 
         // Step 2: Modify ONLY RepoB (not RepoC!)
         std::fs::write(copied_path.join("RepoB/README.md"), "# RepoB\nhi").unwrap();
@@ -2660,7 +2714,7 @@ mod tests {
 
         // Copy repo (this overlays working dir content over the clone)
         let branch_name = "tsk/test/lfs-preserve/abcd1234";
-        let (repo_path, _) = repo_manager
+        let repo_path = repo_manager
             .copy_repo(
                 "lfs-test-preserve",
                 source.path(),
@@ -2668,7 +2722,8 @@ mod tests {
                 branch_name,
             )
             .await
-            .unwrap();
+            .unwrap()
+            .repo_path;
 
         // Configure git user in the task repo for commits
         let task_repo = ExistingGitRepository::new(&repo_path).unwrap();
@@ -2736,7 +2791,7 @@ mod tests {
 
         // Copy repo
         let branch_name = "tsk/test/lfs-modified/efgh5678";
-        let (repo_path, _) = repo_manager
+        let repo_path = repo_manager
             .copy_repo(
                 "lfs-test-modified",
                 source.path(),
@@ -2744,7 +2799,8 @@ mod tests {
                 branch_name,
             )
             .await
-            .unwrap();
+            .unwrap()
+            .repo_path;
 
         // Configure git user in the task repo
         let task_repo = ExistingGitRepository::new(&repo_path).unwrap();

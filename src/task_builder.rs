@@ -439,7 +439,7 @@ impl TaskBuilder {
         } else {
             let copy_source = self.repo_copy_source.as_ref().unwrap_or(&repo_root);
             let repo_manager = RepoManager::new(ctx);
-            let (path, _) = repo_manager
+            let copy_result = repo_manager
                 .copy_repo(
                     &task_dir_name,
                     copy_source,
@@ -448,7 +448,10 @@ impl TaskBuilder {
                 )
                 .await
                 .map_err(|e| format!("Failed to copy repository: {e}"))?;
-            Some(path)
+            for warning in &copy_result.warnings {
+                eprintln!("{warning}");
+            }
+            Some(copy_result.repo_path)
         };
 
         // For child tasks, source_branch is set to None - it will be set from parent task later

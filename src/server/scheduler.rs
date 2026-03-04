@@ -160,7 +160,7 @@ impl TaskScheduler {
 
         // Copy the repository from the parent task's folder
         let repo_manager = RepoManager::new(&self.context);
-        let (copied_repo_path, _) = repo_manager
+        let copy_result = repo_manager
             .copy_repo(
                 &task.id,
                 parent_repo_path,
@@ -169,6 +169,10 @@ impl TaskScheduler {
             )
             .await
             .map_err(|e| format!("Failed to copy repo from parent task: {e}"))?;
+        let copied_repo_path = copy_result.repo_path;
+        for warning in copy_result.warnings {
+            self.emit(ServerEvent::WarningMessage(warning));
+        }
 
         // Persist the updated fields and return the authoritative DB row.
         // source_branch is set to the parent's branch name for git-town integration.

@@ -258,14 +258,21 @@ impl TaskRunner {
 
         // Commit any changes made by the container
         let commit_message = format!("tsk automated changes for task: {}", task.name);
-        if let Err(e) = self
+        match self
             .repo_manager
             .commit_changes(repo_path, &commit_message)
             .await
         {
-            task_logger.log(LogLine::tsk_warning(format!(
-                "Error committing changes: {e}"
-            )));
+            Ok(commit_warnings) => {
+                for warning in commit_warnings {
+                    task_logger.log(LogLine::tsk_warning(warning));
+                }
+            }
+            Err(e) => {
+                task_logger.log(LogLine::tsk_warning(format!(
+                    "Error committing changes: {e}"
+                )));
+            }
         }
 
         // Fetch changes back to main repository
