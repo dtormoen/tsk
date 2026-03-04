@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 /// Find the root of a git repository starting from the given path.
 ///
 /// This function walks up the directory tree from the starting path until it finds
-/// a directory containing a `.git` subdirectory, which indicates the repository root.
+/// a directory containing a `.git` entry. For git worktrees (where `.git` is a file),
+/// the path is resolved to the main repository root via [`resolve_git_common_dir`].
 ///
 /// # Arguments
 ///
@@ -36,7 +37,15 @@ pub fn find_repository_root(start_path: &Path) -> Result<PathBuf, Box<dyn Error>
     let mut current = start.canonicalize()?;
 
     loop {
-        if current.join(".git").exists() {
+        let git_entry = current.join(".git");
+        if git_entry.exists() {
+            // If .git is a file, this is a worktree — resolve to the main repo root
+            if git_entry.is_file()
+                && let Ok(common_dir) = resolve_git_common_dir(&current)
+                && let Some(main_root) = common_dir.parent()
+            {
+                return Ok(main_root.to_path_buf());
+            }
             return Ok(current);
         }
 
@@ -233,6 +242,43 @@ mod tests {
         assert_eq!(
             common_dir.canonicalize().unwrap(),
             main_git_dir.canonicalize().unwrap()
+        );
+
+        // Clean up worktree before temp dirs are dropped
+        std::fs::remove_dir_all(&worktree_dir).ok();
+        repo.run_git_command(&["worktree", "prune"]).ok();
+    }
+
+    #[test]
+    fn test_find_repository_root_from_worktree() {
+        let repo = TestGitRepository::new().unwrap();
+        repo.init_with_commit().unwrap();
+
+        let worktree_tmp = tempfile::TempDir::new().unwrap();
+        let worktree_dir = worktree_tmp.path().join("worktree");
+        repo.run_git_command(&[
+            "worktree",
+            "add",
+            worktree_dir.to_str().unwrap(),
+            "-b",
+            "wt-find-root-branch",
+        ])
+        .unwrap();
+
+        // From the worktree root, should resolve to main repo root
+        let found_root = find_repository_root(&worktree_dir).unwrap();
+        assert_eq!(
+            found_root.canonicalize().unwrap(),
+            repo.path().canonicalize().unwrap()
+        );
+
+        // From a subdirectory within the worktree, should also resolve to main repo root
+        let sub_dir = worktree_dir.join("subdir");
+        fs::create_dir_all(&sub_dir).unwrap();
+        let found_root_from_sub = find_repository_root(&sub_dir).unwrap();
+        assert_eq!(
+            found_root_from_sub.canonicalize().unwrap(),
+            repo.path().canonicalize().unwrap()
         );
 
         // Clean up worktree before temp dirs are dropped
