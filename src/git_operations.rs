@@ -100,6 +100,33 @@ pub async fn add_all(repo_path: &Path) -> Result<(), String> {
     .map_err(|e| format!("Task join error: {e}"))?
 }
 
+/// Re-normalizes the index so that clean/smudge filters (e.g. git-lfs) are
+/// re-applied. This fixes stat-cache mismatches after overlaying working
+/// directory files onto a clone.
+pub async fn renormalize(repo_path: &Path) -> Result<(), String> {
+    tokio::task::spawn_blocking({
+        let repo_path = repo_path.to_owned();
+        move || -> Result<(), String> {
+            let output = std::process::Command::new("git")
+                .current_dir(&repo_path)
+                .args(["add", "--renormalize", "."])
+                .output()
+                .map_err(|e| format!("Failed to execute git add --renormalize: {e}"))?;
+
+            if !output.status.success() {
+                return Err(format!(
+                    "Failed to renormalize files: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+
+            Ok(())
+        }
+    })
+    .await
+    .map_err(|e| format!("Task join error: {e}"))?
+}
+
 pub async fn commit(repo_path: &Path, message: &str) -> Result<(), String> {
     tokio::task::spawn_blocking({
         let repo_path = repo_path.to_owned();

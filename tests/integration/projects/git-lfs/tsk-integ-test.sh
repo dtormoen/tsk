@@ -7,6 +7,16 @@ echo "=== Git LFS Integration Test ==="
 echo "Checking git-lfs..."
 git lfs version
 
+# Verify working tree starts clean (LFS files should not appear dirty)
+echo "Checking working tree is clean..."
+status=$(git status --porcelain)
+if [ -n "$status" ]; then
+    echo "FAIL: Working tree is not clean after repo copy:"
+    echo "$status"
+    exit 1
+fi
+echo "  Working tree: clean"
+
 # Modify the LFS-tracked binary file
 echo "Modifying LFS-tracked file..."
 echo "Modified LFS binary content for testing" > data.bin

@@ -170,18 +170,28 @@ impl RepoManager {
             ));
         }
 
-        // Warn if repo uses LFS but git-lfs is not available on the host
+        // Check if repo uses LFS and whether git-lfs is available
         let gitattributes_path = current_dir.join(".gitattributes");
-        if let Ok(content) = tokio::fs::read_to_string(&gitattributes_path).await
-            && content.contains("filter=lfs")
-            && tokio::process::Command::new("git")
+        let repo_uses_lfs =
+            if let Ok(content) = tokio::fs::read_to_string(&gitattributes_path).await {
+                content.contains("filter=lfs")
+            } else {
+                false
+            };
+
+        let git_lfs_available = if repo_uses_lfs {
+            tokio::process::Command::new("git")
                 .args(["lfs", "version"])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .status()
                 .await
-                .map_or(true, |s| !s.success())
-        {
+                .is_ok_and(|s| s.success())
+        } else {
+            false
+        };
+
+        if repo_uses_lfs && !git_lfs_available {
             warnings.push(
                 "Repository uses git-lfs but git-lfs is not installed. LFS files may not be handled correctly.".to_string()
             );
@@ -359,6 +369,16 @@ impl RepoManager {
                     ));
                 }
             }
+        }
+
+        // Renormalize files to fix LFS index stat cache after overlay
+        if repo_uses_lfs
+            && git_lfs_available
+            && let Err(e) = git_operations::renormalize(&repo_path).await
+        {
+            warnings.push(format!(
+                "Failed to renormalize LFS files: {e}. LFS files may appear modified in git status."
+            ));
         }
 
         // Copy .tsk directory if it exists (for project-specific Docker configurations)
@@ -2724,6 +2744,14 @@ mod tests {
             .await
             .unwrap()
             .repo_path;
+
+        // Verify the working directory is clean after copy_repo
+        // (LFS files should not appear as modified)
+        let status = git_operations::get_status(&repo_path).await.unwrap();
+        assert!(
+            status.trim().is_empty(),
+            "Working directory should be clean after copy_repo, but got: {status}"
+        );
 
         // Configure git user in the task repo for commits
         let task_repo = ExistingGitRepository::new(&repo_path).unwrap();
