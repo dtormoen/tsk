@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.3](https://github.com/dtormoen/tsk-tsk/compare/v0.10.2...v0.10.3) - 2026-03-09
+
+### Documentation
+
+- simplify CLAUDE.md by removing redundancy with README and implementation details
+
+### Fixed
+
+- use config for stack/agent resolution in `tsk docker build`
+- prevent LFS-tracked files from appearing dirty after repo copy
+- route git operation warnings through TaskLogger instead of stderr
+- resolve git worktree paths to main repo root for task creation
+- support git-lfs repositories by replacing libgit2 with git CLI for commits
+
 ## [0.10.2](https://github.com/dtormoen/tsk-tsk/compare/v0.10.1...v0.10.2) - 2026-03-01
 
 ### Added
