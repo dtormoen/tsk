@@ -32,12 +32,9 @@ precommit: format lint test
         echo "Skipping network isolation tests (not in TSK container)"; \
     fi
 
-# Upgrade all dependencies in cargo.toml
+# Upgrade all dependencies in cargo.toml and cargo.lock
 upgrade-deps:
     cargo upgrade
-
-# Update all dependencies in cargo.lock
-update-deps:
     cargo update
 
 # Run network isolation tests (must be run inside a TSK container)
