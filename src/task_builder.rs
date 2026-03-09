@@ -239,7 +239,7 @@ impl TaskBuilder {
             tsk_config.resolve_config(&project, project_config.as_ref(), Some(&repo_root));
 
         // Get agent: CLI flag > resolved config (project > defaults > built-in)
-        let agent = self.agent.clone().unwrap_or(resolved.agent.clone());
+        let agent = tsk_config::resolve_agent(self.agent.clone(), &resolved);
 
         // Validate agent
         if !crate::agent::AgentProvider::is_valid_agent(&agent) {
@@ -354,32 +354,14 @@ impl TaskBuilder {
             .flatten();
 
         // Resolve stack: CLI flag > config (project > defaults) > auto-detect > built-in default
-        let stack = match self.stack {
-            Some(ts) => ts,
-            None => {
-                // Check if any config layer explicitly sets a stack
-                // Priority: user [project.<name>] > project .tsk/tsk.toml > user [defaults]
-                let config_stack = tsk_config
-                    .project
-                    .get(&project)
-                    .and_then(|p| p.stack.clone())
-                    .or_else(|| project_config.as_ref().and_then(|pc| pc.stack.clone()))
-                    .or_else(|| tsk_config.defaults.stack.clone());
-
-                if let Some(config_stack) = config_stack {
-                    config_stack
-                } else {
-                    // Auto-detect stack
-                    match crate::repository::detect_stack(&repo_root).await {
-                        Ok(detected) => detected,
-                        Err(e) => {
-                            eprintln!("Warning: Failed to detect stack: {e}. Using default.");
-                            "default".to_string()
-                        }
-                    }
-                }
-            }
-        };
+        let stack = tsk_config::resolve_stack(
+            self.stack,
+            &tsk_config,
+            &project,
+            project_config.as_ref(),
+            &repo_root,
+        )
+        .await;
 
         // Resolve dind: CLI flag > resolved config (project > defaults > built-in)
         let dind = self.dind.unwrap_or(resolved.dind);

@@ -49,33 +49,16 @@ impl Command for DockerBuildCommand {
             return Ok(());
         }
 
-        // Auto-detect stack if not provided
-        let stack = match &self.stack {
-            Some(ts) => ts.clone(),
-            None => {
-                use crate::repo_utils::find_repository_root;
-                let repo_root = find_repository_root(std::path::Path::new("."))
-                    .unwrap_or_else(|_| std::path::PathBuf::from("."));
-
-                match crate::repository::detect_stack(&repo_root).await {
-                    Ok(detected) => detected,
-                    Err(e) => {
-                        eprintln!("Warning: Failed to detect stack: {e}. Using default.");
-                        "default".to_string()
-                    }
-                }
-            }
-        };
-
-        let agent = self.agent.as_deref().unwrap_or("claude");
+        // Get project root for Docker operations
+        let project_root = find_repository_root(std::path::Path::new(".")).ok();
 
         // Auto-detect project if not provided
         let project = match &self.project {
             Some(p) => Some(p.clone()),
             None => {
-                use crate::repo_utils::find_repository_root;
-                let repo_root = find_repository_root(std::path::Path::new("."))
-                    .unwrap_or_else(|_| std::path::PathBuf::from("."));
+                let repo_root = project_root
+                    .clone()
+                    .unwrap_or_else(|| std::path::PathBuf::from("."));
 
                 match crate::repository::detect_project_name(&repo_root).await {
                     Ok(detected) => Some(detected),
@@ -87,19 +70,31 @@ impl Command for DockerBuildCommand {
             }
         };
 
-        // Get project root for Docker operations
-        let project_root = find_repository_root(std::path::Path::new(".")).ok();
-
         // Resolve config for inline layer overrides
         let project_name = project.as_deref().unwrap_or("default");
+        let tsk_config = ctx.tsk_config();
         let project_config = project_root
             .as_deref()
             .and_then(crate::context::tsk_config::load_project_config);
-        let resolved_config = ctx.tsk_config().resolve_config(
+        let resolved_config = tsk_config.resolve_config(
             project_name,
             project_config.as_ref(),
             project_root.as_deref(),
         );
+
+        // Resolve stack and agent using shared resolution logic
+        let repo_root = project_root
+            .clone()
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let stack = crate::context::tsk_config::resolve_stack(
+            self.stack.clone(),
+            &tsk_config,
+            project_name,
+            project_config.as_ref(),
+            &repo_root,
+        )
+        .await;
+        let agent = crate::context::tsk_config::resolve_agent(self.agent.clone(), &resolved_config);
 
         // Create image manager with AppContext
         let image_manager = DockerImageManager::new(ctx, docker_client.clone(), None);
@@ -108,7 +103,7 @@ impl Command for DockerBuildCommand {
         let image_tag = image_manager
             .build_image(
                 &stack,
-                agent,
+                &agent,
                 project.as_deref(),
                 &BuildOptions {
                     no_cache: self.no_cache,
@@ -141,62 +136,5 @@ impl Command for DockerBuildCommand {
         }
 
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_docker_build_command_creation() {
-        // Test that DockerBuildCommand can be instantiated
-        let _command = DockerBuildCommand {
-            no_cache: false,
-            stack: None,
-            agent: None,
-            project: None,
-            dry_run: false,
-            proxy_only: false,
-        };
-    }
-
-    #[test]
-    fn test_docker_build_command_with_options() {
-        // Test that DockerBuildCommand can be instantiated with all options
-        let _command = DockerBuildCommand {
-            no_cache: true,
-            stack: Some("rust".to_string()),
-            agent: Some("claude".to_string()),
-            project: Some("web-api".to_string()),
-            dry_run: false,
-            proxy_only: false,
-        };
-    }
-
-    #[test]
-    fn test_docker_build_command_dry_run() {
-        // Test that DockerBuildCommand can be instantiated with dry_run
-        let _command = DockerBuildCommand {
-            no_cache: false,
-            stack: Some("python".to_string()),
-            agent: Some("claude".to_string()),
-            project: Some("test-project".to_string()),
-            dry_run: true,
-            proxy_only: false,
-        };
-    }
-
-    #[test]
-    fn test_docker_build_command_proxy_only() {
-        // Test that DockerBuildCommand can be instantiated with proxy_only
-        let _command = DockerBuildCommand {
-            no_cache: false,
-            stack: None,
-            agent: None,
-            project: None,
-            dry_run: false,
-            proxy_only: true,
-        };
     }
 }

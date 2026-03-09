@@ -698,6 +698,48 @@ pub fn load_project_config(project_root: &Path) -> Option<SharedConfig> {
     None
 }
 
+/// Resolves the stack using the full resolution chain.
+///
+/// Priority: CLI flag > config layers (user `[project.<name>]` > project `.tsk/tsk.toml`
+/// > user `[defaults]`) > auto-detect from project files > `"default"` fallback.
+pub async fn resolve_stack(
+    cli_stack: Option<String>,
+    tsk_config: &TskConfig,
+    project_name: &str,
+    project_config: Option<&SharedConfig>,
+    repo_root: &Path,
+) -> String {
+    if let Some(stack) = cli_stack {
+        return stack;
+    }
+
+    let config_stack = tsk_config
+        .project
+        .get(project_name)
+        .and_then(|p| p.stack.clone())
+        .or_else(|| project_config.and_then(|pc| pc.stack.clone()))
+        .or_else(|| tsk_config.defaults.stack.clone());
+
+    if let Some(stack) = config_stack {
+        return stack;
+    }
+
+    match crate::repository::detect_stack(repo_root).await {
+        Ok(detected) => detected,
+        Err(e) => {
+            eprintln!("Warning: Failed to detect stack: {e}. Using default.");
+            "default".to_string()
+        }
+    }
+}
+
+/// Resolves the agent from CLI flag or resolved config.
+///
+/// Priority: CLI flag > resolved config agent (which already handles config layer merging).
+pub fn resolve_agent(cli_agent: Option<String>, resolved_config: &ResolvedConfig) -> String {
+    cli_agent.unwrap_or_else(|| resolved_config.agent.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1921,5 +1963,134 @@ setup = "RUN pip install numpy"
         let resolved = config.resolve_config("my-project", None, None);
         // User project squid_conf_path should win over defaults squid_conf_path
         assert_eq!(resolved.squid_conf, Some("project-content".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_stack_cli_flag_wins() {
+        let config = TskConfig {
+            defaults: SharedConfig {
+                stack: Some("python".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let result = resolve_stack(
+            Some("go".to_string()),
+            &config,
+            "my-project",
+            None,
+            tmp.path(),
+        )
+        .await;
+        assert_eq!(result, "go");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_stack_config_wins_over_auto_detect() {
+        let config = TskConfig {
+            defaults: SharedConfig {
+                stack: Some("python".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        // Create Cargo.toml so auto-detect would pick "rust"
+        std::fs::write(tmp.path().join("Cargo.toml"), "[package]").unwrap();
+        let result = resolve_stack(None, &config, "my-project", None, tmp.path()).await;
+        assert_eq!(result, "python");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_stack_auto_detect_when_no_config() {
+        let config = TskConfig::default();
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("Cargo.toml"), "[package]").unwrap();
+        let result = resolve_stack(None, &config, "my-project", None, tmp.path()).await;
+        assert_eq!(result, "rust");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_stack_default_fallback() {
+        let config = TskConfig::default();
+        let tmp = tempfile::tempdir().unwrap();
+        let result = resolve_stack(None, &config, "my-project", None, tmp.path()).await;
+        assert_eq!(result, "default");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_stack_user_project_wins_over_project_file_and_defaults() {
+        let config = TskConfig {
+            defaults: SharedConfig {
+                stack: Some("python".to_string()),
+                ..Default::default()
+            },
+            project: HashMap::from([(
+                "my-project".to_string(),
+                SharedConfig {
+                    stack: Some("go".to_string()),
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+        let project_config = SharedConfig {
+            stack: Some("rust".to_string()),
+            ..Default::default()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let result = resolve_stack(
+            None,
+            &config,
+            "my-project",
+            Some(&project_config),
+            tmp.path(),
+        )
+        .await;
+        assert_eq!(result, "go");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_stack_project_file_wins_over_defaults() {
+        let config = TskConfig {
+            defaults: SharedConfig {
+                stack: Some("python".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let project_config = SharedConfig {
+            stack: Some("rust".to_string()),
+            ..Default::default()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let result = resolve_stack(
+            None,
+            &config,
+            "my-project",
+            Some(&project_config),
+            tmp.path(),
+        )
+        .await;
+        assert_eq!(result, "rust");
+    }
+
+    #[test]
+    fn test_resolve_agent_cli_flag_wins() {
+        let resolved = ResolvedConfig {
+            agent: "claude".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(resolve_agent(Some("codex".to_string()), &resolved), "codex");
+    }
+
+    #[test]
+    fn test_resolve_agent_falls_back_to_config() {
+        let resolved = ResolvedConfig {
+            agent: "codex".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(resolve_agent(None, &resolved), "codex");
     }
 }

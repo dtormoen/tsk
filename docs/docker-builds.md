@@ -149,7 +149,7 @@ Config-defined layers (`setup`, `stack_config`, `agent_config`) take priority ov
 Use the `docker build` command to manually build images:
 
 ```bash
-# Build with auto-detected settings
+# Build using resolved settings
 tsk docker build
 
 # Specify stack explicitly
@@ -189,7 +189,7 @@ tsk docker build --dry-run
 | Lua | files ending in `rockspec`, `.luacheckrc`, `init.lua` |
 | Default | Used when no specific files found |
 
-Auto-detection is used when the `--stack` flag is not provided.
+Auto-detection is used as a fallback when neither the `--stack` flag nor any config layer (`[project.<name>]`, `.tsk/tsk.toml`, `[defaults]`) specifies a stack.
 
 ## Security and Isolation
 
