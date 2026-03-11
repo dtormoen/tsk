@@ -195,6 +195,7 @@ Create, manage, and monitor tasks assigned to AI agents.
 - `tsk clean` - Clean up completed tasks
 - `tsk delete <task-id>...` - Delete one or more tasks
 - `tsk retry <task-id>...` - Retry one or more tasks
+- `tsk review <task-id>` - Open a completed task's changes for review (coming soon)
 
 ### Server Commands
 
@@ -272,6 +273,7 @@ privileged = false           # Run containers in privileged mode (disables secur
 sudo = false                 # Enable passwordless sudo inside containers
 devices = []                 # Device paths to expose (e.g., ["/dev/video0"])
 git_town = false             # Enable git-town parent branch tracking
+# review_command = "vim {{review_file}}"  # Command to open review files (placeholders: {{base}}, {{version}}, {{review_file}})
 
 # Project-specific overrides (matches directory name)
 [project.my-go-service]
