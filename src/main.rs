@@ -539,6 +539,7 @@ async fn main() {
                     sudo,
                     devices,
                     branch,
+                    target_branch: None,
                 },
                 parent_id,
                 wait,
@@ -584,6 +585,7 @@ async fn main() {
                     sudo,
                     devices,
                     branch,
+                    target_branch: None,
                 },
                 docker_client_override: None,
             })
@@ -628,6 +630,7 @@ async fn main() {
                     sudo,
                     devices,
                     branch,
+                    target_branch: None,
                 },
             })
         }

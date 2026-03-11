@@ -48,6 +48,7 @@ pub struct TaskArgs {
     pub sudo: bool,
     pub devices: Vec<String>,
     pub branch: Option<String>,
+    pub target_branch: Option<String>,
 }
 
 impl TaskArgs {
@@ -138,5 +139,6 @@ impl TaskArgs {
             .sudo(if self.sudo { Some(true) } else { None })
             .devices(self.devices.clone())
             .branch(self.branch.clone())
+            .target_branch(self.target_branch.clone())
     }
 }

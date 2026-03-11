@@ -46,6 +46,7 @@ pub struct TaskBuilder {
     devices: Vec<String>,
     repo_copy_source: Option<PathBuf>,
     branch: Option<String>,
+    target_branch: Option<String>,
 }
 
 impl TaskBuilder {
@@ -72,6 +73,7 @@ impl TaskBuilder {
             devices: Vec::new(),
             repo_copy_source: None,
             branch: None,
+            target_branch: None,
         }
     }
 
@@ -98,7 +100,7 @@ impl TaskBuilder {
             builder.sudo = Some(config.sudo);
             builder.devices = config.devices;
         }
-        // Note: We intentionally don't copy parent_id when retrying a task.
+        // Note: We intentionally don't copy parent_id or target_branch when retrying.
         // The retry creates a fresh task from the current repository state.
 
         // Use existing instructions as-is for retry (bypasses template rendering)
@@ -229,6 +231,13 @@ impl TaskBuilder {
     /// When set, the task copies only the committed state at the branch's HEAD.
     pub fn branch(mut self, branch: Option<String>) -> Self {
         self.branch = branch;
+        self
+    }
+
+    /// Sets the target branch name to use instead of the auto-generated branch.
+    /// Falls back to the generated name if the target branch push fails.
+    pub fn target_branch(mut self, target: Option<String>) -> Self {
+        self.target_branch = target;
         self
     }
 
@@ -446,10 +455,11 @@ impl TaskBuilder {
             }
         }
 
-        // Generate human-readable branch name with format: tsk/{task-type}/{task-name}/{task-id}
+        // Determine branch name: use target_branch if set, otherwise generate from task fields
         let sanitized_task_type = sanitize_for_branch_name(&task_type);
         let sanitized_name = sanitize_for_branch_name(&name);
-        let branch_name = format!("tsk/{sanitized_task_type}/{sanitized_name}/{id}");
+        let generated_branch = format!("tsk/{sanitized_task_type}/{sanitized_name}/{id}");
+        let branch_name = self.target_branch.clone().unwrap_or(generated_branch);
 
         // Validate parent task if specified
         if let Some(ref pid) = self.parent_id {
@@ -544,6 +554,7 @@ impl TaskBuilder {
             instructions_path,
             agent,
             branch_name,
+            self.target_branch,
             source_commit,
             effective_source_branch,
             stack,
@@ -926,6 +937,39 @@ mod tests {
         // Branch name should follow pattern: tsk/{task-type}/{task-name}/{task-id}
         assert!(task.branch_name.starts_with("tsk/generic/my-feature-name/"));
         assert_eq!(task.branch_name.split('/').count(), 4);
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_with_target_branch() {
+        use crate::test_utils::TestGitRepository;
+
+        let ctx = AppContext::builder().build();
+
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+
+        let task = TaskBuilder::new()
+            .repo_root(test_repo.path().to_path_buf())
+            .name("my-task".to_string())
+            .prompt(Some("Test".to_string()))
+            .target_branch(Some("feature/custom-branch".to_string()))
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        assert_eq!(task.branch_name, "feature/custom-branch");
+        assert_eq!(
+            task.target_branch,
+            Some("feature/custom-branch".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_without_target_branch() {
+        let task = create_basic_task("my-task", "Description").await;
+
+        assert!(task.branch_name.starts_with("tsk/generic/my-task/"));
+        assert_eq!(task.target_branch, None);
     }
 
     #[tokio::test]
