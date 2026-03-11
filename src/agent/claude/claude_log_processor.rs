@@ -167,7 +167,7 @@ impl ClaudeLogProcessor {
                 }
             }
             "system" => match msg.subtype.as_deref() {
-                Some("task_started") => None,
+                Some("task_started") | Some("task_progress") => None,
                 _ => Some(LogLine::message(vec![], None, "[system]".into())),
             },
             "rate_limit_event" => {
@@ -1631,6 +1631,15 @@ mod tests {
         let json = r#"{"type": "system", "subtype": "init", "cwd": "/workspace"}"#;
         let result = processor.process_line(json).unwrap();
         assert_eq!(get_message_text(&result), "[system]");
+    }
+
+    #[test]
+    fn test_system_task_progress_suppressed() {
+        let mut processor = ClaudeLogProcessor::new();
+
+        let json = r#"{"type": "system", "subtype": "task_progress", "task_id": "abc123", "tool_use_id": "toolu_456", "description": "Reading file"}"#;
+        let result = processor.process_line(json);
+        assert!(result.is_none());
     }
 
     #[test]
