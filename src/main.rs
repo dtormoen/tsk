@@ -26,7 +26,7 @@ mod utils;
 
 use commands::{
     AddCommand, CancelCommand, CleanCommand, Command, DeleteCommand, ListCommand, RetryCommand,
-    RunCommand, ShellCommand, WaitCommand,
+    ReviewCommand, RunCommand, ShellCommand, WaitCommand,
     docker::DockerBuildCommand,
     server::{ServerStartCommand, ServerStopCommand},
     task_args::{self, TaskArgs},
@@ -363,6 +363,43 @@ enum Commands {
     },
     /// Docker operations - build and manage TSK Docker images
     Docker(DockerArgs),
+    /// Open a completed task's changes for review
+    Review {
+        /// Task ID to review
+        task_id: Option<String>,
+
+        /// Git ref to review against (mutually exclusive with task_id)
+        #[arg(long)]
+        base: Option<String>,
+
+        /// Override the review task name
+        #[arg(short, long)]
+        name: Option<String>,
+
+        /// Specific agent to use
+        #[arg(short, long)]
+        agent: Option<String>,
+
+        /// Stack for Docker image
+        #[arg(long)]
+        stack: Option<String>,
+
+        /// Path to the git repository
+        #[arg(long)]
+        repo: Option<String>,
+
+        /// Open the full prompt in editor after review file is processed
+        #[arg(short, long)]
+        edit: bool,
+
+        /// Disable per-container network isolation
+        #[arg(long)]
+        no_network_isolation: bool,
+
+        /// Enable Docker-in-Docker support
+        #[arg(long)]
+        dind: bool,
+    },
     /// Template operations - manage task templates
     Template(TemplateArgs),
 }
@@ -385,6 +422,7 @@ impl Commands {
             Commands::List
             | Commands::Clean
             | Commands::Delete { .. }
+            | Commands::Review { .. }
             | Commands::Template(_)
             | Commands::Wait { .. } => None,
         }
@@ -706,6 +744,27 @@ async fn main() {
                 proxy_only,
             }),
         },
+        Commands::Review {
+            task_id,
+            base,
+            name,
+            agent,
+            stack,
+            repo,
+            edit,
+            no_network_isolation,
+            dind,
+        } => Box::new(ReviewCommand {
+            task_id,
+            base,
+            name,
+            agent,
+            stack,
+            repo,
+            edit,
+            no_network_isolation,
+            dind,
+        }),
         Commands::Template(template_args) => match template_args.command {
             TemplateCommands::List => Box::new(TemplateListCommand),
             TemplateCommands::Show { name } => Box::new(TemplateShowCommand { name }),

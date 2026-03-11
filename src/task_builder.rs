@@ -51,6 +51,9 @@ pub struct TaskBuilder {
     /// instead of deferring to the scheduler. Used for review tasks where the
     /// parent is already complete.
     skip_parent_repo_deferral: bool,
+    /// Override for the source commit SHA. When set, this value is used instead
+    /// of computing it from the repository HEAD.
+    source_commit_override: Option<String>,
 }
 
 impl TaskBuilder {
@@ -79,6 +82,7 @@ impl TaskBuilder {
             branch: None,
             target_branch: None,
             skip_parent_repo_deferral: false,
+            source_commit_override: None,
         }
     }
 
@@ -248,10 +252,15 @@ impl TaskBuilder {
 
     /// When true, tasks with a parent_id copy the repo at creation time instead
     /// of deferring to the scheduler. The parent's resolved config is inherited.
-    /// Gated to `cfg(test)` until the review command is implemented.
-    #[cfg(test)]
     pub fn skip_parent_repo_deferral(mut self, skip: bool) -> Self {
         self.skip_parent_repo_deferral = skip;
+        self
+    }
+
+    /// Sets a custom source commit SHA instead of using the repository HEAD.
+    /// Used by review tasks to set the base commit for the diff.
+    pub fn source_commit_override(mut self, sha: Option<String>) -> Self {
+        self.source_commit_override = sha;
         self
     }
 
@@ -421,8 +430,17 @@ impl TaskBuilder {
         };
 
         // Capture the source commit SHA and branch.
-        // When --branch is specified, resolve from the named branch instead of HEAD.
-        let (source_commit, source_branch) = if let Some(ref branch) = self.branch {
+        // Priority: source_commit_override > --branch > HEAD
+        let (source_commit, source_branch) = if let Some(ref override_sha) =
+            self.source_commit_override
+        {
+            // Review tasks provide an explicit base commit
+            let source_branch = git_operations::get_current_branch(&source_info_path)
+                .await
+                .ok()
+                .flatten();
+            (override_sha.clone(), source_branch)
+        } else if let Some(ref branch) = self.branch {
             let commit = git_operations::resolve_branch_commit(&repo_root, branch)
                 .await
                 .map_err(|e| -> Box<dyn Error> { e.into() })?;
