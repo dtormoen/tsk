@@ -44,6 +44,7 @@ pub struct TaskArgs {
     pub repo: Option<String>,
     pub no_network_isolation: bool,
     pub dind: bool,
+    pub target_branch: Option<String>,
 }
 
 impl TaskArgs {
@@ -121,5 +122,6 @@ impl TaskArgs {
             .network_isolation(!self.no_network_isolation)
             .dind(if self.dind { Some(true) } else { None })
             .repo_copy_source(worktree_source)
+            .target_branch(self.target_branch.clone())
     }
 }
