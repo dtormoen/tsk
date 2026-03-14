@@ -102,6 +102,7 @@ ARG GIT_USER_EMAIL
 USER agent
 RUN git config --global user.name "$GIT_USER_NAME" && \
     git config --global user.email "$GIT_USER_EMAIL" && \
+    git config --global --add safe.directory '*' && \
     git lfs install
 
 # Agent version ARG to invalidate cache when agent updates

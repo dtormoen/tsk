@@ -509,7 +509,10 @@ impl DockerClient for DefaultDockerClient {
         if let Some(result) = stream.next().await {
             match result {
                 Ok(wait_response) => Ok(wait_response.status_code),
-                Err(e) => Err(format!("Failed to wait for container: {e}")),
+                // Bollard converts non-zero exit codes into DockerContainerWaitError.
+                // Extract the exit code so callers can handle it normally.
+                Err(bollard::errors::Error::DockerContainerWaitError { code, .. }) => Ok(code),
+                Err(e) => Err(format!("Failed to wait for container: {e:?}")),
             }
         } else {
             Err("Container wait stream ended unexpectedly".to_string())
