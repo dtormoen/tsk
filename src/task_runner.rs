@@ -224,7 +224,7 @@ impl TaskRunner {
         {
             Ok(tag) => tag,
             Err(e) => {
-                let msg = format!("Error ensuring Docker image: {e}");
+                let msg = format!("Error ensuring Docker image: {e:?}");
                 task_logger.log(LogLine::tsk_error(&msg));
                 return Err(msg.into());
             }

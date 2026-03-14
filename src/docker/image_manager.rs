@@ -548,15 +548,71 @@ impl DockerImageManager {
             header.set_cksum();
             builder.append(&header, dockerfile_bytes)?;
 
-            // Add build_root files if provided
+            // Add build_root files if provided, skipping broken symlinks
             if let Some(build_root) = build_root {
-                builder.append_dir_all(".", build_root)?;
+                Self::append_dir_skipping_broken_symlinks(&mut builder, build_root, build_root)?;
             }
 
             builder.finish()?;
         }
 
         Ok(tar_data)
+    }
+
+    /// Recursively append directory contents to a tar archive, skipping broken symlinks.
+    ///
+    /// Unlike `tar::Builder::append_dir_all`, this detects broken symlinks and skips them
+    /// with a warning instead of failing the entire build. This is common in Node.js/pnpm
+    /// projects where symlinks may reference directories (e.g. git worktrees) that aren't
+    /// included in the repository copy.
+    fn append_dir_skipping_broken_symlinks(
+        builder: &mut tar::Builder<&mut Vec<u8>>,
+        root: &std::path::Path,
+        current: &std::path::Path,
+    ) -> Result<()> {
+        let entries = std::fs::read_dir(current)
+            .with_context(|| format!("Failed to read directory: {}", current.display()))?;
+
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+            let symlink_meta = std::fs::symlink_metadata(&path)
+                .with_context(|| format!("Failed to read metadata: {}", path.display()))?;
+
+            // For symlinks, check if the target exists before adding
+            if symlink_meta.is_symlink() {
+                match std::fs::metadata(&path) {
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        eprintln!(
+                            "Warning: Skipping broken symlink in Docker build context: {}",
+                            path.display()
+                        );
+                        continue;
+                    }
+                    Err(e) => {
+                        return Err(e).with_context(|| {
+                            format!("Failed to resolve symlink: {}", path.display())
+                        });
+                    }
+                    Ok(_) => {} // Symlink resolves, fall through to handle normally
+                }
+            }
+
+            // Get the resolved metadata (follows symlinks for valid symlinks)
+            let metadata = std::fs::metadata(&path)
+                .with_context(|| format!("Failed to read file metadata: {}", path.display()))?;
+            let rel_path = path.strip_prefix(root).expect("path must be under root");
+            let archive_path = std::path::Path::new(".").join(rel_path);
+
+            if metadata.is_dir() {
+                builder.append_dir(&archive_path, &path)?;
+                Self::append_dir_skipping_broken_symlinks(builder, root, &path)?;
+            } else {
+                builder.append_path_with_name(&path, &archive_path)?;
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -796,6 +852,52 @@ mod tests {
             project_content.contains("FROM node:18"),
             "Project Dockerfile has wrong content"
         );
+    }
+
+    #[test]
+    fn test_create_tar_archive_with_broken_symlink() {
+        let manager = create_test_manager();
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create a regular file and a broken symlink
+        std::fs::write(temp_dir.path().join("file.txt"), "hello").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("/nonexistent/path/target", temp_dir.path().join("broken_link"))
+            .unwrap();
+
+        let composed = ComposedDockerfile {
+            dockerfile_content: "FROM ubuntu:24.04".to_string(),
+            build_args: std::collections::HashSet::new(),
+            image_tag: "tsk/test/test/test".to_string(),
+            layer_sources: Default::default(),
+        };
+
+        // Currently fails with "No such file or directory" because append_dir_all follows symlinks.
+        // After fix, this should succeed and skip the broken symlink.
+        let result = manager.create_tar_archive(&composed, Some(temp_dir.path()));
+        assert!(result.is_ok(), "Broken symlinks should be skipped, not cause failure: {:?}", result.err());
+
+        // Verify the valid file is still in the archive
+        let tar_data = result.unwrap();
+        use tar::Archive;
+        let mut archive = Archive::new(&tar_data[..]);
+
+        let mut found_file = false;
+        let mut found_broken_link = false;
+        for entry in archive.entries().unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path().unwrap();
+            let path_str = path.to_str().unwrap();
+            if path_str.contains("file.txt") {
+                found_file = true;
+            }
+            if path_str.contains("broken_link") {
+                found_broken_link = true;
+            }
+        }
+
+        assert!(found_file, "Valid file should be included in tar archive");
+        assert!(!found_broken_link, "Broken symlink should not be in tar archive");
     }
 
     #[tokio::test]
