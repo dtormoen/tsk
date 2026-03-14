@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.4](https://github.com/dtormoen/tsk-tsk/compare/v0.10.3...v0.10.4) - 2026-03-14
+
+### Fixed
+
+- resolve git-lfs integration test failure on Podman
+- skip broken symlinks in Docker build context and show full error chain ([#67](https://github.com/dtormoen/tsk-tsk/pull/67))
+- suppress task_progress system messages from agent logs
+
 ## [0.10.3](https://github.com/dtormoen/tsk-tsk/compare/v0.10.2...v0.10.3) - 2026-03-09
 
 ### Documentation
