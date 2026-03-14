@@ -15,7 +15,7 @@ name = "tsk"
 path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.6", features = ["derive"] }
 bollard = "0.20"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
@@ -32,7 +32,7 @@ libc = "0.2"
 is-terminal = "0.4"
 termion = "4.0"
 rust-embed = { version = "8.11", features = ["debug-embed"] }
-tempfile = "3.26"
+tempfile = "3.27"
 tar = "0.4"
 nanoid = "0.4"
 bytes = "1.11"
@@ -45,5 +45,5 @@ ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 crossterm = "0.29"
 
 [dev-dependencies]
-assert_cmd = "2.1"
+assert_cmd = "2.2"
 predicates = "3.1"
