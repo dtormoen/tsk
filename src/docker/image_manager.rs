@@ -862,8 +862,11 @@ mod tests {
         // Create a regular file and a broken symlink
         std::fs::write(temp_dir.path().join("file.txt"), "hello").unwrap();
         #[cfg(unix)]
-        std::os::unix::fs::symlink("/nonexistent/path/target", temp_dir.path().join("broken_link"))
-            .unwrap();
+        std::os::unix::fs::symlink(
+            "/nonexistent/path/target",
+            temp_dir.path().join("broken_link"),
+        )
+        .unwrap();
 
         let composed = ComposedDockerfile {
             dockerfile_content: "FROM ubuntu:24.04".to_string(),
@@ -875,7 +878,11 @@ mod tests {
         // Currently fails with "No such file or directory" because append_dir_all follows symlinks.
         // After fix, this should succeed and skip the broken symlink.
         let result = manager.create_tar_archive(&composed, Some(temp_dir.path()));
-        assert!(result.is_ok(), "Broken symlinks should be skipped, not cause failure: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Broken symlinks should be skipped, not cause failure: {:?}",
+            result.err()
+        );
 
         // Verify the valid file is still in the archive
         let tar_data = result.unwrap();
@@ -897,7 +904,10 @@ mod tests {
         }
 
         assert!(found_file, "Valid file should be included in tar archive");
-        assert!(!found_broken_link, "Broken symlink should not be in tar archive");
+        assert!(
+            !found_broken_link,
+            "Broken symlink should not be in tar archive"
+        );
     }
 
     #[tokio::test]

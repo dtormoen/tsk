@@ -34,7 +34,7 @@ precommit: format lint test
 
 # Upgrade all dependencies in cargo.toml and cargo.lock
 upgrade-deps:
-    cargo upgrade
+    cargo upgrade --incompatible
     cargo update
 
 # Run network isolation tests (must be run inside a TSK container)
