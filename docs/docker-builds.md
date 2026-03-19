@@ -170,7 +170,7 @@ tsk docker build --dry-run
 
 ### Automatic Building
 
-`tsk` automatically builds missing images when:
+`tsk` automatically builds the required image when:
 - Running a task (`tsk run`)
 - Starting an interactive shell (`tsk shell`)
 - Adding tasks to the queue (`tsk add`)

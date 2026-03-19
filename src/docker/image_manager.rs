@@ -40,8 +40,6 @@ pub struct EnsureImageOptions<'a> {
     pub project: Option<&'a str>,
     /// Optional build root directory for project-specific context
     pub build_root: Option<&'a std::path::Path>,
-    /// Whether to force a rebuild even if the image exists
-    pub force_rebuild: bool,
     /// Task logger for build output
     pub logger: &'a TaskLogger,
     /// Optional resolved config for inline layer overrides
@@ -291,11 +289,10 @@ impl DockerImageManager {
         Ok((format!("tsk/{stack}/{agent}/{project}"), false))
     }
 
-    /// Ensure a Docker image exists, rebuilding if necessary.
+    /// Build a Docker image and return its tag.
     ///
     /// This method:
-    /// - Checks if the image exists in the Docker daemon
-    /// - If missing or force_rebuild is true, builds the image with locking
+    /// - Builds the image with locking to prevent concurrent builds of the same tag
     /// - Returns the Docker image tag
     ///
     /// # Returns
@@ -312,12 +309,6 @@ impl DockerImageManager {
             opts.logger.log(LogLine::tsk_message(
                 "Note: Using default project layer as project-specific layer was not found",
             ));
-        }
-
-        // Check if image exists unless force rebuild
-        if !opts.force_rebuild && self.image_exists(&tag).await? {
-            // Image already exists
-            return Ok(tag);
         }
 
         // Acquire build lock for this image
@@ -423,19 +414,6 @@ impl DockerImageManager {
         }
 
         Ok(format!("tsk/{stack}/{agent}/{project}"))
-    }
-
-    /// Check if a Docker image exists
-    async fn image_exists(&self, tag: &str) -> Result<bool> {
-        // In test environments, always return true to avoid calling actual docker
-        if cfg!(test) {
-            return Ok(true);
-        }
-
-        self.client
-            .image_exists(tag)
-            .await
-            .map_err(|e| anyhow::anyhow!(e))
     }
 
     /// Build a Docker image from composed content
@@ -1051,7 +1029,6 @@ mod tests {
                     agent: "claude",
                     project: Some("project1"),
                     build_root: None,
-                    force_rebuild: false,
                     logger: &TaskLogger::no_file(),
                     resolved_config: None,
                 })
@@ -1065,7 +1042,6 @@ mod tests {
                     agent: "claude",
                     project: Some("project2"),
                     build_root: None,
-                    force_rebuild: false,
                     logger: &TaskLogger::no_file(),
                     resolved_config: None,
                 })

@@ -96,10 +96,6 @@ impl DockerClient for NoOpDockerClient {
         Ok(Box::new(Box::pin(stream)))
     }
 
-    async fn image_exists(&self, _tag: &str) -> Result<bool, String> {
-        Ok(true)
-    }
-
     async fn inspect_container(&self, _id: &str) -> Result<String, String> {
         Ok(r#"{"State": {"Health": {"Status": "healthy"}}}"#.to_string())
     }
@@ -242,10 +238,6 @@ impl DockerClient for FixedResponseDockerClient {
         Ok(Box::new(stream))
     }
 
-    async fn image_exists(&self, _tag: &str) -> Result<bool, String> {
-        Ok(true)
-    }
-
     async fn inspect_container(&self, _id: &str) -> Result<String, String> {
         Ok(r#"{"State": {"Health": {"Status": "healthy"}}}"#.to_string())
     }
@@ -296,7 +288,6 @@ pub struct TrackedDockerClient {
     pub remove_network_error: Option<String>,
     pub create_container_error: Option<String>,
     pub start_container_error: Option<String>,
-    pub image_exists_returns: bool,
     pub inspect_container_response: String,
 }
 
@@ -322,7 +313,6 @@ impl Default for TrackedDockerClient {
             remove_network_error: None,
             create_container_error: None,
             start_container_error: None,
-            image_exists_returns: true,
             inspect_container_response: r#"{"State": {"Health": {"Status": "healthy"}}}"#
                 .to_string(),
         }
@@ -510,10 +500,6 @@ impl DockerClient for TrackedDockerClient {
         let stream =
             futures_util::stream::once(async { Ok("Building image...".to_string()) }).boxed();
         Ok(Box::new(stream))
-    }
-
-    async fn image_exists(&self, _tag: &str) -> Result<bool, String> {
-        Ok(self.image_exists_returns)
     }
 
     async fn inspect_container(&self, _id: &str) -> Result<String, String> {

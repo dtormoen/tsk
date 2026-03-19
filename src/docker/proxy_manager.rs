@@ -998,10 +998,6 @@ mod tests {
                 Ok(Box::new(Box::pin(stream)))
             }
 
-            async fn image_exists(&self, _tag: &str) -> Result<bool, String> {
-                Ok(true)
-            }
-
             async fn inspect_container(&self, _id: &str) -> Result<String, String> {
                 Ok(r#"{"State": {"Health": {"Status": "healthy"}}}"#.to_string())
             }

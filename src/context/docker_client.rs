@@ -341,15 +341,6 @@ pub trait DockerClient: Send + Sync {
         tar_archive: Vec<u8>,
     ) -> Result<Box<dyn futures_util::Stream<Item = Result<String, String>> + Send + Unpin>, String>;
 
-    /// Check if a Docker image exists locally
-    ///
-    /// # Arguments
-    /// * `tag` - The image tag to check (e.g., "tsk/rust/claude/web-api")
-    ///
-    /// # Returns
-    /// True if the image exists, false otherwise
-    async fn image_exists(&self, tag: &str) -> Result<bool, String>;
-
     /// Inspect a container to get its details
     ///
     /// # Arguments
@@ -702,23 +693,6 @@ impl DockerClient for DefaultDockerClient {
         // Convert receiver to stream
         let receiver_stream = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
         Ok(Box::new(Box::pin(receiver_stream)))
-    }
-
-    async fn image_exists(&self, tag: &str) -> Result<bool, String> {
-        let mut filters = HashMap::new();
-        filters.insert("reference", vec![tag]);
-
-        let options = bollard::query_parameters::ListImagesOptionsBuilder::default()
-            .filters(&filters)
-            .build();
-
-        let images = self
-            .docker
-            .list_images(Some(options))
-            .await
-            .map_err(|e| format!("Failed to list images: {e}"))?;
-
-        Ok(!images.is_empty())
     }
 
     async fn inspect_container(&self, id: &str) -> Result<String, String> {

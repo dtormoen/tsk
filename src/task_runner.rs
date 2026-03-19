@@ -209,14 +209,13 @@ impl TaskRunner {
         let resolved_config =
             crate::docker::resolve_config_from_task(task, &self.ctx, &self.event_sender);
 
-        // Ensure the Docker image exists - always rebuild to pick up any changes
+        // Build the Docker image for this task
         let docker_image_tag = match task_image_manager
             .ensure_image(&crate::docker::image_manager::EnsureImageOptions {
                 stack: &task.stack,
                 agent: &task.agent,
                 project: Some(&task.project),
                 build_root: Some(repo_path.as_path()),
-                force_rebuild: true,
                 logger: &task_logger,
                 resolved_config: Some(&resolved_config),
             })
