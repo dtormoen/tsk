@@ -24,6 +24,60 @@ use std::sync::Arc;
 const CONTAINER_WORKSPACE_BASE: &str = "/workspace";
 const CONTAINER_USER: &str = "agent";
 const SECCOMP_DIND_PROFILE: &str = include_str!("seccomp_dind.json");
+const PODMAN_STORAGE_PATH: &str = "/home/agent/.local/share/containers/storage";
+
+/// How Podman storage is provided for DIND (Docker-in-Docker) containers.
+///
+/// Rootless Podman needs a backing filesystem that supports overlay mounts in
+/// user namespaces. Not all filesystem types qualify — the kernel requires
+/// user.* xattr support on the backing store. We pick the lightest-weight
+/// option that works on the current platform:
+///
+/// 1. **None** (container's own filesystem) — ideal but currently no platform
+///    reliably supports overlay-on-overlayfs in user namespaces.
+/// 2. **Tmpfs** — ephemeral, no cleanup needed. Works on macOS/Docker Desktop
+///    (LinuxKit supports user.* xattrs on tmpfs) but fails on Linux kernels
+///    < 6.6 where tmpfs lacks user.* xattr support.
+/// 3. **Named volume** — works everywhere (backed by host ext4/xfs). Requires
+///    cleanup after the task completes.
+///
+/// Update the conditions in [`dind_storage_strategy`] as platform support evolves.
+enum DindStorage {
+    /// No extra mount; use the container's own filesystem.
+    #[allow(dead_code)]
+    None,
+    /// Mount a tmpfs at the storage path (ephemeral, no cleanup).
+    Tmpfs,
+    /// Mount a named volume at the storage path (cleaned up after the task).
+    NamedVolume(String),
+}
+
+/// Choose the best DIND storage strategy for the current platform.
+fn dind_storage_strategy(task_id: &str) -> DindStorage {
+    if cfg!(target_os = "macos") {
+        // Docker Desktop / LinuxKit: tmpfs supports user.* xattrs and avoids
+        // the execve() bug on FUSE mounts (docker/for-mac#7413).
+        DindStorage::Tmpfs
+    } else {
+        // Linux: tmpfs lacks user.* xattrs on kernels < 6.6, and the
+        // container's overlayfs doesn't support nested overlay in userns.
+        // Named volume (backed by host ext4/xfs) works on all kernels.
+        let kernel_ok = std::fs::read_to_string("/proc/sys/kernel/osrelease")
+            .ok()
+            .and_then(|r| {
+                let mut parts = r.trim().splitn(3, '.');
+                let major: u32 = parts.next()?.parse().ok()?;
+                let minor: u32 = parts.next()?.parse().ok()?;
+                Some(major > 6 || (major == 6 && minor >= 6))
+            })
+            .unwrap_or(false);
+        if kernel_ok {
+            DindStorage::Tmpfs
+        } else {
+            DindStorage::NamedVolume(format!("tsk-dind-{task_id}"))
+        }
+    }
+}
 
 /// Checks whether a cgroup v2 controller (e.g. "cpu", "memory") is delegated
 /// to the current user session. Rootless Podman requires controllers to be
@@ -335,9 +389,9 @@ impl DockerManager {
         network_name: Option<&str>,
         proxy_config: Option<&crate::context::ResolvedProxyConfig>,
         proxy_container_ip: Option<&str>,
-    ) -> ContainerCreateBody {
+    ) -> (ContainerCreateBody, DindStorage) {
         let resolved = resolve_config_from_task(task, &self.ctx, &self.event_sender);
-        let binds = self.build_bind_volumes(task, agent, &resolved);
+        let mut binds = self.build_bind_volumes(task, agent, &resolved);
         let instructions_file_path = PathBuf::from(&task.instructions_file);
         let working_dir = container_working_dir(&task.project);
 
@@ -434,16 +488,23 @@ impl DockerManager {
             cap_drop.push("NET_RAW".to_string());
         }
 
-        // Check if a user-configured volume already covers Podman's storage path
-        // before `binds` is moved into the container config.
-        let podman_storage = "/home/agent/.local/share/containers/storage";
+        // DIND storage: pick the best strategy for Podman's overlay storage.
+        // See `DindStorage` docs for the cascade logic.
         let has_storage_volume = binds
             .iter()
-            .any(|b| b.split(':').nth(1) == Some(podman_storage));
+            .any(|b| b.split(':').nth(1) == Some(PODMAN_STORAGE_PATH));
+        let dind_storage = if task.dind && !has_storage_volume {
+            let strategy = dind_storage_strategy(&task.id);
+            if let DindStorage::NamedVolume(ref name) = strategy {
+                binds.push(format!("{name}:{PODMAN_STORAGE_PATH}"));
+            }
+            strategy
+        } else {
+            DindStorage::None
+        };
 
-        ContainerCreateBody {
+        let config = ContainerCreateBody {
             image: Some(image.to_string()),
-            // No entrypoint needed anymore - just run as agent user directly
             user: Some(CONTAINER_USER.to_string()),
             cmd: command,
             host_config: Some(HostConfig {
@@ -476,24 +537,13 @@ impl DockerManager {
                 },
                 cap_drop: Some(cap_drop),
                 security_opt,
-                // WORKAROUND: Mount tmpfs at Podman's storage path so it uses native
-                // kernel overlay instead of fuse-overlayfs. Without this, execve()
-                // returns EINVAL for any binary on a FUSE mount inside a user
-                // namespace — a kernel bug in LinuxKit 6.10.14+ (Docker Desktop
-                // 4.33.0+). This breaks all `podman build` and `podman run` inside
-                // TSK containers. Native overlay on tmpfs avoids the broken code
-                // path entirely. Remove this once docker/for-mac#7413 is fixed.
-                //
-                // Skip the tmpfs when a user-configured volume already targets this
-                // path (e.g. a named volume for caching DIND image layers across runs).
-                // The named volume provides the same native overlay benefit.
-                tmpfs: if has_storage_volume {
-                    None
-                } else {
+                tmpfs: if matches!(dind_storage, DindStorage::Tmpfs) {
                     Some(HashMap::from([(
-                        podman_storage.to_string(),
-                        "size=40G".to_string(),
+                        PODMAN_STORAGE_PATH.to_string(),
+                        "size=40G,mode=1777".to_string(),
                     )]))
+                } else {
+                    None
                 },
                 // Keep the host UID mapping in Podman so bind-mounted files retain
                 // correct ownership (rootless Podman remaps UIDs otherwise).
@@ -518,7 +568,9 @@ impl DockerManager {
             tty: Some(task.is_interactive),
             open_stdin: Some(task.is_interactive),
             ..Default::default()
-        }
+        };
+
+        (config, dind_storage)
     }
 
     /// Run a task container with unified support for both interactive and non-interactive modes.
@@ -579,7 +631,7 @@ impl DockerManager {
         };
 
         // --- Execute: run the container, capturing its ID for cleanup ---
-        let (container_id, result) = self
+        let (container_id, dind_storage, result) = self
             .run_container_inner(
                 docker_image_tag,
                 task,
@@ -597,14 +649,18 @@ impl DockerManager {
         if let Some(ref session) = proxy_session {
             self.proxy_manager.release_proxy(session).await;
         }
+        if let DindStorage::NamedVolume(ref name) = dind_storage {
+            let _ = self.client.remove_volume(name).await;
+        }
 
         result
     }
 
     /// Execute the container lifecycle without performing resource cleanup.
     ///
-    /// Returns the container ID (if one was created) alongside the execution result,
-    /// so the caller can clean up the container, network, and proxy in one place.
+    /// Returns the container ID (if one was created) and the DIND storage strategy
+    /// alongside the execution result, so the caller can clean up everything in
+    /// one place.
     async fn run_container_inner(
         &self,
         docker_image_tag: &str,
@@ -615,10 +671,11 @@ impl DockerManager {
         proxy_container_ip: Option<&str>,
     ) -> (
         Option<String>,
+        DindStorage,
         Result<(String, crate::agent::TaskResult), String>,
     ) {
         let suppress_stdout = self.event_sender.is_some();
-        let config = self.create_container_config(
+        let (config, dind_storage) = self.create_container_config(
             docker_image_tag,
             task,
             agent,
@@ -633,7 +690,7 @@ impl DockerManager {
 
         let container_id = match self.client.create_container(Some(options), config).await {
             Ok(id) => id,
-            Err(e) => return (None, Err(e)),
+            Err(e) => return (None, dind_storage, Err(e)),
         };
 
         // Copy agent files into container before starting
@@ -643,12 +700,12 @@ impl DockerManager {
                 .upload_to_container(&container_id, &dest_path, tar_data)
                 .await
             {
-                return (Some(container_id), Err(e));
+                return (Some(container_id), dind_storage, Err(e));
             }
         }
 
         if let Err(e) = self.client.start_container(&container_id).await {
-            return (Some(container_id), Err(e));
+            return (Some(container_id), dind_storage, Err(e));
         }
 
         let result = if task.is_interactive {
@@ -725,7 +782,7 @@ impl DockerManager {
             }
         };
 
-        (Some(container_id), result)
+        (Some(container_id), dind_storage, result)
     }
 
     /// Stream container logs and process them through the log processor.
@@ -958,7 +1015,7 @@ mod tests {
         assert!(actual_cmd[2].contains("claude"));
 
         // Check that user is set
-        assert_eq!(task_container_config.user, Some("agent".to_string()));
+        assert_eq!(task_container_config.user, Some(CONTAINER_USER.to_string()));
 
         // Check proxy environment variables (uses fingerprinted proxy container name)
         let pcn = default_proxy_container_name();
@@ -1173,7 +1230,7 @@ mod tests {
         );
         assert_eq!(config.image, Some("tsk/base".to_string()));
         assert_eq!(config.working_dir, Some("/workspace/default".to_string()));
-        // User is now set directly
+        // User is set directly
         assert_eq!(config.user, Some(CONTAINER_USER.to_string()));
 
         // Check that command includes the agent command

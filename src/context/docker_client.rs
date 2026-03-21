@@ -209,11 +209,12 @@ fn ensure_podman_service(socket_path: &str) -> Result<(), String> {
         .reopen()
         .map_err(|e| format!("Failed to reopen stderr temp file: {e}"))?;
 
-    let mut child = std::process::Command::new("podman")
-        .args(["system", "service", "--timeout=0", &socket_uri])
+    let mut cmd = std::process::Command::new("podman");
+    cmd.args(["system", "service", "--timeout=0", &socket_uri])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::from(stderr_handle))
+        .stderr(std::process::Stdio::from(stderr_handle));
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to start podman system service: {e}"))?;
 
@@ -423,6 +424,9 @@ pub trait DockerClient: Send + Sync {
     /// # Returns
     /// The exit code of the command (0 = success)
     async fn exec_in_container(&self, id: &str, cmd: Vec<String>) -> Result<i64, String>;
+
+    /// Remove a named volume. Errors are non-fatal (volume may not exist).
+    async fn remove_volume(&self, name: &str) -> Result<(), String>;
 }
 
 #[derive(Clone)]
@@ -963,5 +967,12 @@ impl DockerClient for DefaultDockerClient {
         }
 
         Err("Exec command timed out".to_string())
+    }
+
+    async fn remove_volume(&self, name: &str) -> Result<(), String> {
+        self.docker
+            .remove_volume(name, None::<bollard::query_parameters::RemoveVolumeOptions>)
+            .await
+            .map_err(|e| format!("Failed to remove volume {name}: {e}"))
     }
 }

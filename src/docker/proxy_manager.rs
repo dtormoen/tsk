@@ -1033,6 +1033,10 @@ mod tests {
             async fn exec_in_container(&self, _id: &str, _cmd: Vec<String>) -> Result<i64, String> {
                 Ok(0)
             }
+
+            async fn remove_volume(&self, _name: &str) -> Result<(), String> {
+                Ok(())
+            }
         }
 
         let mock_client: Arc<dyn DockerClient> = Arc::new(NoContainerDockerClient);

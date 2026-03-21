@@ -121,6 +121,10 @@ impl DockerClient for NoOpDockerClient {
     async fn exec_in_container(&self, _id: &str, _cmd: Vec<String>) -> Result<i64, String> {
         Ok(0)
     }
+
+    async fn remove_volume(&self, _name: &str) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
@@ -266,6 +270,10 @@ impl DockerClient for FixedResponseDockerClient {
 
     async fn exec_in_container(&self, _id: &str, _cmd: Vec<String>) -> Result<i64, String> {
         Ok(0)
+    }
+
+    async fn remove_volume(&self, _name: &str) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -538,5 +546,9 @@ impl DockerClient for TrackedDockerClient {
 
     async fn exec_in_container(&self, _id: &str, _cmd: Vec<String>) -> Result<i64, String> {
         Ok(0)
+    }
+
+    async fn remove_volume(&self, _name: &str) -> Result<(), String> {
+        Ok(())
     }
 }
