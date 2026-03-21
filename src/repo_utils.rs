@@ -1,20 +1,95 @@
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
+/// Runs `git -C <path> rev-parse <args>` and returns the trimmed stdout.
+fn run_git_rev_parse(path: &Path, args: &[&str]) -> Result<String, Box<dyn Error>> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .arg("rev-parse")
+        .args(args)
+        .output()
+        .map_err(|e| format!("Failed to run git rev-parse: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "git rev-parse failed in {}: {}",
+            path.display(),
+            stderr.trim()
+        )
+        .into());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Parsed output from `git rev-parse --show-toplevel --git-dir --git-common-dir`.
+struct GitRepoInfo {
+    toplevel: PathBuf,
+    is_worktree: bool,
+    /// The canonicalized `--git-common-dir` path, resolved relative to the query path.
+    common_dir: PathBuf,
+}
+
+/// Detects git repository info for a given start path.
+///
+/// Runs a single `git rev-parse` invocation with `--show-toplevel --git-dir --git-common-dir`
+/// and returns parsed results. A worktree is detected when `--git-dir` differs from
+/// `--git-common-dir`.
+fn detect_git_repo(start_path: &Path) -> Result<GitRepoInfo, Box<dyn Error>> {
+    let start = if start_path.is_relative() {
+        std::env::current_dir()?.join(start_path)
+    } else {
+        start_path.to_path_buf()
+    };
+
+    let canonical = start.canonicalize()?;
+
+    let output = run_git_rev_parse(
+        &canonical,
+        &["--show-toplevel", "--git-dir", "--git-common-dir"],
+    )
+    .map_err(|e| {
+        format!(
+            "Not in a git repository (or any of the parent directories): {} ({e})",
+            start_path.display()
+        )
+    })?;
+
+    let lines: Vec<&str> = output.lines().collect();
+    if lines.len() < 3 {
+        return Err(format!(
+            "Unexpected git rev-parse output in {}: {output}",
+            canonical.display()
+        )
+        .into());
+    }
+
+    let toplevel = lines[0];
+    let git_dir = lines[1];
+    let git_common_dir = lines[2];
+    let is_worktree = git_dir != git_common_dir;
+
+    let common_path = if Path::new(git_common_dir).is_absolute() {
+        PathBuf::from(git_common_dir)
+    } else {
+        canonical.join(git_common_dir)
+    };
+    let common_dir = common_path
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve common dir {}: {e}", common_path.display()))?;
+
+    Ok(GitRepoInfo {
+        toplevel: PathBuf::from(toplevel),
+        is_worktree,
+        common_dir,
+    })
+}
+
 /// Find the root of a git repository starting from the given path.
 ///
-/// This function walks up the directory tree from the starting path until it finds
-/// a directory containing a `.git` entry. For git worktrees (where `.git` is a file),
-/// the path is resolved to the main repository root via [`resolve_git_common_dir`].
-///
-/// # Arguments
-///
-/// * `start_path` - The path to start searching from
-///
-/// # Returns
-///
-/// * `Ok(PathBuf)` - The canonical path to the repository root
-/// * `Err` - If not in a git repository or if an I/O error occurs
+/// Uses `git rev-parse` to locate the repository root. For git worktrees,
+/// the main repository root is resolved by taking the parent of the common
+/// git directory.
 ///
 /// # Example
 ///
@@ -28,146 +103,52 @@ use std::path::{Path, PathBuf};
 /// println!("Repository root: {}", repo_root.display());
 /// ```
 pub fn find_repository_root(start_path: &Path) -> Result<PathBuf, Box<dyn Error>> {
-    let start = if start_path.is_relative() {
-        std::env::current_dir()?.join(start_path)
-    } else {
-        start_path.to_path_buf()
-    };
+    let info = detect_git_repo(start_path)?;
 
-    let mut current = start.canonicalize()?;
-
-    loop {
-        let git_entry = current.join(".git");
-        if git_entry.exists() {
-            // If .git is a file, this is a worktree — resolve to the main repo root
-            if git_entry.is_file()
-                && let Ok(common_dir) = resolve_git_common_dir(&current)
-                && let Some(main_root) = common_dir.parent()
-            {
-                return Ok(main_root.to_path_buf());
-            }
-            return Ok(current);
-        }
-
-        match current.parent() {
-            Some(parent) => current = parent.to_path_buf(),
-            None => {
-                return Err(format!(
-                    "Not in a git repository (or any of the parent directories): {}",
-                    start_path.display()
-                )
-                .into());
-            }
-        }
-    }
-}
-
-/// Resolves the actual git directory for a repository path.
-///
-/// In a normal repository, `.git` is a directory and this returns `repo_path/.git`.
-/// In a worktree, `.git` is a file containing `gitdir: <path>` — this parses that
-/// and resolves the path (which may be relative) to an absolute path.
-pub fn resolve_git_dir(repo_path: &Path) -> Result<PathBuf, Box<dyn Error>> {
-    let git_path = repo_path.join(".git");
-    let metadata = std::fs::metadata(&git_path)
-        .map_err(|e| format!("Cannot access {}: {}", git_path.display(), e))?;
-
-    if metadata.is_dir() {
-        return Ok(git_path);
+    if info.is_worktree
+        && let Some(main_root) = info.common_dir.parent()
+    {
+        return Ok(main_root.to_path_buf());
     }
 
-    // .git is a file — parse gitdir: line
-    let content = std::fs::read_to_string(&git_path)
-        .map_err(|e| format!("Cannot read {}: {}", git_path.display(), e))?;
-    let gitdir_line = content.trim();
-    let gitdir_path = gitdir_line.strip_prefix("gitdir: ").ok_or_else(|| {
-        format!(
-            "Invalid .git file format in {}: {}",
-            git_path.display(),
-            gitdir_line
-        )
-    })?;
-
-    let gitdir = Path::new(gitdir_path);
-    let resolved = if gitdir.is_absolute() {
-        gitdir.to_path_buf()
-    } else {
-        repo_path.join(gitdir)
-    };
-
-    // Canonicalize to resolve any .. components
-    resolved
-        .canonicalize()
-        .map_err(|e| format!("Cannot resolve git dir {}: {}", resolved.display(), e).into())
+    Ok(info.toplevel)
 }
 
 /// Resolves the common git directory (the main repository's `.git`).
 ///
-/// In a normal repository, this is the same as `resolve_git_dir`.
-/// In a worktree, the git dir contains a `commondir` file that points to the
-/// shared `.git` directory of the main repository.
+/// Uses `git rev-parse --git-common-dir` to find the shared `.git` directory.
+/// In a normal repository, this is the repo's `.git` directory.
+/// In a worktree, this points to the main repository's `.git` directory.
 pub fn resolve_git_common_dir(repo_path: &Path) -> Result<PathBuf, Box<dyn Error>> {
-    let git_dir = resolve_git_dir(repo_path)?;
-
-    let commondir_path = git_dir.join("commondir");
-    if commondir_path.is_file() {
-        let content = std::fs::read_to_string(&commondir_path)
-            .map_err(|e| format!("Cannot read {}: {}", commondir_path.display(), e))?;
-        let commondir = content.trim();
-        let common = if Path::new(commondir).is_absolute() {
-            PathBuf::from(commondir)
-        } else {
-            git_dir.join(commondir)
-        };
-        return common
-            .canonicalize()
-            .map_err(|e| format!("Cannot resolve common dir {}: {}", common.display(), e).into());
-    }
-
-    Ok(git_dir)
+    let result = run_git_rev_parse(repo_path, &["--git-common-dir"])?;
+    let common_dir = Path::new(&result);
+    let resolved = if common_dir.is_absolute() {
+        common_dir.to_path_buf()
+    } else {
+        repo_path.join(common_dir)
+    };
+    resolved
+        .canonicalize()
+        .map_err(|e| format!("Cannot resolve common dir {}: {e}", resolved.display()).into())
 }
 
 /// Find the worktree root directory from a starting path.
 ///
-/// Returns the worktree directory if the path is inside a git worktree,
-/// or `None` if it's a normal repository.
+/// Uses `git rev-parse` to determine if the path is inside a git worktree.
+/// Returns the worktree directory if so, or `None` if it's a normal repository.
 pub fn find_worktree_root(start_path: &Path) -> Result<Option<PathBuf>, Box<dyn Error>> {
-    let start = if start_path.is_relative() {
-        std::env::current_dir()?.join(start_path)
+    let info = detect_git_repo(start_path)?;
+
+    if info.is_worktree {
+        Ok(Some(info.toplevel))
     } else {
-        start_path.to_path_buf()
-    };
-
-    let mut current = start.canonicalize()?;
-
-    loop {
-        let git_entry = current.join(".git");
-        if git_entry.exists() {
-            if git_entry.is_file() {
-                // .git is a file — this is a worktree
-                return Ok(Some(current));
-            }
-            // .git is a directory — normal repository
-            return Ok(None);
-        }
-
-        match current.parent() {
-            Some(parent) => current = parent.to_path_buf(),
-            None => {
-                return Err(format!(
-                    "Not in a git repository (or any of the parent directories): {}",
-                    start_path.display()
-                )
-                .into());
-            }
-        }
+        Ok(None)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
     use crate::test_utils::TestGitRepository;
 
@@ -179,7 +160,7 @@ mod tests {
 
         // Create subdirectories
         let sub_dir = repo_root.join("src").join("commands");
-        fs::create_dir_all(&sub_dir).unwrap();
+        std::fs::create_dir_all(&sub_dir).unwrap();
 
         // Test from various locations
         assert_eq!(
@@ -211,49 +192,13 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_git_dir_normal_repo() {
-        let repo = TestGitRepository::new().unwrap();
-        repo.init().unwrap();
-
-        let git_dir = resolve_git_dir(repo.path()).unwrap();
-        assert!(git_dir.is_dir());
-        assert_eq!(git_dir.file_name().unwrap(), ".git");
-    }
-
-    #[test]
-    fn test_resolve_git_dir_worktree() {
-        let repo = TestGitRepository::new().unwrap();
-        repo.init_with_commit().unwrap();
-
-        let worktree_tmp = tempfile::TempDir::new().unwrap();
-        let worktree_dir = worktree_tmp.path().join("worktree");
-        repo.run_git_command(&[
-            "worktree",
-            "add",
-            worktree_dir.to_str().unwrap(),
-            "-b",
-            "wt-branch",
-        ])
-        .unwrap();
-
-        let git_dir = resolve_git_dir(&worktree_dir).unwrap();
-        // Should resolve to something inside the main repo's .git/worktrees/
-        assert!(git_dir.is_dir());
-        assert!(git_dir.to_str().unwrap().contains("worktrees"));
-
-        // Clean up worktree before temp dirs are dropped
-        std::fs::remove_dir_all(&worktree_dir).ok();
-        repo.run_git_command(&["worktree", "prune"]).ok();
-    }
-
-    #[test]
     fn test_resolve_git_common_dir_normal_repo() {
         let repo = TestGitRepository::new().unwrap();
         repo.init().unwrap();
 
         let common_dir = resolve_git_common_dir(repo.path()).unwrap();
-        let git_dir = resolve_git_dir(repo.path()).unwrap();
-        assert_eq!(common_dir, git_dir);
+        assert!(common_dir.is_dir());
+        assert_eq!(common_dir.file_name().unwrap(), ".git");
     }
 
     #[test]
@@ -273,12 +218,12 @@ mod tests {
         .unwrap();
 
         let common_dir = resolve_git_common_dir(&worktree_dir).unwrap();
-        let main_git_dir = resolve_git_dir(repo.path()).unwrap();
+        let main_common_dir = resolve_git_common_dir(repo.path()).unwrap();
         // Common dir from worktree should point to main repo's .git
         // Canonicalize both to handle macOS /var -> /private/var symlink
         assert_eq!(
             common_dir.canonicalize().unwrap(),
-            main_git_dir.canonicalize().unwrap()
+            main_common_dir.canonicalize().unwrap()
         );
 
         // Clean up worktree before temp dirs are dropped
@@ -311,7 +256,7 @@ mod tests {
 
         // From a subdirectory within the worktree, should also resolve to main repo root
         let sub_dir = worktree_dir.join("subdir");
-        fs::create_dir_all(&sub_dir).unwrap();
+        std::fs::create_dir_all(&sub_dir).unwrap();
         let found_root_from_sub = find_repository_root(&sub_dir).unwrap();
         assert_eq!(
             found_root_from_sub.canonicalize().unwrap(),
@@ -358,7 +303,7 @@ mod tests {
 
         // From a subdirectory within the worktree, should still return the worktree root
         let sub_dir = worktree_dir.join("subdir");
-        fs::create_dir_all(&sub_dir).unwrap();
+        std::fs::create_dir_all(&sub_dir).unwrap();
         let result = find_worktree_root(&sub_dir).unwrap();
         assert_eq!(
             result.unwrap().canonicalize().unwrap(),
@@ -371,9 +316,9 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_git_dir_not_a_repo() {
+    fn test_resolve_git_common_dir_not_a_repo() {
         let temp = tempfile::TempDir::new().unwrap();
-        let result = resolve_git_dir(temp.path());
+        let result = resolve_git_common_dir(temp.path());
         assert!(result.is_err());
     }
 }

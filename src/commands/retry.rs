@@ -55,6 +55,12 @@ impl Command for RetryCommand {
 
         for task_id in &self.task_ids {
             let mut repo_copy_source = None;
+            if self.from_cwd
+                && let Ok(Some(worktree_path)) =
+                    crate::repo_utils::find_worktree_root(std::path::Path::new("."))
+            {
+                repo_copy_source = Some(worktree_path);
+            }
             if !self.from_cwd {
                 let storage = ctx.task_storage();
                 if let Ok(Some(original_task)) = storage.get_task(task_id).await
