@@ -127,6 +127,43 @@ pub fn resolve_git_common_dir(repo_path: &Path) -> Result<PathBuf, Box<dyn Error
     Ok(git_dir)
 }
 
+/// Find the worktree root directory from a starting path.
+///
+/// Returns the worktree directory if the path is inside a git worktree,
+/// or `None` if it's a normal repository.
+pub fn find_worktree_root(start_path: &Path) -> Result<Option<PathBuf>, Box<dyn Error>> {
+    let start = if start_path.is_relative() {
+        std::env::current_dir()?.join(start_path)
+    } else {
+        start_path.to_path_buf()
+    };
+
+    let mut current = start.canonicalize()?;
+
+    loop {
+        let git_entry = current.join(".git");
+        if git_entry.exists() {
+            if git_entry.is_file() {
+                // .git is a file — this is a worktree
+                return Ok(Some(current));
+            }
+            // .git is a directory — normal repository
+            return Ok(None);
+        }
+
+        match current.parent() {
+            Some(parent) => current = parent.to_path_buf(),
+            None => {
+                return Err(format!(
+                    "Not in a git repository (or any of the parent directories): {}",
+                    start_path.display()
+                )
+                .into());
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,6 +316,53 @@ mod tests {
         assert_eq!(
             found_root_from_sub.canonicalize().unwrap(),
             repo.path().canonicalize().unwrap()
+        );
+
+        // Clean up worktree before temp dirs are dropped
+        std::fs::remove_dir_all(&worktree_dir).ok();
+        repo.run_git_command(&["worktree", "prune"]).ok();
+    }
+
+    #[test]
+    fn test_find_worktree_root_normal_repo() {
+        let repo = TestGitRepository::new().unwrap();
+        repo.init_with_commit().unwrap();
+
+        // Normal repo should return None
+        let result = find_worktree_root(repo.path()).unwrap();
+        assert!(result.is_none(), "Normal repo should not be a worktree");
+    }
+
+    #[test]
+    fn test_find_worktree_root_from_worktree() {
+        let repo = TestGitRepository::new().unwrap();
+        repo.init_with_commit().unwrap();
+
+        let worktree_tmp = tempfile::TempDir::new().unwrap();
+        let worktree_dir = worktree_tmp.path().join("worktree");
+        repo.run_git_command(&[
+            "worktree",
+            "add",
+            worktree_dir.to_str().unwrap(),
+            "-b",
+            "wt-detect-branch",
+        ])
+        .unwrap();
+
+        // From worktree root, should return the worktree path
+        let result = find_worktree_root(&worktree_dir).unwrap();
+        assert_eq!(
+            result.unwrap().canonicalize().unwrap(),
+            worktree_dir.canonicalize().unwrap()
+        );
+
+        // From a subdirectory within the worktree, should still return the worktree root
+        let sub_dir = worktree_dir.join("subdir");
+        fs::create_dir_all(&sub_dir).unwrap();
+        let result = find_worktree_root(&sub_dir).unwrap();
+        assert_eq!(
+            result.unwrap().canonicalize().unwrap(),
+            worktree_dir.canonicalize().unwrap()
         );
 
         // Clean up worktree before temp dirs are dropped

@@ -1,4 +1,4 @@
-use crate::repo_utils::find_repository_root;
+use crate::repo_utils::{find_repository_root, find_worktree_root};
 use crate::stdin_utils::{merge_prompt_with_stdin, read_piped_input};
 use crate::task::TaskBuilder;
 use std::error::Error;
@@ -84,6 +84,13 @@ impl TaskArgs {
         find_repository_root(Path::new(start_path))
     }
 
+    /// Finds the worktree root from `--repo` or current directory.
+    /// Returns `None` if the path is a normal repository (not a worktree).
+    pub fn resolve_worktree_source(&self) -> Result<Option<PathBuf>, Box<dyn Error>> {
+        let start_path = self.repo.as_deref().unwrap_or(".");
+        find_worktree_root(Path::new(start_path))
+    }
+
     /// Creates and configures a TaskBuilder with all shared fields.
     ///
     /// Pass `Some(agent)` to set a specific agent, or `None` to let
@@ -97,6 +104,10 @@ impl TaskArgs {
         agent: Option<String>,
         prompt: Option<String>,
     ) -> TaskBuilder {
+        let worktree_source = self.resolve_worktree_source().unwrap_or_else(|e| {
+            eprintln!("Warning: failed to detect worktree: {e}");
+            None
+        });
         TaskBuilder::new()
             .repo_root(repo_root)
             .name(name)
@@ -109,5 +120,6 @@ impl TaskArgs {
             .project(self.project.clone())
             .network_isolation(!self.no_network_isolation)
             .dind(if self.dind { Some(true) } else { None })
+            .repo_copy_source(worktree_source)
     }
 }

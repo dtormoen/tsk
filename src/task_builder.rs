@@ -262,9 +262,12 @@ impl TaskBuilder {
             }
         }
 
+        // Worktrees and parent-retry both set repo_copy_source with a different HEAD than repo_root
+        let source_info_path = self.repo_copy_source.as_ref().unwrap_or(&repo_root).clone();
+
         // Check if repository has any commits
         // This must happen before we try to capture source_commit
-        let has_commits = match git_operations::get_current_commit(&repo_root).await {
+        let has_commits = match git_operations::get_current_commit(&source_info_path).await {
             Ok(_) => true,
             Err(e) => {
                 // Check if this is an empty repository error
@@ -339,7 +342,7 @@ impl TaskBuilder {
         };
 
         // Capture the current commit SHA
-        let source_commit = match git_operations::get_current_commit(&repo_root).await {
+        let source_commit = match git_operations::get_current_commit(&source_info_path).await {
             Ok(commit) => commit,
             Err(e) => {
                 return Err(format!("Failed to get current commit for task '{name}': {e}").into());
@@ -348,7 +351,7 @@ impl TaskBuilder {
 
         // Capture the current branch for git-town parent tracking
         // Returns None if in detached HEAD state
-        let source_branch = git_operations::get_current_branch(&repo_root)
+        let source_branch = git_operations::get_current_branch(&source_info_path)
             .await
             .ok()
             .flatten();
@@ -1420,6 +1423,78 @@ mod tests {
         let config: ResolvedConfig =
             serde_json::from_str(task.resolved_config.as_ref().unwrap()).unwrap();
         assert_eq!(config.agent, "claude", "Default agent should be claude");
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_from_worktree() {
+        use crate::test_utils::{ExistingGitRepository, TestGitRepository};
+
+        // Create main repo with a commit on main
+        let main_repo = TestGitRepository::new().unwrap();
+        main_repo.init_with_main_branch().unwrap();
+        main_repo
+            .create_file("main-file.txt", "main content")
+            .unwrap();
+        main_repo.stage_all().unwrap();
+        main_repo.commit("Add main-file.txt").unwrap();
+
+        // Create a worktree on branch-a
+        let worktree_tmp = tempfile::TempDir::new().unwrap();
+        let worktree_dir = worktree_tmp.path().join("worktree");
+        main_repo
+            .run_git_command(&[
+                "worktree",
+                "add",
+                worktree_dir.to_str().unwrap(),
+                "-b",
+                "branch-a",
+            ])
+            .unwrap();
+
+        // In the worktree, create a file and commit
+        let worktree_repo = ExistingGitRepository::new(&worktree_dir).unwrap();
+        worktree_repo.configure_test_user().unwrap();
+        std::fs::write(worktree_dir.join("branch-a-file.txt"), "branch-a content").unwrap();
+        worktree_repo.stage_all().unwrap();
+        let branch_a_commit = worktree_repo.commit("Add branch-a-file.txt").unwrap();
+
+        let ctx = AppContext::builder().build();
+
+        let canonical_main = main_repo.path().canonicalize().unwrap();
+
+        let task = TaskBuilder::new()
+            .repo_root(canonical_main.clone())
+            .name("worktree-test".to_string())
+            .prompt(Some("Test from worktree".to_string()))
+            .repo_copy_source(Some(worktree_dir.clone()))
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        // repo_root should point to the main repo
+        assert_eq!(task.repo_root, canonical_main);
+
+        // source_branch should be branch-a
+        assert_eq!(task.source_branch, Some("branch-a".to_string()));
+
+        // source_commit should match branch-a's HEAD, not main's
+        assert_eq!(task.source_commit, branch_a_commit);
+
+        // The copied repo should contain both files
+        let task_dir = ctx.tsk_env().task_dir(&task.id);
+        let copied_repo = task_dir.join("repo");
+        assert!(
+            copied_repo.join("branch-a-file.txt").exists(),
+            "Copied repo should contain branch-a-file.txt from the worktree"
+        );
+        assert!(
+            copied_repo.join("main-file.txt").exists(),
+            "Copied repo should contain main-file.txt inherited from main"
+        );
+
+        // Clean up worktree before temp dirs are dropped
+        std::fs::remove_dir_all(&worktree_dir).ok();
+        main_repo.run_git_command(&["worktree", "prune"]).ok();
     }
 
     #[tokio::test]
