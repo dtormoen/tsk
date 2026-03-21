@@ -10,12 +10,21 @@ set -euo pipefail
 #   - Docker engine tests are skipped (Docker unavailable)
 #   - Nested tests are skipped (prevents infinite recursion)
 #   - Podman engine stack tests still run
+#
+# Suite selection: pass suite names as arguments to run specific suites.
+# Available suites: nested, docker, podman, dind-build, network
+# Example: ./integration-test.sh podman dind-build
+# No arguments runs all suites.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TSK_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECTS_DIR="$TSK_ROOT/tests/integration/projects"
 MANIFEST="$TSK_ROOT/Cargo.toml"
 LOG_DIR="$TSK_ROOT/tests/integration/logs"
+
+# Kernel version (used to skip tests that require newer kernel features)
+KERNEL_MAJOR=$(uname -r | cut -d. -f1)
+KERNEL_MINOR=$(uname -r | cut -d. -f2)
 
 # Colors for output
 RED='\033[0;31m'
@@ -25,6 +34,23 @@ NC='\033[0m' # No Color
 
 # Create log directory for capturing test output
 mkdir -p "$LOG_DIR"
+
+# Parse suite arguments
+requested_suites=("$@")
+
+suite_enabled() {
+    local suite="$1"
+    # No args = run all suites
+    if [ ${#requested_suites[@]} -eq 0 ]; then
+        return 0
+    fi
+    for s in "${requested_suites[@]}"; do
+        if [ "$s" = "$suite" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
 
 # Global result tracking
 total_passed=0
@@ -72,8 +98,11 @@ create_tsk_isolation() {
 # Updates global counters: total_passed, total_failed, all_failed
 # Arguments:
 #   $1 - engine: "docker" or "podman"
+#   $2+ - extra flags to pass to `tsk add` (optional, e.g. "--dind")
 run_stack_tests() {
     local engine="$1"
+    shift
+    local extra_flags=("$@")
 
     reset_podman_service
 
@@ -96,6 +125,11 @@ run_stack_tests() {
     for project_dir in "$PROJECTS_DIR"/*/; do
         local stack
         stack=$(basename "$project_dir")
+
+        # Skip dind-build in regular stack tests (it has its own suite)
+        if [ "$stack" = "dind-build" ]; then
+            continue
+        fi
 
         # Skip git-lfs project if git-lfs is not installed on the host
         if [ "$stack" = "git-lfs" ] && ! command -v git-lfs &>/dev/null; then
@@ -141,6 +175,7 @@ run_stack_tests() {
             --type feat \
             --prompt "Integration test for $stack stack" \
             --repo "$work_dir" \
+            "${extra_flags[@]}" \
             < /dev/null 2>&1 | tee "$LOG_DIR/${stack}-${engine}-add.log"; then
             echo -e "  ${RED}ERROR${NC}: Failed to queue $stack"
             exit 1
@@ -266,6 +301,55 @@ run_stack_tests() {
     done
 }
 
+# Runs a single DIND integration test (simple docker build inside a tsk container).
+# Arguments:
+#   $1 - engine: "docker" or "podman"
+run_dind_build_test() {
+    local engine="$1"
+
+    reset_podman_service
+
+    local iso_dir
+    iso_dir=$(create_tsk_isolation)
+    cleanup_dirs+=("$iso_dir")
+    export TSK_DATA_HOME="$iso_dir/data"
+    export TSK_RUNTIME_DIR="$iso_dir/runtime"
+    export TSK_CONFIG_HOME="$iso_dir/config"
+
+    local project_dir="$PROJECTS_DIR/dind-build/"
+    local work_dir
+    work_dir=$(mktemp -d)
+    cleanup_dirs+=("$work_dir")
+
+    git init -q -b main "$work_dir"
+    git -C "$work_dir" config user.email "integ-test@tsk.dev"
+    git -C "$work_dir" config user.name "TSK Integration Test"
+    cp -r "$project_dir". "$work_dir/"
+    git -C "$work_dir" add -A
+    git -C "$work_dir" commit -q -m "Initial commit for dind-build integration test"
+
+    echo -e "  Running: ${YELLOW}dind-build-${engine}${NC}"
+
+    if cargo run --manifest-path "$MANIFEST" -- run \
+        --agent integ \
+        --dind \
+        --container-engine "$engine" \
+        --stack default \
+        --name "dind-build-${engine}" \
+        --type feat \
+        --prompt "DIND build integration test for ${engine}" \
+        --repo "$work_dir" \
+        < /dev/null 2>&1 | tee "$LOG_DIR/dind-build-${engine}.log"; then
+        echo -e "  ${GREEN}PASSED${NC}: dind-build-${engine}"
+        total_passed=$((total_passed + 1))
+    else
+        echo -e "  ${RED}FAILED${NC}: dind-build-${engine}"
+        total_failed=$((total_failed + 1))
+        all_failed+=("dind-build-${engine}")
+    fi
+    echo ""
+}
+
 # Runs a nested integration test for the given container engine.
 # Starts a TSK container with the tsk repo and runs `just integration-test`
 # inside it, testing podman-in-docker or podman-in-podman.
@@ -329,6 +413,11 @@ echo "  TSK Stack Layer Integration Tests"
 echo "============================================"
 echo ""
 
+if [ ${#requested_suites[@]} -gt 0 ]; then
+    echo "  Suites: ${requested_suites[*]}"
+    echo ""
+fi
+
 # Build tsk first
 echo "Building tsk..."
 if ! cargo build --manifest-path "$MANIFEST" 2>&1; then
@@ -338,7 +427,7 @@ fi
 echo ""
 
 # --- Nested integration tests (skipped inside TSK containers) ---
-if [ "${TSK_CONTAINER:-}" != "1" ]; then
+if suite_enabled "nested" && [ "${TSK_CONTAINER:-}" != "1" ]; then
     echo "============================================"
     echo "  Nested Integration Tests"
     echo "============================================"
@@ -352,33 +441,71 @@ if [ "${TSK_CONTAINER:-}" != "1" ]; then
     echo "--------------------------------------------"
     echo "  podman-in-podman"
     echo "--------------------------------------------"
-    run_nested_test "podman"
-else
+    # Podman-in-Podman requires the inner user namespace to support overlay with
+    # user.* xattrs. tmpfs only gained user.* xattr support in kernel 6.6, and
+    # the outer Podman namespace limits the available UID range. Skip on older
+    # kernels where this combination cannot work.
+    if [ "$KERNEL_MAJOR" -gt 6 ] || { [ "$KERNEL_MAJOR" -eq 6 ] && [ "$KERNEL_MINOR" -ge 6 ]; }; then
+        run_nested_test "podman"
+    else
+        echo "  Skipping: kernel $(uname -r) < 6.6 (tmpfs lacks user.* xattr support for nested rootless overlay)"
+    fi
+elif suite_enabled "nested"; then
     echo "Skipping nested tests (inside TSK container)"
     echo ""
 fi
 
+# --- DIND build tests (skipped inside TSK containers) ---
+if suite_enabled "dind-build" && [ "${TSK_CONTAINER:-}" != "1" ]; then
+    echo "============================================"
+    echo "  DIND Build Tests"
+    echo "============================================"
+    echo ""
+
+    echo "--------------------------------------------"
+    echo "  docker-build-in-docker"
+    echo "--------------------------------------------"
+    run_dind_build_test "docker"
+
+    echo "--------------------------------------------"
+    echo "  docker-build-in-podman"
+    echo "--------------------------------------------"
+    # Podman-in-Podman requires the inner user namespace to map UIDs via
+    # newuidmap, which needs sufficient UID range from the outer namespace.
+    # On kernels < 6.6 this fails with "write to uid_map: Operation not permitted".
+    if [ "$KERNEL_MAJOR" -gt 6 ] || { [ "$KERNEL_MAJOR" -eq 6 ] && [ "$KERNEL_MINOR" -ge 6 ]; }; then
+        run_dind_build_test "podman"
+    else
+        echo "  Skipping: kernel $(uname -r) < 6.6 (nested rootless Podman requires newer kernel)"
+    fi
+elif suite_enabled "dind-build"; then
+    echo "Skipping DIND build tests (inside TSK container)"
+    echo ""
+fi
+
 # --- Docker engine tests (skipped inside TSK containers) ---
-if [ "${TSK_CONTAINER:-}" != "1" ]; then
+if suite_enabled "docker" && [ "${TSK_CONTAINER:-}" != "1" ]; then
     echo "============================================"
     echo "  Docker Engine Stack Tests"
     echo "============================================"
     echo ""
     run_stack_tests "docker"
-else
+elif suite_enabled "docker"; then
     echo "Skipping Docker engine tests (inside TSK container)"
     echo ""
 fi
 
 # --- Podman engine stack tests (always run) ---
-echo "============================================"
-echo "  Podman Engine Stack Tests"
-echo "============================================"
-echo ""
-run_stack_tests "podman"
+if suite_enabled "podman"; then
+    echo "============================================"
+    echo "  Podman Engine Stack Tests"
+    echo "============================================"
+    echo ""
+    run_stack_tests "podman"
+fi
 
 # --- Network isolation tests (only inside TSK containers) ---
-if [ "${TSK_CONTAINER:-}" = "1" ]; then
+if suite_enabled "network" && [ "${TSK_CONTAINER:-}" = "1" ]; then
     echo "============================================"
     echo "  Network Isolation Tests"
     echo "============================================"
@@ -392,7 +519,7 @@ if [ "${TSK_CONTAINER:-}" = "1" ]; then
         all_failed+=("network-isolation")
     fi
     echo ""
-else
+elif suite_enabled "network"; then
     echo "Skipping network isolation tests (not in TSK container)"
     echo ""
 fi

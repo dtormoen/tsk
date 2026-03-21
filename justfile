@@ -53,6 +53,6 @@ podman-smoke-test:
     git commit --allow-empty -m "init"
     cargo run --manifest-path "$MANIFEST" -- run --container-engine podman --agent no-op --type feat --name podman-test --stack default --prompt "Podman smoke test"
 
-# Run integration tests for all stack layers
-integration-test:
-    ./scripts/integration-test.sh
+# Run integration tests for all stack layers (or specific suites: nested, dind-build, docker, podman, network)
+integration-test *suites:
+    ./scripts/integration-test.sh {{suites}}
