@@ -12,30 +12,37 @@ fi
 
 # Configure iptables firewall rules (must be done as root before dropping privileges)
 # This blocks all incoming connections except Squid (3128) and configured host service ports
-echo "Configuring firewall rules..."
+# Test if iptables is available (fails in rootless Podman where kernel
+# netfilter requires init_user_ns capabilities)
+if iptables -L -n >/dev/null 2>&1; then
+    echo "Configuring firewall rules..."
 
-# IPv4 rules
-iptables -A INPUT -i lo -j ACCEPT
-iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
-iptables -A INPUT -p tcp --dport 3128 -j ACCEPT
-if [ -n "$TSK_HOST_PORTS" ]; then
-    for port in $(echo "$TSK_HOST_PORTS" | tr ',' ' '); do
-        iptables -A INPUT -p tcp --dport "$port" -j ACCEPT
-    done
-fi
-iptables -A INPUT -j DROP
-
-# IPv6 rules (defense-in-depth)
-if command -v ip6tables >/dev/null 2>&1; then
-    ip6tables -A INPUT -i lo -j ACCEPT
-    ip6tables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
-    ip6tables -A INPUT -p tcp --dport 3128 -j ACCEPT
+    # IPv4 rules
+    iptables -A INPUT -i lo -j ACCEPT
+    iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+    iptables -A INPUT -p tcp --dport 3128 -j ACCEPT
     if [ -n "$TSK_HOST_PORTS" ]; then
         for port in $(echo "$TSK_HOST_PORTS" | tr ',' ' '); do
-            ip6tables -A INPUT -p tcp --dport "$port" -j ACCEPT
+            iptables -A INPUT -p tcp --dport "$port" -j ACCEPT
         done
     fi
-    ip6tables -A INPUT -j DROP
+    iptables -A INPUT -j DROP
+
+    # IPv6 rules (defense-in-depth)
+    if command -v ip6tables >/dev/null 2>&1; then
+        ip6tables -A INPUT -i lo -j ACCEPT
+        ip6tables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+        ip6tables -A INPUT -p tcp --dport 3128 -j ACCEPT
+        if [ -n "$TSK_HOST_PORTS" ]; then
+            for port in $(echo "$TSK_HOST_PORTS" | tr ',' ' '); do
+                ip6tables -A INPUT -p tcp --dport "$port" -j ACCEPT
+            done
+        fi
+        ip6tables -A INPUT -j DROP
+    fi
+else
+    echo "Note: iptables unavailable (rootless container), firewall rules skipped"
+    echo "Network isolation enforced by container network topology and Squid ACLs"
 fi
 
 # Start TCP forwarders for host services if configured (as squid user for security)

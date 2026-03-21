@@ -50,7 +50,7 @@ The proxy container is the sole gateway between agent networks and the outside w
 The proxy runs:
 - **Squid**: HTTP/HTTPS proxy with domain allowlist
 - **socat**: TCP port forwarder for host service access
-- **iptables**: Firewall rules for defense-in-depth
+- **iptables**: Firewall rules for defense-in-depth (Docker only; unavailable in rootless Podman)
 
 ### Connection Flow
 
@@ -153,6 +153,24 @@ When network isolation is disabled:
 - All other security hardening (dropped capabilities like `NET_ADMIN`, `SYS_ADMIN`, etc.) remains in effect
 
 Use this flag when tasks require network access patterns that are incompatible with the proxy-based filtering, such as custom package registries, proprietary APIs not on the allowlist, or debugging network connectivity issues.
+
+## Rootless Podman Limitations
+
+When using rootless Podman as the container engine, the **Firewall** security layer (iptables in the proxy container) is unavailable. The Linux kernel's netfilter subsystem requires capabilities in the initial user namespace, which rootless containers cannot obtain. This is a kernel limitation, not a Podman or tsk bug.
+
+Under rootless Podman, the remaining security layers still enforce isolation:
+
+| Layer           | Status                     |
+|-----------------|----------------------------|
+| **Network**     | Active (internal networks)  |
+| **Application** | Active (Squid domain ACLs)  |
+| **Capability**  | Active (dropped caps)       |
+| **DNS**         | Active (no resolver access) |
+| **Firewall**    | Unavailable                 |
+
+The primary isolation mechanism — Docker/Podman internal networks with no external gateway — is unaffected. Agent containers still cannot route to the internet directly; all traffic must pass through the Squid proxy.
+
+When running with Docker, all security layers including iptables firewall rules are fully active.
 
 ## Verifying Isolation
 
