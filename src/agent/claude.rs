@@ -146,9 +146,10 @@ fn create_tar_with_file(filename: &str, contents: &[u8]) -> Vec<u8> {
     header.set_path(filename).expect("Invalid filename");
     header.set_size(contents.len() as u64);
     header.set_mode(0o644);
-    // UID/GID 1000 matches the 'agent' user in TSK Docker images
-    header.set_uid(1000);
-    header.set_gid(1000);
+    // Use host UID/GID so files are owned by the container's runtime user
+    // SAFETY: getuid/getgid are simple syscalls with no preconditions
+    header.set_uid(unsafe { libc::getuid() } as u64);
+    header.set_gid(unsafe { libc::getgid() } as u64);
     header.set_mtime(0);
     header.set_cksum();
 
@@ -210,10 +211,7 @@ impl Agent for ClaudeAgent {
     }
 
     fn environment(&self) -> Vec<(String, String)> {
-        vec![
-            ("HOME".to_string(), "/home/agent".to_string()),
-            ("USER".to_string(), "agent".to_string()),
-        ]
+        vec![]
     }
 
     fn create_log_processor(
@@ -402,13 +400,9 @@ mod tests {
             .collect();
         assert!(volume_paths.contains(&"/home/agent/.claude"));
 
-        // Test environment variables
+        // Environment variables are set by DockerManager, not the agent
         let env = agent.environment();
-        assert_eq!(env.len(), 2);
-
-        let env_map: std::collections::HashMap<_, _> = env.into_iter().collect();
-        assert_eq!(env_map.get("HOME"), Some(&"/home/agent".to_string()));
-        assert_eq!(env_map.get("USER"), Some(&"agent".to_string()));
+        assert!(env.is_empty());
     }
 
     #[test]

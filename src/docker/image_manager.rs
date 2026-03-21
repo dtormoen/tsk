@@ -449,6 +449,21 @@ impl DockerImageManager {
             build_args.insert("TSK_AGENT_VERSION".to_string(), version.to_string());
         }
 
+        // Pass host UID/GID so the container's "agent" user matches the host user
+        if composed.build_args.contains("HOST_UID") {
+            // SAFETY: getuid/getgid are simple syscalls with no preconditions
+            build_args.insert(
+                "HOST_UID".to_string(),
+                unsafe { libc::getuid() }.to_string(),
+            );
+        }
+        if composed.build_args.contains("HOST_GID") {
+            build_args.insert(
+                "HOST_GID".to_string(),
+                unsafe { libc::getgid() }.to_string(),
+            );
+        }
+
         if self.ctx.tsk_config().container_engine == ContainerEngine::Podman {
             if std::env::var("TSK_CONTAINER").is_ok() {
                 // Inside a TSK container, forward proxy env vars so Podman builds

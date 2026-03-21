@@ -3,6 +3,11 @@ FROM ubuntu:25.10
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Host UID/GID — injected at build time so the container's "agent" user
+# matches the host user, avoiding bind-mount permission mismatches.
+ARG HOST_UID=1000
+ARG HOST_GID=1000
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -15,6 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iputils-ping \
     jq \
     just \
+    fuse-overlayfs `# DIND: overlay fallback for kernels < 5.19 without native overlay in userns` \
     libcap2-bin `# DIND: file capabilities for newuidmap/newgidmap` \
     openssh-client \
     podman `# DIND: nested container builds` \
@@ -29,21 +35,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zip \
     && rm -rf /var/lib/apt/lists/*
 
-# Ubuntu already has a ubuntu user with UID/GID 1000
-# We'll rename it to agent and ensure proper permissions
-RUN usermod -l agent ubuntu && \
-    groupmod -n agent ubuntu && \
-    usermod -d /home/agent -m agent
+# Create agent user with the host's UID/GID (replacing the default ubuntu user).
+# Fresh useradd -m creates /home/agent in the current layer, avoiding
+# cross-layer file issues that break rootless Podman builds.
+RUN userdel ubuntu && \
+    groupadd -g $HOST_GID agent && \
+    useradd -m -s /bin/bash -u $HOST_UID -g agent agent
 
 # Configure rootless Podman for nested container support (DIND).
-# 1. Subordinate UID/GID ranges for user namespace mapping
+# 1. Subordinate UID/GID ranges for user namespace mapping.
+#    useradd already created subuid/subgid entries for agent.
 # 2. File capabilities on newuidmap/newgidmap instead of SUID bits.
 #    File caps run as the calling user (not root), so the user can open
 #    /proc/<pid>/uid_map (owner permission) without CAP_DAC_OVERRIDE.
 #    This is the standard approach used by Fedora/RHEL since 2018.
-RUN echo "agent:100000:65536" >> /etc/subuid && \
-    echo "agent:100000:65536" >> /etc/subgid && \
-    chmod u-s /usr/bin/newuidmap /usr/bin/newgidmap && \
+RUN chmod u-s /usr/bin/newuidmap /usr/bin/newgidmap && \
     setcap cap_setuid+ep /usr/bin/newuidmap && \
     setcap cap_setgid+ep /usr/bin/newgidmap
 
@@ -70,7 +76,7 @@ RUN mkdir -p /home/agent/.config/containers \
     > /home/agent/.config/containers/containers.conf && \
     printf '[storage]\ndriver = "overlay"\ngraphroot = "/home/agent/.local/share/containers/storage"\n' \
     > /home/agent/.config/containers/storage.conf && \
-    chown -R agent:agent /home/agent/.config /home/agent/.local
+    chown -R agent:agent /home/agent
 
 # Alias docker to podman so agents and scripts that use `docker` commands work seamlessly
 RUN ln -s /usr/bin/podman /usr/local/bin/docker

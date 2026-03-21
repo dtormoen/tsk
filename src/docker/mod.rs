@@ -495,9 +495,9 @@ impl DockerManager {
                         "size=40G".to_string(),
                     )]))
                 },
-                // In nested containers, keep the host UID mapping so bind-mounted
-                // files retain correct ownership (rootless Podman remaps UIDs otherwise).
-                userns_mode: if self.is_nested() {
+                // Keep the host UID mapping in Podman so bind-mounted files retain
+                // correct ownership (rootless Podman remaps UIDs otherwise).
+                userns_mode: if *container_engine == ContainerEngine::Podman {
                     Some("keep-id".to_string())
                 } else {
                     None

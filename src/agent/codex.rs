@@ -92,10 +92,7 @@ impl Agent for CodexAgent {
     }
 
     fn environment(&self) -> Vec<(String, String)> {
-        vec![
-            ("HOME".to_string(), "/home/agent".to_string()),
-            ("USER".to_string(), "agent".to_string()),
-        ]
+        vec![]
     }
 
     fn create_log_processor(
@@ -189,13 +186,9 @@ mod tests {
             .collect();
         assert!(volume_paths.contains(&"/home/agent/.codex"));
 
-        // Test environment variables
+        // Environment variables are set by DockerManager, not the agent
         let env = agent.environment();
-        assert_eq!(env.len(), 2);
-
-        let env_map: std::collections::HashMap<_, _> = env.into_iter().collect();
-        assert_eq!(env_map.get("HOME"), Some(&"/home/agent".to_string()));
-        assert_eq!(env_map.get("USER"), Some(&"agent".to_string()));
+        assert!(env.is_empty());
     }
 
     #[test]
