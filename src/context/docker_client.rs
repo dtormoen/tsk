@@ -198,19 +198,22 @@ fn ensure_podman_service(socket_path: &str) -> Result<(), String> {
     // Pass the socket path to podman so it creates the socket where we expect it
     let socket_uri = format!("unix://{socket_path}");
 
-    // Stderr must be /dev/null, not a pipe. When stderr is piped and the
-    // read end is never consumed (as happens after mem::forget below), the
-    // 64 KB kernel pipe buffer fills up once the service emits enough log
-    // output, blocking Go's logger goroutine and eventually deadlocking the
-    // entire Podman process.
-    //
-    // We still detect startup failures via try_wait() on the process exit
-    // code — the error message text is lost but the failure is not silent.
+    // Redirect stderr to a temp file instead of a pipe or /dev/null.
+    // A pipe would deadlock: after mem::forget, the read end is never consumed
+    // and the 64 KB kernel buffer fills, blocking Podman's logger goroutine.
+    // A temp file avoids this while still capturing errors for diagnostics.
+    let stderr_file = tempfile::NamedTempFile::new()
+        .map_err(|e| format!("Failed to create temp file for podman stderr: {e}"))?;
+    let stderr_path = stderr_file.path().to_path_buf();
+    let stderr_handle = stderr_file
+        .reopen()
+        .map_err(|e| format!("Failed to reopen stderr temp file: {e}"))?;
+
     let mut child = std::process::Command::new("podman")
         .args(["system", "service", "--timeout=0", &socket_uri])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::from(stderr_handle))
         .spawn()
         .map_err(|e| format!("Failed to start podman system service: {e}"))?;
 
@@ -219,13 +222,23 @@ fn ensure_podman_service(socket_path: &str) -> Result<(), String> {
         if std::path::Path::new(socket_path).exists() {
             // Service started successfully, leak the child handle so it outlives this process
             std::mem::forget(child);
+            let _ = std::fs::remove_file(&stderr_path);
             return Ok(());
         }
         // Check if the process has already exited (indicating failure)
         match child.try_wait() {
             Ok(Some(status)) => {
+                let stderr_output = std::fs::read_to_string(&stderr_path)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
+                let detail = if stderr_output.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n\nPodman stderr:\n{stderr_output}")
+                };
                 return Err(format!(
-                    "Podman system service exited with {status}.\n\n\
+                    "Podman system service exited with {status}.{detail}\n\n\
                     Please ensure Podman is installed and configured correctly.\n\
                     Try running manually: podman system service --timeout=0"
                 ));
@@ -240,8 +253,17 @@ fn ensure_podman_service(socket_path: &str) -> Result<(), String> {
 
     // Timed out waiting for socket, kill the child and report
     let _ = child.kill();
+    let stderr_output = std::fs::read_to_string(&stderr_path)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let detail = if stderr_output.is_empty() {
+        String::new()
+    } else {
+        format!("\n\nPodman stderr:\n{stderr_output}")
+    };
     Err(format!(
-        "Podman socket did not appear at {socket_path} after 10 seconds.\n\n\
+        "Podman socket did not appear at {socket_path} after 10 seconds.{detail}\n\n\
         Please ensure Podman is installed and configured correctly.\n\
         Try running manually: podman system service --timeout=0"
     ))
@@ -391,6 +413,16 @@ pub trait DockerClient: Send + Sync {
 
     /// Ping the Docker/Podman daemon to verify connectivity
     async fn ping(&self) -> Result<String, String>;
+
+    /// Execute a command in a running container and return the exit code
+    ///
+    /// # Arguments
+    /// * `id` - Container ID or name
+    /// * `cmd` - Command to execute as a list of strings
+    ///
+    /// # Returns
+    /// The exit code of the command (0 = success)
+    async fn exec_in_container(&self, id: &str, cmd: Vec<String>) -> Result<i64, String>;
 }
 
 #[derive(Clone)]
@@ -886,5 +918,50 @@ impl DockerClient for DefaultDockerClient {
             .await
             .map_err(|e| format!("Docker ping failed: {e}"))?;
         Ok(version)
+    }
+
+    async fn exec_in_container(&self, id: &str, cmd: Vec<String>) -> Result<i64, String> {
+        use bollard::exec::{CreateExecOptions, StartExecOptions};
+
+        let exec = self
+            .docker
+            .create_exec(
+                id,
+                CreateExecOptions {
+                    cmd: Some(cmd),
+                    attach_stdout: Some(false),
+                    attach_stderr: Some(false),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| format!("Failed to create exec: {e}"))?;
+
+        self.docker
+            .start_exec(
+                &exec.id,
+                Some(StartExecOptions {
+                    detach: true,
+                    ..Default::default()
+                }),
+            )
+            .await
+            .map_err(|e| format!("Failed to start exec: {e}"))?;
+
+        // Poll until the exec completes
+        for _ in 0..30 {
+            let inspect = self
+                .docker
+                .inspect_exec(&exec.id)
+                .await
+                .map_err(|e| format!("Failed to inspect exec: {e}"))?;
+
+            if inspect.running != Some(true) {
+                return Ok(inspect.exit_code.unwrap_or(-1));
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+
+        Err("Exec command timed out".to_string())
     }
 }

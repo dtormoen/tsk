@@ -959,8 +959,9 @@ mod tests {
         assert_eq!(wait_calls[0], "test-container-id-1");
 
         let remove_calls = mock_client.remove_container_calls.lock().unwrap();
-        assert_eq!(remove_calls.len(), 1);
+        assert_eq!(remove_calls.len(), 2); // One for task container, one for proxy
         assert_eq!(remove_calls[0].0, "test-container-id-1");
+        assert_eq!(remove_calls[1].0, pcn);
         drop(remove_calls);
 
         // Verify upload_to_container was called for agent files
@@ -1022,7 +1023,7 @@ mod tests {
 
         // Verify cleanup happened
         let remove_calls = mock_client.remove_container_calls.lock().unwrap();
-        assert_eq!(remove_calls.len(), 1); // Task container should be removed
+        assert_eq!(remove_calls.len(), 2); // Task container + proxy
         assert_eq!(remove_calls[0].0, "test-container-id-1");
     }
 
@@ -1055,7 +1056,7 @@ mod tests {
 
         // Cleanup still happens
         let remove_calls = mock_client.remove_container_calls.lock().unwrap();
-        assert_eq!(remove_calls.len(), 1);
+        assert_eq!(remove_calls.len(), 2); // Task container + proxy
         assert_eq!(remove_calls[0].0, "test-container-id-1");
         drop(remove_calls);
 
@@ -1103,7 +1104,7 @@ mod tests {
         let agent_network = "tsk-agent-test-task-id";
         let mock_client = Arc::new(TrackedDockerClient {
             inspect_container_response: serde_json::json!({
-                "State": { "Health": { "Status": "healthy" } },
+                "State": { "Running": true },
                 "NetworkSettings": {
                     "Networks": {
                         agent_network: { "IPAddress": "172.18.0.2" }
@@ -1680,9 +1681,9 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("out of disk space"));
 
-        // No container was created, so no remove_container call
+        // Proxy container removed during cleanup
         let remove_calls = mock_client.remove_container_calls.lock().unwrap();
-        assert_eq!(remove_calls.len(), 0);
+        assert_eq!(remove_calls.len(), 1); // Proxy cleanup
         drop(remove_calls);
 
         // Network cleanup should still happen (setup succeeded before container create failed)
@@ -1710,9 +1711,9 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("container runtime error"));
 
-        // Container was created, so cleanup should remove it
+        // Container was created, so cleanup should remove it, plus proxy cleanup
         let remove_calls = mock_client.remove_container_calls.lock().unwrap();
-        assert_eq!(remove_calls.len(), 1);
+        assert_eq!(remove_calls.len(), 2); // Task container + proxy
         assert_eq!(remove_calls[0].0, "test-container-id-1");
         drop(remove_calls);
 

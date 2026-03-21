@@ -646,70 +646,57 @@ impl ProxyManager {
         Ok(())
     }
 
-    /// Waits for the specified proxy container to become healthy.
+    /// Waits for the proxy container to be running and accepting connections.
+    ///
+    /// Uses `exec` to run `nc -z localhost 3128` inside the container rather than
+    /// relying on Docker/Podman HEALTHCHECK infrastructure, which is unreliable
+    /// under rootless Podman (systemd timer scheduling issues).
     async fn wait_for_proxy_health(&self, container_name: &str, logger: &TaskLogger) -> Result<()> {
-        const MAX_RETRIES: u32 = 30; // 30 retries with 1 second delay = 30 seconds max wait
+        const MAX_RETRIES: u32 = 30;
         const RETRY_DELAY_MS: u64 = 1000;
 
         for attempt in 1..=MAX_RETRIES {
+            // Check if container is running
             match self.docker_client.inspect_container(container_name).await {
                 Ok(json_data) => {
-                    // Parse the JSON to check health status
-                    if let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_data) {
-                        // Check if container has a health check
-                        if let Some(state) = data.get("State") {
-                            // Check if container is running
-                            if let Some(running) = state.get("Running").and_then(|v| v.as_bool())
-                                && !running
-                            {
-                                return Err(anyhow::anyhow!("Proxy container is not running"));
-                            }
-
-                            // Check health status if it exists
-                            if let Some(health) = state.get("Health") {
-                                if let Some(status) = health.get("Status").and_then(|v| v.as_str())
-                                {
-                                    match status {
-                                        "healthy" => {
-                                            logger.log(LogLine::tsk_message(
-                                                "Proxy container is healthy",
-                                            ));
-                                            return Ok(());
-                                        }
-                                        "unhealthy" => {
-                                            return Err(anyhow::anyhow!(
-                                                "Proxy container is unhealthy"
-                                            ));
-                                        }
-                                        "starting" => {
-                                            // Still starting, continue waiting
-                                            if attempt == 1 {
-                                                logger.log(LogLine::tsk_message(
-                                                    "Waiting for proxy container to become healthy...",
-                                                ));
-                                            }
-                                        }
-                                        _ => {
-                                            // Unknown status, continue waiting
-                                        }
-                                    }
-                                }
-                            } else {
-                                // No health check configured, just verify it's running
-                                // This is for backward compatibility
-                                logger.log(LogLine::tsk_message(
-                                    "Proxy container is running (no health check configured)",
-                                ));
-                                return Ok(());
-                            }
-                        }
+                    if let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_data)
+                        && let Some(running) = data
+                            .get("State")
+                            .and_then(|s| s.get("Running"))
+                            .and_then(|v| v.as_bool())
+                        && !running
+                    {
+                        return Err(anyhow::anyhow!("Proxy container is not running"));
                     }
                 }
                 Err(e) if e.to_lowercase().contains("no such container") => {
                     return Err(anyhow::anyhow!("Proxy container not found"));
                 }
-                Err(_) => {
-                    // Ignore other errors and retry
+                Err(_) => {}
+            }
+
+            // Probe Squid port directly via exec
+            let cmd = vec![
+                "nc".to_string(),
+                "-z".to_string(),
+                "localhost".to_string(),
+                "3128".to_string(),
+            ];
+            match self
+                .docker_client
+                .exec_in_container(container_name, cmd)
+                .await
+            {
+                Ok(0) => {
+                    logger.log(LogLine::tsk_message("Proxy container is healthy"));
+                    return Ok(());
+                }
+                _ => {
+                    if attempt == 1 {
+                        logger.log(LogLine::tsk_message(
+                            "Waiting for proxy container to become healthy...",
+                        ));
+                    }
                 }
             }
 
@@ -999,7 +986,7 @@ mod tests {
             }
 
             async fn inspect_container(&self, _id: &str) -> Result<String, String> {
-                Ok(r#"{"State": {"Health": {"Status": "healthy"}}}"#.to_string())
+                Ok(r#"{"State": {"Running": true}}"#.to_string())
             }
 
             async fn attach_container(&self, _id: &str) -> Result<(), String> {
@@ -1042,6 +1029,10 @@ mod tests {
             async fn ping(&self) -> Result<String, String> {
                 Ok("OK".to_string())
             }
+
+            async fn exec_in_container(&self, _id: &str, _cmd: Vec<String>) -> Result<i64, String> {
+                Ok(0)
+            }
         }
 
         let mock_client: Arc<dyn DockerClient> = Arc::new(NoContainerDockerClient);
@@ -1059,71 +1050,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_wait_for_proxy_health_success() {
-        use serde_json::json;
-
-        let mock_client = Arc::new(TrackedDockerClient {
-            inspect_container_response: json!({
-                "State": {
-                    "Running": true,
-                    "Health": {
-                        "Status": "healthy"
-                    }
-                }
-            })
-            .to_string(),
-            ..Default::default()
-        });
-
-        let ctx = AppContext::builder().build();
-
-        let manager = ProxyManager::new(
-            mock_client.clone(),
-            ctx.tsk_env(),
-            ContainerEngine::Docker,
-            None,
-        );
-        let result = manager
-            .wait_for_proxy_health("tsk-proxy-test", &TaskLogger::no_file())
-            .await;
-
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_wait_for_proxy_health_unhealthy() {
-        use serde_json::json;
-
-        let mock_client = Arc::new(TrackedDockerClient {
-            inspect_container_response: json!({
-                "State": {
-                    "Running": true,
-                    "Health": {
-                        "Status": "unhealthy"
-                    }
-                }
-            })
-            .to_string(),
-            ..Default::default()
-        });
-
-        let ctx = AppContext::builder().build();
-
-        let manager = ProxyManager::new(
-            mock_client.clone(),
-            ctx.tsk_env(),
-            ContainerEngine::Docker,
-            None,
-        );
-        let result = manager
-            .wait_for_proxy_health("tsk-proxy-test", &TaskLogger::no_file())
-            .await;
-
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("unhealthy"));
-    }
-
-    #[tokio::test]
-    async fn test_wait_for_proxy_health_no_health_check() {
         use serde_json::json;
 
         let mock_client = Arc::new(TrackedDockerClient {
@@ -1535,9 +1461,7 @@ mod tests {
         let mock_client = Arc::new(TrackedDockerClient {
             inspect_container_response: json!({
                 "State": {
-                    "Health": {
-                        "Status": "healthy"
-                    }
+                    "Running": true
                 },
                 "NetworkSettings": {
                     "Networks": {
@@ -1568,9 +1492,7 @@ mod tests {
         let mock_client = Arc::new(TrackedDockerClient {
             inspect_container_response: json!({
                 "State": {
-                    "Health": {
-                        "Status": "healthy"
-                    }
+                    "Running": true
                 },
                 "NetworkSettings": {
                     "Networks": {

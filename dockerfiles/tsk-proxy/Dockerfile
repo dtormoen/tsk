@@ -14,10 +14,5 @@ RUN mkdir -p /var/cache/squid /var/log/squid /var/run/squid && \
 # Expose the proxy port
 EXPOSE 3128
 
-# Add health check - Squid responds with 400 to direct requests which is fine
-# We just need to verify the port is responding
-HEALTHCHECK --interval=2s --timeout=3s --start-period=10s --retries=3 \
-    CMD nc -z localhost 3128 || exit 1
-
 # Run entrypoint as root for iptables setup, then drop to squid user via su-exec
 ENTRYPOINT ["/entrypoint.sh"]

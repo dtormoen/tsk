@@ -97,7 +97,7 @@ impl DockerClient for NoOpDockerClient {
     }
 
     async fn inspect_container(&self, _id: &str) -> Result<String, String> {
-        Ok(r#"{"State": {"Health": {"Status": "healthy"}}}"#.to_string())
+        Ok(r#"{"State": {"Running": true}}"#.to_string())
     }
 
     async fn attach_container(&self, _id: &str) -> Result<(), String> {
@@ -116,6 +116,10 @@ impl DockerClient for NoOpDockerClient {
 
     async fn ping(&self) -> Result<String, String> {
         Ok("OK".to_string())
+    }
+
+    async fn exec_in_container(&self, _id: &str, _cmd: Vec<String>) -> Result<i64, String> {
+        Ok(0)
     }
 }
 
@@ -239,7 +243,7 @@ impl DockerClient for FixedResponseDockerClient {
     }
 
     async fn inspect_container(&self, _id: &str) -> Result<String, String> {
-        Ok(r#"{"State": {"Health": {"Status": "healthy"}}}"#.to_string())
+        Ok(r#"{"State": {"Running": true}}"#.to_string())
     }
 
     async fn attach_container(&self, _id: &str) -> Result<(), String> {
@@ -258,6 +262,10 @@ impl DockerClient for FixedResponseDockerClient {
 
     async fn ping(&self) -> Result<String, String> {
         Ok("OK".to_string())
+    }
+
+    async fn exec_in_container(&self, _id: &str, _cmd: Vec<String>) -> Result<i64, String> {
+        Ok(0)
     }
 }
 
@@ -313,8 +321,7 @@ impl Default for TrackedDockerClient {
             remove_network_error: None,
             create_container_error: None,
             start_container_error: None,
-            inspect_container_response: r#"{"State": {"Health": {"Status": "healthy"}}}"#
-                .to_string(),
+            inspect_container_response: r#"{"State": {"Running": true}}"#.to_string(),
         }
     }
 }
@@ -527,5 +534,9 @@ impl DockerClient for TrackedDockerClient {
 
     async fn ping(&self) -> Result<String, String> {
         Ok("OK".to_string())
+    }
+
+    async fn exec_in_container(&self, _id: &str, _cmd: Vec<String>) -> Result<i64, String> {
+        Ok(0)
     }
 }
