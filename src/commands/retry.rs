@@ -55,15 +55,17 @@ impl Command for RetryCommand {
 
         for task_id in &self.task_ids {
             let mut repo_copy_source = None;
-            if self.from_cwd
-                && let Ok(Some(worktree_path)) =
+            if self.from_cwd {
+                // --from-cwd: force use current working directory, skipping parent repo
+                if let Ok(Some(worktree_path)) =
                     crate::repo_utils::find_worktree_root(std::path::Path::new("."))
-            {
-                repo_copy_source = Some(worktree_path);
-            }
-            if !self.from_cwd {
+                {
+                    repo_copy_source = Some(worktree_path);
+                }
+            } else {
+                // Try parent repo first
                 let storage = ctx.task_storage();
-                if let Ok(Some(original_task)) = storage.get_task(task_id).await
+                let used_parent = if let Ok(Some(original_task)) = storage.get_task(task_id).await
                     && let Some(parent_id) = original_task.parent_ids.first()
                     && let Ok(Some(parent_task)) = storage.get_task(parent_id).await
                     && let Some(ref parent_repo) = parent_task.copied_repo_path
@@ -76,9 +78,19 @@ impl Command for RetryCommand {
                         "Use parent's repo?",
                         "Using parent's repo (non-interactive mode)",
                         ctx.interactive(),
-                    )
-                {
+                    ) {
                     repo_copy_source = Some(parent_repo.clone());
+                    true
+                } else {
+                    false
+                };
+
+                // Fall back to worktree root when no parent repo is used
+                if !used_parent
+                    && let Ok(Some(worktree_path)) =
+                        crate::repo_utils::find_worktree_root(std::path::Path::new("."))
+                {
+                    repo_copy_source = Some(worktree_path);
                 }
             }
 
@@ -786,5 +798,131 @@ mod tests {
             .find(|t| t.status == TaskStatus::Queued)
             .expect("Should have a new queued task");
         assert_eq!(new_task.name, "child-task");
+    }
+
+    #[tokio::test]
+    async fn test_retry_child_falls_back_when_parent_repo_missing() {
+        let ctx = AppContext::builder().build();
+        let tsk_env = ctx.tsk_env();
+        tsk_env.ensure_directories().unwrap();
+
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        let repo_root = test_repo.path().to_path_buf();
+
+        let parent_id = "parent-missing-repo";
+        let child_id = "child-missing-repo";
+
+        let storage = ctx.task_storage();
+
+        // Create parent task with a copied_repo_path that doesn't exist on disk
+        let parent_dir = tsk_env.task_dir(parent_id);
+        std::fs::create_dir_all(&parent_dir).unwrap();
+        let parent_instructions = parent_dir.join("instructions.md");
+        std::fs::write(&parent_instructions, "Parent task instructions").unwrap();
+
+        let nonexistent_repo = parent_dir.join("repo-gone");
+
+        storage
+            .add_task(crate::task::Task {
+                id: parent_id.to_string(),
+                repo_root: repo_root.clone(),
+                name: "parent-task".to_string(),
+                instructions_file: parent_instructions.to_string_lossy().to_string(),
+                branch_name: format!("tsk/{parent_id}"),
+                status: TaskStatus::Complete,
+                copied_repo_path: Some(nonexistent_repo),
+                started_at: Some(chrono::Utc::now()),
+                completed_at: Some(chrono::Utc::now()),
+                ..crate::task::Task::test_default()
+            })
+            .await
+            .unwrap();
+
+        // Create child task (failed, with parent)
+        let child_dir = tsk_env.task_dir(child_id);
+        std::fs::create_dir_all(&child_dir).unwrap();
+        let child_instructions = child_dir.join("instructions.md");
+        std::fs::write(&child_instructions, "Child task instructions").unwrap();
+
+        storage
+            .add_task(crate::task::Task {
+                id: child_id.to_string(),
+                repo_root: repo_root.clone(),
+                name: "child-task".to_string(),
+                instructions_file: child_instructions.to_string_lossy().to_string(),
+                branch_name: format!("tsk/{child_id}"),
+                status: TaskStatus::Failed,
+                copied_repo_path: Some(child_dir),
+                parent_ids: vec![parent_id.to_string()],
+                started_at: Some(chrono::Utc::now()),
+                ..crate::task::Task::test_default()
+            })
+            .await
+            .unwrap();
+
+        // Retry child without --from-cwd; parent repo is missing so it should
+        // fall through to worktree detection (returns None here) then use repo_root
+        let cmd = RetryCommand {
+            task_ids: vec![child_id.to_string()],
+            edit: false,
+            name: None,
+            agent: None,
+            stack: None,
+            project: None,
+            parent_id: None,
+            dind: None,
+            no_children: true,
+            from_cwd: false,
+        };
+
+        let result = cmd.execute(&ctx).await;
+        assert!(result.is_ok(), "Retry should succeed: {result:?}");
+
+        let all_tasks = storage.list_tasks().await.unwrap();
+        assert_eq!(all_tasks.len(), 3);
+
+        let new_task = all_tasks
+            .iter()
+            .find(|t| t.status == TaskStatus::Queued)
+            .expect("Should have a new queued task");
+        assert_eq!(new_task.name, "child-task");
+    }
+
+    #[tokio::test]
+    async fn test_retry_parentless_task_with_from_cwd() {
+        let task_id = "parentless-from-cwd";
+        let (ctx, _test_repo) = setup_test_environment_with_completed_tasks(vec![task_id])
+            .await
+            .unwrap();
+
+        // --from-cwd on a parentless task should work (worktree check runs but
+        // returns None in a normal repo, so repo_copy_source stays None and
+        // the builder falls back to repo_root)
+        let cmd = RetryCommand {
+            task_ids: vec![task_id.to_string()],
+            edit: false,
+            name: None,
+            agent: None,
+            stack: None,
+            project: None,
+            parent_id: None,
+            dind: None,
+            no_children: true,
+            from_cwd: true,
+        };
+
+        let result = cmd.execute(&ctx).await;
+        assert!(result.is_ok(), "Retry should succeed: {result:?}");
+
+        let storage = ctx.task_storage();
+        let all_tasks = storage.list_tasks().await.unwrap();
+        assert_eq!(all_tasks.len(), 2);
+
+        let new_task = all_tasks
+            .iter()
+            .find(|t| t.id != task_id)
+            .expect("Should have a new task");
+        assert_eq!(new_task.status, TaskStatus::Queued);
     }
 }
