@@ -3,6 +3,14 @@ use notify_rust::{Hint, Notification, Timeout};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+/// Check if running in a headless environment (no display server or D-Bus session)
+#[cfg(all(target_os = "linux", not(test)))]
+fn is_headless() -> bool {
+    std::env::var_os("DISPLAY").is_none()
+        && std::env::var_os("WAYLAND_DISPLAY").is_none()
+        && std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none()
+}
+
 /// Desktop notification client for task completion events
 pub struct NotificationClient {
     #[cfg(all(target_os = "linux", not(test)))]
@@ -80,6 +88,10 @@ impl NotificationClient {
         // On Linux, use notify-rust with sound hints
         #[cfg(target_os = "linux")]
         {
+            if is_headless() {
+                return;
+            }
+
             let timeout_seconds = self.timeout_seconds;
             let sound_enabled = self.sound_enabled.load(Ordering::Relaxed);
             let sound_name = if success {
@@ -97,10 +109,7 @@ impl NotificationClient {
                 notification.hint(Hint::SoundName(sound_name.into()));
             }
 
-            if let Err(e) = notification.show() {
-                eprintln!("TSK: {} - {}", summary, body.replace('\n', " "));
-                eprintln!("(Desktop notification failed: {e})");
-            }
+            let _ = notification.show();
         }
     }
 
@@ -122,6 +131,10 @@ impl NotificationClient {
 
         #[cfg(target_os = "linux")]
         {
+            if is_headless() {
+                return;
+            }
+
             let timeout_seconds = self.timeout_seconds;
             let sound_enabled = self.sound_enabled.load(Ordering::Relaxed);
 
@@ -134,10 +147,7 @@ impl NotificationClient {
                 notification.hint(Hint::SoundName("dialog-warning".into()));
             }
 
-            if let Err(e) = notification.show() {
-                eprintln!("TSK: {} - {}", title, message.replace('\n', " "));
-                eprintln!("(Desktop notification failed: {e})");
-            }
+            let _ = notification.show();
         }
     }
 
