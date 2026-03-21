@@ -25,6 +25,26 @@ const CONTAINER_WORKSPACE_BASE: &str = "/workspace";
 const CONTAINER_USER: &str = "agent";
 const SECCOMP_DIND_PROFILE: &str = include_str!("seccomp_dind.json");
 
+/// Checks whether a cgroup v2 controller (e.g. "cpu", "memory") is delegated
+/// to the current user session. Rootless Podman requires controllers to be
+/// delegated before it can set resource limits; without this, crun fails with
+/// "the requested cgroup controller is not available".
+fn cgroup_controller_available(controller: &str) -> bool {
+    let uid = unsafe { libc::getuid() };
+    // Check the user's systemd service cgroup first, then the user slice
+    let paths = [
+        format!("/sys/fs/cgroup/user.slice/user-{uid}.slice/user@{uid}.service/cgroup.controllers"),
+        format!("/sys/fs/cgroup/user.slice/user-{uid}.slice/cgroup.controllers"),
+    ];
+    for path in &paths {
+        if let Ok(contents) = std::fs::read_to_string(path) {
+            return contents.split_whitespace().any(|c| c == controller);
+        }
+    }
+    // Non-cgroup-v2 or non-systemd: assume available (Docker handles this fine)
+    true
+}
+
 /// Standard proxy environment variable names forwarded to/from containers.
 /// Additional variables like JAVA_TOOL_OPTIONS and TSK_PROXY_HOST are handled separately.
 pub(crate) const PROXY_ENV_VARS: &[&str] = &[
@@ -438,12 +458,18 @@ impl DockerManager {
                 } else {
                     network_name.map(|n| n.to_string())
                 },
-                memory: if self.is_nested() {
+                memory: if self.is_nested()
+                    || (*container_engine == ContainerEngine::Podman
+                        && !cgroup_controller_available("memory"))
+                {
                     None
                 } else {
                     Some(resolved.memory_limit_bytes())
                 },
-                cpu_quota: if self.is_nested() {
+                cpu_quota: if self.is_nested()
+                    || (*container_engine == ContainerEngine::Podman
+                        && !cgroup_controller_available("cpu"))
+                {
                     None
                 } else {
                     Some(resolved.cpu_quota_microseconds())
