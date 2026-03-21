@@ -449,19 +449,24 @@ impl DockerImageManager {
             build_args.insert("TSK_AGENT_VERSION".to_string(), version.to_string());
         }
 
-        // Pass host UID/GID so the container's "agent" user matches the host user
-        if composed.build_args.contains("HOST_UID") {
-            // SAFETY: getuid/getgid are simple syscalls with no preconditions
-            build_args.insert(
-                "HOST_UID".to_string(),
-                unsafe { libc::getuid() }.to_string(),
-            );
-        }
-        if composed.build_args.contains("HOST_GID") {
-            build_args.insert(
-                "HOST_GID".to_string(),
-                unsafe { libc::getgid() }.to_string(),
-            );
+        // Pass host UID/GID so the container's "agent" user matches the host user.
+        // On macOS, Docker Desktop transparently maps file permissions between the
+        // host and the Linux VM, so we use the Dockerfile defaults (1000:1000) to
+        // avoid GID collisions and subuid issues with non-Linux UID/GID ranges.
+        if cfg!(target_os = "linux") {
+            if composed.build_args.contains("HOST_UID") {
+                // SAFETY: getuid/getgid are simple syscalls with no preconditions
+                build_args.insert(
+                    "HOST_UID".to_string(),
+                    unsafe { libc::getuid() }.to_string(),
+                );
+            }
+            if composed.build_args.contains("HOST_GID") {
+                build_args.insert(
+                    "HOST_GID".to_string(),
+                    unsafe { libc::getgid() }.to_string(),
+                );
+            }
         }
 
         if self.ctx.tsk_config().container_engine == ContainerEngine::Podman {

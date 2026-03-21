@@ -488,12 +488,17 @@ impl DockerManager {
             cap_drop.push("NET_RAW".to_string());
         }
 
-        // DIND storage: pick the best strategy for Podman's overlay storage.
-        // See `DindStorage` docs for the cascade logic.
+        // Podman storage: rootless Podman needs a backing filesystem that supports
+        // overlay mounts in user namespaces. The container's own overlayfs doesn't
+        // qualify, so we provide a tmpfs (or named volume on older Linux kernels).
+        // Only needed when Podman will actually run inside the container:
+        //   - DIND tasks: user explicitly requested container builds
+        //   - Nested containers: inner tsk uses Podman as its container engine
         let has_storage_volume = binds
             .iter()
             .any(|b| b.split(':').nth(1) == Some(PODMAN_STORAGE_PATH));
-        let dind_storage = if task.dind && !has_storage_volume {
+        let needs_podman_storage = (task.dind || self.is_nested()) && !has_storage_volume;
+        let dind_storage = if needs_podman_storage {
             let strategy = dind_storage_strategy(&task.id);
             if let DindStorage::NamedVolume(ref name) = strategy {
                 binds.push(format!("{name}:{PODMAN_STORAGE_PATH}"));

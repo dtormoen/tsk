@@ -20,7 +20,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iputils-ping \
     jq \
     just \
-    fuse-overlayfs `# DIND: overlay fallback for kernels < 5.19 without native overlay in userns` \
     libcap2-bin `# DIND: file capabilities for newuidmap/newgidmap` \
     openssh-client \
     podman `# DIND: nested container builds` \
