@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.6](https://github.com/dtormoen/tsk-tsk/compare/v0.10.5...v0.10.6) - 2026-03-22
+
+### Added
+
+- platform-aware DIND storage with auto-cleanup
+
+### Fixed
+
+- handle pre-existing GIDs in container image builds
+- build container images with host UID/GID for non-1000 UID compatibility
+- skip Podman resource limits when cgroup controllers unavailable
+- support rootless Podman proxy with graceful iptables fallback
+- use exec-based proxy health checks for rootless Podman compatibility
+
 ## [0.10.5](https://github.com/dtormoen/tsk-tsk/compare/v0.10.4...v0.10.5) - 2026-03-21
 
 ### Fixed
