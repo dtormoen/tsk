@@ -38,7 +38,7 @@ nanoid = "0.4"
 bytes = "1.11"
 http-body-util = "0.1"
 handlebars = "6.4"
-toml = "1.0"
+toml = "1.1"
 rusqlite = { version = "0.39", features = ["bundled"] }
 sha2 = "0.10"
 ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
