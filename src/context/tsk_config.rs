@@ -431,7 +431,11 @@ impl ResolvedProxyConfig {
         }
 
         let result = hasher.finalize();
-        format!("{:x}", result).chars().take(8).collect()
+        result
+            .iter()
+            .take(4)
+            .map(|b| format!("{:02x}", b))
+            .collect()
     }
 
     /// Container name for this proxy configuration
