@@ -145,6 +145,13 @@ impl ReviewCommand {
         let review_file_path = temp_dir.path().join("review-feedback.md");
         std::fs::write(&review_file_path, &review_content)?;
 
+        // Resolve the HEAD of the task branch so the review starts from the
+        // feature tip (not the diff base). This keeps fetch_changes a
+        // fast-forward onto the original branch.
+        let branch_head = git_operations::rev_parse(repo_root, &task.branch_name)
+            .await
+            .map_err(|e| format!("Failed to resolve branch '{}': {}", task.branch_name, e))?;
+
         // Build the review task
         let builder = TaskBuilder::new()
             .repo_root(repo_root.to_path_buf())
@@ -159,7 +166,7 @@ impl ReviewCommand {
             .parent_id(Some(parent_id))
             .skip_parent_repo_deferral(true)
             .target_branch(Some(task.branch_name.clone()))
-            .source_commit_override(Some(base_commit));
+            .source_commit_override(Some(branch_head));
 
         let review_task = builder.build(ctx).await?;
 
@@ -201,6 +208,11 @@ impl ReviewCommand {
             .await
             .map_err(|e| format!("Failed to get HEAD: {e}"))?;
 
+        let current_branch = git_operations::get_current_branch(repo_root)
+            .await
+            .map_err(|e| format!("Failed to get current branch: {e}"))?
+            .ok_or("Cannot run base review in detached HEAD state. Check out a branch first.")?;
+
         // Open editor for review feedback
         let review_content = self
             .get_review_feedback(ctx, repo_root, &base_sha, &head_sha)
@@ -226,7 +238,8 @@ impl ReviewCommand {
             .stack(self.stack.clone())
             .network_isolation(!self.no_network_isolation)
             .dind(if self.dind { Some(true) } else { None })
-            .source_commit_override(Some(base_sha));
+            .target_branch(Some(current_branch))
+            .source_commit_override(Some(head_sha));
 
         let storage = ctx.task_storage();
         let review_task = builder.build(ctx).await?;
@@ -664,6 +677,59 @@ mod tests {
         let result = cmd.execute(&ctx).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Could not detect"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_base_commit_uses_source_commit_as_ancestor() {
+        let ctx = AppContext::builder().build();
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_main_branch().unwrap();
+
+        // Create a commit on main - this will be the task's source_commit
+        test_repo.create_file("base.txt", "base").unwrap();
+        test_repo.stage_all().unwrap();
+        let source_commit = test_repo.commit("Base commit").unwrap();
+
+        // Create a feature branch with additional commits
+        test_repo
+            .run_git_command(&["checkout", "-b", "tsk/feat/my-feature/abc123"])
+            .unwrap();
+        test_repo.create_file("feature.txt", "feature").unwrap();
+        test_repo.stage_all().unwrap();
+        test_repo.commit("Feature commit").unwrap();
+
+        let root_task = Task {
+            id: "abc123".to_string(),
+            source_commit: source_commit.clone(),
+            branch_name: "tsk/feat/my-feature/abc123".to_string(),
+            status: TaskStatus::Complete,
+            repo_root: test_repo.path().to_path_buf(),
+            ..Task::test_default()
+        };
+
+        let task = root_task.clone();
+
+        let cmd = ReviewCommand {
+            task_id: None,
+            base: None,
+            name: None,
+            agent: None,
+            stack: None,
+            repo: None,
+            edit: false,
+            no_network_isolation: false,
+            dind: false,
+        };
+
+        let result = cmd
+            .resolve_base_commit(test_repo.path(), &root_task, &task, &ctx)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result, source_commit,
+            "Base commit should be the root task's source_commit"
+        );
     }
 
     #[tokio::test]
