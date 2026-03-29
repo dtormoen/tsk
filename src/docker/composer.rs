@@ -4,8 +4,9 @@
 //! Dockerfile using template rendering.
 
 use anyhow::{Context, Result};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
+use crate::context::tsk_config::ResolvedConfig;
 use crate::docker::layers::DockerImageConfig;
 use crate::docker::template_engine::DockerTemplateEngine;
 
@@ -63,16 +64,22 @@ impl DockerComposer {
     ///
     /// When `overrides` is provided, inline config content takes priority over
     /// embedded asset lookups for the corresponding layer positions.
+    /// When `resolved_config` is provided, config-driven template variables
+    /// (e.g., `{{{SUDO}}}`) are populated from the resolved configuration.
     pub fn compose(
         &self,
         config: &DockerImageConfig,
         overrides: Option<&InlineLayerOverrides>,
+        resolved_config: Option<&ResolvedConfig>,
     ) -> Result<ComposedDockerfile> {
         // Get the base template
         let base_dockerfile = crate::assets::embedded::get_dockerfile("base/default")
             .context("Failed to get base dockerfile")?;
         let base_template = String::from_utf8(base_dockerfile)
             .context("Failed to decode base dockerfile as UTF-8")?;
+
+        // Build config-driven template variables from resolved config
+        let config_vars = Self::build_config_vars(resolved_config);
 
         // Create template engine and render the Dockerfile
         let template_engine = DockerTemplateEngine::new(overrides);
@@ -81,6 +88,7 @@ impl DockerComposer {
             Some(&config.stack),
             Some(&config.agent),
             Some(&config.project),
+            &config_vars,
         )?;
 
         // Extract build arguments from the composed Dockerfile
@@ -92,6 +100,26 @@ impl DockerComposer {
             image_tag: config.image_tag(),
             layer_sources,
         })
+    }
+
+    /// Build config-driven template variables from resolved configuration.
+    ///
+    /// This translates resolved config flags into Dockerfile content that gets
+    /// injected via named placeholders in the base template (e.g., `{{{SUDO}}}`).
+    fn build_config_vars(resolved_config: Option<&ResolvedConfig>) -> HashMap<String, String> {
+        let mut vars = HashMap::new();
+
+        let sudo_content = match resolved_config {
+            Some(config) if config.sudo => concat!(
+                "USER root\n",
+                "RUN echo 'agent ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/agent && chmod 0440 /etc/sudoers.d/agent\n",
+                "USER agent",
+            ).to_string(),
+            _ => String::new(),
+        };
+        vars.insert("SUDO".to_string(), sudo_content);
+
+        vars
     }
 
     /// Extract build arguments from Dockerfile content
@@ -246,7 +274,7 @@ RUN echo "Hello"
             "default".to_string(),
         );
 
-        let composed = composer.compose(&config, None).unwrap();
+        let composed = composer.compose(&config, None, None).unwrap();
         assert!(composed.dockerfile_content.contains("FROM"));
         assert!(!composed.image_tag.is_empty());
         // Without overrides, embedded sources should be used
@@ -269,7 +297,7 @@ RUN echo "Hello"
             ..Default::default()
         };
 
-        let composed = composer.compose(&config, Some(&overrides)).unwrap();
+        let composed = composer.compose(&config, Some(&overrides), None).unwrap();
         assert!(
             composed
                 .dockerfile_content
@@ -300,7 +328,7 @@ RUN echo "Hello"
             ..Default::default()
         };
 
-        let composed = composer.compose(&config, Some(&overrides)).unwrap();
+        let composed = composer.compose(&config, Some(&overrides), None).unwrap();
         assert!(
             composed
                 .dockerfile_content
@@ -309,5 +337,44 @@ RUN echo "Hello"
         assert_eq!(composed.layer_sources.stack, LayerSource::Config);
         // Agent still comes from embedded assets
         assert_eq!(composed.layer_sources.agent, LayerSource::AssetManager);
+    }
+
+    #[test]
+    fn test_compose_with_sudo_injects_sudoers() {
+        let composer = create_test_composer();
+        let config = crate::docker::layers::DockerImageConfig::new(
+            "default".to_string(),
+            "claude".to_string(),
+            "default".to_string(),
+        );
+
+        let resolved = ResolvedConfig {
+            sudo: true,
+            ..Default::default()
+        };
+
+        let composed = composer.compose(&config, None, Some(&resolved)).unwrap();
+        assert!(
+            composed.dockerfile_content.contains("NOPASSWD:ALL"),
+            "Sudo injection should add NOPASSWD sudoers rule"
+        );
+    }
+
+    #[test]
+    fn test_compose_without_sudo_has_no_sudoers() {
+        let composer = create_test_composer();
+        let config = crate::docker::layers::DockerImageConfig::new(
+            "default".to_string(),
+            "claude".to_string(),
+            "default".to_string(),
+        );
+
+        let resolved = ResolvedConfig::default();
+
+        let composed = composer.compose(&config, None, Some(&resolved)).unwrap();
+        assert!(
+            !composed.dockerfile_content.contains("NOPASSWD"),
+            "Without sudo, sudoers rule should not be present"
+        );
     }
 }

@@ -13,7 +13,7 @@ use crate::context::docker_client::DockerClient;
 use crate::context::tsk_config;
 use crate::docker::proxy_manager::ProxyManager;
 use crate::tui::events::{ServerEvent, ServerEventSender};
-use bollard::models::{ContainerCreateBody, HostConfig};
+use bollard::models::{ContainerCreateBody, DeviceMapping, HostConfig};
 use bollard::query_parameters::{LogsOptions, RemoveContainerOptions};
 use futures_util::stream::StreamExt;
 use std::collections::HashMap;
@@ -446,7 +446,39 @@ impl DockerManager {
 
         let container_engine = &self.ctx.tsk_config().container_engine;
 
-        // DIND security relaxations (seccomp profile, AppArmor, SETUID/SETGID) are opt-in
+        // Build device mappings from resolved config, expanding glob patterns
+        let devices: Option<Vec<DeviceMapping>> = if resolved.devices.is_empty() {
+            None
+        } else {
+            let mut mappings = Vec::new();
+            for pattern in &resolved.devices {
+                if pattern.contains('*') || pattern.contains('?') || pattern.contains('[') {
+                    if let Ok(paths) = glob::glob(pattern) {
+                        for entry in paths.flatten() {
+                            let path_str = entry.to_string_lossy().to_string();
+                            mappings.push(DeviceMapping {
+                                path_on_host: Some(path_str.clone()),
+                                path_in_container: Some(path_str),
+                                cgroup_permissions: Some("rwm".to_string()),
+                            });
+                        }
+                    }
+                } else {
+                    mappings.push(DeviceMapping {
+                        path_on_host: Some(pattern.clone()),
+                        path_in_container: Some(pattern.clone()),
+                        cgroup_permissions: Some("rwm".to_string()),
+                    });
+                }
+            }
+            if mappings.is_empty() {
+                None
+            } else {
+                Some(mappings)
+            }
+        };
+
+        // Security relaxations: seccomp/AppArmor for DIND, SETUID/SETGID for DIND or sudo
         let security_opt = if task.dind {
             let mut security_opts = if *container_engine == ContainerEngine::Podman {
                 let seccomp_path = self.ctx.tsk_env().config_dir().join("seccomp_dind.json");
@@ -480,7 +512,7 @@ impl DockerManager {
             "DAC_OVERRIDE".to_string(),
             "AUDIT_WRITE".to_string(),
         ];
-        if !task.dind {
+        if !task.dind && !resolved.sudo {
             cap_drop.push("SETUID".to_string());
             cap_drop.push("SETGID".to_string());
         }
@@ -540,6 +572,12 @@ impl DockerManager {
                 } else {
                     Some(resolved.cpu_quota_microseconds())
                 },
+                privileged: if resolved.privileged {
+                    Some(true)
+                } else {
+                    None
+                },
+                devices,
                 cap_drop: Some(cap_drop),
                 security_opt,
                 tmpfs: if matches!(dind_storage, DindStorage::Tmpfs) {
@@ -1909,6 +1947,47 @@ mod tests {
         assert!(
             !env.contains(&"BUILDAH_ISOLATION=chroot".to_string()),
             "BUILDAH_ISOLATION should not be set when dind is disabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sudo_security_relaxations() {
+        let mock_client = Arc::new(TrackedDockerClient::default());
+
+        // Create a resolved config with sudo enabled and snapshot it on the task
+        let resolved = crate::context::ResolvedConfig {
+            sudo: true,
+            ..Default::default()
+        };
+        let config_json = serde_json::to_string(&resolved).unwrap();
+
+        let ctx = AppContext::builder().build();
+        let manager = DockerManager::new(&ctx, mock_client.clone(), None);
+
+        let mut task = create_test_task(false);
+        task.resolved_config = Some(config_json);
+        let agent = crate::agent::ClaudeAgent::with_tsk_env(ctx.tsk_env());
+        let _ = manager.run_task_container("tsk/base", &task, &agent).await;
+
+        let create_calls = mock_client.create_container_calls.lock().unwrap();
+        let task_config = &create_calls[1].1;
+        let host_config = task_config.host_config.as_ref().unwrap();
+
+        // Sudo: SETUID and SETGID should NOT be in cap_drop
+        let cap_drop = host_config.cap_drop.as_ref().unwrap();
+        assert!(
+            !cap_drop.contains(&"SETUID".to_string()),
+            "SETUID should not be dropped when sudo is enabled"
+        );
+        assert!(
+            !cap_drop.contains(&"SETGID".to_string()),
+            "SETGID should not be dropped when sudo is enabled"
+        );
+
+        // Sudo should NOT enable seccomp/apparmor relaxations (those are DIND-only)
+        assert!(
+            host_config.security_opt.is_none(),
+            "security_opt should be None when only sudo is enabled (not dind)"
         );
     }
 }

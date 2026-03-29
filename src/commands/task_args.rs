@@ -44,6 +44,9 @@ pub struct TaskArgs {
     pub repo: Option<String>,
     pub no_network_isolation: bool,
     pub dind: bool,
+    pub privileged: bool,
+    pub sudo: bool,
+    pub devices: Vec<String>,
 }
 
 impl TaskArgs {
@@ -121,5 +124,8 @@ impl TaskArgs {
             .network_isolation(!self.no_network_isolation)
             .dind(if self.dind { Some(true) } else { None })
             .repo_copy_source(worktree_source)
+            .privileged(if self.privileged { Some(true) } else { None })
+            .sudo(if self.sudo { Some(true) } else { None })
+            .devices(self.devices.clone())
     }
 }

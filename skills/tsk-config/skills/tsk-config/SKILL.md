@@ -309,6 +309,15 @@ cpu = 8
 
 # Enable Docker-in-Docker
 dind = true
+
+# Enable passwordless sudo inside containers
+sudo = false
+
+# Run containers in privileged mode (disables security restrictions)
+privileged = false
+
+# Expose host devices to containers (supports glob patterns)
+devices = ["/dev/video0", "/dev/ttyUSB*"]
 ```
 
 Note: To connect to host services via forwarded ports, use the `TSK_PROXY_HOST` environment variable (set automatically by `tsk`) as the hostname, not `localhost`.

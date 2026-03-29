@@ -41,6 +41,9 @@ pub struct TaskBuilder {
     parent_id: Option<String>,
     network_isolation: bool,
     dind: Option<bool>,
+    privileged: Option<bool>,
+    sudo: Option<bool>,
+    devices: Vec<String>,
     repo_copy_source: Option<PathBuf>,
 }
 
@@ -63,6 +66,9 @@ impl TaskBuilder {
             parent_id: None,
             network_isolation: true,
             dind: None,
+            privileged: None,
+            sudo: None,
+            devices: Vec::new(),
             repo_copy_source: None,
         }
     }
@@ -80,6 +86,16 @@ impl TaskBuilder {
         builder.is_interactive = task.is_interactive;
         builder.network_isolation = task.network_isolation;
         builder.dind = Some(task.dind);
+        // Restore security settings and devices from the resolved config snapshot
+        // so CLI overrides from the original run are preserved on retry.
+        if let Some(ref config_json) = task.resolved_config
+            && let Ok(config) =
+                serde_json::from_str::<crate::context::tsk_config::ResolvedConfig>(config_json)
+        {
+            builder.privileged = Some(config.privileged);
+            builder.sudo = Some(config.sudo);
+            builder.devices = config.devices;
+        }
         // Note: We intentionally don't copy parent_id when retrying a task.
         // The retry creates a fresh task from the current repository state.
 
@@ -178,6 +194,28 @@ impl TaskBuilder {
         self
     }
 
+    /// Sets whether the container runs in privileged mode.
+    /// When enabled, the container has full access to host devices.
+    /// Uses `Option<bool>` so `None` defers to config-file defaults.
+    pub fn privileged(mut self, enabled: Option<bool>) -> Self {
+        self.privileged = enabled;
+        self
+    }
+
+    /// Sets whether passwordless sudo is enabled inside the container.
+    /// Uses `Option<bool>` so `None` defers to config-file defaults.
+    pub fn sudo(mut self, enabled: Option<bool>) -> Self {
+        self.sudo = enabled;
+        self
+    }
+
+    /// Sets device paths to expose to the container.
+    /// These are merged with devices from config files.
+    pub fn devices(mut self, devices: Vec<String>) -> Self {
+        self.devices = devices;
+        self
+    }
+
     /// Overrides the source directory used when copying the repository.
     /// When set, this path is used instead of the auto-detected repository root.
     pub fn repo_copy_source(mut self, source: Option<PathBuf>) -> Self {
@@ -235,7 +273,7 @@ impl TaskBuilder {
         // Resolve configuration for this project (layers defaults + project file + project config)
         let tsk_config = ctx.tsk_config();
         let project_config = tsk_config::load_project_config(&repo_root);
-        let resolved =
+        let mut resolved =
             tsk_config.resolve_config(&project, project_config.as_ref(), Some(&repo_root));
 
         // Get agent: CLI flag > resolved config (project > defaults > built-in)
@@ -368,6 +406,19 @@ impl TaskBuilder {
 
         // Resolve dind: CLI flag > resolved config (project > defaults > built-in)
         let dind = self.dind.unwrap_or(resolved.dind);
+
+        // Resolve privileged: CLI flag > resolved config (project > defaults > built-in)
+        resolved.privileged = self.privileged.unwrap_or(resolved.privileged);
+
+        // Resolve sudo: CLI flag > resolved config (project > defaults > built-in)
+        resolved.sudo = self.sudo.unwrap_or(resolved.sudo);
+
+        // Merge CLI devices into resolved config (deduplicated)
+        for device in &self.devices {
+            if !resolved.devices.contains(device) {
+                resolved.devices.push(device.clone());
+            }
+        }
 
         // Generate human-readable branch name with format: tsk/{task-type}/{task-name}/{task-id}
         let sanitized_task_type = sanitize_for_branch_name(&task_type);

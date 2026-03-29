@@ -261,6 +261,9 @@ stack = "default"            # Tech stack (auto-detected from project files)
 memory_gb = 12.0             # Container memory limit in GB
 cpu = 8                      # Number of CPUs
 dind = false                 # Enable Docker-in-Docker support
+privileged = false           # Run containers in privileged mode (disables security restrictions)
+sudo = false                 # Enable passwordless sudo inside containers
+devices = []                 # Device paths to expose (e.g., ["/dev/video0"])
 git_town = false             # Enable git-town parent branch tracking
 
 # Project-specific overrides (matches directory name)

@@ -20,6 +20,9 @@ pub struct RetryOverrides {
     pub project: Option<String>,
     pub parent_id: Option<String>,
     pub dind: Option<bool>,
+    pub privileged: Option<bool>,
+    pub sudo: Option<bool>,
+    pub devices: Vec<String>,
     pub repo_copy_source: Option<PathBuf>,
 }
 
@@ -225,6 +228,15 @@ impl TaskManager {
         }
         if let Some(dind) = overrides.dind {
             builder = builder.dind(Some(dind));
+        }
+        if let Some(privileged) = overrides.privileged {
+            builder = builder.privileged(Some(privileged));
+        }
+        if let Some(sudo) = overrides.sudo {
+            builder = builder.sudo(Some(sudo));
+        }
+        if !overrides.devices.is_empty() {
+            builder = builder.devices(overrides.devices);
         }
         if let Some(source) = overrides.repo_copy_source {
             builder = builder.repo_copy_source(Some(source));

@@ -35,6 +35,7 @@ The foundation of all `tsk` containers (`base/default.dockerfile`):
 - Git configuration inherited from host user via build arguments
 - Build-time working directory set to `/workspace` (at runtime, `/workspace/{project_name}`)
 - Contains placeholders (`{{{STACK}}}`, `{{{PROJECT}}}`, `{{{AGENT}}}`) for layer composition
+- Config-driven flags (e.g., `sudo = true`) may inject additional Dockerfile content between layers at build time
 
 ### 2. Stack Layer
 Language-specific toolchains and runtimes:
@@ -197,7 +198,7 @@ Auto-detection is used as a fallback when neither the `--stack` flag nor any con
 
 ### Non-Root Execution
 - Containers run as the `agent` user (created by renaming the default `ubuntu` user)
-- No sudo access within containers
+- No sudo access by default (enable with `--sudo` flag or `sudo = true` in config)
 - Limited filesystem permissions
 
 ### Network Isolation
@@ -224,16 +225,16 @@ Each container has the following volumes mounted:
 - Output: `{task_dir}/output:/output` (read-write)
 
 ### Capability Dropping
-Containers run with minimal Linux capabilities, dropping exactly 9 capabilities:
+Containers run with minimal Linux capabilities, dropping up to 9 capabilities:
 - `NET_ADMIN` - Can't manage network interfaces
-- `NET_RAW` - Can't create raw sockets
+- `NET_RAW` - Can't create raw sockets (only when network isolation is enabled)
 - `SETPCAP` - Can't change capability sets
 - `SYS_ADMIN` - Can't mount filesystems or perform namespace operations
 - `SYS_PTRACE` - Can't trace processes
 - `DAC_OVERRIDE` - Can't bypass file read/write/execute permissions
 - `AUDIT_WRITE` - Can't write audit logs
-- `SETUID` - Can't change user IDs
-- `SETGID` - Can't change group IDs
+- `SETUID` - Can't change user IDs (kept when `--dind` or `--sudo` is active)
+- `SETGID` - Can't change group IDs (kept when `--dind` or `--sudo` is active)
 
 ## Debugging Docker Issues
 

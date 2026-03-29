@@ -377,7 +377,7 @@ impl DockerImageManager {
         // Compose the Dockerfile
         let composed = self
             .composer
-            .compose(&config, overrides.as_ref())
+            .compose(&config, overrides.as_ref(), resolved_config)
             .with_context(|| format!("Failed to compose Dockerfile for {}", config.image_tag()))?;
 
         // Validate the composed Dockerfile
@@ -918,7 +918,7 @@ mod tests {
             "claude".to_string(),
             "default".to_string(),
         );
-        let composed = manager.composer.compose(&config, None).unwrap();
+        let composed = manager.composer.compose(&config, None, None).unwrap();
 
         // Check that TSK_AGENT_VERSION is in build args
         assert!(

@@ -21,6 +21,10 @@ impl<'a> DockerTemplateEngine<'a> {
 
     /// Renders a Dockerfile by replacing template placeholders with layer contents.
     ///
+    /// `config_vars` provides additional template variables derived from resolved
+    /// configuration (e.g., `SUDO`). These are inserted into the Handlebars context
+    /// alongside the layer placeholders.
+    ///
     /// Returns the rendered Dockerfile content and the sources of each layer.
     pub fn render_dockerfile(
         &self,
@@ -28,22 +32,33 @@ impl<'a> DockerTemplateEngine<'a> {
         stack: Option<&str>,
         agent: Option<&str>,
         project: Option<&str>,
+        config_vars: &HashMap<String, String>,
     ) -> Result<(String, LayerSources)> {
         let mut context = HashMap::new();
         let mut layer_sources = LayerSources::default();
 
         // Get layer contents, checking overrides first
         let (stack_content, stack_source) = self.get_layer_content("stack", stack)?;
-        context.insert("STACK", stack_content);
+        context.insert("STACK".to_string(), stack_content);
         layer_sources.stack = stack_source;
 
         let (agent_content, agent_source) = self.get_layer_content("agent", agent)?;
-        context.insert("AGENT", agent_content);
+        context.insert("AGENT".to_string(), agent_content);
         layer_sources.agent = agent_source;
 
         let (project_content, project_source) = self.get_layer_content("project", project)?;
-        context.insert("PROJECT", project_content);
+        context.insert("PROJECT".to_string(), project_content);
         layer_sources.project = project_source;
+
+        // Add config-driven template variables (must not collide with layer names)
+        const RESERVED_KEYS: &[&str] = &["STACK", "AGENT", "PROJECT"];
+        for (key, value) in config_vars {
+            debug_assert!(
+                !RESERVED_KEYS.contains(&key.as_str()),
+                "config var '{key}' collides with layer placeholder"
+            );
+            context.insert(key.clone(), value.clone());
+        }
 
         let rendered = self
             .handlebars
@@ -96,6 +111,10 @@ impl<'a> DockerTemplateEngine<'a> {
 mod tests {
     use super::*;
 
+    fn no_config_vars() -> HashMap<String, String> {
+        HashMap::new()
+    }
+
     #[test]
     fn test_render_dockerfile_with_all_layers() {
         let engine = DockerTemplateEngine::new(None);
@@ -116,7 +135,13 @@ mod tests {
 
         // Note: This test will use actual embedded assets if they exist
         let (result, sources) = engine
-            .render_dockerfile(base_template, Some("rust"), Some("claude"), Some("default"))
+            .render_dockerfile(
+                base_template,
+                Some("rust"),
+                Some("claude"),
+                Some("default"),
+                &no_config_vars(),
+            )
             .unwrap();
 
         assert!(result.contains("FROM ubuntu:24.04"));
@@ -144,6 +169,7 @@ mod tests {
                 Some("nonexistent"),
                 Some("missing"),
                 Some("notfound"),
+                &no_config_vars(),
             )
             .unwrap();
 
@@ -165,7 +191,7 @@ mod tests {
 CMD ["/bin/bash"]"#;
 
         let (result, _) = engine
-            .render_dockerfile(base_template, None, None, None)
+            .render_dockerfile(base_template, None, None, None, &no_config_vars())
             .unwrap();
 
         assert_eq!(result, "FROM ubuntu:24.04\n\n\n\nCMD [\"/bin/bash\"]");
@@ -182,7 +208,13 @@ CMD ["/bin/bash"]"#;
         let base_template = "FROM ubuntu:24.04\n{{{STACK}}}\n{{{AGENT}}}\n{{{PROJECT}}}";
 
         let (result, sources) = engine
-            .render_dockerfile(base_template, Some("rust"), Some("claude"), Some("default"))
+            .render_dockerfile(
+                base_template,
+                Some("rust"),
+                Some("claude"),
+                Some("default"),
+                &no_config_vars(),
+            )
             .unwrap();
 
         assert!(result.contains("RUN apt-get install -y custom-stack-tool"));
@@ -206,6 +238,7 @@ CMD ["/bin/bash"]"#;
                 Some("default"),
                 Some("claude"),
                 Some("default"),
+                &no_config_vars(),
             )
             .unwrap();
 
@@ -230,6 +263,7 @@ CMD ["/bin/bash"]"#;
                 Some("default"),
                 Some("claude"),
                 Some("default"),
+                &no_config_vars(),
             )
             .unwrap();
 
@@ -254,6 +288,7 @@ CMD ["/bin/bash"]"#;
                 Some("nonexistent-stack"),
                 Some("claude"),
                 Some("default"),
+                &no_config_vars(),
             )
             .unwrap();
 
@@ -269,7 +304,13 @@ CMD ["/bin/bash"]"#;
         let base_template = "FROM ubuntu:24.04\n{{{STACK}}}\n{{{AGENT}}}\n{{{PROJECT}}}";
 
         let (_, sources) = engine
-            .render_dockerfile(base_template, Some("rust"), Some("claude"), Some("default"))
+            .render_dockerfile(
+                base_template,
+                Some("rust"),
+                Some("claude"),
+                Some("default"),
+                &no_config_vars(),
+            )
             .unwrap();
 
         // All should come from embedded assets
@@ -295,7 +336,7 @@ CMD ["/bin/bash"]"#;
 # End of Stack layer"#;
 
         let (result, _) = engine
-            .render_dockerfile(base_template, Some("test"), None, None)
+            .render_dockerfile(base_template, Some("test"), None, None, &no_config_vars())
             .unwrap();
 
         // Verify that special characters are NOT escaped
@@ -324,5 +365,19 @@ CMD ["/bin/bash"]"#;
             !result.contains("&amp;"),
             "Should not contain HTML entity for ampersand"
         );
+    }
+
+    #[test]
+    fn test_config_vars_injected_into_template() {
+        let engine = DockerTemplateEngine::new(None);
+        let base_template = "FROM ubuntu:24.04\n{{{STACK}}}\n{{{CUSTOM}}}";
+        let mut vars = HashMap::new();
+        vars.insert("CUSTOM".to_string(), "RUN echo hello".to_string());
+
+        let (result, _) = engine
+            .render_dockerfile(base_template, None, None, None, &vars)
+            .unwrap();
+
+        assert!(result.contains("RUN echo hello"));
     }
 }

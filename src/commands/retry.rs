@@ -14,6 +14,9 @@ pub struct RetryCommand {
     pub project: Option<String>,
     pub parent_id: Option<String>,
     pub dind: Option<bool>,
+    pub privileged: Option<bool>,
+    pub sudo: Option<bool>,
+    pub devices: Vec<String>,
     pub no_children: bool,
     pub from_cwd: bool,
 }
@@ -101,6 +104,9 @@ impl Command for RetryCommand {
                 project: self.project.clone(),
                 parent_id: self.parent_id.clone(),
                 dind: self.dind,
+                privileged: self.privileged,
+                sudo: self.sudo,
+                devices: self.devices.clone(),
                 repo_copy_source,
             };
             match task_manager
@@ -247,6 +253,9 @@ mod tests {
             project: None,
             parent_id: None,
             dind: None,
+            privileged: None,
+            sudo: None,
+            devices: vec![],
             no_children: true,
             from_cwd: false,
         };
@@ -283,6 +292,9 @@ mod tests {
             project: None,
             parent_id: None,
             dind: None,
+            privileged: None,
+            sudo: None,
+            devices: vec![],
             no_children: true,
             from_cwd: false,
         };
@@ -318,6 +330,9 @@ mod tests {
             project: None,
             parent_id: None,
             dind: None,
+            privileged: None,
+            sudo: None,
+            devices: vec![],
             no_children: true,
             from_cwd: false,
         };
@@ -361,6 +376,9 @@ mod tests {
             project: None,
             parent_id: None,
             dind: None,
+            privileged: None,
+            sudo: None,
+            devices: vec![],
             no_children: true,
             from_cwd: false,
         };
@@ -404,6 +422,9 @@ mod tests {
             project: None,
             parent_id: None,
             dind: None,
+            privileged: None,
+            sudo: None,
+            devices: vec![],
             no_children: true,
             from_cwd: false,
         };
@@ -451,6 +472,9 @@ mod tests {
             project: None,
             parent_id: None,
             dind: None,
+            privileged: None,
+            sudo: None,
+            devices: vec![],
             no_children: true,
             from_cwd: false,
         };
@@ -535,6 +559,9 @@ mod tests {
             project: None,
             parent_id: None,
             dind: None,
+            privileged: None,
+            sudo: None,
+            devices: vec![],
             no_children: true,
             from_cwd: false,
         };
@@ -623,6 +650,9 @@ mod tests {
             project: None,
             parent_id: None,
             dind: None,
+            privileged: None,
+            sudo: None,
+            devices: vec![],
             no_children: false,
             from_cwd: false,
         };
@@ -746,6 +776,9 @@ mod tests {
             project: None,
             parent_id: None,
             dind: None,
+            privileged: None,
+            sudo: None,
+            devices: vec![],
             no_children: true,
             from_cwd: false,
         };
@@ -780,6 +813,9 @@ mod tests {
             project: None,
             parent_id: None,
             dind: None,
+            privileged: None,
+            sudo: None,
+            devices: vec![],
             no_children: true,
             from_cwd: true,
         };
@@ -874,6 +910,9 @@ mod tests {
             dind: None,
             no_children: true,
             from_cwd: false,
+            privileged: None,
+            sudo: None,
+            devices: vec![],
         };
 
         let result = cmd.execute(&ctx).await;
@@ -910,6 +949,9 @@ mod tests {
             dind: None,
             no_children: true,
             from_cwd: true,
+            privileged: None,
+            sudo: None,
+            devices: vec![],
         };
 
         let result = cmd.execute(&ctx).await;

@@ -116,6 +116,18 @@ enum Commands {
         /// Enable Docker-in-Docker support (relaxes container security for nested builds)
         #[arg(long)]
         dind: bool,
+
+        /// Run container in privileged mode (disables security restrictions)
+        #[arg(long)]
+        privileged: bool,
+
+        /// Enable passwordless sudo inside containers
+        #[arg(long)]
+        sudo: bool,
+
+        /// Expose a host device to the container (can be repeated, e.g. --device /dev/video0)
+        #[arg(long = "device")]
+        devices: Vec<String>,
     },
     /// Launch a sandbox container with an agent for interactive use
     Shell {
@@ -174,6 +186,18 @@ enum Commands {
         /// Enable Docker-in-Docker support (relaxes container security for nested builds)
         #[arg(long)]
         dind: bool,
+
+        /// Run container in privileged mode (disables security restrictions)
+        #[arg(long)]
+        privileged: bool,
+
+        /// Enable passwordless sudo inside containers
+        #[arg(long)]
+        sudo: bool,
+
+        /// Expose a host device to the container (can be repeated, e.g. --device /dev/video0)
+        #[arg(long = "device")]
+        devices: Vec<String>,
     },
     /// Queue a task for later execution by the TSK server
     Add {
@@ -233,6 +257,18 @@ enum Commands {
         /// Enable Docker-in-Docker support (relaxes container security for nested builds)
         #[arg(long)]
         dind: bool,
+
+        /// Run container in privileged mode (disables security restrictions)
+        #[arg(long)]
+        privileged: bool,
+
+        /// Enable passwordless sudo inside containers
+        #[arg(long)]
+        sudo: bool,
+
+        /// Expose a host device to the container (can be repeated, e.g. --device /dev/video0)
+        #[arg(long = "device")]
+        devices: Vec<String>,
     },
     /// Start or stop the TSK server daemon that runs queued tasks in containers
     Server(ServerArgs),
@@ -282,6 +318,18 @@ enum Commands {
         /// Enable Docker-in-Docker support (relaxes container security for nested builds)
         #[arg(long)]
         dind: bool,
+
+        /// Run container in privileged mode (disables security restrictions)
+        #[arg(long)]
+        privileged: bool,
+
+        /// Enable passwordless sudo inside containers
+        #[arg(long)]
+        sudo: bool,
+
+        /// Expose a host device to the container (can be repeated, e.g. --device /dev/video0)
+        #[arg(long = "device")]
+        devices: Vec<String>,
 
         /// Skip retrying child tasks (don't prompt)
         #[arg(long)]
@@ -440,6 +488,9 @@ async fn main() {
             parent_id,
             no_network_isolation,
             dind,
+            privileged,
+            sudo,
+            devices,
         } => {
             let prompt = task_args::resolve_deprecation(prompt, description).unwrap_or_else(|e| {
                 eprintln!("Error: {e}");
@@ -458,6 +509,9 @@ async fn main() {
                     repo,
                     no_network_isolation,
                     dind,
+                    privileged,
+                    sudo,
+                    devices,
                 },
                 parent_id,
             })
@@ -476,6 +530,9 @@ async fn main() {
             repo,
             no_network_isolation,
             dind,
+            privileged,
+            sudo,
+            devices,
         } => {
             let prompt = task_args::resolve_deprecation(prompt, description).unwrap_or_else(|e| {
                 eprintln!("Error: {e}");
@@ -494,6 +551,9 @@ async fn main() {
                     repo,
                     no_network_isolation,
                     dind,
+                    privileged,
+                    sudo,
+                    devices,
                 },
                 docker_client_override: None,
             })
@@ -512,6 +572,9 @@ async fn main() {
             repo,
             no_network_isolation,
             dind,
+            privileged,
+            sudo,
+            devices,
         } => {
             let prompt = task_args::resolve_deprecation(prompt, description).unwrap_or_else(|e| {
                 eprintln!("Error: {e}");
@@ -530,6 +593,9 @@ async fn main() {
                     repo,
                     no_network_isolation,
                     dind,
+                    privileged,
+                    sudo,
+                    devices,
                 },
             })
         }
@@ -553,6 +619,9 @@ async fn main() {
             project,
             parent_id,
             dind,
+            privileged,
+            sudo,
+            devices,
             no_children,
             from_cwd,
         } => Box::new(RetryCommand {
@@ -564,6 +633,9 @@ async fn main() {
             project,
             parent_id,
             dind: if dind { Some(true) } else { None },
+            privileged: if privileged { Some(true) } else { None },
+            sudo: if sudo { Some(true) } else { None },
+            devices,
             no_children,
             from_cwd,
         }),

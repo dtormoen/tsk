@@ -135,6 +135,12 @@ impl TskConfig {
         if let Some(dind) = config.dind {
             resolved.dind = dind;
         }
+        if let Some(privileged) = config.privileged {
+            resolved.privileged = privileged;
+        }
+        if let Some(sudo) = config.sudo {
+            resolved.sudo = sudo;
+        }
         if let Some(memory) = config.memory_gb {
             resolved.memory_gb = memory;
         }
@@ -155,6 +161,13 @@ impl TskConfig {
         for &port in &config.host_ports {
             if !resolved.host_ports.contains(&port) {
                 resolved.host_ports.push(port);
+            }
+        }
+
+        // devices: combine, deduplicate
+        for device in &config.devices {
+            if !resolved.devices.contains(device) {
+                resolved.devices.push(device.clone());
             }
         }
 
@@ -227,6 +240,13 @@ pub struct SharedConfig {
     pub stack: Option<String>,
     /// Enable Docker-in-Docker support
     pub dind: Option<bool>,
+    /// Run container in privileged mode (disables security restrictions)
+    pub privileged: Option<bool>,
+    /// Enable passwordless sudo inside containers
+    pub sudo: Option<bool>,
+    /// Device paths to expose to the container (e.g., "/dev/video0")
+    #[serde(default)]
+    pub devices: Vec<String>,
     /// Container memory limit in gigabytes
     #[serde(alias = "memory_limit_gb")]
     pub memory_gb: Option<f64>,
@@ -286,6 +306,15 @@ pub struct ResolvedConfig {
     pub stack: String,
     /// Docker-in-Docker support (default: false)
     pub dind: bool,
+    /// Privileged mode (default: false)
+    #[serde(default)]
+    pub privileged: bool,
+    /// Passwordless sudo (default: false)
+    #[serde(default)]
+    pub sudo: bool,
+    /// Device paths to expose to the container
+    #[serde(default)]
+    pub devices: Vec<String>,
     /// Container memory limit in gigabytes (default: 12.0)
     pub memory_gb: f64,
     /// Number of CPUs available to container (default: 8)
@@ -314,6 +343,9 @@ impl Default for ResolvedConfig {
             agent: "claude".to_string(),
             stack: "default".to_string(),
             dind: false,
+            privileged: false,
+            sudo: false,
+            devices: Vec::new(),
             memory_gb: 12.0,
             cpu: 8,
             git_town: false,
@@ -751,6 +783,8 @@ mod tests {
         assert_eq!(resolved.agent, "claude");
         assert_eq!(resolved.stack, "default");
         assert!(!resolved.dind);
+        assert!(!resolved.privileged);
+        assert!(!resolved.sudo);
         assert_eq!(resolved.memory_gb, 12.0);
         assert_eq!(resolved.cpu, 8);
         assert!(!resolved.git_town);
@@ -1684,6 +1718,9 @@ setup = "RUN pip install numpy"
             agent: "codex".to_string(),
             stack: "rust".to_string(),
             dind: true,
+            privileged: false,
+            sudo: true,
+            devices: vec!["/dev/video0".to_string()],
             memory_gb: 24.0,
             cpu: 16,
             git_town: true,
@@ -1726,6 +1763,7 @@ setup = "RUN pip install numpy"
         assert_eq!(deserialized.agent, "codex");
         assert_eq!(deserialized.stack, "rust");
         assert!(deserialized.dind);
+        assert!(deserialized.sudo);
         assert_eq!(deserialized.memory_gb, 24.0);
         assert_eq!(deserialized.cpu, 16);
         assert!(deserialized.git_town);
