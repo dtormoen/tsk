@@ -54,6 +54,10 @@ pub struct TaskBuilder {
     /// Override for the source commit SHA. When set, this value is used instead
     /// of computing it from the repository HEAD.
     source_commit_override: Option<String>,
+    /// Base git ref for template placeholder `{{BASE}}`
+    base_ref: Option<String>,
+    /// Head git ref for template placeholder `{{HEAD}}`
+    head_ref: Option<String>,
 }
 
 impl TaskBuilder {
@@ -83,6 +87,8 @@ impl TaskBuilder {
             target_branch: None,
             skip_parent_repo_deferral: false,
             source_commit_override: None,
+            base_ref: None,
+            head_ref: None,
         }
     }
 
@@ -261,6 +267,20 @@ impl TaskBuilder {
     /// Used by review tasks to set the base commit for the diff.
     pub fn source_commit_override(mut self, sha: Option<String>) -> Self {
         self.source_commit_override = sha;
+        self
+    }
+
+    /// Sets the base git ref for template placeholder `{{BASE}}`.
+    /// Used by review tasks to indicate the diff base.
+    pub fn base_ref(mut self, base: Option<String>) -> Self {
+        self.base_ref = base;
+        self
+    }
+
+    /// Sets the head git ref for template placeholder `{{HEAD}}`.
+    /// Used by review tasks to indicate the diff head.
+    pub fn head_ref(mut self, head: Option<String>) -> Self {
+        self.head_ref = head;
         self
     }
 
@@ -487,11 +507,12 @@ impl TaskBuilder {
             }
         }
 
-        // Determine branch name: use target_branch if set, otherwise generate from task fields
+        // Always use the generated branch name. When target_branch is set, the
+        // task runner will attempt to push to it at fetch time and fall back to
+        // this generated name on failure (e.g. non-fast-forward).
         let sanitized_task_type = sanitize_for_branch_name(&task_type);
         let sanitized_name = sanitize_for_branch_name(&name);
-        let generated_branch = format!("tsk/{sanitized_task_type}/{sanitized_name}/{id}");
-        let branch_name = self.target_branch.clone().unwrap_or(generated_branch);
+        let branch_name = format!("tsk/{sanitized_task_type}/{sanitized_name}/{id}");
 
         // Validate parent task if specified and capture it for later use
         let validated_parent = if let Some(ref pid) = self.parent_id {
@@ -631,6 +652,20 @@ impl TaskBuilder {
         Ok(task)
     }
 
+    /// Replaces `{{BASE}}` and `{{HEAD}}` placeholders with their values when set.
+    fn apply_ref_placeholders(&self, content: String) -> String {
+        let content = if let Some(ref base) = self.base_ref {
+            content.replace("{{BASE}}", base)
+        } else {
+            content
+        };
+        if let Some(ref head) = self.head_ref {
+            content.replace("{{HEAD}}", head)
+        } else {
+            content
+        }
+    }
+
     async fn write_instructions_content(
         &self,
         dest_path: &Path,
@@ -681,6 +716,7 @@ impl TaskBuilder {
                     prompt_text.clone()
                 };
 
+                let content = self.apply_ref_placeholders(content);
                 crate::file_system::write_file(dest_path, &content).await?;
             } else {
                 // No prompt provided - use template as-is or create empty file
@@ -715,6 +751,7 @@ impl TaskBuilder {
                     String::new()
                 };
 
+                let initial_content = self.apply_ref_placeholders(initial_content);
                 crate::file_system::write_file(dest_path, &initial_content).await?;
             }
         }
@@ -1017,7 +1054,13 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(task.branch_name, "feature/custom-branch");
+        // branch_name should always be the generated name
+        assert!(
+            task.branch_name.starts_with("tsk/generic/my-task/"),
+            "branch_name should be generated, got: {}",
+            task.branch_name
+        );
+        // target_branch is stored separately
         assert_eq!(
             task.target_branch,
             Some("feature/custom-branch".to_string())
@@ -1958,6 +2001,103 @@ mod tests {
         assert_eq!(
             config.memory_gb, 32.0,
             "Inherited config should have parent's memory_gb"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_base_and_head_ref_replacement() {
+        use crate::test_utils::TestGitRepository;
+
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        let current_dir = test_repo.path().to_path_buf();
+
+        // Create a template that uses {{BASE}} and {{HEAD}}
+        let template_content =
+            "---\ndescription: Review\n---\n# Review\n\nDiff: {{BASE}}..{{HEAD}}\n\n{{PROMPT}}";
+        test_repo
+            .create_file(".tsk/templates/ref-test.md", template_content)
+            .unwrap();
+
+        let ctx = AppContext::builder().build();
+
+        let task = TaskBuilder::new()
+            .repo_root(current_dir)
+            .name("ref-test".to_string())
+            .task_type("ref-test".to_string())
+            .prompt(Some("Fix the bug".to_string()))
+            .base_ref(Some("abc123".to_string()))
+            .head_ref(Some("def456".to_string()))
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        let instructions_path = ctx
+            .tsk_env()
+            .data_dir()
+            .join("tasks")
+            .join(&task.id)
+            .join(&task.instructions_file);
+        let content = crate::file_system::read_file(&instructions_path)
+            .await
+            .unwrap();
+        assert!(
+            content.contains("abc123..def456"),
+            "Should replace {{{{BASE}}}} and {{{{HEAD}}}}, got: {content}"
+        );
+        assert!(
+            content.contains("Fix the bug"),
+            "Should still replace {{{{PROMPT}}}}"
+        );
+        assert!(
+            !content.contains("{{BASE}}"),
+            "{{{{BASE}}}} placeholder should be replaced"
+        );
+        assert!(
+            !content.contains("{{HEAD}}"),
+            "{{{{HEAD}}}} placeholder should be replaced"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_base_and_head_ref_without_prompt() {
+        use crate::test_utils::TestGitRepository;
+
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_commit().unwrap();
+        let current_dir = test_repo.path().to_path_buf();
+
+        // Template without {{PROMPT}} but with {{BASE}} and {{HEAD}}
+        let template_content =
+            "---\ndescription: Review\n---\n# Review\n\nDiff: {{BASE}}..{{HEAD}}";
+        test_repo
+            .create_file(".tsk/templates/nopr-test.md", template_content)
+            .unwrap();
+
+        let ctx = AppContext::builder().build();
+
+        let task = TaskBuilder::new()
+            .repo_root(current_dir)
+            .name("nopr-test".to_string())
+            .task_type("nopr-test".to_string())
+            .base_ref(Some("aaa111".to_string()))
+            .head_ref(Some("bbb222".to_string()))
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        let instructions_path = ctx
+            .tsk_env()
+            .data_dir()
+            .join("tasks")
+            .join(&task.id)
+            .join(&task.instructions_file);
+        let content = crate::file_system::read_file(&instructions_path)
+            .await
+            .unwrap();
+        assert!(
+            content.contains("aaa111..bbb222"),
+            "Should replace refs even without prompt, got: {content}"
         );
     }
 }

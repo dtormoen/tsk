@@ -279,7 +279,7 @@ pub struct SharedConfig {
     pub squid_conf: Option<String>,
     /// Path to a Squid proxy configuration file
     pub squid_conf_path: Option<String>,
-    /// Command to open review files (placeholders: `{{base}}`, `{{version}}`, `{{review_file}}`)
+    /// Command that prints review feedback to stdout (placeholders: `{{base}}`, `{{version}}`). Falls back to $EDITOR if unset
     pub review_command: Option<String>,
 }
 
@@ -340,7 +340,7 @@ pub struct ResolvedConfig {
     pub env: Vec<EnvVar>,
     /// Resolved Squid proxy configuration content
     pub squid_conf: Option<String>,
-    /// Command to open review files (placeholders: `{{base}}`, `{{version}}`, `{{review_file}}`)
+    /// Command that prints review feedback to stdout (placeholders: `{{base}}`, `{{version}}`). Falls back to $EDITOR if unset
     pub review_command: Option<String>,
 }
 
@@ -1767,7 +1767,7 @@ setup = "RUN pip install numpy"
                 value: "postgres://localhost/db".to_string(),
             }],
             squid_conf: Some("http_port 3128".to_string()),
-            review_command: Some("vim {{review_file}}".to_string()),
+            review_command: Some("my-review-script {{base}} {{version}}".to_string()),
         };
 
         let json = serde_json::to_string(&config).unwrap();
@@ -1797,7 +1797,7 @@ setup = "RUN pip install numpy"
         assert_eq!(deserialized.squid_conf, Some("http_port 3128".to_string()));
         assert_eq!(
             deserialized.review_command,
-            Some("vim {{review_file}}".to_string())
+            Some("my-review-script {{base}} {{version}}".to_string())
         );
     }
 
@@ -2153,13 +2153,13 @@ setup = "RUN pip install numpy"
     fn test_resolve_config_review_command() {
         let config = TskConfig {
             defaults: SharedConfig {
-                review_command: Some("vim {{review_file}}".to_string()),
+                review_command: Some("my-review-script {{base}} {{version}}".to_string()),
                 ..Default::default()
             },
             project: HashMap::from([(
                 "my-project".to_string(),
                 SharedConfig {
-                    review_command: Some("code {{review_file}}".to_string()),
+                    review_command: Some("project-review {{base}}".to_string()),
                     ..Default::default()
                 },
             )]),
@@ -2170,19 +2170,19 @@ setup = "RUN pip install numpy"
         let resolved_other = config.resolve_config("other-project", None, None);
         assert_eq!(
             resolved_other.review_command,
-            Some("vim {{review_file}}".to_string())
+            Some("my-review-script {{base}} {{version}}".to_string())
         );
 
         // Project-level config overrides defaults
         let project_config = SharedConfig {
-            review_command: Some("nano {{review_file}}".to_string()),
+            review_command: Some("local-review {{base}}".to_string()),
             ..Default::default()
         };
         let resolved_project = config.resolve_config("my-project", Some(&project_config), None);
         // User [project.<name>] overrides project-level config
         assert_eq!(
             resolved_project.review_command,
-            Some("code {{review_file}}".to_string())
+            Some("project-review {{base}}".to_string())
         );
 
         // None by default

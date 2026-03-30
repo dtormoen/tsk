@@ -283,28 +283,56 @@ impl TaskRunner {
             branch_name,
         )));
         let mut actual_branch_name = branch_name.clone();
-        let fetch_result = self
-            .repo_manager
-            .fetch_changes(
-                repo_path,
-                &branch_name,
-                &task.repo_root,
-                &task.source_commit,
-                task.source_branch.as_deref(),
-                resolved_config.git_town,
-            )
-            .await;
 
-        let fetch_result = match fetch_result {
-            Ok(result) => Some(result),
-            Err(e) if task.target_branch.is_some() => {
-                // Target branch fetch failed (likely non-fast-forward), try fallback
-                self.fetch_with_fallback_branch(task, repo_path, &resolved_config, &task_logger, &e)
-                    .await
+        // If target_branch is set, try fetching to that branch first.
+        // On failure, fall back to the generated branch_name.
+        let fetch_result = if let Some(ref target) = task.target_branch {
+            match self
+                .try_target_branch_fetch(task, repo_path, target, &resolved_config, &task_logger)
+                .await
+            {
+                Some(result) => Some(result),
+                None => {
+                    // Target branch failed, fall back to generated branch name
+                    match self
+                        .repo_manager
+                        .fetch_changes(
+                            repo_path,
+                            &branch_name,
+                            &task.repo_root,
+                            &task.source_commit,
+                            task.source_branch.as_deref(),
+                            resolved_config.git_town,
+                        )
+                        .await
+                    {
+                        Ok(result) => Some(result),
+                        Err(e) => {
+                            task_logger
+                                .log(LogLine::tsk_warning(format!("Error fetching changes: {e}")));
+                            None
+                        }
+                    }
+                }
             }
-            Err(e) => {
-                task_logger.log(LogLine::tsk_warning(format!("Error fetching changes: {e}")));
-                None
+        } else {
+            match self
+                .repo_manager
+                .fetch_changes(
+                    repo_path,
+                    &branch_name,
+                    &task.repo_root,
+                    &task.source_commit,
+                    task.source_branch.as_deref(),
+                    resolved_config.git_town,
+                )
+                .await
+            {
+                Ok(result) => Some(result),
+                Err(e) => {
+                    task_logger.log(LogLine::tsk_warning(format!("Error fetching changes: {e}")));
+                    None
+                }
             }
         };
 
@@ -337,37 +365,35 @@ impl TaskRunner {
         }
     }
 
-    /// Attempt to fetch task changes using the auto-generated fallback branch name.
-    /// Called when the initial fetch with a target_branch fails (e.g. non-fast-forward).
-    async fn fetch_with_fallback_branch(
+    /// Attempt to fetch task changes using the target branch name.
+    /// Creates the target branch in the repo copy from HEAD, then fetches.
+    /// Returns None if the target branch fetch fails (caller should fall back
+    /// to the generated branch name).
+    async fn try_target_branch_fetch(
         &self,
         task: &Task,
         repo_path: &Path,
+        target_branch: &str,
         resolved_config: &ResolvedConfig,
         task_logger: &TaskLogger,
-        original_error: &str,
     ) -> Option<FetchResult> {
-        let fallback_name = task.generated_branch_name();
-        task_logger.log(LogLine::tsk_warning(format!(
-            "Target branch failed ({original_error}), falling back to {fallback_name}"
-        )));
-
         let commit = match crate::git_operations::get_current_commit(repo_path).await {
             Ok(c) => c,
             Err(e) => {
                 task_logger.log(LogLine::tsk_warning(format!(
-                    "Failed to get current commit for fallback: {e}"
+                    "Failed to get current commit for target branch: {e}"
                 )));
                 return None;
             }
         };
 
         if let Err(e) =
-            crate::git_operations::create_branch_from_commit(repo_path, &fallback_name, &commit)
+            crate::git_operations::create_branch_from_commit(repo_path, target_branch, &commit)
                 .await
         {
             task_logger.log(LogLine::tsk_warning(format!(
-                "Failed to create fallback branch: {e}"
+                "Failed to create target branch '{}': {e}",
+                target_branch
             )));
             return None;
         }
@@ -376,7 +402,7 @@ impl TaskRunner {
             .repo_manager
             .fetch_changes(
                 repo_path,
-                &fallback_name,
+                target_branch,
                 &task.repo_root,
                 &task.source_commit,
                 task.source_branch.as_deref(),
@@ -387,7 +413,8 @@ impl TaskRunner {
             Ok(result) => Some(result),
             Err(e) => {
                 task_logger.log(LogLine::tsk_warning(format!(
-                    "Fallback fetch also failed: {e}"
+                    "Target branch '{}' fetch failed ({}), falling back to {}",
+                    target_branch, e, task.branch_name
                 )));
                 None
             }

@@ -725,7 +725,7 @@ mod tests {
         let task = Task {
             id: "target1234".to_string(),
             repo_root: tsk_env.data_dir().to_path_buf(),
-            branch_name: "feature/my-branch".to_string(),
+            branch_name: "tsk/feat/my-task/target1234".to_string(),
             target_branch: Some("feature/my-branch".to_string()),
             copied_repo_path: Some(tsk_env.data_dir().to_path_buf()),
             ..Task::test_default()
@@ -737,7 +737,7 @@ mod tests {
             retrieved.target_branch,
             Some("feature/my-branch".to_string())
         );
-        assert_eq!(retrieved.branch_name, "feature/my-branch");
+        assert_eq!(retrieved.branch_name, "tsk/feat/my-task/target1234");
     }
 
     #[tokio::test]

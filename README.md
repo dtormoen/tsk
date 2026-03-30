@@ -273,7 +273,7 @@ privileged = false           # Run containers in privileged mode (disables secur
 sudo = false                 # Enable passwordless sudo inside containers
 devices = []                 # Device paths to expose (e.g., ["/dev/video0"])
 git_town = false             # Enable git-town parent branch tracking
-# review_command = "vim {{review_file}}"  # Command for `tsk review` to collect feedback (placeholders: {{base}}, {{version}}, {{review_file}}). Falls back to $EDITOR if unset
+# review_command = "my-review-script {{base}} {{version}}"  # Command for `tsk review` to collect feedback via stdout (placeholders: {{base}}, {{version}}). Falls back to $EDITOR if unset
 
 # Project-specific overrides (matches directory name)
 [project.my-go-service]
@@ -366,6 +366,8 @@ I'm working on improving this part of `tsk` to be as seamless and easy to set up
 ### Creating Templates
 
 Templates are simply markdown files that get passed to agents. `tsk` additionally adds a convenience `{{PROMPT}}` placeholder that will get replaced by anything you pipe into tsk or pass in via the `-p/--prompt` flag, or by using `--prompt-file <path>` to read from a file. The legacy `{{DESCRIPTION}}` placeholder is still supported but deprecated.
+
+Review templates can also use `{{BASE}}` and `{{HEAD}}` placeholders. When `tsk review` creates a task, these are replaced with the diff base and branch HEAD commit SHAs respectively (e.g., `git diff {{BASE}}..{{HEAD}}`).
 
 To inspect an existing template, run `tsk template show <template>`. To customize a built-in template, run `tsk template edit <template>` — `tsk` will copy it to `~/.config/tsk/templates/` and open it in your `$EDITOR`.
 

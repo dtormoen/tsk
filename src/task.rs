@@ -175,16 +175,6 @@ impl Task {
             resolved_config,
         }
     }
-
-    /// Returns the auto-generated branch name for this task.
-    ///
-    /// This is the standard `tsk/{type}/{name}/{id}` format, computed
-    /// deterministically from existing task fields.
-    pub fn generated_branch_name(&self) -> String {
-        let sanitized_type = crate::utils::sanitize_for_branch_name(&self.task_type);
-        let sanitized_name = crate::utils::sanitize_for_branch_name(&self.name);
-        format!("tsk/{sanitized_type}/{sanitized_name}/{}", self.id)
-    }
 }
 
 // TaskBuilder has been moved to task_builder.rs
@@ -296,12 +286,6 @@ mod tests {
         assert_eq!(task.parent_ids, vec!["parent-id"]);
         assert!(task.copied_repo_path.is_none());
         assert!(task.source_branch.is_none());
-    }
-
-    #[test]
-    fn test_generated_branch_name() {
-        let task = Task::test_default();
-        assert_eq!(task.generated_branch_name(), "tsk/feat/test-task/test-id");
     }
 
     #[test]

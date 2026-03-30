@@ -166,7 +166,9 @@ impl ReviewCommand {
             .parent_id(Some(parent_id))
             .skip_parent_repo_deferral(true)
             .target_branch(Some(task.branch_name.clone()))
-            .source_commit_override(Some(branch_head));
+            .source_commit_override(Some(branch_head.clone()))
+            .base_ref(Some(base_commit.clone()))
+            .head_ref(Some(branch_head));
 
         let review_task = builder.build(ctx).await?;
 
@@ -239,7 +241,9 @@ impl ReviewCommand {
             .network_isolation(!self.no_network_isolation)
             .dind(if self.dind { Some(true) } else { None })
             .target_branch(Some(current_branch))
-            .source_commit_override(Some(head_sha));
+            .source_commit_override(Some(head_sha.clone()))
+            .base_ref(Some(base_sha.clone()))
+            .head_ref(Some(head_sha));
 
         let storage = ctx.task_storage();
         let review_task = builder.build(ctx).await?;
@@ -306,31 +310,33 @@ impl ReviewCommand {
         base: &str,
         version: &str,
     ) -> Result<String, Box<dyn Error>> {
-        let temp_dir = tempfile::tempdir()?;
-        let review_file = temp_dir.path().join("review.md");
-        std::fs::write(&review_file, "")?;
-
-        let review_file_str = review_file.to_string_lossy().to_string();
-
         let resolved = Self::resolve_config(ctx, repo_root).await;
 
         if let Some(ref review_command) = resolved.review_command {
             let cmd = review_command
                 .replace("{{base}}", base)
-                .replace("{{version}}", version)
-                .replace("{{review_file}}", &review_file_str);
+                .replace("{{version}}", version);
 
-            let status = std::process::Command::new("sh")
+            let output = std::process::Command::new("sh")
                 .arg("-c")
                 .arg(&cmd)
-                .status()
+                .output()
                 .map_err(|e| format!("Failed to execute review command: {e}"))?;
 
-            if !status.success() {
-                return Err(format!("Review command exited with status: {}", status).into());
+            if !output.status.success() {
+                return Err(format!("Review command exited with status: {}", output.status).into());
             }
+
+            let content = String::from_utf8(output.stdout)
+                .map_err(|e| format!("Review command output is not valid UTF-8: {e}"))?;
+            Ok(content)
         } else {
-            // Use $EDITOR
+            // Use $EDITOR with a temp file
+            let temp_dir = tempfile::tempdir()?;
+            let review_file = temp_dir.path().join("review.md");
+            std::fs::write(&review_file, "")?;
+            let review_file_str = review_file.to_string_lossy().to_string();
+
             let editor = std::env::var("EDITOR")
                 .map_err(|_| "No review_command configured and $EDITOR is not set. Set $EDITOR or configure review_command in tsk.toml.")?;
 
@@ -342,10 +348,10 @@ impl ReviewCommand {
             if !status.success() {
                 return Err(format!("Editor exited with status: {}", status).into());
             }
-        }
 
-        let content = std::fs::read_to_string(&review_file)?;
-        Ok(content)
+            let content = std::fs::read_to_string(&review_file)?;
+            Ok(content)
+        }
     }
 }
 
