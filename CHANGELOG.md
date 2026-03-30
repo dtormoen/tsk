@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.7](https://github.com/dtormoen/tsk-tsk/compare/v0.10.6...v0.10.7) - 2026-03-30
+
+### Added
+
+- add privileged mode, sudo, and device passthrough for containers
+
 ## [0.10.6](https://github.com/dtormoen/tsk-tsk/compare/v0.10.5...v0.10.6) - 2026-03-22
 
 Many Fix/improvements for using `tsk` on Ubuntu/Linux. Fixes container image build
