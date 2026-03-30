@@ -436,7 +436,10 @@ mod tests {
         );
         tsk_env.ensure_directories().unwrap();
 
-        let ctx = AppContext::builder().with_tsk_env(tsk_env).build();
+        let ctx = AppContext::builder()
+            .with_tsk_env(tsk_env)
+            .with_interactive(true)
+            .build();
 
         let cmd = AddCommand {
             task_args: TaskArgs {

@@ -258,6 +258,10 @@ impl TaskBuilder {
             return Err("Either prompt or prompt file must be provided, or use edit mode".into());
         }
 
+        if self.edit && !ctx.interactive() {
+            return Err("--edit requires an interactive terminal (stdin is not a TTY)".into());
+        }
+
         // Auto-detect project name first (needed for project config lookup)
         let project = match self.project {
             Some(ref p) => p.clone(),
@@ -1546,6 +1550,35 @@ mod tests {
         // Clean up worktree before temp dirs are dropped
         std::fs::remove_dir_all(&worktree_dir).ok();
         main_repo.run_git_command(&["worktree", "prune"]).ok();
+    }
+
+    #[tokio::test]
+    async fn test_edit_requires_interactive_terminal() {
+        use crate::test_utils::TestGitRepository;
+
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_main_branch().unwrap();
+        let repo_path = test_repo.path().to_path_buf();
+
+        let ctx = AppContext::builder().with_interactive(false).build();
+
+        let result = TaskBuilder::new()
+            .repo_root(repo_path)
+            .name("edit-test".to_string())
+            .task_type("generic".to_string())
+            .edit(true)
+            .build(&ctx)
+            .await;
+
+        assert!(
+            result.is_err(),
+            "--edit should fail in non-interactive mode"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("interactive terminal"),
+            "Error should mention interactive terminal, got: {err_msg}"
+        );
     }
 
     #[tokio::test]
