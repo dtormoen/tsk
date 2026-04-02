@@ -120,11 +120,15 @@ tsk add -t feat -n greeting -p "Add a silly robot greeting to every tsk command"
 # Now there should be two running tasks
 tsk list
 
-# Wait for the tasks to finish. After they complete, look at the two new branches
+# Wait for a specific task to finish (blocks until complete)
+tsk wait <taskid>
+
+# Or look at all the branches after tasks complete
 git branch --format="%(refname:short) - %(subject) (%(committerdate:relative))"
 ```
 
 After you try this command out, try these next steps:
+- Use `tsk add --wait` to queue a task and block until it completes (useful in scripts and CI)
 - Add tasks from multiple repositories in parallel
 - Start up multiple agents at once
   - Adding `--agent codex` will use `codex` to perform the task
@@ -182,8 +186,9 @@ Create, manage, and monitor tasks assigned to AI agents.
 
 - `tsk run` - Execute a task immediately (Ctrl+C marks task as CANCELLED)
 - `tsk shell` - Start a sandbox container with an interactive shell
-- `tsk add` - Queue a task (supports `--parent <taskid>` for task chaining)
+- `tsk add` - Queue a task (supports `--parent <taskid>` for task chaining, `--wait` to block until completion)
 - `tsk list` - View task status and branches
+- `tsk wait <task-id>...` - Block until one or more tasks complete
 - `tsk cancel <task-id>...` - Cancel one or more running or queued tasks
 - `tsk clean` - Clean up completed tasks
 - `tsk delete <task-id>...` - Delete one or more tasks

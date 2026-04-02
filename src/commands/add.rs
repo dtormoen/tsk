@@ -8,6 +8,7 @@ use std::path::PathBuf;
 pub struct AddCommand {
     pub task_args: TaskArgs,
     pub parent_id: Option<String>,
+    pub wait: bool,
 }
 
 #[async_trait]
@@ -133,6 +134,11 @@ impl Command for AddCommand {
             }
         }
 
+        if self.wait {
+            let task_ids: Vec<String> = created_tasks.iter().map(|t| t.id.clone()).collect();
+            return crate::commands::wait::wait_for_tasks(ctx, &task_ids).await;
+        }
+
         Ok(())
     }
 }
@@ -155,6 +161,7 @@ mod tests {
                 ..Default::default()
             },
             parent_id: None,
+            wait: false,
         };
 
         let ctx = create_test_context();
@@ -178,6 +185,7 @@ mod tests {
                 ..Default::default()
             },
             parent_id: None,
+            wait: false,
         };
 
         let ctx = create_test_context();
@@ -212,6 +220,7 @@ mod tests {
                 ..Default::default()
             },
             parent_id: None,
+            wait: false,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -244,6 +253,7 @@ mod tests {
                 ..Default::default()
             },
             parent_id: None,
+            wait: false,
         };
 
         let current_dir = std::env::current_dir().unwrap();
@@ -281,6 +291,7 @@ mod tests {
                 ..Default::default()
             },
             parent_id: None,
+            wait: false,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -317,6 +328,7 @@ mod tests {
                 ..Default::default()
             },
             parent_id: None,
+            wait: false,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -346,6 +358,7 @@ mod tests {
                 ..Default::default()
             },
             parent_id: None,
+            wait: false,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -381,6 +394,7 @@ mod tests {
                 ..Default::default()
             },
             parent_id: None,
+            wait: false,
         };
 
         let result = cmd.execute(&ctx).await;
@@ -452,6 +466,7 @@ mod tests {
                 ..Default::default()
             },
             parent_id: None,
+            wait: false,
         };
 
         let result = cmd.execute(&ctx).await;

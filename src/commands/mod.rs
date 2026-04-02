@@ -14,6 +14,7 @@ pub mod server;
 pub mod shell;
 pub mod task_args;
 pub mod template;
+pub mod wait;
 
 pub use add::AddCommand;
 pub use cancel::CancelCommand;
@@ -23,6 +24,7 @@ pub use list::ListCommand;
 pub use retry::RetryCommand;
 pub use run::RunCommand;
 pub use shell::ShellCommand;
+pub use wait::WaitCommand;
 
 #[async_trait]
 pub trait Command: Send + Sync {

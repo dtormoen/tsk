@@ -126,6 +126,7 @@ mod tests {
                 ..Default::default()
             },
             parent_id: None,
+            wait: false,
         };
 
         // Should fail without piped input
@@ -142,6 +143,7 @@ mod tests {
                 ..Default::default()
             },
             parent_id: None,
+            wait: false,
         };
 
         let result = cmd_with_desc.execute(&ctx).await;

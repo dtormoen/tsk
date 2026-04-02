@@ -26,7 +26,7 @@ mod utils;
 
 use commands::{
     AddCommand, CancelCommand, CleanCommand, Command, DeleteCommand, ListCommand, RetryCommand,
-    RunCommand, ShellCommand,
+    RunCommand, ShellCommand, WaitCommand,
     docker::DockerBuildCommand,
     server::{ServerStartCommand, ServerStopCommand},
     task_args::{self, TaskArgs},
@@ -269,11 +269,21 @@ enum Commands {
         /// Expose a host device to the container (can be repeated, e.g. --device /dev/video0)
         #[arg(long = "device")]
         devices: Vec<String>,
+
+        /// Block until the queued task completes
+        #[arg(short, long)]
+        wait: bool,
     },
     /// Start or stop the TSK server daemon that runs queued tasks in containers
     Server(ServerArgs),
     /// List all queued tasks
     List,
+    /// Block until one or more tasks complete
+    Wait {
+        /// Task IDs to wait for
+        #[arg(required = true)]
+        task_ids: Vec<String>,
+    },
     /// Cancel one or more running or queued tasks by ID
     Cancel {
         #[command(flatten)]
@@ -360,9 +370,11 @@ impl Commands {
                 DockerCommands::Build { engine, .. } => engine.container_engine.clone(),
             },
             Commands::Cancel { engine, .. } => engine.container_engine.clone(),
-            Commands::List | Commands::Clean | Commands::Delete { .. } | Commands::Template(_) => {
-                None
-            }
+            Commands::List
+            | Commands::Clean
+            | Commands::Delete { .. }
+            | Commands::Template(_)
+            | Commands::Wait { .. } => None,
         }
     }
 }
@@ -491,6 +503,7 @@ async fn main() {
             privileged,
             sudo,
             devices,
+            wait,
         } => {
             let prompt = task_args::resolve_deprecation(prompt, description).unwrap_or_else(|e| {
                 eprintln!("Error: {e}");
@@ -514,6 +527,7 @@ async fn main() {
                     devices,
                 },
                 parent_id,
+                wait,
             })
         }
         Commands::Run {
@@ -609,6 +623,7 @@ async fn main() {
         Commands::List => Box::new(ListCommand),
         Commands::Clean => Box::new(CleanCommand),
         Commands::Delete { task_ids } => Box::new(DeleteCommand { task_ids }),
+        Commands::Wait { task_ids } => Box::new(WaitCommand { task_ids }),
         Commands::Retry {
             engine: _,
             task_ids,
