@@ -45,6 +45,7 @@ pub struct TaskBuilder {
     sudo: Option<bool>,
     devices: Vec<String>,
     repo_copy_source: Option<PathBuf>,
+    branch: Option<String>,
 }
 
 impl TaskBuilder {
@@ -70,6 +71,7 @@ impl TaskBuilder {
             sudo: None,
             devices: Vec::new(),
             repo_copy_source: None,
+            branch: None,
         }
     }
 
@@ -223,6 +225,13 @@ impl TaskBuilder {
         self
     }
 
+    /// Sets a specific branch to clone from instead of the current working tree.
+    /// When set, the task copies only the committed state at the branch's HEAD.
+    pub fn branch(mut self, branch: Option<String>) -> Self {
+        self.branch = branch;
+        self
+    }
+
     /// Builds the task, creating all necessary files and directories
     pub async fn build(self, ctx: &AppContext) -> Result<Task, Box<dyn Error>> {
         let repo_root = self
@@ -304,8 +313,13 @@ impl TaskBuilder {
             }
         }
 
-        // Worktrees and parent-retry both set repo_copy_source with a different HEAD than repo_root
-        let source_info_path = self.repo_copy_source.as_ref().unwrap_or(&repo_root).clone();
+        // When --branch is specified, always use repo_root (ignore worktree).
+        // Worktrees and parent-retry both set repo_copy_source with a different HEAD than repo_root.
+        let source_info_path = if self.branch.is_some() {
+            repo_root.clone()
+        } else {
+            self.repo_copy_source.as_ref().unwrap_or(&repo_root).clone()
+        };
 
         // Check if repository has any commits
         // This must happen before we try to capture source_commit
@@ -383,20 +397,28 @@ impl TaskBuilder {
                 .await?
         };
 
-        // Capture the current commit SHA
-        let source_commit = match git_operations::get_current_commit(&source_info_path).await {
-            Ok(commit) => commit,
-            Err(e) => {
-                return Err(format!("Failed to get current commit for task '{name}': {e}").into());
-            }
+        // Capture the source commit SHA and branch.
+        // When --branch is specified, resolve from the named branch instead of HEAD.
+        let (source_commit, source_branch) = if let Some(ref branch) = self.branch {
+            let commit = git_operations::resolve_branch_commit(&repo_root, branch)
+                .await
+                .map_err(|e| -> Box<dyn Error> { e.into() })?;
+            (commit, Some(branch.clone()))
+        } else {
+            let source_commit = match git_operations::get_current_commit(&source_info_path).await {
+                Ok(commit) => commit,
+                Err(e) => {
+                    return Err(
+                        format!("Failed to get current commit for task '{name}': {e}").into(),
+                    );
+                }
+            };
+            let source_branch = git_operations::get_current_branch(&source_info_path)
+                .await
+                .ok()
+                .flatten();
+            (source_commit, source_branch)
         };
-
-        // Capture the current branch for git-town parent tracking
-        // Returns None if in detached HEAD state
-        let source_branch = git_operations::get_current_branch(&source_info_path)
-            .await
-            .ok()
-            .flatten();
 
         // Resolve stack: CLI flag > config (project > defaults) > auto-detect > built-in default
         let stack = tsk_config::resolve_stack(
@@ -477,7 +499,16 @@ impl TaskBuilder {
             // Skip repo copy for child tasks - the scheduler will copy from parent task
             None
         } else {
-            let copy_source = self.repo_copy_source.as_ref().unwrap_or(&repo_root);
+            let copy_source = if self.branch.is_some() {
+                &repo_root
+            } else {
+                self.repo_copy_source.as_ref().unwrap_or(&repo_root)
+            };
+            let copy_mode = if self.branch.is_some() {
+                crate::git::CopyMode::CommittedOnly
+            } else {
+                crate::git::CopyMode::WorkingTree
+            };
             let repo_manager = RepoManager::new(ctx);
             let copy_result = repo_manager
                 .copy_repo(
@@ -485,6 +516,7 @@ impl TaskBuilder {
                     copy_source,
                     Some(&source_commit),
                     &branch_name,
+                    copy_mode,
                 )
                 .await
                 .map_err(|e| format!("Failed to copy repository: {e}"))?;
@@ -1578,6 +1610,96 @@ mod tests {
         assert!(
             err_msg.contains("interactive terminal"),
             "Error should mention interactive terminal, got: {err_msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_with_branch() {
+        use crate::test_utils::TestGitRepository;
+
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_main_branch().unwrap();
+        test_repo.create_file("main-file.txt", "content").unwrap();
+        test_repo.stage_all().unwrap();
+        let main_commit = test_repo.commit("Add main file").unwrap();
+
+        // Create a feature branch with a different commit
+        test_repo
+            .run_git_command(&["checkout", "-b", "feature-branch"])
+            .unwrap();
+        test_repo
+            .create_file("feature-file.txt", "feature")
+            .unwrap();
+        test_repo.stage_all().unwrap();
+        test_repo.commit("Add feature file").unwrap();
+
+        // Go back to main
+        test_repo.run_git_command(&["checkout", "main"]).unwrap();
+
+        // Create uncommitted changes on main that should NOT appear in --branch copy
+        test_repo
+            .create_file("dirty-file.txt", "uncommitted")
+            .unwrap();
+
+        let ctx = AppContext::builder().build();
+
+        // Build task from feature-branch while on main
+        let task = TaskBuilder::new()
+            .repo_root(test_repo.path().to_path_buf())
+            .name("branch-test".to_string())
+            .prompt(Some("Test".to_string()))
+            .branch(Some("feature-branch".to_string()))
+            .build(&ctx)
+            .await
+            .unwrap();
+
+        assert_eq!(task.source_branch, Some("feature-branch".to_string()));
+        assert_ne!(
+            task.source_commit, main_commit,
+            "Should use feature-branch commit, not main"
+        );
+
+        // Verify the copied repo has the feature file
+        let task_dir = ctx.tsk_env().task_dir(&task.id);
+        let copied_repo = task_dir.join("repo");
+        assert!(
+            copied_repo.join("feature-file.txt").exists(),
+            "Should have feature-branch files"
+        );
+        assert!(
+            copied_repo.join("main-file.txt").exists(),
+            "Should have main-file.txt too"
+        );
+
+        // Verify uncommitted working tree changes are NOT included
+        assert!(
+            !copied_repo.join("dirty-file.txt").exists(),
+            "Uncommitted working tree changes should not be included with --branch"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_task_builder_with_invalid_branch() {
+        use crate::test_utils::TestGitRepository;
+
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_main_branch().unwrap();
+
+        let ctx = AppContext::builder().build();
+
+        let result = TaskBuilder::new()
+            .repo_root(test_repo.path().to_path_buf())
+            .name("bad-branch".to_string())
+            .prompt(Some("Test".to_string()))
+            .branch(Some("nonexistent-branch".to_string()))
+            .build(&ctx)
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("not found"),
+            "Should mention branch not found: {err}"
         );
     }
 

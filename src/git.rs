@@ -21,6 +21,14 @@ pub struct CopyResult {
     pub warnings: Vec<String>,
 }
 
+/// Controls how a repository is copied for a task.
+pub enum CopyMode {
+    /// Copy the working tree state including uncommitted changes (default behavior).
+    WorkingTree,
+    /// Use only the committed state at a specific branch/commit.
+    CommittedOnly,
+}
+
 /// Information about a git submodule parsed from .gitmodules
 #[derive(Debug, Clone)]
 struct SubmoduleInfo {
@@ -103,6 +111,7 @@ impl RepoManager {
         repo_root: &Path,
         source_commit: Option<&str>,
         branch_name: &str,
+        copy_mode: CopyMode,
     ) -> Result<CopyResult, String> {
         // Use the task ID directly for the directory name
         let task_dir_name = task_id;
@@ -126,11 +135,15 @@ impl RepoManager {
         // Use the provided repository root
         let current_dir = repo_root.to_path_buf();
 
-        // Get list of all files that should be copied:
+        // Get list of all files that should be copied (only needed for WorkingTree mode):
         // 1. All tracked files (from working directory, including unstaged changes)
         // 2. All staged files (including newly added files in the index)
         // 3. All untracked files (not ignored)
-        let all_files_to_copy = git_operations::get_all_non_ignored_files(&current_dir).await?;
+        let all_files_to_copy = if matches!(copy_mode, CopyMode::WorkingTree) {
+            git_operations::get_all_non_ignored_files(&current_dir).await?
+        } else {
+            Vec::new()
+        };
 
         // Clone repository with optimized pack files (no hardlinks)
         // This creates an efficient repository copy with 1-2 pack files instead of
@@ -217,7 +230,8 @@ impl RepoManager {
 
         // Overlay all non-ignored files from the source working directory
         // This happens AFTER branch creation to preserve unstaged changes over the cloned state
-        for file_path in all_files_to_copy {
+        // Skipped in CommittedOnly mode since only committed state is needed
+        for file_path in &all_files_to_copy {
             // Remove trailing slash if present (git adds it for directories)
             let file_path_str = file_path.to_string_lossy();
             let file_path_clean = if let Some(stripped) = file_path_str.strip_suffix('/') {
@@ -371,32 +385,34 @@ impl RepoManager {
             }
         }
 
-        // Renormalize files to fix LFS index stat cache after overlay
-        if repo_uses_lfs
-            && git_lfs_available
-            && let Err(e) = git_operations::renormalize(&repo_path).await
-        {
-            warnings.push(format!(
-                "Failed to renormalize LFS files: {e}. LFS files may appear modified in git status."
-            ));
-        }
-
-        // Copy .tsk directory if it exists (for project-specific Docker configurations)
-        // Remove existing .tsk if present (from clone) to ensure overlay
-        let tsk_src = current_dir.join(".tsk");
-        let tsk_dst = repo_path.join(".tsk");
-        if crate::file_system::exists(&tsk_src)
-            .await
-            .map_err(|e| format!("Failed to check if .tsk exists: {e}"))?
-        {
-            if tsk_dst.exists() {
-                tokio::fs::remove_dir_all(&tsk_dst)
-                    .await
-                    .map_err(|e| format!("Failed to remove existing .tsk directory: {e}"))?;
+        if matches!(copy_mode, CopyMode::WorkingTree) {
+            // Renormalize files to fix LFS index stat cache after overlay
+            if repo_uses_lfs
+                && git_lfs_available
+                && let Err(e) = git_operations::renormalize(&repo_path).await
+            {
+                warnings.push(format!(
+                    "Failed to renormalize LFS files: {e}. LFS files may appear modified in git status."
+                ));
             }
-            crate::file_system::copy_dir(&tsk_src, &tsk_dst)
+
+            // Copy .tsk directory if it exists (for project-specific Docker configurations)
+            // Remove existing .tsk if present (from clone) to ensure overlay
+            let tsk_src = current_dir.join(".tsk");
+            let tsk_dst = repo_path.join(".tsk");
+            if crate::file_system::exists(&tsk_src)
                 .await
-                .map_err(|e| format!("Failed to copy .tsk directory: {e}"))?;
+                .map_err(|e| format!("Failed to check if .tsk exists: {e}"))?
+            {
+                if tsk_dst.exists() {
+                    tokio::fs::remove_dir_all(&tsk_dst)
+                        .await
+                        .map_err(|e| format!("Failed to remove existing .tsk directory: {e}"))?;
+                }
+                crate::file_system::copy_dir(&tsk_src, &tsk_dst)
+                    .await
+                    .map_err(|e| format!("Failed to copy .tsk directory: {e}"))?;
+            }
         }
 
         Ok(CopyResult {
@@ -1163,6 +1179,7 @@ mod tests {
                 non_git_repo.path(),
                 None,
                 "tsk/test/test-task/abcd1234",
+                CopyMode::WorkingTree,
             )
             .await;
 
@@ -1471,7 +1488,13 @@ mod tests {
         let task_id = "efgh5678";
         let branch_name = "tsk/test/copy-repo-test/efgh5678";
         let result = manager
-            .copy_repo(task_id, test_repo.path(), Some(&first_commit), branch_name)
+            .copy_repo(
+                task_id,
+                test_repo.path(),
+                Some(&first_commit),
+                branch_name,
+                CopyMode::WorkingTree,
+            )
             .await;
 
         assert!(result.is_ok());
@@ -1528,7 +1551,13 @@ mod tests {
         let task_id = "ijkl9012";
         let branch_name = "tsk/test/copy-repo-head/ijkl9012";
         let result = manager
-            .copy_repo(task_id, test_repo.path(), None, branch_name)
+            .copy_repo(
+                task_id,
+                test_repo.path(),
+                None,
+                branch_name,
+                CopyMode::WorkingTree,
+            )
             .await;
 
         assert!(result.is_ok());
@@ -1558,7 +1587,13 @@ mod tests {
         let task_id = "mnop3456";
         let branch_name = "tsk/test/tracked-untracked/mnop3456";
         let result = manager
-            .copy_repo(task_id, test_repo.path(), None, branch_name)
+            .copy_repo(
+                task_id,
+                test_repo.path(),
+                None,
+                branch_name,
+                CopyMode::WorkingTree,
+            )
             .await;
 
         assert!(result.is_ok());
@@ -1686,7 +1721,13 @@ mod tests {
         let task_id = "symlink123";
         let branch_name = "tsk/test/symlinks/symlink123";
         let result = manager
-            .copy_repo(task_id, test_repo.path(), None, branch_name)
+            .copy_repo(
+                task_id,
+                test_repo.path(),
+                None,
+                branch_name,
+                CopyMode::WorkingTree,
+            )
             .await;
 
         assert!(
@@ -1811,7 +1852,13 @@ mod tests {
         let task_id = "qrst7890";
         let branch_name = "tsk/test/tsk-directory/qrst7890";
         let result = manager
-            .copy_repo(task_id, test_repo.path(), None, branch_name)
+            .copy_repo(
+                task_id,
+                test_repo.path(),
+                None,
+                branch_name,
+                CopyMode::WorkingTree,
+            )
             .await;
 
         assert!(result.is_ok());
@@ -1873,7 +1920,13 @@ mod tests {
         let task_id = "unstaged123";
         let branch_name = "tsk/test/unstaged-changes/unstaged123";
         let result = manager
-            .copy_repo(task_id, test_repo.path(), None, branch_name)
+            .copy_repo(
+                task_id,
+                test_repo.path(),
+                None,
+                branch_name,
+                CopyMode::WorkingTree,
+            )
             .await;
 
         assert!(result.is_ok());
@@ -1925,7 +1978,13 @@ mod tests {
         let task_id = "commit123";
         let branch_name = "tsk/test/from-commit-no-changes/commit123";
         let result = manager
-            .copy_repo(task_id, main_repo.path(), Some(&first_commit), branch_name)
+            .copy_repo(
+                task_id,
+                main_repo.path(),
+                Some(&first_commit),
+                branch_name,
+                CopyMode::WorkingTree,
+            )
             .await;
 
         assert!(result.is_ok(), "Failed to copy repo: {:?}", result);
@@ -2022,7 +2081,13 @@ mod tests {
         let task_id = "submod123";
         let branch_name = "tsk/test/submodules/submod123";
         let result = manager
-            .copy_repo(task_id, main_repo.path(), None, branch_name)
+            .copy_repo(
+                task_id,
+                main_repo.path(),
+                None,
+                branch_name,
+                CopyMode::WorkingTree,
+            )
             .await;
 
         assert!(result.is_ok(), "Copy should succeed: {:?}", result);
@@ -2139,7 +2204,13 @@ mod tests {
         let task_id = "nested123";
         let branch_name = "tsk/test/nested-submodules/nested123";
         let result = manager
-            .copy_repo(task_id, main_repo.path(), None, branch_name)
+            .copy_repo(
+                task_id,
+                main_repo.path(),
+                None,
+                branch_name,
+                CopyMode::WorkingTree,
+            )
             .await;
 
         assert!(result.is_ok(), "Copy should succeed: {:?}", result);
@@ -2205,7 +2276,13 @@ mod tests {
         let task_id = "modsubmod";
         let branch_name = "tsk/test/modify-submodule/modsubmod";
         let result = manager
-            .copy_repo(task_id, main_repo.path(), None, branch_name)
+            .copy_repo(
+                task_id,
+                main_repo.path(),
+                None,
+                branch_name,
+                CopyMode::WorkingTree,
+            )
             .await;
 
         assert!(result.is_ok(), "Failed to copy repo: {:?}", result);
@@ -2303,7 +2380,13 @@ mod tests {
         let task_id = "submodvisible";
         let branch_name = "tsk/test/submod-visible/submodvisible";
         let copied_path = manager
-            .copy_repo(task_id, repo_a.path(), None, branch_name)
+            .copy_repo(
+                task_id,
+                repo_a.path(),
+                None,
+                branch_name,
+                CopyMode::WorkingTree,
+            )
             .await
             .expect("Copy should succeed")
             .repo_path;
@@ -2445,7 +2528,13 @@ mod tests {
         let task_id = "uncommittedsub";
         let branch_name = "tsk/test/uncommitted-submodule/uncommittedsub";
         let copied_path = manager
-            .copy_repo(task_id, repo_a.path(), None, branch_name)
+            .copy_repo(
+                task_id,
+                repo_a.path(),
+                None,
+                branch_name,
+                CopyMode::WorkingTree,
+            )
             .await
             .expect("Copy should succeed")
             .repo_path;
@@ -2623,7 +2712,13 @@ mod tests {
         let task_id = "unchanged";
         let branch_name = "tsk/test/unchanged-submod/unchanged";
         let copied_path = manager
-            .copy_repo(task_id, repo_a.path(), None, branch_name)
+            .copy_repo(
+                task_id,
+                repo_a.path(),
+                None,
+                branch_name,
+                CopyMode::WorkingTree,
+            )
             .await
             .expect("Copy should succeed")
             .repo_path;
@@ -2740,6 +2835,7 @@ mod tests {
                 source.path(),
                 Some(&source_commit),
                 branch_name,
+                CopyMode::WorkingTree,
             )
             .await
             .unwrap()
@@ -2825,6 +2921,7 @@ mod tests {
                 source.path(),
                 Some(&source_commit),
                 branch_name,
+                CopyMode::WorkingTree,
             )
             .await
             .unwrap()

@@ -516,6 +516,34 @@ pub async fn clone_local(source_repo_path: &Path, destination_path: &Path) -> Re
     .map_err(|e| format!("Task join error: {e}"))?
 }
 
+/// Resolves a local branch name to its commit SHA.
+///
+/// Validates that the branch exists as a local branch (via `refs/heads/<branch>`)
+/// and returns the commit SHA it points to.
+///
+/// # Errors
+///
+/// Returns an error if the branch does not exist locally, with a hint
+/// about creating a local tracking branch.
+pub async fn resolve_branch_commit(repo_path: &Path, branch: &str) -> Result<String, String> {
+    let ref_name = format!("refs/heads/{branch}");
+    let output = tokio::process::Command::new("git")
+        .args(["rev-parse", "--verify", &ref_name])
+        .current_dir(repo_path)
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run git rev-parse: {e}"))?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(format!(
+            "Branch '{branch}' not found. Make sure it exists as a local branch.\n\
+             To create a local tracking branch: git checkout -b {branch} origin/{branch}"
+        ))
+    }
+}
+
 /// Get the current branch name
 ///
 /// Returns the name of the currently checked out branch, or None if
@@ -864,6 +892,42 @@ mod integration_tests {
             branch.is_none(),
             "Expected None for detached HEAD, got: {:?}",
             branch
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_branch_commit() {
+        let test_repo = TestGitRepository::new().unwrap();
+        test_repo.init_with_main_branch().unwrap();
+        test_repo.create_file("file.txt", "content").unwrap();
+        test_repo.stage_all().unwrap();
+        test_repo.commit("Add file").unwrap();
+
+        // Create a feature branch with an additional commit
+        test_repo
+            .run_git_command(&["checkout", "-b", "feature"])
+            .unwrap();
+        test_repo
+            .create_file("feature.txt", "feature content")
+            .unwrap();
+        test_repo.stage_all().unwrap();
+        let feature_commit = test_repo.commit("Add feature file").unwrap();
+
+        // Go back to main
+        test_repo.run_git_command(&["checkout", "main"]).unwrap();
+
+        // Valid branch should resolve
+        let result = resolve_branch_commit(test_repo.path(), "feature").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), feature_commit);
+
+        // Invalid branch should error
+        let result = resolve_branch_commit(test_repo.path(), "nonexistent").await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("not found"),
+            "Should mention branch not found: {err}"
         );
     }
 }

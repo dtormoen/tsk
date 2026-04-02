@@ -73,6 +73,9 @@ impl Command for ListCommand {
                         } else {
                             task.parent_ids.join(",")
                         },
+                        task.source_branch
+                            .clone()
+                            .unwrap_or_else(|| "-".to_string()),
                         task.agent.clone(),
                         task.branch_name.clone(),
                         task.created_at.format("%Y-%m-%d %H:%M").to_string(),
@@ -81,7 +84,8 @@ impl Command for ListCommand {
                 .collect();
 
             let headers = [
-                "ID", "Name", "Type", "Status", "Duration", "Parent", "Agent", "Branch", "Created",
+                "ID", "Name", "Type", "Status", "Duration", "Parent", "Source", "Agent", "Branch",
+                "Created",
             ];
             print_columns(&headers, &rows);
 

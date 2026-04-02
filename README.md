@@ -92,6 +92,8 @@ Some important parts of the command:
 
 Similar to `tsk shell`, the agent will run in a sandbox so it will not interfere with any ongoing work and will create a new branch in your repository in the background once it is done working.
 
+Add `--branch main` to start from a specific branch's committed state instead of your current working tree. This is useful when you want to launch a task from a different branch without switching to it.
+
 After you try this command out, try out these next steps:
 - Add the `--edit` flag to edit the full prompt that is sent to the agent.
 - Add a custom task type. Use `tsk template list` to see existing task templates and where you can add your own custom tasks.
@@ -184,9 +186,9 @@ Now it's easy to solve GitHub issues with a simple task template. Try this with 
 
 Create, manage, and monitor tasks assigned to AI agents.
 
-- `tsk run` - Execute a task immediately (Ctrl+C marks task as CANCELLED)
-- `tsk shell` - Start a sandbox container with an interactive shell
-- `tsk add` - Queue a task (supports `--parent <taskid>` for task chaining, `--wait` to block until completion)
+- `tsk run` - Execute a task immediately (supports `--branch <branch>` to start from a specific branch's HEAD; Ctrl+C marks task as CANCELLED)
+- `tsk shell` - Start a sandbox container with an interactive shell (supports `--branch <branch>` to start from a specific branch's HEAD)
+- `tsk add` - Queue a task (supports `--parent <taskid>` for task chaining, `--wait` to block until completion, `--branch <branch>` to start from a specific branch's HEAD)
 - `tsk list` - View task status and branches
 - `tsk wait <task-id>...` - Block until one or more tasks complete
 - `tsk cancel <task-id>...` - Cancel one or more running or queued tasks

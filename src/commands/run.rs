@@ -40,8 +40,12 @@ impl Command for RunCommand {
             .await?;
 
         println!(
-            "Running {} ({}, {}, {})",
-            task.id, task.task_type, task.stack, task.agent
+            "Running {} ({}, {}, {}){}",
+            task.id,
+            task.task_type,
+            task.stack,
+            task.agent,
+            args.branch_suffix()
         );
 
         // Update terminal title for the task

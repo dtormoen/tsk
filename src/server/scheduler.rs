@@ -166,6 +166,7 @@ impl TaskScheduler {
                 parent_repo_path,
                 Some(&source_commit),
                 &task.branch_name,
+                crate::git::CopyMode::WorkingTree,
             )
             .await
             .map_err(|e| format!("Failed to copy repo from parent task: {e}"))?;

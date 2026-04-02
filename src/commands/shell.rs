@@ -32,7 +32,13 @@ impl Command for ShellCommand {
             .build(ctx)
             .await?;
 
-        println!("Shell {} ({}, {})", task.id, task.stack, task.agent);
+        println!(
+            "Shell {} ({}, {}){}",
+            task.id,
+            task.stack,
+            task.agent,
+            args.branch_suffix()
+        );
 
         // Update terminal title for the shell session
         ctx.terminal_operations()

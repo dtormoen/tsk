@@ -128,6 +128,10 @@ enum Commands {
         /// Expose a host device to the container (can be repeated, e.g. --device /dev/video0)
         #[arg(long = "device")]
         devices: Vec<String>,
+
+        /// Clone from a specific branch's HEAD instead of the working tree
+        #[arg(long)]
+        branch: Option<String>,
     },
     /// Launch a sandbox container with an agent for interactive use
     Shell {
@@ -198,6 +202,10 @@ enum Commands {
         /// Expose a host device to the container (can be repeated, e.g. --device /dev/video0)
         #[arg(long = "device")]
         devices: Vec<String>,
+
+        /// Clone from a specific branch's HEAD instead of the working tree
+        #[arg(long)]
+        branch: Option<String>,
     },
     /// Queue a task for later execution by the TSK server
     Add {
@@ -273,6 +281,10 @@ enum Commands {
         /// Block until the queued task completes
         #[arg(short, long)]
         wait: bool,
+
+        /// Clone from a specific branch's HEAD instead of the working tree
+        #[arg(long, conflicts_with = "parent_id")]
+        branch: Option<String>,
     },
     /// Start or stop the TSK server daemon that runs queued tasks in containers
     Server(ServerArgs),
@@ -504,6 +516,7 @@ async fn main() {
             sudo,
             devices,
             wait,
+            branch,
         } => {
             let prompt = task_args::resolve_deprecation(prompt, description).unwrap_or_else(|e| {
                 eprintln!("Error: {e}");
@@ -525,6 +538,7 @@ async fn main() {
                     privileged,
                     sudo,
                     devices,
+                    branch,
                 },
                 parent_id,
                 wait,
@@ -547,6 +561,7 @@ async fn main() {
             privileged,
             sudo,
             devices,
+            branch,
         } => {
             let prompt = task_args::resolve_deprecation(prompt, description).unwrap_or_else(|e| {
                 eprintln!("Error: {e}");
@@ -568,6 +583,7 @@ async fn main() {
                     privileged,
                     sudo,
                     devices,
+                    branch,
                 },
                 docker_client_override: None,
             })
@@ -589,6 +605,7 @@ async fn main() {
             privileged,
             sudo,
             devices,
+            branch,
         } => {
             let prompt = task_args::resolve_deprecation(prompt, description).unwrap_or_else(|e| {
                 eprintln!("Error: {e}");
@@ -610,6 +627,7 @@ async fn main() {
                     privileged,
                     sudo,
                     devices,
+                    branch,
                 },
             })
         }

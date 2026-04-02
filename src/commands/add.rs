@@ -110,16 +110,16 @@ impl Command for AddCommand {
                 format!(" parent:{}", task.parent_ids.join(","))
             }
         };
-
         if created_tasks.len() == 1 {
             let task = &created_tasks[0];
             println!(
-                "Queued {} ({}, {}, {}){}",
+                "Queued {} ({}, {}, {}){}{}",
                 task.id,
                 task.task_type,
                 task.stack,
                 task.agent,
-                parent_suffix(task)
+                parent_suffix(task),
+                args.branch_suffix()
             );
         } else {
             let first = &created_tasks[0];
@@ -130,7 +130,13 @@ impl Command for AddCommand {
                 first.stack
             );
             for task in &created_tasks {
-                println!("  {} ({}){}", task.id, task.agent, parent_suffix(task));
+                println!(
+                    "  {} ({}){}{}",
+                    task.id,
+                    task.agent,
+                    parent_suffix(task),
+                    args.branch_suffix()
+                );
             }
         }
 

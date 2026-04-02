@@ -64,7 +64,7 @@ This is the output of `tsk help`
 
 ## How it works
 
-1. `tsk` copies your repository (including uncommitted changes) into an isolated directory
+1. `tsk` copies your repository into an isolated directory (includes uncommitted changes by default, or use `--branch` to start from a specific branch's committed state)
 2. A Docker/Podman container is started with your language stack and agent installed
 3. Network access is restricted to approved API domains via a Squid proxy
 4. The agent executes the task autonomously

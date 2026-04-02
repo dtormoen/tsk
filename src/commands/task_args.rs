@@ -47,12 +47,22 @@ pub struct TaskArgs {
     pub privileged: bool,
     pub sudo: bool,
     pub devices: Vec<String>,
+    pub branch: Option<String>,
 }
 
 impl TaskArgs {
     /// Resolves the task name, defaulting to the task type if not provided.
     pub fn resolved_name(&self) -> String {
         self.name.clone().unwrap_or_else(|| self.r#type.clone())
+    }
+
+    /// Returns a display suffix for the branch flag, e.g. ` from:main`.
+    pub fn branch_suffix(&self) -> String {
+        if let Some(ref b) = self.branch {
+            format!(" from:{b}")
+        } else {
+            String::new()
+        }
     }
 
     /// Parses comma-separated agent string and validates each agent.
@@ -127,5 +137,6 @@ impl TaskArgs {
             .privileged(if self.privileged { Some(true) } else { None })
             .sudo(if self.sudo { Some(true) } else { None })
             .devices(self.devices.clone())
+            .branch(self.branch.clone())
     }
 }
