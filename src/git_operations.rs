@@ -516,6 +516,33 @@ pub async fn clone_local(source_repo_path: &Path, destination_path: &Path) -> Re
     .map_err(|e| format!("Task join error: {e}"))?
 }
 
+/// Initializes and checks out all submodules recursively in a repository.
+///
+/// Runs `git submodule update --init --recursive` with local file protocol enabled,
+/// which is needed because cloned repos have local file:// URLs for submodules.
+pub async fn init_submodules(repo_path: &Path) -> Result<(), String> {
+    let output = tokio::process::Command::new("git")
+        .args([
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "update",
+            "--init",
+            "--recursive",
+        ])
+        .current_dir(repo_path)
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run git submodule update: {e}"))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("git submodule update failed: {stderr}"))
+    }
+}
+
 /// Resolves a local branch name to its commit SHA.
 ///
 /// Validates that the branch exists as a local branch (via `refs/heads/<branch>`)

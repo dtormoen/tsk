@@ -228,6 +228,16 @@ impl RepoManager {
         // are overlaid, they point to valid locations in .git/modules
         warnings.extend(self.fix_submodule_paths(&repo_path).await);
 
+        // In CommittedOnly mode, submodule working trees aren't populated by the file overlay,
+        // so explicitly initialize and check out submodules from the cloned state
+        if matches!(copy_mode, CopyMode::CommittedOnly)
+            && let Err(e) = git_operations::init_submodules(&repo_path).await
+        {
+            warnings.push(format!(
+                "Failed to initialize submodules: {e}. Submodules may not work correctly."
+            ));
+        }
+
         // Overlay all non-ignored files from the source working directory
         // This happens AFTER branch creation to preserve unstaged changes over the cloned state
         // Skipped in CommittedOnly mode since only committed state is needed
@@ -2136,6 +2146,79 @@ mod tests {
         assert!(
             modules_exist,
             ".git/modules should exist after copy with submodule support"
+        );
+    }
+
+    /// Test that copy_repo with CommittedOnly mode properly initializes submodules.
+    /// This is the code path used by --branch flag.
+    #[tokio::test]
+    async fn test_copy_repo_with_submodules_committed_only() {
+        let ctx = AppContext::builder().build();
+
+        // Create a "submodule" repository
+        let submodule_repo = TestGitRepository::new().unwrap();
+        submodule_repo.init().unwrap();
+        submodule_repo
+            .create_file(
+                "lib.rs",
+                "pub fn hello() -> &'static str { \"hello from submodule\" }",
+            )
+            .unwrap();
+        submodule_repo.stage_all().unwrap();
+        submodule_repo.commit("Initial submodule commit").unwrap();
+
+        // Create the main repository with submodule
+        let main_repo = TestGitRepository::new().unwrap();
+        main_repo.init_with_main_branch().unwrap();
+        main_repo
+            .add_submodule(&submodule_repo, "libs/mylib")
+            .unwrap();
+        main_repo.stage_all().unwrap();
+        let commit_sha = main_repo.commit("Add submodule").unwrap();
+
+        // Copy using CommittedOnly mode (the --branch code path)
+        let manager = RepoManager::new(&ctx);
+        let task_id = "submod-committed";
+        let branch_name = "tsk/test/submodules-committed/submod-committed";
+        let result = manager
+            .copy_repo(
+                task_id,
+                main_repo.path(),
+                Some(&commit_sha),
+                branch_name,
+                CopyMode::CommittedOnly,
+            )
+            .await;
+
+        assert!(result.is_ok(), "Copy should succeed: {:?}", result);
+        let copied_path = result.unwrap().repo_path;
+
+        // Submodule files should be checked out
+        assert!(
+            copied_path.join("libs/mylib/lib.rs").exists(),
+            "Submodule files should exist in CommittedOnly copy"
+        );
+
+        // .gitmodules should be present
+        assert!(
+            copied_path.join(".gitmodules").exists(),
+            ".gitmodules should exist in CommittedOnly copy"
+        );
+
+        // Submodule should be a valid git repo
+        let submodule_is_git_repo =
+            git_operations::is_git_repository(&copied_path.join("libs/mylib"))
+                .await
+                .unwrap_or(false);
+        assert!(
+            submodule_is_git_repo,
+            "Submodule should be a valid git repo in CommittedOnly copy"
+        );
+
+        // .git/modules should exist
+        assert!(
+            copied_path.join(".git/modules").exists(),
+            ".git/modules should exist in CommittedOnly copy"
         );
     }
 
