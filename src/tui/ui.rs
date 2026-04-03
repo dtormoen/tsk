@@ -119,9 +119,9 @@ fn render_task_list(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::
         .tasks
         .iter()
         .map(|task| {
-            let (icon, color) = if is_waiting(task) {
+            let (icon, color) = if task.is_waiting() {
                 ("\u{25ce}", Color::DarkGray)
-            } else if task.status == TaskStatus::Queued && task.blocked_reason.is_some() {
+            } else if task.is_blocked() {
                 ("\u{26a0}", Color::LightYellow)
             } else {
                 match task.status {
@@ -445,18 +445,13 @@ pub(super) fn task_display_height(task: &crate::task::Task, tasks: &[crate::task
     }
 }
 
-/// Whether a task is in waiting state (queued child with a parent).
-fn is_waiting(task: &crate::task::Task) -> bool {
-    !task.parent_ids.is_empty() && task.status == TaskStatus::Queued
-}
-
 /// Compute the display status text for a task.
 ///
 /// Returns "WAITING" for queued child tasks, otherwise the uppercase status name.
 pub(super) fn status_text(task: &crate::task::Task) -> &'static str {
-    if is_waiting(task) {
+    if task.is_waiting() {
         "WAITING"
-    } else if task.status == TaskStatus::Queued && task.blocked_reason.is_some() {
+    } else if task.is_blocked() {
         "BLOCKED"
     } else {
         match task.status {
@@ -642,6 +637,7 @@ mod tests {
             name: "waiting-child".to_string(),
             status: TaskStatus::Queued,
             parent_ids: vec!["parent-id".to_string()],
+            copied_repo_path: None,
             branch_name: "tsk/feat/waiting-child/child".to_string(),
             ..Task::test_default()
         }];

@@ -28,9 +28,9 @@ impl Command for ListCommand {
                 .map(|task| {
                     let status = match &task.status {
                         TaskStatus::Queued => {
-                            if !task.parent_ids.is_empty() && task.copied_repo_path.is_none() {
+                            if task.is_waiting() {
                                 "WAITING".to_string()
-                            } else if task.blocked_reason.is_some() {
+                            } else if task.is_blocked() {
                                 "BLOCKED".to_string()
                             } else {
                                 "QUEUED".to_string()
@@ -92,29 +92,11 @@ impl Command for ListCommand {
             print_columns(&headers, &rows);
 
             // Print summary
-            let waiting = tasks
-                .iter()
-                .filter(|t| {
-                    t.status == TaskStatus::Queued
-                        && !t.parent_ids.is_empty()
-                        && t.copied_repo_path.is_none()
-                })
-                .count();
-            let blocked = tasks
-                .iter()
-                .filter(|t| {
-                    t.status == TaskStatus::Queued
-                        && t.blocked_reason.is_some()
-                        && (t.parent_ids.is_empty() || t.copied_repo_path.is_some())
-                })
-                .count();
+            let waiting = tasks.iter().filter(|t| t.is_waiting()).count();
+            let blocked = tasks.iter().filter(|t| t.is_blocked()).count();
             let queued = tasks
                 .iter()
-                .filter(|t| {
-                    t.status == TaskStatus::Queued
-                        && t.blocked_reason.is_none()
-                        && (t.parent_ids.is_empty() || t.copied_repo_path.is_some())
-                })
+                .filter(|t| t.status == TaskStatus::Queued && !t.is_waiting() && !t.is_blocked())
                 .count();
             let running = tasks
                 .iter()

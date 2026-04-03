@@ -124,6 +124,19 @@ pub struct Task {
 }
 
 impl Task {
+    /// Whether this task is waiting for a parent to complete.
+    pub fn is_waiting(&self) -> bool {
+        self.status == TaskStatus::Queued
+            && !self.parent_ids.is_empty()
+            && self.copied_repo_path.is_none()
+    }
+
+    /// Whether this task is blocked (e.g., by a warmup failure).
+    /// A task that is waiting on a parent is not considered blocked.
+    pub fn is_blocked(&self) -> bool {
+        self.status == TaskStatus::Queued && self.blocked_reason.is_some() && !self.is_waiting()
+    }
+
     /// Creates a new Task with all required fields
     #[allow(clippy::too_many_arguments)]
     pub fn new(

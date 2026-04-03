@@ -54,8 +54,13 @@ pub async fn wait_for_tasks(ctx: &AppContext, task_ids: &[String]) -> Result<(),
                     any_failed = true;
                 }
                 TaskStatus::Queued | TaskStatus::Running => {
-                    if let Some(reason) = &task.blocked_reason {
-                        eprintln!("Task {} ({}) is blocked: {}", task.name, task.id, reason);
+                    if task.is_blocked() {
+                        eprintln!(
+                            "Task {} ({}) is blocked: {}",
+                            task.name,
+                            task.id,
+                            task.blocked_reason.as_ref().unwrap()
+                        );
                         any_failed = true;
                     } else {
                         still_pending.push(task_id.clone());

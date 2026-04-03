@@ -562,7 +562,7 @@ impl TaskScheduler {
                     }
 
                     // Check if this is a child task that needs repo preparation
-                    if !task.parent_ids.is_empty() && task.copied_repo_path.is_none() {
+                    if task.is_waiting() {
                         // Find the parent task
                         if let Some(ParentStatus::Ready(parent_task)) =
                             Self::is_parent_ready(&task, &tasks)
