@@ -121,6 +121,8 @@ fn render_task_list(app: &mut TuiApp, frame: &mut Frame, area: ratatui::layout::
         .map(|task| {
             let (icon, color) = if is_waiting(task) {
                 ("\u{25ce}", Color::DarkGray)
+            } else if task.status == TaskStatus::Queued && task.blocked_reason.is_some() {
+                ("\u{26a0}", Color::LightYellow)
             } else {
                 match task.status {
                     TaskStatus::Complete => ("\u{2713}", Color::Green),
@@ -454,6 +456,8 @@ fn is_waiting(task: &crate::task::Task) -> bool {
 pub(super) fn status_text(task: &crate::task::Task) -> &'static str {
     if is_waiting(task) {
         "WAITING"
+    } else if task.status == TaskStatus::Queued && task.blocked_reason.is_some() {
+        "BLOCKED"
     } else {
         match task.status {
             TaskStatus::Complete => "COMPLETE",

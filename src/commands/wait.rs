@@ -54,7 +54,12 @@ pub async fn wait_for_tasks(ctx: &AppContext, task_ids: &[String]) -> Result<(),
                     any_failed = true;
                 }
                 TaskStatus::Queued | TaskStatus::Running => {
-                    still_pending.push(task_id.clone());
+                    if let Some(reason) = &task.blocked_reason {
+                        eprintln!("Task {} ({}) is blocked: {}", task.name, task.id, reason);
+                        any_failed = true;
+                    } else {
+                        still_pending.push(task_id.clone());
+                    }
                 }
             }
         }
@@ -250,6 +255,22 @@ mod tests {
         let ids: Vec<String> = (1..=3).map(|i| format!("wait-multi-ok-{i}")).collect();
         let result = wait_for_tasks(&ctx, &ids).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_wait_blocked_task_exits_with_error() {
+        let ctx = create_test_context();
+        let storage = ctx.task_storage();
+
+        let task = Task {
+            id: "wait-blocked-1".to_string(),
+            blocked_reason: Some("Agent warmup failed: OAuth expired".to_string()),
+            ..Task::test_default()
+        };
+        storage.add_task(task).await.unwrap();
+
+        let result = wait_for_tasks(&ctx, &["wait-blocked-1".to_string()]).await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]

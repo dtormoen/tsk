@@ -548,7 +548,16 @@ impl TaskScheduler {
                 if let Some(mut task) = queued_task {
                     // Proactively check OAuth token validity for Claude tasks
                     if !self.check_oauth_for_task(&task) {
-                        // Token is expired/expiring; task stays queued
+                        // Set blocked reason so wait commands can report it
+                        if let Err(e) = self.storage.set_blocked_reason(
+                            &task.id,
+                            "Agent warmup blocked: Claude OAuth token is expired or expiring soon. Run `claude /login` to refresh.",
+                        ).await {
+                            self.emit(ServerEvent::WarningMessage(format!(
+                                "Failed to set blocked reason for task {}: {e}",
+                                task.id
+                            )));
+                        }
                         continue;
                     }
 
@@ -741,6 +750,20 @@ impl AsyncJob for TaskJob {
                             self.task.id
                         )),
                     );
+
+                    // Store the warmup failure reason so wait commands can report it
+                    if let Err(reason_err) = self
+                        .storage
+                        .set_blocked_reason(&self.task.id, &e.message)
+                        .await
+                    {
+                        crate::tui::events::emit_or_print(
+                            &self.event_sender,
+                            ServerEvent::WarningMessage(format!(
+                                "Failed to set blocked reason: {reason_err}"
+                            )),
+                        );
+                    }
 
                     // Set the wait period
                     let wait_until = Instant::now() + Duration::from_secs(3600); // 1 hour

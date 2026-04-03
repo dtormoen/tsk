@@ -52,6 +52,7 @@ pub fn status_color(status: &str) -> Option<&'static str> {
         "COMPLETE" | "complete" => Some("\x1b[32m"),
         "FAILED" | "failed" => Some("\x1b[31m"),
         "CANCELLED" | "cancelled" => Some("\x1b[35m"),
+        "BLOCKED" | "blocked" => Some("\x1b[33;1m"),
         _ => None,
     }
 }

@@ -79,6 +79,9 @@ pub struct Task {
     pub branch_name: String,
     /// Error message if task failed
     pub error_message: Option<String>,
+    /// Reason this task is blocked (e.g., warmup failure). Set while task stays QUEUED for retry.
+    #[serde(default)]
+    pub blocked_reason: Option<String>,
     /// Git commit SHA from which the task was created
     pub source_commit: String,
     /// Git branch from which the task was created (for git-town parent tracking)
@@ -156,6 +159,7 @@ impl Task {
             completed_at: None,
             branch_name,
             error_message: None,
+            blocked_reason: None,
             source_commit,
             source_branch,
             stack,
@@ -194,6 +198,7 @@ impl Task {
             completed_at: None,
             branch_name: "tsk/feat/test-task/test-id".to_string(),
             error_message: None,
+            blocked_reason: None,
             source_commit: "abc123".to_string(),
             source_branch: Some("main".to_string()),
             stack: "default".to_string(),

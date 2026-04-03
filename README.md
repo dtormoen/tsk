@@ -190,7 +190,7 @@ Create, manage, and monitor tasks assigned to AI agents.
 - `tsk shell` - Start a sandbox container with an interactive shell (supports `--branch <branch>` to start from a specific branch's HEAD)
 - `tsk add` - Queue a task (supports `--parent <taskid>` for task chaining, `--wait` to block until completion, `--branch <branch>` to start from a specific branch's HEAD)
 - `tsk list` - View task status and branches
-- `tsk wait <task-id>...` - Block until one or more tasks complete
+- `tsk wait <task-id>...` - Block until one or more tasks complete (exits non-zero if any task failed, was cancelled, or is blocked by a warmup error)
 - `tsk cancel <task-id>...` - Cancel one or more running or queued tasks
 - `tsk clean` - Clean up completed tasks
 - `tsk delete <task-id>...` - Delete one or more tasks

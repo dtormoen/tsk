@@ -86,6 +86,7 @@ fn row_to_task(row: &rusqlite::Row) -> rusqlite::Result<Task> {
             })?,
         branch_name: row.get("branch_name")?,
         error_message: row.get("error_message")?,
+        blocked_reason: row.get("blocked_reason")?,
         source_commit: row.get("source_commit")?,
         source_branch: row.get("source_branch")?,
         stack: row.get("stack")?,
@@ -139,7 +140,7 @@ fn insert_task(
         .map(|p| path_to_string(p))
         .transpose()?;
     conn.execute(
-        "INSERT INTO tasks (id, repo_root, name, task_type, instructions_file, agent, status, created_at, started_at, completed_at, branch_name, error_message, source_commit, source_branch, stack, project, copied_repo_path, is_interactive, parent_ids, network_isolation, dind, resolved_config) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+        "INSERT INTO tasks (id, repo_root, name, task_type, instructions_file, agent, status, created_at, started_at, completed_at, branch_name, error_message, blocked_reason, source_commit, source_branch, stack, project, copied_repo_path, is_interactive, parent_ids, network_isolation, dind, resolved_config) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
         rusqlite::params![
             task.id,
             repo_root,
@@ -153,6 +154,7 @@ fn insert_task(
             task.completed_at.map(|dt| dt.to_rfc3339()),
             task.branch_name,
             task.error_message,
+            task.blocked_reason,
             task.source_commit,
             task.source_branch,
             task.stack,
@@ -314,6 +316,9 @@ impl TaskStorage {
         // Migration: add resolved_config column for config snapshotting
         let _ = conn.execute_batch("ALTER TABLE tasks ADD COLUMN resolved_config TEXT;");
 
+        // Migration: add blocked_reason column for surfacing warmup failures
+        let _ = conn.execute_batch("ALTER TABLE tasks ADD COLUMN blocked_reason TEXT;");
+
         if let Some(data_dir) = db_path.parent() {
             migrate_from_json(&conn, data_dir);
         }
@@ -396,7 +401,7 @@ impl TaskStorage {
             let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
             let now = chrono::Utc::now().to_rfc3339();
             let rows_affected = conn.execute(
-                "UPDATE tasks SET status = 'RUNNING', started_at = ?1 WHERE id = ?2",
+                "UPDATE tasks SET status = 'RUNNING', started_at = ?1, blocked_reason = NULL WHERE id = ?2",
                 rusqlite::params![now, id],
             )?;
             if rows_affected == 0 {
@@ -512,6 +517,29 @@ impl TaskStorage {
                 return Err("Task not found".into());
             }
             read_task_by_id(&conn, &id)
+        })
+        .await?
+    }
+
+    /// Set the blocked reason for a task (e.g., warmup failure) without changing its status.
+    pub async fn set_blocked_reason(
+        &self,
+        id: &str,
+        reason: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let conn = Arc::clone(&self.conn);
+        let id = id.to_string();
+        let reason = reason.to_string();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+            let rows_affected = conn.execute(
+                "UPDATE tasks SET blocked_reason = ?1 WHERE id = ?2",
+                rusqlite::params![reason, id],
+            )?;
+            if rows_affected == 0 {
+                return Err("Task not found".into());
+            }
+            Ok(())
         })
         .await?
     }
@@ -1272,5 +1300,48 @@ mod tests {
             TaskStatus::Cancelled,
             "Status should remain CANCELLED"
         );
+    }
+
+    #[tokio::test]
+    async fn test_blocked_reason_lifecycle() {
+        let ctx = AppContext::builder().build();
+        let tsk_env = ctx.tsk_env();
+        let db_path = tsk_env.data_dir().join("test_blocked_reason.db");
+        let storage = TaskStorage::new(db_path).unwrap();
+
+        let task = Task {
+            id: "blocked1".to_string(),
+            repo_root: tsk_env.data_dir().to_path_buf(),
+            branch_name: "tsk/feat/blocked/blocked1".to_string(),
+            copied_repo_path: Some(tsk_env.data_dir().to_path_buf()),
+            ..Task::test_default()
+        };
+        storage.add_task(task).await.unwrap();
+
+        // Set blocked reason
+        storage
+            .set_blocked_reason("blocked1", "Agent warmup failed: OAuth expired")
+            .await
+            .unwrap();
+        let t = storage.get_task("blocked1").await.unwrap().unwrap();
+        assert_eq!(
+            t.blocked_reason,
+            Some("Agent warmup failed: OAuth expired".to_string())
+        );
+        assert_eq!(t.status, TaskStatus::Queued);
+
+        // mark_running clears blocked_reason
+        storage.mark_running("blocked1").await.unwrap();
+        let t = storage.get_task("blocked1").await.unwrap().unwrap();
+        assert!(t.blocked_reason.is_none());
+
+        // Set it again and verify reset_to_queued preserves it
+        storage
+            .set_blocked_reason("blocked1", "Still blocked")
+            .await
+            .unwrap();
+        storage.reset_to_queued("blocked1").await.unwrap();
+        let t = storage.get_task("blocked1").await.unwrap().unwrap();
+        assert_eq!(t.blocked_reason, Some("Still blocked".to_string()));
     }
 }

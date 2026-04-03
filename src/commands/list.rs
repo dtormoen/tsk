@@ -30,6 +30,8 @@ impl Command for ListCommand {
                         TaskStatus::Queued => {
                             if !task.parent_ids.is_empty() && task.copied_repo_path.is_none() {
                                 "WAITING".to_string()
+                            } else if task.blocked_reason.is_some() {
+                                "BLOCKED".to_string()
                             } else {
                                 "QUEUED".to_string()
                             }
@@ -98,10 +100,19 @@ impl Command for ListCommand {
                         && t.copied_repo_path.is_none()
                 })
                 .count();
+            let blocked = tasks
+                .iter()
+                .filter(|t| {
+                    t.status == TaskStatus::Queued
+                        && t.blocked_reason.is_some()
+                        && (t.parent_ids.is_empty() || t.copied_repo_path.is_some())
+                })
+                .count();
             let queued = tasks
                 .iter()
                 .filter(|t| {
                     t.status == TaskStatus::Queued
+                        && t.blocked_reason.is_none()
                         && (t.parent_ids.is_empty() || t.copied_repo_path.is_some())
                 })
                 .count();
@@ -132,8 +143,9 @@ impl Command for ListCommand {
                 format!("{count} {label}")
             };
             println!(
-                "\nSummary: {}, {}, {}, {}, {}, {}",
+                "\nSummary: {}, {}, {}, {}, {}, {}, {}",
                 cs(queued, "queued"),
+                cs(blocked, "blocked"),
                 cs(waiting, "waiting"),
                 cs(running, "running"),
                 cs(complete, "complete"),
