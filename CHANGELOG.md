@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.8](https://github.com/dtormoen/tsk-tsk/compare/v0.10.7...v0.10.8) - 2026-04-03
+
+### Added
+
+- add --branch flag to tsk add, run, and shell commands
+- add `tsk wait` command and `--wait` flag on `tsk add`
+
+### Fixed
+
+- initialize submodules when using --branch flag
+- prevent --edit from hanging in non-interactive contexts
+
 ## [0.10.7](https://github.com/dtormoen/tsk-tsk/compare/v0.10.6...v0.10.7) - 2026-03-30
 
 ### Added
