@@ -836,6 +836,7 @@ mod tests {
             repo_root: repo_path.to_path_buf(),
             name: format!("task-{id}"),
             task_type: "test".to_string(),
+            agent: "no-op".to_string(),
             branch_name: format!("tsk/test/{id}"),
             source_commit: commit_sha.to_string(),
             copied_repo_path: Some(data_dir.join(format!("task-copy-{id}"))),
